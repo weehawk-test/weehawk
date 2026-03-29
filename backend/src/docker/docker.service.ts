@@ -4,6 +4,23 @@ import {
   InternalServerErrorException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import {
+  filterContainers,
+  filterImages,
+  filterNetworks,
+  filterVolumes,
+  mapRawRowsToContainers,
+  mapRawRowsToImages,
+  mapRawRowsToNetworks,
+  mapRawRowsToVolumes,
+} from './docker-row.mapper';
+import {
+  countByStatus,
+  type PaginatedContainersDto,
+  type PaginatedImagesDto,
+  type PaginatedNetworksDto,
+  type PaginatedVolumesDto,
+} from './dto/paginated-list.dto';
 import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -116,6 +133,15 @@ type VolumeInspectRow = {
 
 @Injectable()
 export class DockerService {
+  private clampPage(page: number): number {
+    return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+  }
+
+  private clampPageSize(size: number): number {
+    const n = Number.isFinite(size) ? Math.floor(size) : 10;
+    return Math.min(Math.max(n, 1), 100);
+  }
+
   async getContainers() {
     try {
       const { stdout } = await execAsync('docker ps -a --format "{{json .}}"');
@@ -127,6 +153,30 @@ export class DockerService {
     } catch (error) {
       rethrowDockerError(error, 'containers');
     }
+  }
+
+  async getContainersPaged(
+    pageRaw: number,
+    pageSizeRaw: number,
+    search: string,
+  ): Promise<PaginatedContainersDto> {
+    const page = this.clampPage(pageRaw);
+    const pageSize = this.clampPageSize(pageSizeRaw);
+    const raw = await this.getContainers();
+    const mapped = mapRawRowsToContainers(raw as unknown[]);
+    const counts = countByStatus(mapped);
+    const filtered = filterContainers(mapped, search ?? '');
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const items = filtered.slice(start, start + pageSize);
+    return {
+      items,
+      total,
+      totalAll: mapped.length,
+      page,
+      pageSize,
+      counts,
+    };
   }
 
   async getImages() {
@@ -142,6 +192,28 @@ export class DockerService {
     } catch (error) {
       rethrowDockerError(error, 'images');
     }
+  }
+
+  async getImagesPaged(
+    pageRaw: number,
+    pageSizeRaw: number,
+    search: string,
+  ): Promise<PaginatedImagesDto> {
+    const page = this.clampPage(pageRaw);
+    const pageSize = this.clampPageSize(pageSizeRaw);
+    const raw = await this.getImages();
+    const mapped = mapRawRowsToImages(raw as unknown[]);
+    const filtered = filterImages(mapped, search ?? '');
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const items = filtered.slice(start, start + pageSize);
+    return {
+      items,
+      total,
+      totalAll: mapped.length,
+      page,
+      pageSize,
+    };
   }
 
   async getVolumes() {
@@ -192,6 +264,65 @@ export class DockerService {
     } catch (error) {
       rethrowDockerError(error, 'volumes');
     }
+  }
+
+  async getVolumesPaged(
+    pageRaw: number,
+    pageSizeRaw: number,
+    search: string,
+  ): Promise<PaginatedVolumesDto> {
+    const page = this.clampPage(pageRaw);
+    const pageSize = this.clampPageSize(pageSizeRaw);
+    const raw = await this.getVolumes();
+    const mapped = mapRawRowsToVolumes(raw as unknown[]);
+    const filtered = filterVolumes(mapped, search ?? '');
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const items = filtered.slice(start, start + pageSize);
+    return {
+      items,
+      total,
+      totalAll: mapped.length,
+      page,
+      pageSize,
+    };
+  }
+
+  async getNetworks() {
+    try {
+      const { stdout } = await execAsync(
+        'docker network ls --no-trunc --format "{{json .}}"',
+      );
+      return stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    } catch (error) {
+      rethrowDockerError(error, 'networks');
+    }
+  }
+
+  async getNetworksPaged(
+    pageRaw: number,
+    pageSizeRaw: number,
+    search: string,
+  ): Promise<PaginatedNetworksDto> {
+    const page = this.clampPage(pageRaw);
+    const pageSize = this.clampPageSize(pageSizeRaw);
+    const raw = await this.getNetworks();
+    const mapped = mapRawRowsToNetworks(raw as unknown[]);
+    const filtered = filterNetworks(mapped, search ?? '');
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const items = filtered.slice(start, start + pageSize);
+    return {
+      items,
+      total,
+      totalAll: mapped.length,
+      page,
+      pageSize,
+    };
   }
 
   async getSystemStats() {
@@ -279,6 +410,17 @@ export class DockerService {
       return { success: true };
     } catch (error) {
       rethrowDockerMutateError(error, 'Failed to remove volume');
+    }
+  }
+
+  /** Remove a network by name or ID (fails for in-use or predefined networks). */
+  async removeNetwork(idOrName: string) {
+    const target = assertNonEmptyParam(idOrName, 'Network id or name');
+    try {
+      await execFileAsync('docker', ['network', 'rm', target]);
+      return { success: true };
+    } catch (error) {
+      rethrowDockerMutateError(error, 'Failed to remove network');
     }
   }
 }

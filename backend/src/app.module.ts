@@ -5,6 +5,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ProjectsModule } from './projects/projects.module';
 import { DockersecretsModule } from './dockersecrets/dockersecrets.module';
 import { DockerModule } from './docker/docker.module';
+import { AuthModule } from './auth/auth.module';
+import { UserModule } from './user/user.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 
 @Module({
   imports: [
@@ -29,6 +33,10 @@ import { DockerModule } from './docker/docker.module';
     ProjectsModule,
     DockersecretsModule,
     DockerModule,
+    AuthModule,
+    UserModule,
+    NotificationsModule,
+    WebhooksModule,
   ],
   controllers: [],
   providers: [],

@@ -5,6 +5,7 @@ import {
   deleteServiceApi,
   fetchService,
   fetchServiceRuntime,
+  fetchServiceVolumesApi,
   fetchServices,
   shutdownServiceApi,
   startServiceApi,
@@ -20,22 +21,36 @@ export function useServices(projectId?: string) {
   });
 }
 
-export function useService(id: string) {
+export function useService(id: string, options?: { initialData?: Service }) {
   return useQuery({
     queryKey: ["service", id],
     queryFn: () => fetchService(id),
     enabled: !!id,
     staleTime: 10_000,
+    initialData: options?.initialData,
   });
 }
 
-export function useServiceRuntime(id: string | undefined) {
+export function useServiceRuntime(
+  id: string | undefined,
+  options?: { initialData?: { running: boolean } },
+) {
   return useQuery({
     queryKey: ["service-runtime", id],
     queryFn: () => fetchServiceRuntime(id!),
     enabled: !!id,
     staleTime: 5_000,
     refetchInterval: 10_000,
+    initialData: options?.initialData,
+  });
+}
+
+export function useServiceVolumes(serviceId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["service-volumes", serviceId],
+    queryFn: () => fetchServiceVolumesApi(serviceId!),
+    enabled: !!serviceId && enabled,
+    staleTime: 15_000,
   });
 }
 
@@ -66,6 +81,7 @@ export function useUpdateService() {
       qc.invalidateQueries({ queryKey: ["services", data.projectId] });
       qc.invalidateQueries({ queryKey: ["services"] });
       qc.invalidateQueries({ queryKey: ["service", data.id] });
+      qc.invalidateQueries({ queryKey: ["service-volumes", String(data.id)] });
       qc.invalidateQueries({ queryKey: ["projects", data.projectId] });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },

@@ -29,9 +29,17 @@ export class ServicesController {
   }
 
   @Post(':id/execute')
-  @ApiOperation({ summary: 'Deploy (build) or reload (no build) — body: { mode?: "deploy" | "reload" }' })
-  execute(@Param('id') id: string, @Body() body?: { mode?: 'deploy' | 'reload' }) {
-    const mode = body?.mode === 'reload' ? 'reload' : 'deploy';
+  @ApiOperation({
+    summary:
+      'Deploy (build), reload (compose --no-build / stack deploy), or redeploy (compose stop + build + up; stack deploy + forced rolling restart)',
+  })
+  execute(
+    @Param('id') id: string,
+    @Body() body?: { mode?: 'deploy' | 'reload' | 'redeploy' },
+  ) {
+    const m = body?.mode;
+    const mode =
+      m === 'reload' ? 'reload' : m === 'redeploy' ? 'redeploy' : 'deploy';
     return this.servicesService.executeDeployment(+id, mode);
   }
 
@@ -58,6 +66,14 @@ export class ServicesController {
   @ApiOperation({ summary: 'Whether Docker reports running containers for this service' })
   async runtime(@Param('id') id: string) {
     return await this.servicesService.getRuntimeStatus(+id);
+  }
+
+  @Get(':id/volumes')
+  @ApiOperation({
+    summary: 'Compose-declared volume/bind mounts for this service (docker compose config)',
+  })
+  async serviceVolumes(@Param('id') id: string) {
+    return await this.servicesService.getServiceVolumes(+id);
   }
 
   @Get(':id')

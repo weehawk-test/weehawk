@@ -185,9 +185,6 @@ export default function ProjectDetails() {
               <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
                 <Clock className="w-3 h-3" />
                 Created {format(new Date(project.createdAt), "MMM d, yyyy")}
-                <span className={`ml-2 px-2 py-0.5 rounded-full border text-xs font-medium ${project.isActive ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-muted text-muted-foreground border-border"}`}>
-                  {project.isActive ? "Active" : "Inactive"}
-                </span>
               </div>
             </div>
           </div>

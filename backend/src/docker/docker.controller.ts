@@ -13,6 +13,21 @@ export class DockerController {
     return await this.dockerService.getContainers();
   }
 
+  @Get('containers/paged')
+  @ApiOperation({ summary: 'List containers (paginated, optional search)' })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'pageSize', required: false, example: 10 })
+  @ApiQuery({ name: 'q', required: false, description: 'Filter by name or image' })
+  async containersPaged(
+    @Query('page') pageStr?: string,
+    @Query('pageSize') pageSizeStr?: string,
+    @Query('q') q?: string,
+  ) {
+    const page = parseInt(pageStr ?? '1', 10);
+    const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    return this.dockerService.getContainersPaged(page, pageSize, q ?? '');
+  }
+
   @Get('containers/:id/logs')
   @ApiOperation({ summary: 'Get recent container logs (stdout/stderr)' })
   @ApiQuery({
@@ -43,6 +58,21 @@ export class DockerController {
     return await this.dockerService.getImages();
   }
 
+  @Get('images/paged')
+  @ApiOperation({ summary: 'List images (paginated, optional search)' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'pageSize', required: false })
+  @ApiQuery({ name: 'q', required: false, description: 'Filter by repository or tag' })
+  async imagesPaged(
+    @Query('page') pageStr?: string,
+    @Query('pageSize') pageSizeStr?: string,
+    @Query('q') q?: string,
+  ) {
+    const page = parseInt(pageStr ?? '1', 10);
+    const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    return this.dockerService.getImagesPaged(page, pageSize, q ?? '');
+  }
+
   @Delete('images')
   @ApiOperation({ summary: 'Remove an image by reference' })
   @ApiQuery({ name: 'ref', required: true, example: 'nginx:latest' })
@@ -56,10 +86,56 @@ export class DockerController {
     return await this.dockerService.getVolumes();
   }
 
+  @Get('volumes/paged')
+  @ApiOperation({ summary: 'List volumes (paginated, optional search)' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'pageSize', required: false })
+  @ApiQuery({ name: 'q', required: false, description: 'Filter by volume name' })
+  async volumesPaged(
+    @Query('page') pageStr?: string,
+    @Query('pageSize') pageSizeStr?: string,
+    @Query('q') q?: string,
+  ) {
+    const page = parseInt(pageStr ?? '1', 10);
+    const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    return this.dockerService.getVolumesPaged(page, pageSize, q ?? '');
+  }
+
   @Delete('volumes/:name')
   @ApiOperation({ summary: 'Remove a volume' })
   async removeVolume(@Param('name') name: string) {
     return await this.dockerService.removeVolume(decodeURIComponent(name));
+  }
+
+  @Get('networks')
+  @ApiOperation({ summary: 'List Docker networks (docker network ls)' })
+  async networks() {
+    return await this.dockerService.getNetworks();
+  }
+
+  @Get('networks/paged')
+  @ApiOperation({ summary: 'List networks (paginated, optional search)' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'pageSize', required: false })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Filter by name, driver, scope, or id',
+  })
+  async networksPaged(
+    @Query('page') pageStr?: string,
+    @Query('pageSize') pageSizeStr?: string,
+    @Query('q') q?: string,
+  ) {
+    const page = parseInt(pageStr ?? '1', 10);
+    const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    return this.dockerService.getNetworksPaged(page, pageSize, q ?? '');
+  }
+
+  @Delete('networks/:id')
+  @ApiOperation({ summary: 'Remove a network by name or id' })
+  async removeNetwork(@Param('id') id: string) {
+    return await this.dockerService.removeNetwork(decodeURIComponent(id));
   }
 
   @Get('stats')

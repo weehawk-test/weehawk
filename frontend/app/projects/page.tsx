@@ -189,7 +189,7 @@ export default function Projects() {
               >
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className={`p-2 rounded-lg flex-shrink-0 ${project.isActive ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                    <div className="p-2 rounded-lg flex-shrink-0 bg-primary/10 text-primary">
                       <Boxes className="w-5 h-5" />
                     </div>
                     <div className="min-w-0">

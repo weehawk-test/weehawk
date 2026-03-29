@@ -1,21 +1,5 @@
 import { z } from "zod";
 
-// ─── Webhooks ────────────────────────────────────────────────────────────────
-
-export const webhookSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string().min(1, "Name is required").max(100),
-  script: z.string().min(1, "Script is required"),
-  description: z.string().optional().default(""),
-  createdAt: z.string().datetime(),
-  isActive: z.boolean().default(true),
-});
-export type Webhook = z.infer<typeof webhookSchema>;
-export const createWebhookSchema = webhookSchema.omit({ id: true, createdAt: true, isActive: true });
-export type CreateWebhookInput = z.infer<typeof createWebhookSchema>;
-export const updateWebhookSchema = webhookSchema.partial();
-export type UpdateWebhookInput = z.infer<typeof updateWebhookSchema>;
-
 // ─── Projects ────────────────────────────────────────────────────────────────
 
 export const projectSchema = z.object({

@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Delete, Body, Param, InternalServerErrorException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Delete,
+  Body,
+  Param,
+  Query,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { DockerSecretsService } from './dockersecrets.service';
 import { BulkImportDto, CreateDockersecretDto } from './dto/create-dockersecret.dto';
@@ -12,6 +21,18 @@ export class DockerSecretsController {
   @ApiOperation({ summary: 'List all secrets' })
   async findAll() {
     return await this.secretsService.findAll();
+  }
+
+  @Get('paged')
+  @ApiOperation({ summary: 'List secrets (paginated, search)' })
+  async findAllPaged(
+    @Query('page') pageStr?: string,
+    @Query('pageSize') pageSizeStr?: string,
+    @Query('q') q?: string,
+  ) {
+    const page = parseInt(pageStr ?? '1', 10);
+    const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    return await this.secretsService.findAllPaged(page, pageSize, q ?? '');
   }
 
   @Post()

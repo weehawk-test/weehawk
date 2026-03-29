@@ -29,8 +29,10 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${fontSans.variable} ${fontMono.variable} h-full`}
+      style={{ backgroundColor: "hsl(0, 0%, 2%)" }}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">
+      <body className="min-h-full flex flex-col bg-background">
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -5,6 +5,7 @@ import { ServicesController } from './services.controller';
 import { Service } from './entities/service.entity';
 import { ProjectsModule } from 'src/projects/projects.module';
 import { ExecutorService } from './ExecutorService';
+import { ServiceTerminalGateway } from './service-terminal.gateway';
 
 @Module({
   imports: [
@@ -12,7 +13,7 @@ import { ExecutorService } from './ExecutorService';
     ProjectsModule, 
   ],
   controllers: [ServicesController],
-  providers: [ServicesService,ExecutorService],
-  exports: [ServicesService],
+  providers: [ServicesService, ExecutorService, ServiceTerminalGateway],
+  exports: [ServicesService, ExecutorService],
 })
 export class ServicesModule {}

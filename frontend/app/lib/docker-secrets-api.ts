@@ -1,5 +1,6 @@
 import { API_BASE } from "./api";
 import type { DockerSecretListItem } from "./schema";
+import type { PaginatedSecretsResponse } from "./docker-paged-fetch";
 
 function parseJsonError(text: string): string {
   try {
@@ -43,6 +44,20 @@ export async function listDockerSecrets(): Promise<DockerSecretListItem[]> {
   const raw = await request<unknown[]>("/docker-secrets");
   if (!Array.isArray(raw)) return [];
   return raw.map((row, i) => mapDockerSecretLsRow(row as Record<string, unknown>, i));
+}
+
+export async function fetchDockerSecretsPagedApi(
+  page: number,
+  pageSize: number,
+  q: string,
+): Promise<PaginatedSecretsResponse> {
+  const params = new URLSearchParams({
+    page: String(Math.max(1, page)),
+    pageSize: String(Math.max(1, pageSize)),
+  });
+  const t = q.trim();
+  if (t) params.set("q", t);
+  return request<PaginatedSecretsResponse>(`/docker-secrets/paged?${params.toString()}`);
 }
 
 export async function createDockerSecretApi(body: { name: string; value: string }) {

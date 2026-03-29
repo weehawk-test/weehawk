@@ -47,7 +47,7 @@ export function useDeploy() {
       serviceId: string;
       serviceName: string;
       serviceType: string;
-      mode?: "deploy" | "reload";
+      mode?: "deploy" | "reload" | "redeploy";
     }) => {
       const id = crypto.randomUUID();
       const startedAt = new Date().toISOString();
@@ -93,6 +93,7 @@ export function useDeploy() {
       qc.invalidateQueries({ queryKey: ["deploy-logs", log.serviceId] });
       qc.invalidateQueries({ queryKey: ["service", log.serviceId] });
       qc.invalidateQueries({ queryKey: ["service-runtime", log.serviceId] });
+      qc.invalidateQueries({ queryKey: ["service-volumes", log.serviceId] });
       qc.invalidateQueries({ queryKey: ["services"] });
     },
   });

@@ -42,6 +42,18 @@ export interface DockerVolume {
   createdAt: string;
 }
 
+/** Row from `docker network ls --no-trunc --format "{{json .}}"` (mapped on the API). */
+export interface DockerNetwork {
+  id: string;
+  networkIdShort: string;
+  name: string;
+  driver: string;
+  scope: string;
+  internal: boolean;
+  ipv6: boolean;
+  createdAt: string;
+}
+
 function mapContainerStatus(status: string): ContainerStatus {
   const s = status.toLowerCase();
   if (s.startsWith("up") || s.includes("running")) return "running";
@@ -326,4 +338,8 @@ export async function deleteDockerImage(ref: string): Promise<void> {
 
 export async function deleteDockerVolume(name: string): Promise<void> {
   await dockerDelete(`/docker-monitor/volumes/${encodeURIComponent(name)}`);
+}
+
+export async function deleteDockerNetwork(nameOrId: string): Promise<void> {
+  await dockerDelete(`/docker-monitor/networks/${encodeURIComponent(nameOrId)}`);
 }

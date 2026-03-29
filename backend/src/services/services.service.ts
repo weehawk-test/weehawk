@@ -12,9 +12,11 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { Project } from 'src/projects/entities/project.entity';
 import { randomBytes } from 'crypto';
 import { ExecutorService } from './ExecutorService';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { Observable } from 'rxjs';
 import { composeType } from './entities/composeType.enum';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 
 @Injectable()
 export class ServicesService {
@@ -43,40 +45,109 @@ export class ServicesService {
   }
 
 
-  getServiceLogsStream(id: number): Observable<any> {
+  /** First `services:` key in compose YAML (matches deploy / exec targets). */
+  private firstComposeServiceName(config: string): string {
+    const lines = config.split(/\r?\n/);
+    let inServices = false;
+    for (const line of lines) {
+      const t = line.trim();
+      if (!inServices) {
+        if (t === 'services:' || /^\s*services:\s*$/.test(line)) inServices = true;
+        continue;
+      }
+      if (!t || t.startsWith('#')) continue;
+      if (/^[a-zA-Z_]/.test(line) && !line.startsWith(' ')) break;
+      const m = line.match(/^\s{2}([a-zA-Z0-9_.-]+)\s*:/);
+      if (m) return m[1];
+    }
+    return 'app';
+  }
+
+  /**
+   * Stream `docker compose logs -f` or `docker service logs -f` using the same paths and
+   * stack names as deploy (see `ExecutorService`).
+   */
+  getServiceLogsStream(id: number): Observable<{ data: string }> {
     return new Observable((observer) => {
-      this.findOne(id).then((service) => {
-        let args: string[] = [];
+      let child: ChildProcess | null = null;
+      let cancelled = false;
+      let stderrBuf = '';
 
-        if (service.composeType === composeType.STACK) {
-          args = ['service', 'logs', '-f', '--tail', '50', service.appName];
-        } else {
-          // Docker Compose Mode (Standalone)
-          args = ['compose', '-p', service.appName, 'logs', '-f', '--tail', '50'];
-        }
+      void this.findOne(id)
+        .then(async (service) => {
+          if (cancelled) return;
 
-        const child = spawn('docker', args);
+          const deployDir = path.join(process.cwd(), 'deployments', service.appName);
+          const composeFile = path.join(deployDir, 'docker-compose.yml');
+          const key = this.firstComposeServiceName(service.dockerConfig || '');
 
-        child.stdout.on('data', (data) => {
-          observer.next({ data: data.toString() });
-        });
+          let args: string[] = [];
+          const spawnOpts: { cwd?: string } = {};
 
-        child.stderr.on('data', (data) => {
-          const errorMsg = data.toString();
-          if (!errorMsg.includes('Attaching to')) {
-            observer.next({ data: errorMsg });
+          if (service.composeType === composeType.STACK) {
+            const stackServiceName = `${service.appName}_${key}`;
+            args = ['service', 'logs', '-f', '--tail', '50', stackServiceName];
+          } else {
+            const exists = await fs.access(composeFile).then(() => true).catch(() => false);
+            if (!exists) {
+              observer.next({
+                data: `[compose] No deployment file at ${composeFile}. Deploy the service first.\n`,
+              });
+              observer.complete();
+              return;
+            }
+            args = [
+              'compose',
+              '-f',
+              composeFile,
+              '-p',
+              service.appName,
+              'logs',
+              '-f',
+              '--tail',
+              '50',
+            ];
+            spawnOpts.cwd = deployDir;
           }
-        });
 
-        child.on('error', (err) => observer.error(err));
-        child.on('close', () => observer.complete());
+          if (cancelled) return;
 
-        return () => child.kill();
-      }).catch(err => observer.error(err));
+          child = spawn('docker', args, spawnOpts);
+
+          child.stdout?.on('data', (data) => {
+            observer.next({ data: data.toString() });
+          });
+
+          child.stderr?.on('data', (data) => {
+            const errorMsg = data.toString();
+            stderrBuf += errorMsg;
+            if (!errorMsg.includes('Attaching to')) {
+              observer.next({ data: errorMsg });
+            }
+          });
+
+          child.on('error', (err) => observer.error(err));
+          child.on('close', (code) => {
+            if (code !== 0 && stderrBuf.trim()) {
+              observer.next({
+                data: `\n[docker logs exited with code ${code}]\n${stderrBuf}`,
+              });
+            }
+            observer.complete();
+          });
+        })
+        .catch((err) => observer.error(err));
+
+      return () => {
+        cancelled = true;
+        if (child && !child.killed) {
+          child.kill('SIGKILL');
+        }
+      };
     });
   }
 
-  async executeDeployment(id: number, mode: 'deploy' | 'reload' = 'deploy') {
+  async executeDeployment(id: number, mode: 'deploy' | 'reload' | 'redeploy' = 'deploy') {
     const result = await this.executorService.execute(id, mode);
     await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
     return result;
@@ -90,6 +161,11 @@ export class ServicesService {
   async getRuntimeStatus(id: number) {
     await this.findOne(id);
     return await this.executorService.getRuntimeStatus(id);
+  }
+
+  async getServiceVolumes(id: number) {
+    await this.findOne(id);
+    return await this.executorService.getServiceVolumeMounts(id);
   }
 
   async findAll() {

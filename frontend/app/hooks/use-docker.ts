@@ -7,6 +7,7 @@ import {
   deleteDockerContainer,
   deleteDockerImage,
   deleteDockerVolume,
+  deleteDockerNetwork,
 } from "@/lib/docker-api";
 
 export function useDockerContainers() {
@@ -54,6 +55,14 @@ export function useDeleteDockerVolume() {
   return useMutation({
     mutationFn: (name: string) => deleteDockerVolume(name),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["docker", "volumes"] }),
+  });
+}
+
+export function useDeleteDockerNetwork() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (nameOrId: string) => deleteDockerNetwork(nameOrId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["docker", "networks"] }),
   });
 }
 

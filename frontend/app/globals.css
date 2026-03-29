@@ -65,6 +65,10 @@
   * {
     @apply border-border;
   }
+  html {
+    background-color: hsl(var(--background));
+    color-scheme: dark;
+  }
   body {
     @apply bg-background text-foreground font-sans antialiased selection:bg-primary/30 selection:text-primary-foreground;
   }
@@ -82,6 +86,115 @@
   }
   ::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--muted-foreground));
+  }
+
+  /** Native checkboxes: dark surface (avoids bright OS default on dark UI) */
+  input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    border-radius: 4px;
+    border: 1px solid rgb(113 113 122 / 0.55);
+    background-color: rgb(9 9 11 / 0.9);
+    cursor: pointer;
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  input[type="checkbox"]:hover {
+    border-color: rgb(161 161 170 / 0.65);
+    background-color: rgb(24 24 27 / 0.95);
+  }
+  input[type="checkbox"]:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px hsl(var(--background)),
+      0 0 0 4px hsl(var(--primary) / 0.35);
+  }
+  input[type="checkbox"]:checked {
+    background-color: hsl(var(--primary));
+    border-color: hsl(var(--primary));
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230a0a0a' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    background-size: 0.7rem;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  /** Native radios next to checkboxes (e.g. webhook target mode) */
+  input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    border-radius: 9999px;
+    border: 1px solid rgb(113 113 122 / 0.55);
+    background-color: rgb(9 9 11 / 0.9);
+    cursor: pointer;
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  input[type="radio"]:hover {
+    border-color: rgb(161 161 170 / 0.65);
+    background-color: rgb(24 24 27 / 0.95);
+  }
+  input[type="radio"]:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px hsl(var(--background)),
+      0 0 0 4px hsl(var(--primary) / 0.35);
+  }
+  input[type="radio"]:checked {
+    border-color: hsl(var(--primary));
+    background-color: rgb(9 9 11 / 0.9);
+    background-image: radial-gradient(
+      circle,
+      hsl(var(--primary)) 40%,
+      transparent 42%
+    );
+  }
+  input[type="radio"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  /** Native <select>: dark closed state + option list where browsers allow */
+  select {
+    color-scheme: dark;
+    background-color: rgb(9 9 11 / 0.92);
+    color: hsl(var(--foreground));
+    border-color: rgb(63 63 70 / 0.55);
+  }
+  select:hover:not(:disabled) {
+    border-color: rgb(113 113 122 / 0.65);
+    background-color: rgb(24 24 27 / 0.95);
+  }
+  select:focus-visible {
+    outline: none;
+    border-color: hsl(var(--primary) / 0.55);
+    box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+  }
+  select:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  select option {
+    background-color: rgb(9 9 11);
+    color: hsl(var(--foreground));
+  }
+  select option:checked,
+  select option:hover {
+    background-color: rgb(39 39 42);
+    color: hsl(var(--foreground));
   }
 }
 
@@ -105,5 +218,28 @@
     @apply w-full px-4 py-3 bg-input/50 border border-border rounded-lg text-foreground 
            placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
            transition-all duration-200 font-sans;
+  }
+  /** Tighter fields for dense forms (webhooks, etc.) */
+  .input-field-sm {
+    @apply w-full px-3 py-2 text-sm bg-input/50 border border-border rounded-md text-foreground
+           placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary
+           transition-all duration-200 font-sans;
+  }
+  /** Native selects using .input-field: darker than generic inputs */
+  select.input-field {
+    background-color: rgb(9 9 11 / 0.92);
+    border-color: rgb(63 63 70 / 0.55);
+  }
+  select.input-field:hover:not(:disabled) {
+    border-color: rgb(113 113 122 / 0.55);
+    background-color: rgb(24 24 27 / 0.95);
+  }
+  select.input-field-sm {
+    background-color: rgb(9 9 11 / 0.92);
+    border-color: rgb(63 63 70 / 0.55);
+  }
+  select.input-field-sm:hover:not(:disabled) {
+    border-color: rgb(113 113 122 / 0.55);
+    background-color: rgb(24 24 27 / 0.95);
   }
 }
