@@ -21,12 +21,13 @@ import {
   useUpdateService,
 } from "@/hooks/use-services";
 import { useProject } from "@/hooks/use-projects";
-import { useDockerSecretsPaged } from "@/hooks/use-docker-secrets";
+import { useDockerSecretsPagedWithInitialData } from "@/hooks/use-docker-secrets";
 import { useDeploy } from "@/hooks/use-deploy-logs";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
-import type { Service } from "@/lib/schema";
+import type { Project, Service } from "@/lib/schema";
+import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 import { streamServiceLogs } from "@/lib/services-api";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceSecretsTab } from "./service-secrets-tab";
@@ -152,7 +153,19 @@ function countEnvEntries(text: string) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function ServiceDetails() {
+type ServiceDetailsProps = {
+  initialService?: Service | null;
+  initialProject?: Project | null;
+  initialRuntime?: { running: boolean } | null;
+  initialSecretsPaged?: PaginatedSecretsResponse | null;
+};
+
+export default function ServiceDetails({
+  initialService,
+  initialProject,
+  initialRuntime,
+  initialSecretsPaged,
+}: ServiceDetailsProps) {
   const { id: projectId, serviceId } = useParams<{ id: string; serviceId: string }>();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -164,10 +177,18 @@ export default function ServiceDetails() {
   const [liveLogAwaitingFirstChunk, setLiveLogAwaitingFirstChunk] = useState(true);
   const liveLogScrollRef = useRef<HTMLDivElement>(null);
 
-  const { data: service, isLoading } = useService(serviceId!);
-  const { data: runtime, isLoading: runtimeLoading } = useServiceRuntime(serviceId);
-  const { data: project } = useProject(projectId!);
-  const { data: secretsPaged } = useDockerSecretsPaged(1, "");
+  const { data: service, isLoading } = useService(serviceId!, {
+    initialData: initialService ?? undefined,
+  });
+  const { data: runtime, isLoading: runtimeLoading } = useServiceRuntime(serviceId, {
+    initialData: initialRuntime ?? undefined,
+  });
+  const { data: project } = useProject(projectId!, {
+    initialData: initialProject ?? undefined,
+  });
+  const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(1, "", {
+    initialData: initialSecretsPaged ?? undefined,
+  });
   const deleteService = useDeleteService();
   const shutdownService = useShutdownService();
   const startService = useStartService();
@@ -184,10 +205,15 @@ export default function ServiceDetails() {
 
   useEffect(() => {
     if (activeTab !== "logs" || !serviceId) return;
-    setLiveLogError(null);
-    setLiveLogText("");
-    setLiveLogAwaitingFirstChunk(true);
     const ac = new AbortController();
+
+    // Reset UI state on tab switch asynchronously to avoid cascading renders.
+    queueMicrotask(() => {
+      setLiveLogError(null);
+      setLiveLogText("");
+      setLiveLogAwaitingFirstChunk(true);
+    });
+
     void streamServiceLogs(
       serviceId,
       (chunk) => {

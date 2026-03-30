@@ -18,8 +18,25 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     config: ConfigService,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
   ) {
+    const fromCookie = (req: { headers?: { cookie?: string } }) => {
+      const raw = req?.headers?.cookie ?? '';
+      if (!raw) return null;
+      const parts = raw.split(';').map((p) => p.trim());
+      for (const part of parts) {
+        const idx = part.indexOf('=');
+        if (idx <= 0) continue;
+        const key = part.slice(0, idx);
+        if (key !== 'weehawk_at') continue;
+        const value = part.slice(idx + 1);
+        return decodeURIComponent(value || '');
+      }
+      return null;
+    };
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        fromCookie as never,
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ]),
       ignoreExpiration: false,
       secretOrKey: config.get<string>('JWT_SECRET', 'change-me-in-production'),
     });

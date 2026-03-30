@@ -1,19 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { ImageIcon, Search, HardDrive, Tag, Clock, RefreshCw, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
+import { ImageIcon, Search, HardDrive, Tag, Clock, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useDeleteDockerImage } from "@/hooks/use-docker";
 import {
   DOCKER_API_HELP,
   deleteDockerImage,
+  dockerPagedWsUrl,
   dockerImageDeleteRef,
   dockerImageForceDeleteRef,
   type DockerImage,
 } from "@/lib/docker-api";
-import type { PaginatedImagesResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_LIST_PAGE_SIZE, type PaginatedImagesResponse } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
@@ -47,20 +48,69 @@ type Props = {
 
 export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
   const router = useRouter();
-  const { localQ, setLocalQ, setPage, refresh } = useDockerListUrl(urlPage, urlQ);
+  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const del = useDeleteDockerImage();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
   const [forceDialog, setForceDialog] = useState<DockerImage | null>(null);
+  const [liveData, setLiveData] = useState<PaginatedImagesResponse | null>(data);
+  const [liveError, setLiveError] = useState<string | null>(error);
 
-  const items = data?.items ?? [];
+  useEffect(() => {
+    setLiveData(data);
+    setLiveError(error);
+  }, [data, error, urlPage, urlQ]);
+
+  useEffect(() => {
+    let disposed = false;
+    let ws: WebSocket | null = null;
+    const connect = () => {
+      ws = new WebSocket(
+        dockerPagedWsUrl({
+          topic: "images.paged",
+          page,
+          pageSize: DOCKER_LIST_PAGE_SIZE,
+          q,
+          intervalMs: 2000,
+        }),
+      );
+      ws.onmessage = (ev) => {
+        if (disposed || typeof ev.data !== "string") return;
+        try {
+          const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
+          if (msg.type === "images.paged" && msg.data) {
+            setLiveData(msg.data as PaginatedImagesResponse);
+            setLiveError(null);
+          } else if (msg.type === "error") {
+            setLiveError(msg.message ?? "WebSocket error");
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        if (disposed) return;
+        setTimeout(() => {
+          if (!disposed) connect();
+        }, 1500);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      try {
+        ws?.close();
+      } catch {}
+    };
+  }, [page, q]);
+
+  const currentData = liveData;
+  const items = currentData?.items ?? [];
   const filteredKeys = useMemo(() => items.map((img) => img.id), [items]);
   const bulk = useBulkSelection(filteredKeys);
 
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  const from = data && data.total > 0 ? (data.page - 1) * data.pageSize + 1 : 0;
-  const to = data ? Math.min(data.page * data.pageSize, data.total) : 0;
+  const totalPages = currentData ? Math.max(1, Math.ceil(currentData.total / currentData.pageSize)) : 1;
+  const from = currentData && currentData.total > 0 ? (currentData.page - 1) * currentData.pageSize + 1 : 0;
+  const to = currentData ? Math.min(currentData.page * currentData.pageSize, currentData.total) : 0;
 
   const handleBulkDelete = async () => {
     const targets = items.filter((img) => bulk.selectedInFiltered.includes(img.id));
@@ -144,7 +194,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
     });
   };
 
-  const listError = error;
+  const listError = liveError;
   const isError = !!listError;
 
   return (
@@ -166,10 +216,6 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
               Delete ({bulk.selectedInFiltered.length})
             </button>
           )}
-          <button type="button" onClick={() => refresh()} disabled={del.isPending} className="btn-secondary flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -194,7 +240,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
         />
       </div>
 
-      {data && data.total > 0 && !isError && (
+      {currentData && currentData.total > 0 && !isError && (
         <div className="flex items-center gap-3 mb-6 text-sm">
           <label className="flex items-center gap-2.5 cursor-pointer text-muted-foreground hover:text-foreground select-none">
             <DockerBulkCheckbox
@@ -210,7 +256,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
         </div>
       )}
 
-      {isError ? null : data && data.total === 0 ? (
+      {isError ? null : currentData && currentData.total === 0 ? (
         <div className="glass-panel rounded-2xl p-12 text-center">
           <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
             <ImageIcon className="w-8 h-8 text-muted-foreground" />
@@ -218,7 +264,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
           <h3 className="font-semibold mb-1">No images found</h3>
           <p className="text-muted-foreground text-sm">No images match your search, or the engine returned an empty list.</p>
         </div>
-      ) : data ? (
+      ) : currentData ? (
         <div className="glass-panel rounded-2xl overflow-hidden">
           <table className="w-full">
             <thead>
@@ -301,12 +347,12 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
             </tbody>
           </table>
           <ListPagination
-            page={data.page}
+            page={currentData.page}
             totalPages={totalPages}
             onPageChange={setPage}
             from={from}
             to={to}
-            total={data.total}
+            total={currentData.total}
             className="px-5 pb-4"
           />
         </div>

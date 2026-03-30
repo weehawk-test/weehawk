@@ -91,14 +91,21 @@ export class DockerController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'pageSize', required: false })
   @ApiQuery({ name: 'q', required: false, description: 'Filter by volume name' })
+  @ApiQuery({
+    name: 'includeSizes',
+    required: false,
+    description: 'When true, also resolves volume sizes (slower). Default: false.',
+  })
   async volumesPaged(
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('q') q?: string,
+    @Query('includeSizes') includeSizesStr?: string,
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
-    return this.dockerService.getVolumesPaged(page, pageSize, q ?? '');
+    const includeSizes = (includeSizesStr ?? '').toLowerCase() === 'true';
+    return this.dockerService.getVolumesPaged(page, pageSize, q ?? '', includeSizes);
   }
 
   @Delete('volumes/:name')

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { CreateProjectInput } from "@/lib/schema";
+import type { CreateProjectInput, Project } from "@/lib/schema";
 import {
   createProjectApi,
   deleteProjectApi,
@@ -8,20 +8,29 @@ import {
   updateProjectApi,
 } from "@/lib/projects-api";
 
-export function useProjects() {
+export function useProjects(initialData?: Project[]) {
+  const hasInitial = initialData !== undefined;
   return useQuery({
     queryKey: ["projects"],
     queryFn: fetchProjects,
-    staleTime: 10_000,
+    initialData,
+    // Keep the query "fresh" when we receive server-side initial data,
+    // without calling impure functions (like Date.now) during render.
+    initialDataUpdatedAt: hasInitial ? 0 : undefined,
+    staleTime: hasInitial ? Infinity : 10_000,
+    refetchOnMount: hasInitial ? false : undefined,
   });
 }
 
-export function useProject(id: string) {
+export function useProject(id: string, options?: { initialData?: Project }) {
+  const hasInitial = options?.initialData !== undefined;
   return useQuery({
     queryKey: ["projects", id],
     queryFn: () => fetchProject(id),
     enabled: !!id,
-    staleTime: 10_000,
+    initialData: options?.initialData,
+    staleTime: hasInitial ? Infinity : 10_000,
+    refetchOnMount: hasInitial ? false : undefined,
   });
 }
 

@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
+import { NotificationChannelType } from './notification-channel-type.enum';
 
 @Entity({ name: 'notification_channels' })
 export class NotificationChannel {
@@ -24,14 +25,8 @@ export class NotificationChannel {
   @Column({ type: 'varchar', length: 200 })
   name!: string;
 
-  @Column({ type: 'varchar', length: 32, default: 'telegram' })
-  type!: string;
-
-  @Column({ name: 'bot_token', type: 'text' })
-  botToken!: string;
-
-  @Column({ name: 'chat_id', type: 'varchar', length: 120 })
-  chatId!: string;
+  @Column({ type: 'enum', enum: NotificationChannelType })
+  type!: NotificationChannelType;
 
   @Column({ name: 'is_active', default: true })
   isActive!: boolean;

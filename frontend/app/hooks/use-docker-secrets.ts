@@ -19,11 +19,33 @@ export function useDockerSecrets() {
 }
 
 export function useDockerSecretsPaged(page: number, q: string) {
+  return useDockerSecretsPagedWithInitial(page, q);
+}
+
+// Separated to keep backwards compatibility for existing callsites.
+function useDockerSecretsPagedWithInitial(
+  page: number,
+  q: string,
+  options?: { initialData?: import("@/lib/docker-paged-fetch").PaginatedSecretsResponse },
+) {
+  const hasInitial = options?.initialData !== undefined;
   return useQuery({
     queryKey: ["docker-secrets-paged", page, q],
     queryFn: () => fetchDockerSecretsPagedApi(page, DOCKER_LIST_PAGE_SIZE, q),
-    staleTime: 15_000,
+    initialData: options?.initialData,
+    initialDataUpdatedAt: hasInitial ? 0 : undefined,
+    staleTime: hasInitial ? Infinity : 15_000,
+    refetchOnMount: hasInitial ? false : undefined,
   });
+}
+
+// New overload: allow SSR-provided initial data.
+export function useDockerSecretsPagedWithInitialData(
+  page: number,
+  q: string,
+  options?: { initialData?: import("@/lib/docker-paged-fetch").PaginatedSecretsResponse },
+) {
+  return useDockerSecretsPagedWithInitial(page, q, options);
 }
 
 export function useCreateDockerSecret() {

@@ -12,22 +12,31 @@ import {
   updateServiceApi,
 } from "@/lib/services-api";
 
-export function useServices(projectId?: string) {
+export function useServices(
+  projectId?: string,
+  options?: { initialData?: Service[] },
+) {
+  const hasInitial = options?.initialData !== undefined;
   return useQuery({
     queryKey: ["services", projectId],
     queryFn: () => fetchServices(projectId),
     enabled: projectId !== undefined && projectId !== "",
-    staleTime: 10_000,
+    initialData: options?.initialData,
+    staleTime: hasInitial ? Infinity : 10_000,
+    refetchOnMount: hasInitial ? false : undefined,
   });
 }
 
 export function useService(id: string, options?: { initialData?: Service }) {
+  const hasInitial = options?.initialData !== undefined;
   return useQuery({
     queryKey: ["service", id],
     queryFn: () => fetchService(id),
     enabled: !!id,
-    staleTime: 10_000,
     initialData: options?.initialData,
+    initialDataUpdatedAt: hasInitial ? 0 : undefined,
+    staleTime: hasInitial ? Infinity : 10_000,
+    refetchOnMount: hasInitial ? false : undefined,
   });
 }
 
@@ -35,12 +44,15 @@ export function useServiceRuntime(
   id: string | undefined,
   options?: { initialData?: { running: boolean } },
 ) {
+  const hasInitial = options?.initialData !== undefined;
   return useQuery({
     queryKey: ["service-runtime", id],
     queryFn: () => fetchServiceRuntime(id!),
     enabled: !!id,
-    staleTime: 5_000,
-    refetchInterval: 10_000,
+    initialDataUpdatedAt: hasInitial ? 0 : undefined,
+    staleTime: hasInitial ? Infinity : 5_000,
+    refetchInterval: hasInitial ? false : 10_000,
+    refetchOnMount: hasInitial ? false : undefined,
     initialData: options?.initialData,
   });
 }

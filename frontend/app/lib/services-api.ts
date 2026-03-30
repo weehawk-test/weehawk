@@ -1,5 +1,6 @@
 import { API_BASE } from "./api";
 import type { CreateServiceInput, Service, ServiceType } from "./schema";
+import { getServerApiBase } from "./server-api";
 
 const DEFAULT_DOCKER_CONFIG = `version: "3.8"
 services:
@@ -21,12 +22,13 @@ function nestErrorMessage(text: string, fallback: string): string {
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
   const headers: HeadersInit = {
     Accept: "application/json",
     ...(init?.body ? { "Content-Type": "application/json" } : {}),
     ...init?.headers,
   };
-  return fetch(`${API_BASE}${path}`, { ...init, cache: "no-store", headers });
+  return fetch(`${base}${path}`, { ...init, cache: "no-store", headers });
 }
 
 /** Produces a valid `appName` for CreateServiceDto `@Matches` (lowercase, start/end letter). */

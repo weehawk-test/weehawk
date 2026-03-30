@@ -27,6 +27,7 @@ export async function fetchSetupStatus(): Promise<{ needsSetup: boolean }> {
   const res = await fetch(`${API_BASE}/api/auth/setup-status`, {
     method: "GET",
     headers: { Accept: "application/json" },
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -42,6 +43,7 @@ export async function registerUser(body: {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -52,16 +54,17 @@ export async function loginUser(body: { email: string; password: string }): Prom
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify(body),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
 
-export async function logoutApi(refreshToken: string, email?: string): Promise<void> {
-  if (!refreshToken) return;
+export async function logoutApi(email?: string): Promise<void> {
   await fetch(`${API_BASE}/api/auth/logout`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ refreshToken, email }),
+    body: JSON.stringify({ email }),
+    credentials: "include",
   });
 }

@@ -55,10 +55,9 @@ async function errorBody(res: Response): Promise<string> {
   return text || res.statusText;
 }
 
-function authHeaders(accessToken: string): HeadersInit {
+function authHeaders(_accessToken: string): HeadersInit {
   return {
     Accept: "application/json",
-    Authorization: `Bearer ${accessToken}`,
   };
 }
 
@@ -69,6 +68,7 @@ export function publicWebhookTriggerUrl(secretToken: string): string {
 export async function fetchWebhooks(accessToken: string): Promise<WebhookListItem[]> {
   const res = await fetch(`${API_BASE}/api/webhooks`, {
     headers: authHeaders(accessToken),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -77,6 +77,7 @@ export async function fetchWebhooks(accessToken: string): Promise<WebhookListIte
 export async function fetchWebhook(accessToken: string, id: string): Promise<WebhookDetail> {
   const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(id)}`, {
     headers: authHeaders(accessToken),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -93,6 +94,7 @@ export async function createWebhook(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -110,6 +112,7 @@ export async function updateWebhook(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -119,6 +122,7 @@ export async function deleteWebhook(accessToken: string, id: string): Promise<vo
   const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: authHeaders(accessToken),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
 }

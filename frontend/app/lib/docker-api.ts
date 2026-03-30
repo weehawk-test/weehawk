@@ -234,6 +234,55 @@ export async function fetchDockerStats(): Promise<DockerContainerStats[]> {
   return raw.map((item) => mapDockerStatsRow(item as Record<string, unknown>));
 }
 
+export function dockerMonitorWsUrl(
+  topic: "stats" | "overview",
+  options?: { intervalMs?: number },
+) {
+  const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+  const qs = new URLSearchParams({
+    topic,
+    intervalMs: String(options?.intervalMs ?? 2000),
+  });
+  return `${wsBase}/ws/docker-monitor?${qs.toString()}`;
+}
+
+export function dockerMonitorStatsWsUrl(options?: { intervalMs?: number }) {
+  return dockerMonitorWsUrl("stats", options);
+}
+
+export function dockerMonitorOverviewWsUrl(options?: { intervalMs?: number }) {
+  return dockerMonitorWsUrl("overview", options);
+}
+
+export type DockerPagedWsTopic =
+  | "containers.paged"
+  | "images.paged"
+  | "networks.paged"
+  | "volumes.paged"
+  | "secrets.paged";
+
+export function dockerPagedWsUrl(options: {
+  topic: DockerPagedWsTopic;
+  page: number;
+  pageSize: number;
+  q: string;
+  intervalMs?: number;
+  includeSizes?: boolean;
+}) {
+  const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+  const qs = new URLSearchParams({
+    topic: options.topic,
+    page: String(options.page),
+    pageSize: String(options.pageSize),
+    q: options.q ?? "",
+    intervalMs: String(options.intervalMs ?? 2000),
+  });
+  if (options.topic === "volumes.paged" && options.includeSizes) {
+    qs.set("includeSizes", "true");
+  }
+  return `${wsBase}/ws/docker-monitor?${qs.toString()}`;
+}
+
 export function findStatsForContainer(
   container: DockerContainer,
   stats: DockerContainerStats[],

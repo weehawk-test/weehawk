@@ -10,33 +10,54 @@ import { useCallback, useEffect, useState } from "react";
 export function useDockerListUrl(urlPage: number, urlQ: string) {
   const router = useRouter();
   const pathname = usePathname();
+  const [page, setPageState] = useState(urlPage);
+  const [q, setQ] = useState(urlQ);
   const [localQ, setLocalQ] = useState(urlQ);
 
   useEffect(() => {
+    setPageState(urlPage);
+    setQ(urlQ);
     setLocalQ(urlQ);
   }, [urlQ]);
 
   useEffect(() => {
+    setPageState(urlPage);
+  }, [urlPage]);
+
+  const updateUrl = useCallback(
+    (nextPage: number, nextQ: string, mode: "replace" | "push") => {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams();
+      const trimmed = nextQ.trim();
+      if (trimmed) params.set("q", trimmed);
+      params.set("page", String(Math.max(1, nextPage)));
+      const next = `${pathname}?${params.toString()}`;
+      if (mode === "replace") window.history.replaceState(window.history.state, "", next);
+      else window.history.pushState(window.history.state, "", next);
+    },
+    [pathname],
+  );
+
+  useEffect(() => {
     const t = window.setTimeout(() => {
       const trimmed = localQ.trim();
-      if (trimmed === urlQ.trim()) return;
-      const params = new URLSearchParams();
-      if (trimmed) params.set("q", trimmed);
-      params.set("page", "1");
-      router.replace(`${pathname}?${params.toString()}`);
+      if (trimmed === q.trim()) return;
+      setQ(trimmed);
+      setPageState(1);
+      updateUrl(1, trimmed, "replace");
     }, 400);
     return () => window.clearTimeout(t);
-  }, [localQ, urlQ, pathname, router]);
+  }, [localQ, q, updateUrl]);
 
   const setPage = useCallback(
     (next: number) => {
-      const params = new URLSearchParams();
-      const q = localQ.trim();
-      if (q) params.set("q", q);
-      params.set("page", String(Math.max(1, next)));
-      router.push(`${pathname}?${params.toString()}`);
+      const n = Math.max(1, next);
+      setPageState(n);
+      const nextQ = localQ.trim();
+      setQ(nextQ);
+      updateUrl(n, nextQ, "push");
     },
-    [pathname, router, localQ],
+    [localQ, updateUrl],
   );
 
   const refresh = useCallback(() => {
@@ -44,8 +65,8 @@ export function useDockerListUrl(urlPage: number, urlQ: string) {
   }, [router]);
 
   return {
-    page: urlPage,
-    q: urlQ,
+    page,
+    q,
     localQ,
     setLocalQ,
     setPage,

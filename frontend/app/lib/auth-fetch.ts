@@ -1,23 +1,7 @@
 import { API_BASE } from "./api";
-import type { AuthResponse } from "./auth-api";
-
-export const AUTH_STORAGE_KEY = "weehawk_auth";
 export const AUTH_CHANGE_EVENT = "weehawk-auth-storage";
 
 let refreshInFlight: Promise<boolean> | null = null;
-
-function persistAuthResponse(res: AuthResponse) {
-  const user = { email: res.email, firstName: res.firstName, lastName: res.lastName };
-  localStorage.setItem(
-    AUTH_STORAGE_KEY,
-    JSON.stringify({
-      accessToken: res.accessToken,
-      refreshToken: res.refreshToken,
-      user,
-    }),
-  );
-  window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
-}
 
 /** Single-flight refresh so parallel 401s share one /refresh call. */
 async function refreshTokensOnce(): Promise<boolean> {
@@ -25,24 +9,13 @@ async function refreshTokensOnce(): Promise<boolean> {
 
   refreshInFlight = (async () => {
     try {
-      const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (!raw) return false;
-      let refreshToken: string | undefined;
-      try {
-        refreshToken = JSON.parse(raw).refreshToken;
-      } catch {
-        return false;
-      }
-      if (!refreshToken) return false;
-
       const r = await fetch(`${API_BASE}/api/auth/refresh`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ refreshToken }),
+        headers: { Accept: "application/json" },
+        credentials: "include",
       });
       if (!r.ok) return false;
-      const data = (await r.json()) as AuthResponse;
-      persistAuthResponse(data);
+      window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
       return true;
     } catch {
       return false;
@@ -59,29 +32,22 @@ async function refreshTokensOnce(): Promise<boolean> {
  * then retries with the new access token (so expired JWTs do not strand the UI).
  */
 export async function authFetch(
-  accessToken: string,
+  _accessToken: string,
   url: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const run = (token: string) => {
+  const run = () => {
     const headers = new Headers(init.headers);
-    headers.set("Authorization", `Bearer ${token}`);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
-    return fetch(url, { ...init, headers });
+    return fetch(url, { ...init, headers, credentials: "include" });
   };
 
-  let res = await run(accessToken);
+  let res = await run();
   if (res.status !== 401 || typeof window === "undefined") return res;
 
   const ok = await refreshTokensOnce();
   if (!ok) return res;
 
-  try {
-    const raw = localStorage.getItem(AUTH_STORAGE_KEY) ?? "";
-    const at = JSON.parse(raw).accessToken as string | undefined;
-    if (at) res = await run(at);
-  } catch {
-    /* keep first 401 response */
-  }
+  res = await run();
   return res;
 }

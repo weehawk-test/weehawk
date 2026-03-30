@@ -7,7 +7,7 @@ import {
   Webhook, LayoutDashboard, FolderKanban, KeyRound, UserCircle, ChevronUp,
   ImageIcon, Box, Database, Bell, HardDrive, Network,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useState } from "react";
 import { useAuth } from "@/contexts/auth-context";
 
@@ -23,7 +23,7 @@ const navSections = [
     label: "Automation",
     items: [
       { href: "/webhooks",     label: "Webhooks",      icon: Webhook },
-      { href: "/notifications", label: "Notifications", icon: Bell },
+      { href: "/notifications/channels", label: "Notifications", icon: Bell },
       { href: "/s3",           label: "S3 Storage",    icon: HardDrive },
     ],
   },
@@ -55,13 +55,14 @@ export function Sidebar() {
 
   const isActive = (href: string) => {
     if (href === "/") return location === "/";
+    if (href === "/notifications/channels") return location.startsWith("/notifications");
     return location.startsWith(href);
   };
 
   return (
     <aside className="w-64 border-r border-border bg-card/30 backdrop-blur-xl fixed top-0 left-0 h-screen flex flex-col z-40">
       {/* Logo */}
-      <Link href="/" className="flex-shrink-0 px-6 pt-8 pb-6 flex items-center gap-3 hover:opacity-95 transition-opacity">
+      <Link href="/" scroll={false} className="flex-shrink-0 px-6 pt-8 pb-6 flex items-center gap-3 hover:opacity-95 transition-opacity">
         <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-[0_0_15px_rgba(255,255,255,0.08)] flex-shrink-0 ring-1 ring-white/5">
           <Image
             src="/weehawk-logo.png"
@@ -80,18 +81,21 @@ export function Sidebar() {
 
       {/* Scrollable nav */}
       <nav className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-        {navSections.map((section) => (
-          <div key={section.label} className="mb-2">
-            <p className="text-[10px] text-muted-foreground/40 tracking-widest uppercase font-mono px-4 mb-1 mt-4">
-              {section.label}
-            </p>
-            <div className="space-y-0.5">
-              {section.items.map((item) => {
-                const active = isActive(item.href);
-                return (
-                  <Link key={item.href} href={item.href}>
-                    <div
-                      className={`relative flex items-center gap-3 px-4 py-2.5 rounded-xl cursor-pointer transition-colors duration-200 group ${
+        <LayoutGroup id="sidebar-nav">
+          {navSections.map((section) => (
+            <div key={section.label} className="mb-2">
+              <p className="text-[10px] text-muted-foreground/40 tracking-widest uppercase font-mono px-4 mb-1 mt-4">
+                {section.label}
+              </p>
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const active = isActive(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      scroll={false}
+                      className={`relative flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors duration-200 group ${
                         active ? "text-primary" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
                       }`}
                     >
@@ -100,18 +104,18 @@ export function Sidebar() {
                           layoutId="active-nav"
                           className="absolute inset-0 bg-primary/10 rounded-xl border border-primary/20"
                           initial={false}
-                          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                          transition={{ type: "spring", stiffness: 320, damping: 30 }}
                         />
                       )}
                       <item.icon className={`w-4 h-4 relative z-10 flex-shrink-0 ${active ? "text-primary" : "group-hover:text-foreground"}`} />
                       <span className="font-medium relative z-10 text-sm">{item.label}</span>
-                    </div>
-                  </Link>
-                );
-              })}
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </LayoutGroup>
       </nav>
 
       {/* Profile */}
@@ -127,6 +131,7 @@ export function Sidebar() {
             >
               <Link
                 href="/profile"
+                scroll={false}
                 onClick={() => setProfileOpen(false)}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                   location === "/profile"

@@ -1,5 +1,6 @@
 import { API_BASE } from "./api";
 import type { CreateProjectInput, Project } from "./schema";
+import { getServerApiBase } from "./server-api";
 
 function nestErrorMessage(text: string, fallback: string): string {
   try {
@@ -13,12 +14,13 @@ function nestErrorMessage(text: string, fallback: string): string {
 }
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
   const headers: HeadersInit = {
     Accept: "application/json",
     ...(init?.body ? { "Content-Type": "application/json" } : {}),
     ...init?.headers,
   };
-  return fetch(`${API_BASE}${path}`, { ...init, cache: "no-store", headers });
+  return fetch(`${base}${path}`, { ...init, cache: "no-store", headers });
 }
 
 export function mapApiProjectToProject(raw: unknown): Project {

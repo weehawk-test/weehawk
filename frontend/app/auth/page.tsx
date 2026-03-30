@@ -20,7 +20,7 @@ import { toast } from "@/hooks/use-toast";
 export default function AuthPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { accessToken, setSession } = useAuth();
+  const { accessToken, isReady, setSession } = useAuth();
   /** Always refetch from server: global default staleTime is Infinity, which kept needsSetup true after first signup. */
   const setupQuery = useQuery({
     queryKey: ["auth", "setup-status"],
@@ -74,7 +74,7 @@ export default function AuthPage() {
     }
   }
 
-  if (accessToken) {
+  if (!isReady || accessToken) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />

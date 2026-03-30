@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -20,6 +21,9 @@ import { CreateNotificationChannelDto } from './dto/create-notification-channel.
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { TestTelegramCredentialsDto } from './dto/test-telegram-credentials.dto';
+import { PagedLogsQueryDto } from './dto/paged-logs-query.dto';
+import { BulkDeleteLogsDto } from './dto/bulk-delete-logs.dto';
+import { BulkDeleteChannelsDto } from './dto/bulk-delete-channels.dto';
 
 type AuthedReq = { user?: { userId: number; email: string } };
 
@@ -46,6 +50,16 @@ export class NotificationsController {
   @Get('channels')
   listChannels(@Req() req: AuthedReq) {
     return this.notificationsService.listChannels(this.userId(req));
+  }
+
+  @Get('channels/paged')
+  listChannelsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
+    return this.notificationsService.listChannelsPaged(this.userId(req), q.page, q.pageSize, q.q);
+  }
+
+  @Post('channels/bulk-delete')
+  async bulkDeleteChannels(@Req() req: AuthedReq, @Body() dto: BulkDeleteChannelsDto) {
+    return this.notificationsService.bulkDeleteChannels(this.userId(req), dto.ids);
   }
 
   @Post('test-credentials')
@@ -95,6 +109,22 @@ export class NotificationsController {
   @Get('logs')
   listLogs(@Req() req: AuthedReq) {
     return this.notificationsService.listLogs(this.userId(req));
+  }
+
+  @Get('logs/paged')
+  listLogsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
+    return this.notificationsService.listLogsPaged(this.userId(req), q.page, q.pageSize, q.q);
+  }
+
+  @Delete('logs/:id')
+  async deleteLog(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
+    await this.notificationsService.deleteLog(this.userId(req), id);
+    return { ok: true };
+  }
+
+  @Post('logs/bulk-delete')
+  async bulkDeleteLogs(@Req() req: AuthedReq, @Body() dto: BulkDeleteLogsDto) {
+    return this.notificationsService.bulkDeleteLogs(this.userId(req), dto.ids);
   }
 
   @Post('send')

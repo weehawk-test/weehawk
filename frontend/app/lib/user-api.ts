@@ -22,10 +22,9 @@ async function errorBody(res: Response): Promise<string> {
   return text || res.statusText;
 }
 
-function authHeaders(accessToken: string): HeadersInit {
+function authHeaders(_accessToken: string): HeadersInit {
   return {
     Accept: "application/json",
-    Authorization: `Bearer ${accessToken}`,
   };
 }
 
@@ -33,6 +32,7 @@ export async function getProfile(accessToken: string): Promise<UserProfile> {
   const res = await fetch(`${API_BASE}/api/user/profile`, {
     method: "GET",
     headers: authHeaders(accessToken),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -49,6 +49,7 @@ export async function updateProfile(
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();

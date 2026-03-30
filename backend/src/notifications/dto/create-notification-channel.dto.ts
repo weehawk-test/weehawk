@@ -1,5 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsObject,
+  IsString,
+  MaxLength,
+} from 'class-validator';
+import { NotificationChannelType } from '../entities/notification-channel-type.enum';
+
+export const NOTIFICATION_CHANNEL_TYPES = Object.values(NotificationChannelType);
+
+export type NotificationChannelTypeValue = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
 
 export class CreateNotificationChannelDto {
   @ApiProperty({ example: 'Production Alerts', maxLength: 200 })
@@ -8,16 +19,24 @@ export class CreateNotificationChannelDto {
   @MaxLength(200)
   name!: string;
 
-  @ApiProperty({ example: '123456789:AA...' })
+  @ApiProperty({
+    example: 'telegram',
+    enum: NOTIFICATION_CHANNEL_TYPES,
+    default: 'telegram',
+  })
   @IsString()
   @IsNotEmpty()
-  @MinLength(10)
-  @MaxLength(512)
-  botToken!: string;
+  @IsIn(NOTIFICATION_CHANNEL_TYPES)
+  @MaxLength(32)
+  type!: NotificationChannelTypeValue;
 
-  @ApiProperty({ example: '-1001234567890 or @channelusername' })
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(120)
-  chatId!: string;
+  @ApiProperty({
+    example: {
+      token: '123456789:AA...',
+      target: '-1001234567890',
+    },
+    description: 'Channel-specific configuration payload',
+  })
+  @IsObject()
+  config!: Record<string, unknown>;
 }

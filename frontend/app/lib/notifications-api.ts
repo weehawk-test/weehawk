@@ -5,8 +5,8 @@ export type NotificationChannel = {
   id: string;
   name: string;
   type: string;
-  botToken: string;
-  chatId: string;
+  credentialPreview: string;
+  targetPreview: string;
   isActive: boolean;
   createdAt: string;
 };
@@ -18,6 +18,20 @@ export type NotificationLog = {
   message: string;
   status: "sent" | "failed";
   sentAt: string;
+};
+
+export type PaginatedNotificationLogsResponse = {
+  items: NotificationLog[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type PaginatedNotificationChannelsResponse = {
+  items: NotificationChannel[];
+  total: number;
+  page: number;
+  pageSize: number;
 };
 
 async function errorBody(res: Response): Promise<string> {
@@ -42,9 +56,42 @@ export async function fetchNotificationChannels(
   return res.json();
 }
 
+export async function fetchNotificationChannelsPaged(
+  accessToken: string,
+  page: number,
+  pageSize: number,
+  q: string,
+): Promise<PaginatedNotificationChannelsResponse> {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+  const t = q.trim();
+  if (t) params.set("q", t);
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/notifications/channels/paged?${params.toString()}`,
+    {
+      method: "GET",
+    },
+  );
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function bulkDeleteNotificationChannels(accessToken: string, ids: string[]): Promise<{ removed: number }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/bulk-delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
 export async function createNotificationChannel(
   accessToken: string,
-  body: { name: string; botToken: string; chatId: string },
+  body: { name: string; type: string; config: Record<string, unknown> },
 ): Promise<NotificationChannel> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels`, {
     method: "POST",
@@ -58,7 +105,7 @@ export async function createNotificationChannel(
 export async function updateNotificationChannel(
   accessToken: string,
   id: string,
-  body: Partial<{ name: string; botToken: string; chatId: string; isActive: boolean }>,
+  body: Partial<{ name: string; config: Record<string, unknown>; isActive: boolean }>,
 ): Promise<NotificationChannel> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/${id}`, {
     method: "PATCH",
@@ -108,6 +155,40 @@ export async function testNotificationChannel(
 export async function fetchNotificationLogs(accessToken: string): Promise<NotificationLog[]> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/logs`, {
     method: "GET",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function fetchNotificationLogsPaged(
+  accessToken: string,
+  page: number,
+  pageSize: number,
+  q: string,
+): Promise<PaginatedNotificationLogsResponse> {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+  });
+  const t = q.trim();
+  if (t) params.set("q", t);
+  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/logs/paged?${params.toString()}`, {
+    method: "GET",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function deleteNotificationLog(accessToken: string, id: string): Promise<void> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/logs/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await errorBody(res));
+}
+
+export async function bulkDeleteNotificationLogs(accessToken: string, ids: string[]): Promise<{ removed: number }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/logs/bulk-delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();

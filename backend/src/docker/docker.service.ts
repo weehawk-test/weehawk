@@ -133,6 +133,14 @@ type VolumeInspectRow = {
 
 @Injectable()
 export class DockerService {
+  /**
+   * Cache the (expensive) `docker system df -v` parsed map briefly.
+   * This command is noticeably slower than `docker volume ls`.
+   */
+  private volumeSizeCache:
+    | { at: number; ttlMs: number; map: Map<string, string> }
+    | null = null;
+
   private clampPage(page: number): number {
     return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
   }
@@ -218,49 +226,17 @@ export class DockerService {
 
   async getVolumes() {
     try {
-      const { stdout: listOut } = await execAsync('docker volume ls -q');
-      const names = listOut
-        .trim()
-        .split(/\r?\n/)
-        .map((n) => n.trim())
-        .filter(Boolean);
-      if (names.length === 0) {
-        return [];
-      }
+      const names = await this.listVolumeNames();
+      if (names.length === 0) return [];
 
-      let sizeByName = new Map<string, string>();
-      try {
-        const { stdout: dfOut } = await execAsync('docker system df -v');
-        sizeByName = parseVolumeSizesFromSystemDfV(dfOut);
-      } catch {
-        /* optional; sizes stay unknown */
-      }
+      const sizeByName = await this.getVolumeSizesCached();
+      const inspected = await this.inspectVolumes(names);
 
-      const chunkSize = 60;
-      const merged: Array<{
-        Name: string;
-        CreatedAt: string;
-        Size: string | null;
-      }> = [];
-
-      for (let i = 0; i < names.length; i += chunkSize) {
-        const batch = names.slice(i, i + chunkSize);
-        const { stdout: inspectOut } = await execFileAsync('docker', [
-          'volume',
-          'inspect',
-          ...batch,
-        ]);
-        const parsed = JSON.parse(inspectOut) as VolumeInspectRow | VolumeInspectRow[];
-        const rows = Array.isArray(parsed) ? parsed : [parsed];
-        for (const v of rows) {
-          const n = v.Name;
-          const created = v.CreatedAt ?? new Date().toISOString();
-          const sz = sizeByName.get(n) ?? null;
-          merged.push({ Name: n, CreatedAt: created, Size: sz });
-        }
-      }
-
-      return merged;
+      return inspected.map((v) => ({
+        Name: v.Name,
+        CreatedAt: v.CreatedAt ?? new Date().toISOString(),
+        Size: sizeByName.get(v.Name) ?? null,
+      }));
     } catch (error) {
       rethrowDockerError(error, 'volumes');
     }
@@ -270,22 +246,93 @@ export class DockerService {
     pageRaw: number,
     pageSizeRaw: number,
     search: string,
+    includeSizes = false,
   ): Promise<PaginatedVolumesDto> {
     const page = this.clampPage(pageRaw);
     const pageSize = this.clampPageSize(pageSizeRaw);
-    const raw = await this.getVolumes();
-    const mapped = mapRawRowsToVolumes(raw as unknown[]);
-    const filtered = filterVolumes(mapped, search ?? '');
-    const total = filtered.length;
+
+    // Optimization: paginate BEFORE `docker volume inspect` (and before size lookup).
+    // `docker system df -v` is expensive; keep it cached briefly.
+    const allNames = await this.listVolumeNames();
+    const q = (search ?? '').trim().toLowerCase();
+    const filteredNames = q
+      ? allNames.filter((n) => n.toLowerCase().includes(q))
+      : allNames;
+
+    const total = filteredNames.length;
     const start = (page - 1) * pageSize;
-    const items = filtered.slice(start, start + pageSize);
+    const pageNames = filteredNames.slice(start, start + pageSize);
+
+    const sizeByName = includeSizes ? await this.getVolumeSizesCached() : new Map<string, string>();
+    const inspected = pageNames.length > 0 ? await this.inspectVolumes(pageNames) : [];
+
+    const merged = inspected.map((v) => ({
+      Name: v.Name,
+      CreatedAt: v.CreatedAt ?? new Date().toISOString(),
+      Size: sizeByName.get(v.Name) ?? null,
+    }));
+
+    const mapped = mapRawRowsToVolumes(merged as unknown[]);
+    const items = filterVolumes(mapped, '') // keep mapper behavior; search already applied above
+      .slice(0, pageSize);
+
     return {
       items,
       total,
-      totalAll: mapped.length,
+      totalAll: allNames.length,
       page,
       pageSize,
     };
+  }
+
+  private async listVolumeNames(): Promise<string[]> {
+    try {
+      const { stdout } = await execAsync('docker volume ls -q');
+      return stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((n) => n.trim())
+        .filter(Boolean);
+    } catch (error) {
+      rethrowDockerError(error, 'volume names');
+    }
+  }
+
+  private async getVolumeSizesCached(): Promise<Map<string, string>> {
+    const ttlMs = 30_000;
+    const now = Date.now();
+    if (this.volumeSizeCache && now - this.volumeSizeCache.at < this.volumeSizeCache.ttlMs) {
+      return this.volumeSizeCache.map;
+    }
+    try {
+      const { stdout } = await execAsync('docker system df -v');
+      const map = parseVolumeSizesFromSystemDfV(stdout);
+      this.volumeSizeCache = { at: now, ttlMs, map };
+      return map;
+    } catch {
+      // Optional; sizes stay unknown.
+      const map = new Map<string, string>();
+      this.volumeSizeCache = { at: now, ttlMs, map };
+      return map;
+    }
+  }
+
+  private async inspectVolumes(names: string[]): Promise<VolumeInspectRow[]> {
+    if (names.length === 0) return [];
+    const chunkSize = 60;
+    const rows: VolumeInspectRow[] = [];
+    for (let i = 0; i < names.length; i += chunkSize) {
+      const batch = names.slice(i, i + chunkSize);
+      const { stdout: inspectOut } = await execFileAsync('docker', [
+        'volume',
+        'inspect',
+        ...batch,
+      ]);
+      const parsed = JSON.parse(inspectOut) as VolumeInspectRow | VolumeInspectRow[];
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      rows.push(...arr);
+    }
+    return rows;
   }
 
   async getNetworks() {

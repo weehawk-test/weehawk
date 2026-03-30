@@ -14,8 +14,8 @@ function ServiceSecretsTabInner() {
   const searchParams = useSearchParams();
   const urlPage = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
   const urlQ = searchParams.get("q") ?? "";
-  const { localQ, setLocalQ, setPage, refresh, q } = useDockerListUrl(urlPage, urlQ);
-  const { data, isLoading, isError, error, refetch } = useDockerSecretsPaged(urlPage, q);
+  const { page, q, localQ, setLocalQ, setPage, refresh } = useDockerListUrl(urlPage, urlQ);
+  const { data, isLoading, isError, error, refetch } = useDockerSecretsPaged(page, q);
 
   const items = data?.items ?? [];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;

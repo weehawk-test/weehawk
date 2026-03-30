@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -14,7 +14,6 @@ import {
   Upload,
   Loader2,
   AlertCircle,
-  RefreshCw,
 } from "lucide-react";
 import {
   useCreateDockerSecret,
@@ -32,6 +31,7 @@ import {
   type ReplaceDockerSecretInput,
   type DockerSecretListItem,
 } from "@/lib/schema";
+import { dockerPagedWsUrl } from "@/lib/docker-api";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -40,7 +40,7 @@ import { ListPagination } from "@/components/docker/ListPagination";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
 import { deleteDockerSecretApi } from "@/lib/docker-secrets-api";
 import { formatSecretDate } from "@/lib/format-secret-date";
-import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_LIST_PAGE_SIZE, type PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 
 function CreateSecretModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
@@ -362,19 +362,68 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
   const [editing, setEditing] = useState<DockerSecretListItem | null>(null);
   const [showBulk, setShowBulk] = useState(false);
   const [bulkPending, setBulkPending] = useState(false);
-  const { localQ, setLocalQ, setPage, refresh, q } = useDockerListUrl(urlPage, urlQ);
+  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const { toast } = useToast();
   const confirm = useConfirm();
+  const [liveData, setLiveData] = useState<PaginatedSecretsResponse | null>(data);
+  const [liveError, setLiveError] = useState<string | null>(error);
 
-  const items = data?.items ?? [];
+  useEffect(() => {
+    setLiveData(data);
+    setLiveError(error);
+  }, [data, error, urlPage, urlQ]);
+
+  useEffect(() => {
+    let disposed = false;
+    let ws: WebSocket | null = null;
+    const connect = () => {
+      ws = new WebSocket(
+        dockerPagedWsUrl({
+          topic: "secrets.paged",
+          page,
+          pageSize: DOCKER_LIST_PAGE_SIZE,
+          q,
+          intervalMs: 2000,
+        }),
+      );
+      ws.onmessage = (ev) => {
+        if (disposed || typeof ev.data !== "string") return;
+        try {
+          const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
+          if (msg.type === "secrets.paged" && msg.data) {
+            setLiveData(msg.data as PaginatedSecretsResponse);
+            setLiveError(null);
+          } else if (msg.type === "error") {
+            setLiveError(msg.message ?? "WebSocket error");
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        if (disposed) return;
+        setTimeout(() => {
+          if (!disposed) connect();
+        }, 1500);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      try {
+        ws?.close();
+      } catch {}
+    };
+  }, [page, q]);
+
+  const currentData = liveData;
+  const items = currentData?.items ?? [];
   const filteredKeys = useMemo(() => items.map((s) => s.name), [items]);
   const bulk = useBulkSelection(filteredKeys);
 
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  const from = data && data.total > 0 ? (data.page - 1) * data.pageSize + 1 : 0;
-  const to = data ? Math.min(data.page * data.pageSize, data.total) : 0;
+  const totalPages = currentData ? Math.max(1, Math.ceil(currentData.total / currentData.pageSize)) : 1;
+  const from = currentData && currentData.total > 0 ? (currentData.page - 1) * currentData.pageSize + 1 : 0;
+  const to = currentData ? Math.min(currentData.page * currentData.pageSize, currentData.total) : 0;
 
-  const listError = error;
+  const listError = liveError;
   const isError = !!listError;
 
   const handleBulkDeleteSecrets = async () => {
@@ -430,10 +479,6 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
               Delete ({bulk.selectedInFiltered.length})
             </button>
           )}
-          <button type="button" onClick={() => refresh()} className="btn-secondary flex items-center gap-2">
-            <RefreshCw className="w-5 h-5" />
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -461,7 +506,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
         </div>
       </div>
 
-      {data && data.total > 0 && !isError && (
+      {currentData && currentData.total > 0 && !isError && (
         <div className="flex items-center gap-3 mb-6 text-sm">
           <label className="flex items-center gap-2.5 cursor-pointer text-muted-foreground hover:text-foreground select-none">
             <DockerBulkCheckbox
@@ -491,7 +536,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
         </div>
       )}
 
-      {isError ? null : data && data.total === 0 ? (
+      {isError ? null : currentData && currentData.total === 0 ? (
         <div className="glass-panel p-12 rounded-2xl flex flex-col items-center justify-center text-center">
           <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
             <ShieldCheck className="w-10 h-10 text-muted-foreground" />
@@ -506,7 +551,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
             </button>
           )}
         </div>
-      ) : data ? (
+      ) : currentData ? (
         <div className="glass-panel rounded-2xl overflow-hidden">
           <table className="w-full">
             <thead>
@@ -531,12 +576,12 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
             </tbody>
           </table>
           <ListPagination
-            page={data.page}
+            page={currentData.page}
             totalPages={totalPages}
             onPageChange={setPage}
             from={from}
             to={to}
-            total={data.total}
+            total={currentData.total}
             className="px-5 pb-4"
           />
         </div>

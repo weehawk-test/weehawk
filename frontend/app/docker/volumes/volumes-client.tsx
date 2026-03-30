@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Database, Search, HardDrive, Clock, RefreshCw, Loader2, AlertCircle, Trash2 } from "lucide-react";
+import { Database, Search, HardDrive, Clock, Loader2, AlertCircle, Trash2 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useDeleteDockerVolume } from "@/hooks/use-docker";
-import { DOCKER_API_HELP, deleteDockerVolume } from "@/lib/docker-api";
-import type { PaginatedVolumesResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_API_HELP, deleteDockerVolume, dockerPagedWsUrl } from "@/lib/docker-api";
+import { DOCKER_LIST_PAGE_SIZE, type PaginatedVolumesResponse } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -31,20 +31,70 @@ type Props = {
 
 export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
   const router = useRouter();
-  const { localQ, setLocalQ, setPage, refresh } = useDockerListUrl(urlPage, urlQ);
+  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const del = useDeleteDockerVolume();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
+  const [liveData, setLiveData] = useState<PaginatedVolumesResponse | null>(data);
+  const [liveError, setLiveError] = useState<string | null>(error);
 
-  const items = data?.items ?? [];
+  useEffect(() => {
+    setLiveData(data);
+    setLiveError(error);
+  }, [data, error, urlPage, urlQ]);
+
+  useEffect(() => {
+    let disposed = false;
+    let ws: WebSocket | null = null;
+    const connect = () => {
+      ws = new WebSocket(
+        dockerPagedWsUrl({
+          topic: "volumes.paged",
+          page,
+          pageSize: DOCKER_LIST_PAGE_SIZE,
+          q,
+          intervalMs: 3000,
+          includeSizes: true,
+        }),
+      );
+      ws.onmessage = (ev) => {
+        if (disposed || typeof ev.data !== "string") return;
+        try {
+          const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
+          if (msg.type === "volumes.paged" && msg.data) {
+            setLiveData(msg.data as PaginatedVolumesResponse);
+            setLiveError(null);
+          } else if (msg.type === "error") {
+            setLiveError(msg.message ?? "WebSocket error");
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        if (disposed) return;
+        setTimeout(() => {
+          if (!disposed) connect();
+        }, 1500);
+      };
+    };
+    connect();
+    return () => {
+      disposed = true;
+      try {
+        ws?.close();
+      } catch {}
+    };
+  }, [page, q]);
+
+  const currentData = liveData;
+  const items = currentData?.items ?? [];
   const filteredKeys = useMemo(() => items.map((v) => v.name), [items]);
   const bulk = useBulkSelection(filteredKeys);
 
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
-  const from = data && data.total > 0 ? (data.page - 1) * data.pageSize + 1 : 0;
-  const to = data ? Math.min(data.page * data.pageSize, data.total) : 0;
-  const totalAll = data?.totalAll ?? 0;
+  const totalPages = currentData ? Math.max(1, Math.ceil(currentData.total / currentData.pageSize)) : 1;
+  const from = currentData && currentData.total > 0 ? (currentData.page - 1) * currentData.pageSize + 1 : 0;
+  const to = currentData ? Math.min(currentData.page * currentData.pageSize, currentData.total) : 0;
+  const totalAll = currentData?.totalAll ?? 0;
 
   const handleBulkDelete = async () => {
     const names = bulk.selectedInFiltered;
@@ -87,7 +137,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
     });
   };
 
-  const listError = error;
+  const listError = liveError;
   const isError = !!listError;
 
   return (
@@ -109,10 +159,6 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
               Delete ({bulk.selectedInFiltered.length})
             </button>
           )}
-          <button type="button" onClick={() => refresh()} disabled={del.isPending} className="btn-secondary flex items-center gap-2">
-            <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -127,7 +173,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
         </div>
       )}
 
-      {!isError && data && (
+      {!isError && currentData && (
         <div className="glass-panel rounded-xl p-4 mb-6 max-w-md">
           <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Total volumes</p>
           <p className="text-2xl font-bold text-primary">{totalAll}</p>
@@ -145,7 +191,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
         />
       </div>
 
-      {data && data.total > 0 && !isError && (
+      {currentData && currentData.total > 0 && !isError && (
         <div className="flex items-center gap-3 mb-6 text-sm">
           <label className="flex items-center gap-2.5 cursor-pointer text-muted-foreground hover:text-foreground select-none">
             <DockerBulkCheckbox
@@ -161,7 +207,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
         </div>
       )}
 
-      {isError ? null : data && data.total === 0 ? (
+      {isError ? null : currentData && currentData.total === 0 ? (
         <div className="glass-panel rounded-2xl p-12 text-center">
           <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
             <Database className="w-8 h-8 text-muted-foreground" />
@@ -169,7 +215,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
           <h3 className="font-semibold mb-1">No volumes found</h3>
           <p className="text-muted-foreground text-sm">No volumes match your search, or the engine returned an empty list.</p>
         </div>
-      ) : data ? (
+      ) : currentData ? (
         <div className="glass-panel rounded-2xl overflow-hidden">
           <table className="w-full">
             <thead>
@@ -230,12 +276,12 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
             </tbody>
           </table>
           <ListPagination
-            page={data.page}
+            page={currentData.page}
             totalPages={totalPages}
             onPageChange={setPage}
             from={from}
             to={to}
-            total={data.total}
+            total={currentData.total}
             className="px-5 pb-4"
           />
         </div>
