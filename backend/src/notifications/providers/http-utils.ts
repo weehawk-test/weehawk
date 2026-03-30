@@ -18,7 +18,10 @@ export async function postJson(
     const text = await res.text();
     return { ok: false, description: text || `HTTP ${res.status}` };
   } catch (e) {
-    return { ok: false, description: e instanceof Error ? e.message : 'Network error' };
+    return {
+      ok: false,
+      description: e instanceof Error ? e.message : 'Network error',
+    };
   }
 }
 
@@ -37,12 +40,17 @@ export async function postFormUrlEncoded(
     const text = await res.text();
     return { ok: false, description: text || `HTTP ${res.status}` };
   } catch (e) {
-    return { ok: false, description: e instanceof Error ? e.message : 'Network error' };
+    return {
+      ok: false,
+      description: e instanceof Error ? e.message : 'Network error',
+    };
   }
 }
 
-export function readString(source: Record<string, unknown>, key: string): string {
+export function readString(
+  source: Record<string, unknown>,
+  key: string,
+): string {
   const value = source[key];
   return typeof value === 'string' ? value.trim() : '';
 }
-

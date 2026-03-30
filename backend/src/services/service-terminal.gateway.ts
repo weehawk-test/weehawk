@@ -28,7 +28,12 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
     const serviceIdRaw = url.searchParams.get('serviceId');
     const serviceId = serviceIdRaw ? parseInt(serviceIdRaw, 10) : NaN;
     if (!Number.isFinite(serviceId)) {
-      client.send(JSON.stringify({ type: 'error', message: 'Missing or invalid serviceId.' }));
+      client.send(
+        JSON.stringify({
+          type: 'error',
+          message: 'Missing or invalid serviceId.',
+        }),
+      );
       client.close(4000, 'invalid serviceId');
       return;
     }
@@ -42,17 +47,13 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
 
     let term: pty.IPty;
     try {
-      term = pty.spawn(
-        'docker',
-        ['exec', '-it', resolved.id, 'sh'],
-        {
-          name: 'xterm-256color',
-          cols: 80,
-          rows: 24,
-          cwd: process.cwd(),
-          env: process.env as Record<string, string>,
-        },
-      );
+      term = pty.spawn('docker', ['exec', '-it', resolved.id, 'sh'], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd: process.cwd(),
+        env: process.env as Record<string, string>,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       client.send(JSON.stringify({ type: 'error', message: msg }));
@@ -81,7 +82,7 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
         ? Buffer.concat(data)
         : Buffer.isBuffer(data)
           ? data
-          : Buffer.from(data as ArrayBuffer);
+          : Buffer.from(data);
 
       const s = buf.toString('utf8');
       const trimmed = s.trim();
@@ -93,8 +94,14 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
             rows?: number;
           };
           if (j.type === 'resize') {
-            const cols = Math.min(512, Math.max(2, Math.floor(Number(j.cols)) || 80));
-            const rows = Math.min(512, Math.max(2, Math.floor(Number(j.rows)) || 24));
+            const cols = Math.min(
+              512,
+              Math.max(2, Math.floor(Number(j.cols)) || 80),
+            );
+            const rows = Math.min(
+              512,
+              Math.max(2, Math.floor(Number(j.rows)) || 24),
+            );
             try {
               term.resize(cols, rows);
             } catch {

@@ -1,19 +1,23 @@
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Body, 
-  Param, 
-  Delete, 
-  Sse, 
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Delete,
+  Sse,
   MessageEvent,
   Patch,
   Query,
   BadRequestException,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ServicesService } from './services.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
+import { PostgresDatabaseDto } from './dto/postgres-database.dto';
+import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Observable, map } from 'rxjs';
 
@@ -26,6 +30,32 @@ export class ServicesController {
   @ApiOperation({ summary: 'Create service record' })
   create(@Body() createServiceDto: CreateServiceDto) {
     return this.servicesService.create(createServiceDto);
+  }
+
+  @Post(':id/database/postgres')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Generate Postgres docker-compose from form fields and save to dockerConfig',
+  })
+  applyPostgresDatabase(
+    @Param('id') id: string,
+    @Body() dto: PostgresDatabaseDto,
+  ) {
+    return this.servicesService.applyPostgresDatabase(+id, dto);
+  }
+
+  @Patch(':id/database/postgres/stack')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Update Postgres stack YAML: optional publishPort (null = unpublish) and/or replicas (1–10). Omitted fields keep current values.',
+  })
+  updatePostgresStack(
+    @Param('id') id: string,
+    @Body() dto: PostgresStackUpdateDto,
+  ) {
+    return this.servicesService.updatePostgresStack(+id, dto);
   }
 
   @Post(':id/execute')
@@ -44,7 +74,9 @@ export class ServicesController {
   }
 
   @Post(':id/start')
-  @ApiOperation({ summary: 'Start stopped containers (compose start / up --no-build)' })
+  @ApiOperation({
+    summary: 'Start stopped containers (compose start / up --no-build)',
+  })
   async start(@Param('id') id: string) {
     return await this.servicesService.startService(+id);
   }
@@ -63,14 +95,17 @@ export class ServicesController {
   }
 
   @Get(':id/runtime')
-  @ApiOperation({ summary: 'Whether Docker reports running containers for this service' })
+  @ApiOperation({
+    summary: 'Whether Docker reports running containers for this service',
+  })
   async runtime(@Param('id') id: string) {
     return await this.servicesService.getRuntimeStatus(+id);
   }
 
   @Get(':id/volumes')
   @ApiOperation({
-    summary: 'Compose-declared volume/bind mounts for this service (docker compose config)',
+    summary:
+      'Compose-declared volume/bind mounts for this service (docker compose config)',
   })
   async serviceVolumes(@Param('id') id: string) {
     return await this.servicesService.getServiceVolumes(+id);
@@ -98,9 +133,12 @@ export class ServicesController {
   @ApiOperation({ summary: 'Real-time log streaming' })
   streamLogs(@Param('id') id: string): Observable<MessageEvent> {
     return this.servicesService.getServiceLogsStream(+id).pipe(
-      map((log) => ({
-        data: log.data,
-      } as MessageEvent)),
+      map(
+        (log) =>
+          ({
+            data: log.data,
+          }) as MessageEvent,
+      ),
     );
   }
 

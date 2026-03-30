@@ -26,7 +26,11 @@ export class RefreshToken {
   @Column({ type: 'timestamp' })
   expiry!: Date;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt!: Date;
 
   isExpired(): boolean {

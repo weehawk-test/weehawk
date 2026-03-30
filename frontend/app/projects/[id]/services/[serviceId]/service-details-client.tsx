@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,7 +11,8 @@ import {
   Info, Hash, FolderKanban, CheckCircle, XCircle,
   Download, Edit3, Save, X, Calendar, Tag, Plus,
   Terminal, Rocket, RefreshCw, Square, Play, RotateCw, Activity, Loader2,
-  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, HardDrive,
+  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive,
+  Database, Eye, EyeOff, Lock,
 } from "lucide-react";
 import {
   useService,
@@ -27,11 +29,27 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import type { Project, Service } from "@/lib/schema";
+import {
+  databaseLogoBlendClass,
+  parseDatabaseEngineFromConfig,
+  getDatabaseEngineById,
+  POSTGRES_DOCKER_IMAGE,
+} from "@/lib/database-engines";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
-import { streamServiceLogs } from "@/lib/services-api";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  applyPostgresDatabaseApi,
+  streamServiceLogs,
+  updatePostgresStackApi,
+} from "@/lib/services-api";
+import {
+  parseServiceEnvLines,
+  parseYamlPostgresImage,
+  parseYamlPostgresPublishPort,
+  parseYamlReplicas,
+} from "@/lib/env-utils";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceSecretsTab } from "./service-secrets-tab";
-import { ServiceVolumesTab } from "./service-volumes-tab";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -106,9 +124,19 @@ networks:
   overlay-net:
     driver: overlay`,
   },
+  databases: {
+    label: "Databases",
+    color: "bg-sky-500/10 text-sky-200 border-sky-500/25",
+    glow: "shadow-[0_0_24px_rgba(56,189,248,0.08)]",
+    icon: Database,
+    placeholder: "",
+  },
 };
 
-type Tab = "overview" | "config" | "env" | "volumes" | "domain" | "secrets" | "logs" | "terminal";
+type Tab = "overview" | "config" | "env" | "backup" | "domain" | "secrets" | "logs" | "terminal";
+
+/** Hidden for database services until stack YAML exists (Postgres form saved). */
+const DATABASE_PRECOMPOSE_HIDDEN: Tab[] = ["config", "backup", "terminal"];
 
 // ─── YAML colorizer ───────────────────────────────────────────────────────────
 
@@ -198,25 +226,50 @@ export default function ServiceDetails({
   const confirm = useConfirm();
 
   const envEntryCount = countEnvEntries(service?.env ?? "");
-  const typeConf = service ? (SERVICE_TYPE_CONFIG[service.type] ?? SERVICE_TYPE_CONFIG["docker-compose"]) : SERVICE_TYPE_CONFIG["docker-compose"];
+  const typeConf = service ? (SERVICE_TYPE_CONFIG[service.type as keyof typeof SERVICE_TYPE_CONFIG] ?? SERVICE_TYPE_CONFIG["docker-compose"]) : SERVICE_TYPE_CONFIG["docker-compose"];
+  const isDatabaseService = service?.type === "databases";
+  const hasDatabaseCompose = Boolean(service?.config?.includes("services:"));
 
   const runningOnHost = runtime?.running ?? false;
   const actionBusy = deploy.isPending || startService.isPending || shutdownService.isPending;
 
-  useEffect(() => {
-    if (activeTab !== "logs" || !serviceId) return;
-    const ac = new AbortController();
+  const tabs = useMemo(() => {
+    const allTabs: { id: Tab; label: string; icon: typeof Info; count?: number }[] = [
+      { id: "overview", label: "Overview", icon: Info },
+      { id: "config", label: "Configuration", icon: FileCode },
+      { id: "env", label: "Environment", icon: Variable, count: envEntryCount || undefined },
+      { id: "backup", label: "Backup", icon: Archive },
+      { id: "domain", label: "Domains", icon: Globe, count: service?.domains?.length },
+      { id: "secrets", label: "Secrets", icon: Shield, count: secretsPaged?.totalAll },
+      { id: "logs", label: "Logs", icon: ScrollText },
+      { id: "terminal", label: "Terminal", icon: Terminal },
+    ];
+    if (!isDatabaseService) return allTabs;
+    const withoutDomainSecrets = allTabs.filter((t) => t.id !== "domain" && t.id !== "secrets");
+    if (!hasDatabaseCompose) {
+      return withoutDomainSecrets.filter((t) => !DATABASE_PRECOMPOSE_HIDDEN.includes(t.id));
+    }
+    return withoutDomainSecrets;
+  }, [isDatabaseService, hasDatabaseCompose, envEntryCount, service?.domains?.length, secretsPaged?.totalAll]);
 
-    // Reset UI state on tab switch asynchronously to avoid cascading renders.
-    queueMicrotask(() => {
-      setLiveLogError(null);
-      setLiveLogText("");
-      setLiveLogAwaitingFirstChunk(true);
-    });
+  useEffect(() => {
+    const allowed = new Set(tabs.map((t) => t.id));
+    if (!allowed.has(activeTab)) setActiveTab("overview");
+  }, [tabs, activeTab]);
+
+  useEffect(() => {
+    if ((isDatabaseService && !service?.config?.includes("services:")) || activeTab !== "logs" || !serviceId) return;
+    const ac = new AbortController();
+    let cancelled = false;
+
+    setLiveLogError(null);
+    setLiveLogText("");
+    setLiveLogAwaitingFirstChunk(true);
 
     void streamServiceLogs(
       serviceId,
       (chunk) => {
+        if (cancelled) return;
         setLiveLogAwaitingFirstChunk(false);
         setLiveLogText((prev) => {
           const next = prev + chunk;
@@ -224,13 +277,17 @@ export default function ServiceDetails({
         });
       },
       (msg) => {
+        if (cancelled) return;
         setLiveLogError(msg);
         setLiveLogAwaitingFirstChunk(false);
       },
       ac.signal,
     );
-    return () => ac.abort();
-  }, [activeTab, serviceId]);
+    return () => {
+      cancelled = true;
+      ac.abort();
+    };
+  }, [activeTab, serviceId, isDatabaseService, service?.config]);
 
   useEffect(() => {
     if (activeTab !== "logs") return;
@@ -267,16 +324,27 @@ export default function ServiceDetails({
   // ── Deploy / Redeploy (Docker API) ──
   const handleRunDocker = (mode: "deploy" | "redeploy") => {
     if (!service) return;
+    if (service.type === "databases" && !service.config?.includes("services:")) {
+      toast({
+        title: "Configure Postgres first",
+        description: "Fill the Postgres form and save to generate the stack file, then deploy.",
+      });
+      return;
+    }
     setActiveTab("logs");
     deploy.mutate(
       { serviceId: service.id, serviceName: service.name, serviceType: service.type, mode },
       {
         onSuccess: (log) => {
           if (log.status !== "success") return;
+          const isDb = service.type === "databases";
           toast({
             title: mode === "redeploy" ? "Redeploy finished" : "Deploy successful",
-            description:
-              mode === "redeploy"
+            description: isDb
+              ? mode === "redeploy"
+                ? `${service.name}: stack updated (docker stack deploy + rolling service updates where applicable).`
+                : `${service.name}: stack deployed on Swarm (docker stack deploy).`
+              : mode === "redeploy"
                 ? `${service.name} was restarted with a fresh build (Compose) or rolling restart (Stack).`
                 : `${service.name} deployed.`,
           });
@@ -287,6 +355,7 @@ export default function ServiceDetails({
 
   const handleStartHost = () => {
     if (!service) return;
+    if (service.type === "databases" && !service.config?.includes("services:")) return;
     startService.mutate(service.id, {
       onSuccess: (data) =>
         toast({
@@ -302,6 +371,10 @@ export default function ServiceDetails({
 
   const handleStop = async () => {
     if (!service) return;
+    if (service.type === "databases" && !service.config?.includes("services:")) {
+      toast({ title: "Nothing to stop", description: "Generate and deploy the database stack first." });
+      return;
+    }
     const ok = await confirm({
       title: "Stop running workload?",
       description:
@@ -358,17 +431,8 @@ export default function ServiceDetails({
   );
 
   const TypeIcon = typeConf.icon;
-
-  const tabs: { id: Tab; label: string; icon: typeof Info; count?: number }[] = [
-    { id: "overview", label: "Overview", icon: Info },
-    { id: "config",   label: "Configuration", icon: FileCode },
-    { id: "env",      label: "Environment", icon: Variable, count: envEntryCount || undefined },
-    { id: "volumes",  label: "Volumes", icon: HardDrive },
-    { id: "domain",   label: "Domains", icon: Globe, count: service.domains?.length },
-    { id: "secrets",  label: "Secrets", icon: Shield, count: secretsPaged?.totalAll },
-    { id: "logs",     label: "Logs", icon: ScrollText },
-    { id: "terminal", label: "Terminal", icon: Terminal },
-  ];
+  const dbEngineId = isDatabaseService ? parseDatabaseEngineFromConfig(service.config ?? "") : undefined;
+  const dbEngineLogoSrc = dbEngineId ? getDatabaseEngineById(dbEngineId)?.logoSrc : undefined;
 
   return (
     <AppLayout>
@@ -394,14 +458,39 @@ export default function ServiceDetails({
           <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 blur-[80px] pointer-events-none" />
           <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
             <div className="flex items-center gap-5">
-              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border ${typeConf.color} flex-shrink-0`}>
-                <TypeIcon className="w-8 h-8" />
+              <div
+                className={`w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0 overflow-hidden ${
+                  dbEngineLogoSrc
+                    ? "border border-sky-500/25 bg-transparent p-2"
+                    : typeConf.color
+                }`}
+              >
+                {dbEngineLogoSrc && dbEngineId ? (
+                  <Image
+                    src={dbEngineLogoSrc}
+                    alt=""
+                    width={56}
+                    height={56}
+                    className={`object-contain max-h-12 w-auto max-w-[3.5rem] ${databaseLogoBlendClass(dbEngineId)}`}
+                    sizes="64px"
+                  />
+                ) : (
+                  <TypeIcon className="w-8 h-8" />
+                )}
               </div>
               <div>
                 <div className="flex items-center gap-2.5 flex-wrap mb-1">
                   <h1 className="text-2xl font-bold tracking-tight">{service.name}</h1>
                   <span className={`text-xs border rounded-full px-2.5 py-1 font-semibold ${typeConf.color}`}>{typeConf.label}</span>
-                  {runtimeLoading ? (
+                  {isDatabaseService ? (
+                    <span
+                      className="text-xs border rounded-full px-2.5 py-1 font-semibold flex items-center gap-1.5 bg-sky-500/10 text-sky-300 border-sky-500/25"
+                      title={dbEngineId ? `Engine: ${getDatabaseEngineById(dbEngineId)?.name ?? dbEngineId}` : "Database service"}
+                    >
+                      <Database className="w-3 h-3" />
+                      {dbEngineId ? (getDatabaseEngineById(dbEngineId)?.name ?? dbEngineId) : "Databases"}
+                    </span>
+                  ) : runtimeLoading ? (
                     <span className="text-xs border rounded-full px-2.5 py-1 font-semibold text-zinc-500 border-zinc-500/20">
                       Checking Docker…
                     </span>
@@ -412,7 +501,7 @@ export default function ServiceDetails({
                           ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
                           : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
                       }`}
-                      title="From docker compose ps / stack services on the server"
+                      title={isDatabaseService ? "From docker stack services on the Swarm manager" : "From docker compose ps / stack services on the server"}
                     >
                       {runningOnHost ? (
                         <><Activity className="w-3 h-3" />Running on host</>
@@ -431,57 +520,65 @@ export default function ServiceDetails({
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => handleRunDocker("deploy")}
-                disabled={actionBusy}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-all text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {deploy.isPending && deploy.variables?.mode === "deploy" ? (
-                  <><RefreshCw className="w-4 h-4 animate-spin" />Deploying…</>
-                ) : (
-                  <><Rocket className="w-4 h-4" />Deploy</>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRunDocker("redeploy")}
-                disabled={actionBusy}
-                title="Compose: stop project then docker compose up -d --build. Stack: docker stack deploy then docker service update --force on each service."
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border bg-muted text-foreground hover:bg-accent transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {deploy.isPending && deploy.variables?.mode === "redeploy" ? (
-                  <><RefreshCw className="w-4 h-4 animate-spin" />Redeploying…</>
-                ) : (
-                  <><RotateCw className="w-4 h-4" />Redeploy</>
-                )}
-              </button>
-              {runningOnHost ? (
-                <button
-                  type="button"
-                  onClick={handleStop}
-                  disabled={actionBusy}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-500/40 bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {shutdownService.isPending ? (
-                    <><RefreshCw className="w-4 h-4 animate-spin" />Stopping…</>
+              {!isDatabaseService || hasDatabaseCompose ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleRunDocker("deploy")}
+                    disabled={actionBusy}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-all text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {deploy.isPending && deploy.variables?.mode === "deploy" ? (
+                      <><RefreshCw className="w-4 h-4 animate-spin" />Deploying…</>
+                    ) : (
+                      <><Rocket className="w-4 h-4" />Deploy</>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRunDocker("redeploy")}
+                    disabled={actionBusy}
+                    title={isDatabaseService ? "Stack: docker stack deploy then forced rolling restart on each Swarm service." : "Compose: stop project then docker compose up -d --build. Stack: docker stack deploy then docker service update --force on each service."}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border bg-muted text-foreground hover:bg-accent transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {deploy.isPending && deploy.variables?.mode === "redeploy" ? (
+                      <><RefreshCw className="w-4 h-4 animate-spin" />Redeploying…</>
+                    ) : (
+                      <><RotateCw className="w-4 h-4" />Redeploy</>
+                    )}
+                  </button>
+                  {runningOnHost ? (
+                    <button
+                      type="button"
+                      onClick={handleStop}
+                      disabled={actionBusy}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-500/40 bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {shutdownService.isPending ? (
+                        <><RefreshCw className="w-4 h-4 animate-spin" />Stopping…</>
+                      ) : (
+                        <><Square className="w-4 h-4 fill-current" />Stop</>
+                      )}
+                    </button>
                   ) : (
-                    <><Square className="w-4 h-4 fill-current" />Stop</>
+                    <button
+                      type="button"
+                      onClick={handleStartHost}
+                      disabled={actionBusy}
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {startService.isPending ? (
+                        <><RefreshCw className="w-4 h-4 animate-spin" />Starting…</>
+                      ) : (
+                        <><Play className="w-4 h-4 fill-current" />Start</>
+                      )}
+                    </button>
                   )}
-                </button>
+                </>
               ) : (
-                <button
-                  type="button"
-                  onClick={handleStartHost}
-                  disabled={actionBusy}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {startService.isPending ? (
-                    <><RefreshCw className="w-4 h-4 animate-spin" />Starting…</>
-                  ) : (
-                    <><Play className="w-4 h-4 fill-current" />Start</>
-                  )}
-                </button>
+                <p className="text-xs text-muted-foreground max-w-md leading-relaxed border border-sky-500/20 rounded-xl px-4 py-2.5 bg-sky-500/5">
+                  Fill the <span className="text-foreground font-medium">Postgres</span> form in Overview to save the stack YAML, then use Deploy (<span className="font-mono text-[11px]">docker stack deploy</span>).
+                </p>
               )}
               <button
                 type="button"
@@ -531,50 +628,90 @@ export default function ServiceDetails({
           {/* ── OVERVIEW ── */}
           {activeTab === "overview" && (
             <motion.div key="overview" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              transition={{ duration: 0.2 }} className="space-y-4">
+              {isDatabaseService && dbEngineId === "postgres" && (
+                <PostgresSetupPanel serviceId={service.id} service={service} />
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <InfoCard icon={<Hash className="w-4 h-4 text-primary" />} label="Service ID" value={service.id} mono copyable
                 onCopy={() => { navigator.clipboard.writeText(service.id); toast({ title: "Copied", description: "Service ID copied." }); }} />
-              <InfoCard icon={<TypeIcon className="w-4 h-4 text-primary" />} label="Service Type" value={typeConf.label} badge={typeConf.color} />
-              <InfoCard icon={<FolderKanban className="w-4 h-4 text-primary" />} label="Project" value={project?.name ?? "—"} link={`/projects/${projectId}`} />
               <InfoCard
                 icon={
-                  runtimeLoading ? (
-                    <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
-                  ) : runningOnHost ? (
-                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  dbEngineLogoSrc && dbEngineId ? (
+                    <span className="relative flex h-8 w-8 items-center justify-center shrink-0">
+                      <Image
+                        src={dbEngineLogoSrc}
+                        alt=""
+                        width={32}
+                        height={32}
+                        className={`object-contain max-h-8 w-auto max-w-[2rem] ${databaseLogoBlendClass(dbEngineId)}`}
+                        sizes="32px"
+                      />
+                    </span>
                   ) : (
-                    <XCircle className="w-4 h-4 text-zinc-400" />
+                    <TypeIcon className="w-4 h-4 text-primary" />
                   )
                 }
-                label="Status"
-                value={runtimeLoading ? "Checking Docker…" : runningOnHost ? "Running" : "Stopped"}
-                badge={
-                  runtimeLoading
-                    ? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
-                    : runningOnHost
-                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                      : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
-                }
+                label="Service Type"
+                value={dbEngineId ? `${typeConf.label} · ${getDatabaseEngineById(dbEngineId)?.name ?? dbEngineId}` : typeConf.label}
+                badge={typeConf.color}
               />
-              <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
-                value={format(new Date(service.createdAt), "MMMM d, yyyy 'at' HH:mm")} />
-              <InfoCard
-                icon={<Rocket className="w-4 h-4 text-primary" />}
-                label="Docker on host"
-                value={
-                  runtimeLoading
-                    ? "Checking…"
-                    : `${runningOnHost ? "Running" : "Stopped"} · ${
-                        service.lastDeployedAt
-                          ? `last deploy ${formatDistanceToNow(new Date(service.lastDeployedAt), { addSuffix: true })}`
-                          : "never deployed"
-                      }`
-                }
-              />
+              <InfoCard icon={<FolderKanban className="w-4 h-4 text-primary" />} label="Project" value={project?.name ?? "—"} link={`/projects/${projectId}`} />
+              {!isDatabaseService && (
+                <>
+                  <InfoCard
+                    icon={
+                      runtimeLoading ? (
+                        <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+                      ) : runningOnHost ? (
+                        <CheckCircle className="w-4 h-4 text-emerald-400" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-zinc-400" />
+                      )
+                    }
+                    label="Status"
+                    value={runtimeLoading ? "Checking Docker…" : runningOnHost ? "Running" : "Stopped"}
+                    badge={
+                      runtimeLoading
+                        ? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+                        : runningOnHost
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                          : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+                    }
+                  />
+                  <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
+                    value={format(new Date(service.createdAt), "MMMM d, yyyy 'at' HH:mm")} />
+                  <InfoCard
+                    icon={<Rocket className="w-4 h-4 text-primary" />}
+                    label="Docker on host"
+                    value={
+                      runtimeLoading
+                        ? "Checking…"
+                        : `${runningOnHost ? "Running" : "Stopped"} · ${
+                            service.lastDeployedAt
+                              ? `last deploy ${formatDistanceToNow(new Date(service.lastDeployedAt), { addSuffix: true })}`
+                              : "never deployed"
+                          }`
+                    }
+                  />
+                </>
+              )}
+              {isDatabaseService && (
+                <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
+                  value={format(new Date(service.createdAt), "MMMM d, yyyy 'at' HH:mm")} />
+              )}
               <InfoCard icon={<Tag className="w-4 h-4 text-primary" />} label="Configuration"
-                value={service.config ? `${service.config.split("\n").length} lines` : "Not configured"} />
+                value={
+                  isDatabaseService
+                    ? "Use engine cards above (YAML provisioning later)"
+                    : service.config
+                      ? `${service.config.split("\n").length} lines`
+                      : "Not configured"
+                }
+              />
               <InfoCard icon={<Variable className="w-4 h-4 text-primary" />} label="Environment (.env)"
                 value={envEntryCount > 0 ? `${envEntryCount} variable${envEntryCount !== 1 ? "s" : ""}` : "Not set"} />
+              </div>
             </motion.div>
           )}
 
@@ -675,10 +812,16 @@ export default function ServiceDetails({
             </motion.div>
           )}
 
-          {activeTab === "volumes" && (
-            <motion.div key="volumes" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+          {activeTab === "backup" && (
+            <motion.div key="backup" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="space-y-4">
-              <ServiceVolumesTab serviceId={service.id} enabled={activeTab === "volumes"} />
+              <div className="glass-panel rounded-xl border border-border/60 p-10 md:p-14 text-center max-w-lg mx-auto">
+                <Archive className="w-12 h-12 text-muted-foreground/80 mx-auto mb-4" />
+                <h2 className="text-lg font-semibold tracking-tight mb-2">Backup</h2>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Volume and snapshot backups will be available here in a future update.
+                </p>
+              </div>
             </motion.div>
           )}
 
@@ -716,19 +859,30 @@ export default function ServiceDetails({
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                        Live stream from{" "}
-                        <code className="text-[11px] bg-muted px-1 rounded">docker compose logs -f</code> /{" "}
-                        <code className="text-[11px] bg-muted px-1 rounded">docker service logs -f</code> on the server host.
+                        {isDatabaseService ? (
+                          <>
+                            Live stream from{" "}
+                            <code className="text-[11px] bg-muted px-1 rounded">docker service logs -f</code> on the Swarm manager (stack services).
+                          </>
+                        ) : (
+                          <>
+                            Live stream from{" "}
+                            <code className="text-[11px] bg-muted px-1 rounded">docker compose logs -f</code> /{" "}
+                            <code className="text-[11px] bg-muted px-1 rounded">docker service logs -f</code> on the server host.
+                          </>
+                        )}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab("terminal")}
-                      className="btn-secondary inline-flex items-center gap-2 text-sm py-2 px-3 shrink-0 self-start"
-                    >
-                      <Terminal className="w-4 h-4" />
-                      Terminal
-                    </button>
+                    {(!isDatabaseService || hasDatabaseCompose) && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("terminal")}
+                        className="btn-secondary inline-flex items-center gap-2 text-sm py-2 px-3 shrink-0 self-start"
+                      >
+                        <Terminal className="w-4 h-4" />
+                        Terminal
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -757,7 +911,11 @@ export default function ServiceDetails({
                   ref={liveLogScrollRef}
                   className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950/80"
                 >
-                  {liveLogError ? (
+                  {isDatabaseService && !hasDatabaseCompose ? (
+                    <p className="text-sm text-muted-foreground text-center py-16 px-4 leading-relaxed max-w-md mx-auto">
+                      Save the Postgres stack in <span className="text-foreground font-medium">Overview</span>, then deploy. Live logs stream here once the Swarm stack is running.
+                    </p>
+                  ) : liveLogError ? (
                     <div className="text-sm text-destructive whitespace-pre-wrap">{liveLogError}</div>
                   ) : liveLogAwaitingFirstChunk && !liveLogText ? (
                     <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
@@ -795,6 +953,453 @@ export default function ServiceDetails({
       </motion.div>
 
     </AppLayout>
+  );
+}
+
+// ─── Postgres (create flow uses modal; here: read-only or one-time legacy form) ──
+
+function PostgresSetupPanel({ serviceId, service }: { serviceId: string; service: Service }) {
+  const env = parseServiceEnvLines(service.env ?? "");
+  const hasStack = Boolean(service.config?.includes("services:"));
+  const locked = hasStack && Boolean(env.POSTGRES_PASSWORD);
+
+  if (locked) {
+    return <PostgresCredentialsReadOnly service={service} />;
+  }
+  return <PostgresSetupForm serviceId={serviceId} />;
+}
+
+function PostgresCredentialsReadOnly({ service }: { service: Service }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const env = parseServiceEnvLines(service.env ?? "");
+  const replicas = parseYamlReplicas(service.config ?? "") ?? 1;
+  const hostPort = parseYamlPostgresPublishPort(service.config ?? "");
+  const yamlImage = parseYamlPostgresImage(service.config ?? "") ?? POSTGRES_DOCKER_IMAGE;
+  const [showPassword, setShowPassword] = useState(false);
+  const [editingHostPort, setEditingHostPort] = useState(false);
+  const [portDraft, setPortDraft] = useState("");
+  const [portSaving, setPortSaving] = useState(false);
+  const [editingReplicas, setEditingReplicas] = useState(false);
+  const [replicasDraft, setReplicasDraft] = useState("");
+  const [replicasSaving, setReplicasSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editingHostPort) {
+      setPortDraft(hostPort != null ? String(hostPort) : "");
+    }
+  }, [service.config, hostPort, editingHostPort]);
+
+  useEffect(() => {
+    if (!editingReplicas) {
+      setReplicasDraft(String(replicas));
+    }
+  }, [service.config, replicas, editingReplicas]);
+
+  const saveHostPort = async () => {
+    const t = portDraft.trim();
+    if (t) {
+      const n = parseInt(t, 10);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) {
+        toast({
+          title: "Invalid port",
+          description: "Use an integer from 1 to 65535, or leave empty to unpublish.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    setPortSaving(true);
+    try {
+      await updatePostgresStackApi(service.id, {
+        publishPort: t === "" ? null : parseInt(t, 10),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["service", service.id] });
+      setEditingHostPort(false);
+      toast({
+        title: "Stack updated",
+        description: "Redeploy the stack so Docker applies the new port mapping.",
+      });
+    } catch (e: unknown) {
+      toast({
+        title: "Could not update port",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setPortSaving(false);
+    }
+  };
+
+  const saveReplicas = async () => {
+    const n = parseInt(replicasDraft.trim(), 10);
+    if (!Number.isInteger(n) || n < 1 || n > 10) {
+      toast({
+        title: "Invalid replicas",
+        description: "Use an integer from 1 to 10.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setReplicasSaving(true);
+    try {
+      await updatePostgresStackApi(service.id, { replicas: n });
+      await queryClient.invalidateQueries({ queryKey: ["service", service.id] });
+      setEditingReplicas(false);
+      toast({
+        title: "Stack updated",
+        description: "Redeploy the stack so Swarm applies the new replica count.",
+      });
+    } catch (e: unknown) {
+      toast({
+        title: "Could not update replicas",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setReplicasSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-panel rounded-2xl border border-sky-500/20 p-6 md:p-8">
+      <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
+        <Database className="w-5 h-5 text-sky-400" />
+        Postgres
+        <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground border border-border rounded-full px-2 py-0.5">
+          <Lock className="w-3 h-3" />
+          Saved
+        </span>
+      </h3>
+      <p className="text-sm text-muted-foreground mb-5 max-w-2xl leading-relaxed">
+        Login fields are read-only (see <span className="text-foreground font-medium">Environment</span>); use Show to copy the password. Edit{" "}
+        <span className="text-foreground font-medium">replicas</span> or <span className="text-foreground font-medium">host port</span> below, then redeploy.
+      </p>
+      <p className="text-xs font-mono text-sky-300/90 mb-5">
+        Docker image: <span className="text-foreground">{yamlImage}</span>
+      </p>
+      <dl className="grid gap-4 sm:grid-cols-2 max-w-2xl text-sm">
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground mb-1">Database name</dt>
+          <dd className="font-mono text-foreground break-all">{env.POSTGRES_DB ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground mb-1">User</dt>
+          <dd className="font-mono text-foreground break-all">{env.POSTGRES_USER ?? "—"}</dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs font-medium text-muted-foreground mb-1">Password</dt>
+          <dd className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-foreground break-all">
+              {showPassword ? env.POSTGRES_PASSWORD ?? "—" : "••••••••"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="btn-secondary text-xs py-1 h-8 inline-flex items-center gap-1"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs font-medium text-muted-foreground mb-1">Replicas</dt>
+          <dd className="space-y-2">
+            {!editingReplicas ? (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
+                <span className="font-mono text-foreground">{replicas}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingReplicas(true);
+                    setReplicasDraft(String(replicas));
+                  }}
+                  className="btn-secondary text-xs py-1.5 h-8 self-start"
+                >
+                  Change replicas
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 max-w-md">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    className="input-field font-mono text-sm max-w-[8rem] py-2"
+                    value={replicasDraft}
+                    onChange={(e) => setReplicasDraft(e.target.value)}
+                    disabled={replicasSaving}
+                  />
+                  <span className="text-xs text-muted-foreground">(1–10, Swarm)</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={replicasSaving}
+                    onClick={() => void saveReplicas()}
+                    className="btn-primary text-xs py-1.5 h-8 inline-flex items-center gap-1.5"
+                  >
+                    {replicasSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    {replicasSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={replicasSaving}
+                    onClick={() => {
+                      setEditingReplicas(false);
+                      setReplicasDraft(String(replicas));
+                    }}
+                    className="btn-secondary text-xs py-1.5 h-8"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs font-medium text-muted-foreground mb-1">Host port (→ 5432)</dt>
+          <dd className="space-y-2">
+            {!editingHostPort ? (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
+                <span className="font-mono text-foreground">
+                  {hostPort != null ? (
+                    <>
+                      <span className="text-emerald-400">{hostPort}</span>
+                      <span className="text-muted-foreground"> → 5432 on host</span>
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">
+                      Not published
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingHostPort(true);
+                    setPortDraft(hostPort != null ? String(hostPort) : "");
+                  }}
+                  className="btn-secondary text-xs py-1.5 h-8 self-start"
+                >
+                  Change port
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 max-w-md">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    className="input-field font-mono text-sm max-w-[10rem] py-2"
+                    value={portDraft}
+                    onChange={(e) => setPortDraft(e.target.value)}
+                    placeholder="e.g. 5432"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    disabled={portSaving}
+                  />
+                  <span className="text-xs text-muted-foreground">→ container 5432</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  Leave empty and save to stop publishing on the host. After saving, redeploy the service.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={portSaving}
+                    onClick={() => void saveHostPort()}
+                    className="btn-primary text-xs py-1.5 h-8 inline-flex items-center gap-1.5"
+                  >
+                    {portSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    {portSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={portSaving}
+                    onClick={() => {
+                      setEditingHostPort(false);
+                      setPortDraft(hostPort != null ? String(hostPort) : "");
+                    }}
+                    className="btn-secondary text-xs py-1.5 h-8"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+function PostgresSetupForm({ serviceId }: { serviceId: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [dbName, setDbName] = useState("");
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [replicas, setReplicas] = useState(1);
+  const [publishPort, setPublishPort] = useState("");
+  const [image, setImage] = useState(POSTGRES_DOCKER_IMAGE);
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!dbName.trim() || !user.trim() || !pass.trim()) {
+      toast({
+        title: "Missing fields",
+        description: "Database name, user, and password are required.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const pp = publishPort.trim();
+    if (pp) {
+      const n = parseInt(pp, 10);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) {
+        toast({
+          title: "Invalid host port",
+          description: "Use an integer from 1 to 65535, or leave empty for no published port.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    const img = image.trim();
+    if (img && !/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,127}$/.test(img)) {
+      toast({
+        title: "Invalid image",
+        description: "Use a valid Docker image reference (letters, digits, ._/:@-).",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSaving(true);
+    try {
+      await applyPostgresDatabaseApi(serviceId, {
+        dbName: dbName.trim(),
+        user: user.trim(),
+        pass,
+        replicas: Math.min(10, Math.max(1, Math.floor(replicas) || 1)),
+        ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
+        ...(img ? { image: img } : {}),
+      });
+      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      toast({
+        title: "Stack YAML saved",
+        description:
+          "Credentials are stored under Environment (POSTGRES_*). Deploy from the header to run docker stack deploy.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not save",
+        description: err instanceof Error ? err.message : String(err),
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="glass-panel rounded-2xl border border-amber-500/20 p-6 md:p-8">
+      <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
+        <Database className="w-5 h-5 text-amber-400" />
+        Complete Postgres setup
+      </h3>
+      <p className="text-sm text-muted-foreground mb-5 max-w-2xl leading-relaxed">
+        This service has no saved stack yet. Prefer creating new Postgres services from{" "}
+        <span className="text-foreground font-medium">Add Service</span> so credentials are set at creation. Here you can generate the stack once; after that this form locks.
+      </p>
+      <div className="mb-5 space-y-1.5">
+        <label className="text-xs font-medium text-muted-foreground block">Docker image</label>
+        <input
+          className="input-field w-full font-mono text-sm max-w-2xl"
+          value={image}
+          onChange={(e) => setImage(e.target.value)}
+          placeholder={POSTGRES_DOCKER_IMAGE}
+          autoComplete="off"
+        />
+        <p className="text-[11px] text-amber-500/90 leading-snug rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 max-w-2xl">
+          Changing the image can change PostgreSQL data paths between versions — check volume compatibility.
+        </p>
+      </div>
+      <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2 max-w-2xl">
+        <div className="sm:col-span-2">
+          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Database name</label>
+          <input
+            className="input-field w-full font-mono text-sm"
+            value={dbName}
+            onChange={(e) => setDbName(e.target.value)}
+            placeholder="myapp-db"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1.5">User</label>
+          <input
+            className="input-field w-full font-mono text-sm"
+            value={user}
+            onChange={(e) => setUser(e.target.value)}
+            placeholder="appuser"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
+          <input
+            type="password"
+            className="input-field w-full font-mono text-sm"
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            placeholder="••••••••"
+            autoComplete="new-password"
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Replicas (1–10)</label>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            className="input-field w-full max-w-[8rem] font-mono text-sm"
+            value={replicas}
+            onChange={(e) => setReplicas(Number(e.target.value))}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+            Host port <span className="text-muted-foreground/80 font-normal">(optional)</span>
+          </label>
+          <input
+            className="input-field w-full max-w-[8rem] font-mono text-sm"
+            value={publishPort}
+            onChange={(e) => setPublishPort(e.target.value)}
+            placeholder="e.g. 5432"
+            inputMode="numeric"
+            autoComplete="off"
+          />
+          <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+            Empty = no host port (not exposed externally).
+          </p>
+        </div>
+        <div className="sm:col-span-2">
+          <button
+            type="submit"
+            disabled={saving}
+            className="btn-primary text-sm flex items-center gap-2"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Generate & save stack YAML
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

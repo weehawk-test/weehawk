@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-export class CreateDockersecretDto { 
+export class CreateDockersecretDto {
   @ApiProperty({ example: 'DB_PASSWORD' })
   name: string;
 

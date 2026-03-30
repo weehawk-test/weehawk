@@ -16,7 +16,10 @@ export class ResendProvider implements NotificationProvider {
     private readonly repo: Repository<NotificationResend>,
   ) {}
 
-  async saveConfig(channelId: string, config: Record<string, unknown>): Promise<void> {
+  async saveConfig(
+    channelId: string,
+    config: Record<string, unknown>,
+  ): Promise<void> {
     await this.repo.save(
       this.repo.create({
         channelId,
@@ -37,7 +40,11 @@ export class ResendProvider implements NotificationProvider {
     };
   }
 
-  async send(channelId: string, channelName: string, message: string): Promise<ProviderResult> {
+  async send(
+    channelId: string,
+    channelName: string,
+    message: string,
+  ): Promise<ProviderResult> {
     const row = await this.repo.findOne({ where: { channelId } });
     if (!row) return { ok: false, description: 'Missing Resend configuration' };
     const apiKey = row.apiKey.trim();
@@ -58,4 +65,3 @@ export class ResendProvider implements NotificationProvider {
     );
   }
 }
-

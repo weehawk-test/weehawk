@@ -1,4 +1,10 @@
-import { Column, Entity, JoinColumn, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { NotificationChannel } from './notification-channel.entity';
 
 @Entity({ name: 'notification_microsoft_teams' })
@@ -16,4 +22,3 @@ export class NotificationMicrosoftTeams {
   @Column({ name: 'webhook_url', type: 'text' })
   webhookUrl!: string;
 }
-

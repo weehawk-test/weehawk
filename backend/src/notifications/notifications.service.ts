@@ -111,7 +111,9 @@ export class NotificationsService {
     const take = 10;
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * take;
-    const qb = this.channelRepo.createQueryBuilder('c').where('c.userId = :userId', { userId });
+    const qb = this.channelRepo
+      .createQueryBuilder('c')
+      .where('c.userId = :userId', { userId });
     const term = (q ?? '').trim();
     if (term) {
       qb.andWhere('(c.name ILIKE :term OR c.type::text ILIKE :term)', {
@@ -147,7 +149,9 @@ export class NotificationsService {
     });
     const saved = await this.channelRepo.save(ch);
     await this.saveProviderConfig(saved, config);
-    const preview = await this.providerRegistry.get(saved.type).preview(saved.id);
+    const preview = await this.providerRegistry
+      .get(saved.type)
+      .preview(saved.id);
     return this.toChannelRow(saved, preview);
   }
 
@@ -164,7 +168,9 @@ export class NotificationsService {
     if (dto.config !== undefined) {
       await this.saveProviderConfig(saved, dto.config);
     }
-    const preview = await this.providerRegistry.get(saved.type).preview(saved.id);
+    const preview = await this.providerRegistry
+      .get(saved.type)
+      .preview(saved.id);
     return this.toChannelRow(saved, preview);
   }
 
@@ -173,7 +179,10 @@ export class NotificationsService {
     if (!res.affected) throw new NotFoundException('Channel not found');
   }
 
-  async bulkDeleteChannels(userId: number, ids: string[]): Promise<{ removed: number }> {
+  async bulkDeleteChannels(
+    userId: number,
+    ids: string[],
+  ): Promise<{ removed: number }> {
     if (ids.length === 0) return { removed: 0 };
     const res = await this.channelRepo
       .createQueryBuilder()
@@ -208,7 +217,9 @@ export class NotificationsService {
     // Fixed batch size by design: always return exactly 10 items per page.
     const take = 10;
     const skip = (Math.max(1, page) - 1) * take;
-    const qb = this.logRepo.createQueryBuilder('l').where('l.userId = :userId', { userId });
+    const qb = this.logRepo
+      .createQueryBuilder('l')
+      .where('l.userId = :userId', { userId });
     const term = (q ?? '').trim();
     if (term) {
       qb.andWhere('(l.channelName ILIKE :term OR l.message ILIKE :term)', {
@@ -229,7 +240,10 @@ export class NotificationsService {
     await this.logRepo.delete({ id, userId });
   }
 
-  async bulkDeleteLogs(userId: number, ids: string[]): Promise<{ removed: number }> {
+  async bulkDeleteLogs(
+    userId: number,
+    ids: string[],
+  ): Promise<{ removed: number }> {
     if (ids.length === 0) return { removed: 0 };
     const res = await this.logRepo
       .createQueryBuilder()
@@ -333,7 +347,10 @@ export class NotificationsService {
     return row;
   }
 
-  async testChannel(userId: number, channelId: string): Promise<NotificationLogRow> {
+  async testChannel(
+    userId: number,
+    channelId: string,
+  ): Promise<NotificationLogRow> {
     return this.sendMessage(userId, channelId, NOTIFICATION_TEST_MESSAGE);
   }
 }

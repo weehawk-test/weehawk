@@ -1,6 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class PagedLogsQueryDto {
   @ApiPropertyOptional({ default: 1, minimum: 1 })
@@ -24,4 +31,3 @@ export class PagedLogsQueryDto {
   @MaxLength(200)
   q?: string;
 }
-

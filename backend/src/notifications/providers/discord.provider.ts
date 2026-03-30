@@ -16,7 +16,10 @@ export class DiscordProvider implements NotificationProvider {
     private readonly repo: Repository<NotificationDiscord>,
   ) {}
 
-  async saveConfig(channelId: string, config: Record<string, unknown>): Promise<void> {
+  async saveConfig(
+    channelId: string,
+    config: Record<string, unknown>,
+  ): Promise<void> {
     await this.repo.save(
       this.repo.create({
         channelId,
@@ -29,16 +32,22 @@ export class DiscordProvider implements NotificationProvider {
     const row = await this.repo.findOne({ where: { channelId } });
     const webhookUrl = row?.webhookUrl?.trim() ?? '';
     return {
-      credentialPreview: webhookUrl ? `webhook•••${webhookUrl.slice(-10)}` : 'not set',
+      credentialPreview: webhookUrl
+        ? `webhook•••${webhookUrl.slice(-10)}`
+        : 'not set',
       targetPreview: 'discord',
     };
   }
 
-  async send(channelId: string, _channelName: string, message: string): Promise<ProviderResult> {
+  async send(
+    channelId: string,
+    _channelName: string,
+    message: string,
+  ): Promise<ProviderResult> {
     const row = await this.repo.findOne({ where: { channelId } });
     const webhookUrl = row?.webhookUrl?.trim() ?? '';
-    if (!webhookUrl) return { ok: false, description: 'Missing Discord webhook URL' };
+    if (!webhookUrl)
+      return { ok: false, description: 'Missing Discord webhook URL' };
     return postJson(webhookUrl, { content: message });
   }
 }
-

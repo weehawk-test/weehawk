@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Project } from './entities/project.entity';
@@ -13,7 +17,9 @@ export class ProjectsService {
   ) {}
 
   async create(createProjectDto: CreateProjectDto) {
-    const existing = await this.projectRepository.findOneBy({ name: createProjectDto.name });
+    const existing = await this.projectRepository.findOneBy({
+      name: createProjectDto.name,
+    });
     if (existing) {
       throw new ConflictException('Project name already exists');
     }

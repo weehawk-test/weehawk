@@ -1,4 +1,12 @@
-import { Controller, Get, Delete, Param, Query, ParseIntPipe, DefaultValuePipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Delete,
+  Param,
+  Query,
+  ParseIntPipe,
+  DefaultValuePipe,
+} from '@nestjs/common';
 import { DockerService } from './docker.service';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 
@@ -17,7 +25,11 @@ export class DockerController {
   @ApiOperation({ summary: 'List containers (paginated, optional search)' })
   @ApiQuery({ name: 'page', required: false, example: 1 })
   @ApiQuery({ name: 'pageSize', required: false, example: 10 })
-  @ApiQuery({ name: 'q', required: false, description: 'Filter by name or image' })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Filter by name or image',
+  })
   async containersPaged(
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
@@ -62,7 +74,11 @@ export class DockerController {
   @ApiOperation({ summary: 'List images (paginated, optional search)' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'pageSize', required: false })
-  @ApiQuery({ name: 'q', required: false, description: 'Filter by repository or tag' })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Filter by repository or tag',
+  })
   async imagesPaged(
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
@@ -90,11 +106,16 @@ export class DockerController {
   @ApiOperation({ summary: 'List volumes (paginated, optional search)' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'pageSize', required: false })
-  @ApiQuery({ name: 'q', required: false, description: 'Filter by volume name' })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Filter by volume name',
+  })
   @ApiQuery({
     name: 'includeSizes',
     required: false,
-    description: 'When true, also resolves volume sizes (slower). Default: false.',
+    description:
+      'When true, also resolves volume sizes (slower). Default: false.',
   })
   async volumesPaged(
     @Query('page') pageStr?: string,
@@ -105,7 +126,12 @@ export class DockerController {
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
     const includeSizes = (includeSizesStr ?? '').toLowerCase() === 'true';
-    return this.dockerService.getVolumesPaged(page, pageSize, q ?? '', includeSizes);
+    return this.dockerService.getVolumesPaged(
+      page,
+      pageSize,
+      q ?? '',
+      includeSizes,
+    );
   }
 
   @Delete('volumes/:name')

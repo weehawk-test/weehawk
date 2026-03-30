@@ -1,18 +1,28 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { ArrowLeft, Plus, Trash2, ChevronRight, Clock, Container, Layers, Server } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server } from "lucide-react";
 import { useProject } from "@/hooks/use-projects";
 import { useServices, useCreateService, useDeleteService } from "@/hooks/use-services";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useForm } from "react-hook-form";
+import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createServiceSchema, type CreateServiceInput, type Project, type Service } from "@/lib/schema";
+import { applyPostgresDatabaseApi } from "@/lib/services-api";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
+import { DatabaseEnginePicker } from "@/components/database-engine-picker";
+import {
+  databaseLogoBlendClass,
+  getDatabaseEngineById,
+  parseDatabaseEngineFromConfig,
+  POSTGRES_DOCKER_IMAGE,
+} from "@/lib/database-engines";
 
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
@@ -27,6 +37,12 @@ const SERVICE_TYPE_CONFIG = {
     icon: Layers,
     placeholder: `version: '3.8'\nservices:\n  app:\n    image: nginx:latest\n    deploy:\n      replicas: 2`,
   },
+  databases: {
+    label: "Databases",
+    color: "bg-sky-500/10 text-sky-200 border-sky-500/25",
+    icon: Database,
+    placeholder: "",
+  },
 } as const;
 
 function CreateServiceModal({
@@ -36,30 +52,107 @@ function CreateServiceModal({
   projectId: string;
   onClose: () => void;
 }) {
+  const qc = useQueryClient();
   const create = useCreateService();
   const { toast } = useToast();
-  const { register, handleSubmit, formState: { errors } } = useForm({
-    resolver: zodResolver(createServiceSchema),
-    defaultValues: { projectId, type: "docker-compose" as const, config: "", description: "" },
+  const [dbPickerOpen, setDbPickerOpen] = useState(false);
+  const { register, handleSubmit, formState: { errors }, watch, setValue, getValues } = useForm<CreateServiceInput>({
+    resolver: zodResolver(createServiceSchema) as Resolver<CreateServiceInput>,
+    defaultValues: {
+      name: "",
+      projectId,
+      type: "docker-compose",
+      config: "",
+      description: "",
+      databaseEngine: undefined,
+      postgres: {
+        dbName: "",
+        user: "",
+        pass: "",
+        replicas: 1,
+        publishPort: "",
+        image: POSTGRES_DOCKER_IMAGE,
+      },
+    },
   });
 
-  const onSubmit = (data: CreateServiceInput) => {
-    create.mutate(data, {
-      onSuccess: () => {
-        toast({ title: "Service Created", description: "Your new service is ready." });
-        onClose();
-      },
-      onError: (e: Error) =>
-        toast({
-          title: "Could not create service",
-          description: e.message,
-          variant: "destructive",
-        }),
-    });
+  const type = watch("type");
+  const databaseEngine = watch("databaseEngine");
+
+  useEffect(() => {
+    if (type !== "databases") {
+      setValue("databaseEngine", undefined);
+    }
+  }, [type, setValue]);
+
+  useEffect(() => {
+    if (type !== "databases" || databaseEngine !== "postgres") {
+      setValue("postgres", {
+        dbName: "",
+        user: "",
+        pass: "",
+        replicas: 1,
+        publishPort: "",
+        image: POSTGRES_DOCKER_IMAGE,
+      });
+    }
+  }, [type, databaseEngine, setValue]);
+
+  useEffect(() => {
+    if (type === "databases" && !databaseEngine) {
+      setDbPickerOpen(true);
+    }
+  }, [type, databaseEngine]);
+
+  const onSubmit = async (data: CreateServiceInput) => {
+    try {
+      const created = await create.mutateAsync(data);
+      if (data.type === "databases" && data.databaseEngine === "postgres" && data.postgres) {
+        const pp = data.postgres.publishPort?.trim();
+        const img = data.postgres.image?.trim();
+        await applyPostgresDatabaseApi(created.id, {
+          dbName: data.postgres.dbName.trim(),
+          user: data.postgres.user.trim(),
+          pass: data.postgres.pass,
+          replicas: data.postgres.replicas ?? 1,
+          ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
+          ...(img ? { image: img } : {}),
+        });
+        await qc.invalidateQueries({ queryKey: ["service", created.id] });
+      }
+      toast({
+        title: "Service Created",
+        description:
+          data.type === "databases" && data.databaseEngine === "postgres"
+            ? "Postgres stack and credentials are saved. Deploy from the service page when ready."
+            : "Your new service is ready.",
+      });
+      onClose();
+    } catch (e: unknown) {
+      toast({
+        title: "Could not create service",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div className="fixed top-0 right-0 bottom-0 left-64 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <DatabaseEnginePicker
+        open={dbPickerOpen}
+        selectedId={databaseEngine}
+        onSelect={(id) => {
+          setValue("databaseEngine", id);
+          setDbPickerOpen(false);
+        }}
+        onCancel={() => {
+          setDbPickerOpen(false);
+          if (!getValues("databaseEngine")) {
+            setValue("type", "docker-compose");
+          }
+        }}
+      />
       <motion.div
         initial={false}
         animate={{ opacity: 1, scale: 1 }}
@@ -84,7 +177,26 @@ function CreateServiceModal({
               <select {...register("type")} className="input-field appearance-none cursor-pointer">
                 <option value="docker-compose" className="bg-card">Docker Compose</option>
                 <option value="stack" className="bg-card">Stack</option>
+                <option value="databases" className="bg-card">Databases</option>
               </select>
+              {type === "databases" && databaseEngine && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Engine:</span>
+                  <span className="text-xs font-medium text-sky-300 border border-sky-500/30 rounded-full px-2.5 py-0.5 bg-sky-500/10">
+                    {getDatabaseEngineById(databaseEngine)?.name ?? databaseEngine}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDbPickerOpen(true)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
+              {errors.databaseEngine && (
+                <p className="text-destructive text-xs mt-1">{errors.databaseEngine.message}</p>
+              )}
             </div>
           </div>
 
@@ -94,6 +206,99 @@ function CreateServiceModal({
             </label>
             <input {...register("description")} className="input-field" placeholder="Short description of this service" />
           </div>
+
+          {type === "databases" && databaseEngine === "postgres" && (
+            <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4 space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-sky-200 mb-0.5">Postgres</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Database name, user, and password are saved once. Credentials go to Environment; the stack file uses placeholders.
+                </p>
+                <div className="sm:col-span-2 space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground block">Docker image</label>
+                  <input
+                    {...register("postgres.image")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder={POSTGRES_DOCKER_IMAGE}
+                    autoComplete="off"
+                  />
+                  {errors.postgres?.image && (
+                    <p className="text-destructive text-xs">{errors.postgres.image.message}</p>
+                  )}
+                  <p className="text-[11px] text-amber-500/90 leading-snug rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2">
+                    Changing the image can change PostgreSQL data paths inside the container between major versions. Existing volume mounts may not match a new layout — verify compatibility before switching.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Database name</label>
+                  <input
+                    {...register("postgres.dbName")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="myapp-db"
+                    autoComplete="off"
+                  />
+                  {errors.postgres?.dbName && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.dbName.message}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">User</label>
+                  <input
+                    {...register("postgres.user")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="appuser"
+                    autoComplete="off"
+                  />
+                  {errors.postgres?.user && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.user.message}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
+                  <input
+                    type="password"
+                    {...register("postgres.pass")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                  />
+                  {errors.postgres?.pass && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.pass.message}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Replicas (1–10)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    {...register("postgres.replicas", { valueAsNumber: true })}
+                    className="input-field w-full max-w-[8rem] font-mono text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">
+                    Host port <span className="text-muted-foreground/80 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    {...register("postgres.publishPort")}
+                    className="input-field w-full max-w-[8rem] font-mono text-sm"
+                    placeholder="e.g. 5432"
+                    inputMode="numeric"
+                    autoComplete="off"
+                  />
+                  {errors.postgres?.publishPort && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.publishPort.message}</p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                    Map host → container 5432. Leave empty so Postgres is not published on the host (internal / overlay only).
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary">
@@ -255,7 +460,7 @@ export default function ProjectsIdClient({
             </div>
             <h3 className="text-lg font-bold mb-2">No services yet</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-sm">
-              Add your first service (Docker Compose or Stack) to this project.
+              Add your first service (Docker Compose, Stack, or Databases) to this project.
             </p>
             <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
               <Plus className="w-4 h-4" /> Add Service
@@ -268,6 +473,9 @@ export default function ProjectsIdClient({
                 const typeConf = SERVICE_TYPE_CONFIG[service.type as keyof typeof SERVICE_TYPE_CONFIG] ??
                   SERVICE_TYPE_CONFIG["docker-compose"];
                 const Icon = typeConf.icon;
+                const dbEngineId =
+                  service.type === "databases" ? parseDatabaseEngineFromConfig(service.config) : undefined;
+                const dbLogo = dbEngineId ? getDatabaseEngineById(dbEngineId)?.logoSrc : undefined;
 
                 return (
                   <motion.div
@@ -284,9 +492,26 @@ export default function ProjectsIdClient({
                     <div className="relative flex min-h-0 flex-1 flex-col">
                       <div className="mb-2 flex items-start justify-between gap-1.5">
                         <div
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${service.isActive ? typeConf.color : "border-border bg-muted/50 text-muted-foreground"}`}
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg overflow-hidden ${
+                            service.isActive
+                              ? dbLogo
+                                ? "border border-sky-500/25 bg-transparent p-0.5"
+                                : `border ${typeConf.color}`
+                              : "border border-border bg-muted/50 text-muted-foreground"
+                          }`}
                         >
-                          <Icon className="h-4 w-4" />
+                          {dbLogo && dbEngineId ? (
+                            <Image
+                              src={dbLogo}
+                              alt=""
+                              width={28}
+                              height={28}
+                              className={`object-contain max-h-7 w-auto ${databaseLogoBlendClass(dbEngineId)}`}
+                              sizes="36px"
+                            />
+                          ) : (
+                            <Icon className="h-4 w-4" />
+                          )}
                         </div>
                         <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${typeConf.color}`}>
                           {typeConf.label}

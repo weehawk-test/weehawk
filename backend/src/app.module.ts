@@ -20,7 +20,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
-        type: configService.get<any>('DB_TYPE'), 
+        type: configService.get<any>('DB_TYPE'),
         host: configService.get<string>('DB_HOST'),
         port: configService.get<number>('DB_PORT'),
         username: configService.get<string>('DB_USERNAME'),
@@ -28,7 +28,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
         database: configService.get<string>('DB_DATABASE'),
         autoLoadEntities: true,
         synchronize: true,
-      }), 
+      }),
     }),
     ProjectsModule,
     DockersecretsModule,

@@ -10,7 +10,10 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { DockerSecretsService } from './dockersecrets.service';
-import { BulkImportDto, CreateDockersecretDto } from './dto/create-dockersecret.dto';
+import {
+  BulkImportDto,
+  CreateDockersecretDto,
+} from './dto/create-dockersecret.dto';
 
 @ApiTags('Docker Secrets')
 @Controller('docker-secrets')
@@ -46,37 +49,37 @@ export class DockerSecretsController {
   @ApiOperation({ summary: 'Import from .env' })
   async bulkImport(@Body() dto: BulkImportDto) {
     const lines = dto.envText.split('\n');
-    
-    const results: string[] = []; 
-    const errors: Array<{ key: string; error: string }> = []; 
+
+    const results: string[] = [];
+    const errors: Array<{ key: string; error: string }> = [];
 
     for (const line of lines) {
       const trimmed = line.trim();
-      
+
       if (trimmed && !trimmed.startsWith('#')) {
         const [key, ...valueParts] = trimmed.split('=');
-        
+
         if (key && valueParts.length > 0) {
           const name = key.trim();
           const value = valueParts.join('=').trim();
-          
+
           try {
             await this.secretsService.create(name, value);
-            results.push(name); 
+            results.push(name);
           } catch (err: any) {
-            errors.push({ 
-              key: name, 
-              error: err.message || 'Unknown error' 
+            errors.push({
+              key: name,
+              error: err.message || 'Unknown error',
             });
           }
         }
       }
     }
-    
-    return { 
+
+    return {
       message: `${results.length} secrets processed.`,
-      created: results, 
-      failed: errors 
+      created: results,
+      failed: errors,
     };
   }
 

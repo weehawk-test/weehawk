@@ -1,4 +1,10 @@
-import { Column, Entity, JoinColumn, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { NotificationChannel } from './notification-channel.entity';
 
 @Entity({ name: 'notification_lark' })
@@ -19,4 +25,3 @@ export class NotificationLark {
   @Column({ type: 'text', nullable: true })
   secret!: string | null;
 }
-

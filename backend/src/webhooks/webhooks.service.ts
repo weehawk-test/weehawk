@@ -51,10 +51,7 @@ export class WebhooksService {
           'Service webhooks require serviceId and serviceAction.',
         );
       }
-      if (
-        dto.serviceAction === 'volume_backup' &&
-        !dto.volumeSource?.trim()
-      ) {
+      if (dto.serviceAction === 'volume_backup' && !dto.volumeSource?.trim()) {
         throw new BadRequestException(
           'volumeSource is required for volume backup.',
         );
@@ -120,7 +117,10 @@ export class WebhooksService {
     };
   }
 
-  async create(userId: number, dto: CreateWebhookDto): Promise<WebhookDetailRow> {
+  async create(
+    userId: number,
+    dto: CreateWebhookDto,
+  ): Promise<WebhookDetailRow> {
     this.validateCreate(dto);
     if (dto.notifyOnTrigger && dto.notifyChannelId) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
@@ -142,8 +142,7 @@ export class WebhooksService {
       isActive: true,
       targetMode: dto.targetMode,
       serviceId: dto.targetMode === 'service' ? dto.serviceId : null,
-      serviceAction:
-        dto.targetMode === 'service' ? dto.serviceAction : null,
+      serviceAction: dto.targetMode === 'service' ? dto.serviceAction : null,
       volumeSource:
         dto.targetMode === 'service' &&
         dto.serviceAction === 'volume_backup' &&
@@ -158,7 +157,7 @@ export class WebhooksService {
           : null,
       notifyOnTrigger: dto.notifyOnTrigger === true,
       notifyChannelId:
-        dto.notifyOnTrigger === true ? dto.notifyChannelId ?? null : null,
+        dto.notifyOnTrigger === true ? (dto.notifyChannelId ?? null) : null,
     });
     const saved = await this.webhookRepo.save(w);
     return this.toDetailRow(saved);

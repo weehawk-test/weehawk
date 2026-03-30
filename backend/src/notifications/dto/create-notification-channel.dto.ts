@@ -8,9 +8,12 @@ import {
 } from 'class-validator';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
 
-export const NOTIFICATION_CHANNEL_TYPES = Object.values(NotificationChannelType);
+export const NOTIFICATION_CHANNEL_TYPES = Object.values(
+  NotificationChannelType,
+);
 
-export type NotificationChannelTypeValue = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
+export type NotificationChannelTypeValue =
+  (typeof NOTIFICATION_CHANNEL_TYPES)[number];
 
 export class CreateNotificationChannelDto {
   @ApiProperty({ example: 'Production Alerts', maxLength: 200 })

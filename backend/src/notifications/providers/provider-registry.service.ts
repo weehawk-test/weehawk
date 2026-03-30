@@ -4,7 +4,10 @@ import { NotificationProvider } from './notification-provider.interface';
 
 @Injectable()
 export class ProviderRegistryService {
-  private readonly map = new Map<NotificationChannelType, NotificationProvider>();
+  private readonly map = new Map<
+    NotificationChannelType,
+    NotificationProvider
+  >();
 
   constructor(providers: NotificationProvider[]) {
     for (const p of providers) {
@@ -20,4 +23,3 @@ export class ProviderRegistryService {
     return p;
   }
 }
-

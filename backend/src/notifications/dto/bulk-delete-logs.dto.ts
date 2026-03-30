@@ -9,4 +9,3 @@ export class BulkDeleteLogsDto {
   @IsUUID('4', { each: true })
   ids!: string[];
 }
-

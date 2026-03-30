@@ -11,6 +11,9 @@ export interface NotificationProvider {
   preview(channelId: string): Promise<ChannelPreview>;
 
   /** Send a message using stored config. */
-  send(channelId: string, channelName: string, message: string): Promise<ProviderResult>;
+  send(
+    channelId: string,
+    channelName: string,
+    message: string,
+  ): Promise<ProviderResult>;
 }
-

@@ -11,7 +11,10 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import type { WebhookServiceAction, WebhookTargetMode } from '../entities/webhook.entity';
+import type {
+  WebhookServiceAction,
+  WebhookTargetMode,
+} from '../entities/webhook.entity';
 
 export class CreateWebhookDto {
   @ApiProperty({ example: 'CI redeploy' })
@@ -36,7 +39,9 @@ export class CreateWebhookDto {
   @Min(1)
   serviceId?: number;
 
-  @ApiPropertyOptional({ enum: ['redeploy', 'volume_backup', 'docker_command'] })
+  @ApiPropertyOptional({
+    enum: ['redeploy', 'volume_backup', 'docker_command'],
+  })
   @ValidateIf((o: CreateWebhookDto) => o.targetMode === 'service')
   @IsEnum(['redeploy', 'volume_backup', 'docker_command'] as const)
   serviceAction?: WebhookServiceAction;

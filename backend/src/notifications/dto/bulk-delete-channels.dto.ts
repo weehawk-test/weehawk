@@ -9,4 +9,3 @@ export class BulkDeleteChannelsDto {
   @IsUUID('4', { each: true })
   ids!: string[];
 }
-

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../auth/entities/user.entity';
@@ -19,7 +23,10 @@ export class UserService {
     return this.toProfileResponse(user);
   }
 
-  async updateProfile(email: string, dto: UpdateProfileRequestDto): Promise<UserProfileResponseDto> {
+  async updateProfile(
+    email: string,
+    dto: UpdateProfileRequestDto,
+  ): Promise<UserProfileResponseDto> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     user.firstName = dto.firstName;

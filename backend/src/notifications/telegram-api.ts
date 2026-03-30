@@ -24,6 +24,9 @@ export async function sendTelegramMessage(
   if (data.ok === true) return { ok: true };
   return {
     ok: false,
-    description: typeof data.description === 'string' ? data.description : 'Unknown Telegram error',
+    description:
+      typeof data.description === 'string'
+        ? data.description
+        : 'Unknown Telegram error',
   };
 }

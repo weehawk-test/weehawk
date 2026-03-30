@@ -10,4 +10,3 @@ export enum NotificationChannelType {
   NTFY = 'ntfy',
   PUSHOVER = 'pushover',
 }
-

@@ -15,5 +15,4 @@ export class UpdateProfileRequestDto {
   @MinLength(2)
   @MaxLength(50)
   lastName!: string;
-
 }

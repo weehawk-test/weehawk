@@ -13,7 +13,10 @@ import { User } from '../../auth/entities/user.entity';
 export type WebhookTargetMode = 'service' | 'notify_only';
 
 /** Action when targetMode is service */
-export type WebhookServiceAction = 'redeploy' | 'volume_backup' | 'docker_command';
+export type WebhookServiceAction =
+  | 'redeploy'
+  | 'volume_backup'
+  | 'docker_command';
 
 @Entity({ name: 'webhooks' })
 export class Webhook {
@@ -46,11 +49,21 @@ export class Webhook {
   @Column({ name: 'service_id', type: 'int', nullable: true })
   serviceId: number | null = null;
 
-  @Column({ name: 'service_action', type: 'varchar', length: 32, nullable: true })
+  @Column({
+    name: 'service_action',
+    type: 'varchar',
+    length: 32,
+    nullable: true,
+  })
   serviceAction: WebhookServiceAction | null = null;
 
   /** Named volume name (or compose volume source) for volume_backup */
-  @Column({ name: 'volume_source', type: 'varchar', length: 512, nullable: true })
+  @Column({
+    name: 'volume_source',
+    type: 'varchar',
+    length: 512,
+    nullable: true,
+  })
   volumeSource: string | null = null;
 
   /** Full docker CLI line; server enforces `docker` prefix */

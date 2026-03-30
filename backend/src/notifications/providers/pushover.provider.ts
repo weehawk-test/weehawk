@@ -16,7 +16,10 @@ export class PushoverProvider implements NotificationProvider {
     private readonly repo: Repository<NotificationPushover>,
   ) {}
 
-  async saveConfig(channelId: string, config: Record<string, unknown>): Promise<void> {
+  async saveConfig(
+    channelId: string,
+    config: Record<string, unknown>,
+  ): Promise<void> {
     await this.repo.save(
       this.repo.create({
         channelId,
@@ -36,13 +39,19 @@ export class PushoverProvider implements NotificationProvider {
     };
   }
 
-  async send(channelId: string, channelName: string, message: string): Promise<ProviderResult> {
+  async send(
+    channelId: string,
+    channelName: string,
+    message: string,
+  ): Promise<ProviderResult> {
     const row = await this.repo.findOne({ where: { channelId } });
-    if (!row) return { ok: false, description: 'Missing Pushover configuration' };
+    if (!row)
+      return { ok: false, description: 'Missing Pushover configuration' };
     const appToken = row.appToken.trim();
     const userKey = row.userKey.trim();
     const device = row.device?.trim() ?? '';
-    if (!appToken || !userKey) return { ok: false, description: 'Missing Pushover app token/user key' };
+    if (!appToken || !userKey)
+      return { ok: false, description: 'Missing Pushover app token/user key' };
     return postFormUrlEncoded('https://api.pushover.net/1/messages.json', {
       token: appToken,
       user: userKey,
@@ -52,4 +61,3 @@ export class PushoverProvider implements NotificationProvider {
     });
   }
 }
-

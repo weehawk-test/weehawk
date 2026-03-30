@@ -2,14 +2,6 @@ import { API_BASE } from "./api";
 import type { CreateServiceInput, Service, ServiceType } from "./schema";
 import { getServerApiBase } from "./server-api";
 
-const DEFAULT_DOCKER_CONFIG = `version: "3.8"
-services:
-  app:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-`;
-
 function nestErrorMessage(text: string, fallback: string): string {
   try {
     const j = JSON.parse(text) as { message?: string | string[] };
@@ -46,12 +38,17 @@ export function deriveAppNameFromServiceName(name: string): string {
   return s.replace(/--+/g, "-");
 }
 
-function composeTypeToApi(t: ServiceType): "COMPOSE" | "STACK" {
-  return t === "stack" ? "STACK" : "COMPOSE";
+function composeTypeToApi(t: ServiceType): "COMPOSE" | "STACK" | "DATABASES" {
+  if (t === "stack") return "STACK";
+  if (t === "databases") return "DATABASES";
+  return "COMPOSE";
 }
 
 function composeTypeFromApi(raw: string): ServiceType {
-  return String(raw).toUpperCase() === "STACK" ? "stack" : "docker-compose";
+  const u = String(raw).toUpperCase();
+  if (u === "STACK") return "stack";
+  if (u === "DATABASES") return "databases";
+  return "docker-compose";
 }
 
 export function mapApiServiceToService(row: unknown): Service {
@@ -107,17 +104,60 @@ export async function fetchService(id: string): Promise<Service> {
 }
 
 export async function createServiceApi(input: CreateServiceInput): Promise<Service> {
-  const dockerConfig = input.config?.trim() ? input.config : DEFAULT_DOCKER_CONFIG;
+  const { databaseEngine, postgres: _postgres, ...rest } = input;
+  let dockerConfig = rest.config?.trim() ? rest.config : "";
+  if (rest.type === "databases" && databaseEngine) {
+    dockerConfig = `# weehawk database service\n# engine: ${databaseEngine}\n`;
+  }
   const body = {
-    name: input.name,
-    appName: deriveAppNameFromServiceName(input.name),
-    composeType: composeTypeToApi(input.type),
-    description: input.description?.trim() || undefined,
+    name: rest.name,
+    appName: deriveAppNameFromServiceName(rest.name),
+    composeType: composeTypeToApi(rest.type),
+    description: rest.description?.trim() || undefined,
     dockerConfig,
-    projectId: Number(input.projectId),
+    projectId: Number(rest.projectId),
   };
   const res = await apiFetch("/services", {
     method: "POST",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
+/** Generate Postgres compose from form fields (database-type services, engine postgres). */
+export async function applyPostgresDatabaseApi(
+  id: string,
+  body: {
+    dbName: string;
+    user: string;
+    pass: string;
+    replicas?: number;
+    publishPort?: number;
+    image?: string;
+  },
+): Promise<Service> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/postgres`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
+/** Update Postgres stack YAML after creation: host port and/or replicas (`publishPort: null` unpublishes). */
+export async function updatePostgresStackApi(
+  id: string,
+  body: { publishPort?: number | null; replicas?: number },
+): Promise<Service> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/postgres/stack`, {
+    method: "PATCH",
     body: JSON.stringify(body),
   });
   const text = await res.text();

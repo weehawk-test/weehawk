@@ -1,4 +1,10 @@
-import { Column, Entity, JoinColumn, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { NotificationChannel } from './notification-channel.entity';
 
 @Entity({ name: 'notification_gotify' })
@@ -22,4 +28,3 @@ export class NotificationGotify {
   @Column({ type: 'int', default: 5 })
   priority!: number;
 }
-

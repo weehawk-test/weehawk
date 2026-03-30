@@ -1,4 +1,10 @@
-import { Column, Entity, JoinColumn, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { NotificationChannel } from './notification-channel.entity';
 
 @Entity({ name: 'notification_pushover' })
@@ -22,4 +28,3 @@ export class NotificationPushover {
   @Column({ type: 'varchar', length: 255, nullable: true })
   device!: string | null;
 }
-

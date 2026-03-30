@@ -16,7 +16,10 @@ export class StackProvider implements NotificationProvider {
     private readonly repo: Repository<NotificationStack>,
   ) {}
 
-  async saveConfig(channelId: string, config: Record<string, unknown>): Promise<void> {
+  async saveConfig(
+    channelId: string,
+    config: Record<string, unknown>,
+  ): Promise<void> {
     await this.repo.save(
       this.repo.create({
         channelId,
@@ -30,18 +33,28 @@ export class StackProvider implements NotificationProvider {
     const row = await this.repo.findOne({ where: { channelId } });
     const webhookUrl = row?.webhookUrl?.trim() ?? '';
     return {
-      credentialPreview: webhookUrl ? `webhook•••${webhookUrl.slice(-10)}` : 'not set',
+      credentialPreview: webhookUrl
+        ? `webhook•••${webhookUrl.slice(-10)}`
+        : 'not set',
       targetPreview: row?.project?.trim() || 'stack',
     };
   }
 
-  async send(channelId: string, channelName: string, message: string): Promise<ProviderResult> {
+  async send(
+    channelId: string,
+    channelName: string,
+    message: string,
+  ): Promise<ProviderResult> {
     const row = await this.repo.findOne({ where: { channelId } });
     if (!row) return { ok: false, description: 'Missing Stack configuration' };
     const webhookUrl = row.webhookUrl.trim();
     const project = row.project?.trim() ?? '';
-    if (!webhookUrl) return { ok: false, description: 'Missing Stack webhook URL' };
-    return postJson(webhookUrl, { message, channel: channelName, project: project || undefined });
+    if (!webhookUrl)
+      return { ok: false, description: 'Missing Stack webhook URL' };
+    return postJson(webhookUrl, {
+      message,
+      channel: channelName,
+      project: project || undefined,
+    });
   }
 }
-

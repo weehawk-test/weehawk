@@ -51,7 +51,10 @@ export class DockerMonitorGateway implements OnGatewayConnection {
     }
 
     const intervalRaw = Number(url.searchParams.get('intervalMs') ?? '2000');
-    const intervalMs = Math.min(10_000, Math.max(500, Math.floor(intervalRaw) || 2000));
+    const intervalMs = Math.min(
+      10_000,
+      Math.max(500, Math.floor(intervalRaw) || 2000),
+    );
     const page = Math.max(1, Number(url.searchParams.get('page') ?? '1') || 1);
     const pageSize = Math.min(
       100,
@@ -68,7 +71,9 @@ export class DockerMonitorGateway implements OnGatewayConnection {
       try {
         const rows = await this.dockerService.getSystemStats();
         if (disposed || client.readyState !== 1) return;
-        client.send(JSON.stringify({ type: 'stats', at: Date.now(), data: rows }));
+        client.send(
+          JSON.stringify({ type: 'stats', at: Date.now(), data: rows }),
+        );
       } catch (e) {
         if (disposed || client.readyState !== 1) return;
         const msg = e instanceof Error ? e.message : String(e);
@@ -116,7 +121,11 @@ export class DockerMonitorGateway implements OnGatewayConnection {
             includeSizes,
           );
         } else if (topic === 'secrets.paged') {
-          data = await this.dockerSecretsService.findAllPaged(page, pageSize, q);
+          data = await this.dockerSecretsService.findAllPaged(
+            page,
+            pageSize,
+            q,
+          );
         } else {
           return;
         }
@@ -148,4 +157,3 @@ export class DockerMonitorGateway implements OnGatewayConnection {
     });
   }
 }
-

@@ -54,16 +54,30 @@ export class NotificationsController {
 
   @Get('channels/paged')
   listChannelsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
-    return this.notificationsService.listChannelsPaged(this.userId(req), q.page, q.pageSize, q.q);
+    return this.notificationsService.listChannelsPaged(
+      this.userId(req),
+      q.page,
+      q.pageSize,
+      q.q,
+    );
   }
 
   @Post('channels/bulk-delete')
-  async bulkDeleteChannels(@Req() req: AuthedReq, @Body() dto: BulkDeleteChannelsDto) {
-    return this.notificationsService.bulkDeleteChannels(this.userId(req), dto.ids);
+  async bulkDeleteChannels(
+    @Req() req: AuthedReq,
+    @Body() dto: BulkDeleteChannelsDto,
+  ) {
+    return this.notificationsService.bulkDeleteChannels(
+      this.userId(req),
+      dto.ids,
+    );
   }
 
   @Post('test-credentials')
-  testCredentials(@Req() req: AuthedReq, @Body() dto: TestTelegramCredentialsDto) {
+  testCredentials(
+    @Req() req: AuthedReq,
+    @Body() dto: TestTelegramCredentialsDto,
+  ) {
     return this.notificationsService.testTelegramCredentials(
       this.userId(req),
       dto.botToken,
@@ -99,10 +113,7 @@ export class NotificationsController {
   }
 
   @Post('channels/:id/test')
-  testChannel(
-    @Req() req: AuthedReq,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  testChannel(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
     return this.notificationsService.testChannel(this.userId(req), id);
   }
 
@@ -113,11 +124,19 @@ export class NotificationsController {
 
   @Get('logs/paged')
   listLogsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
-    return this.notificationsService.listLogsPaged(this.userId(req), q.page, q.pageSize, q.q);
+    return this.notificationsService.listLogsPaged(
+      this.userId(req),
+      q.page,
+      q.pageSize,
+      q.q,
+    );
   }
 
   @Delete('logs/:id')
-  async deleteLog(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
+  async deleteLog(
+    @Req() req: AuthedReq,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     await this.notificationsService.deleteLog(this.userId(req), id);
     return { ok: true };
   }

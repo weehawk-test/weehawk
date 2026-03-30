@@ -17,7 +17,10 @@ export class TelegramProvider implements NotificationProvider {
     private readonly repo: Repository<NotificationTelegram>,
   ) {}
 
-  async saveConfig(channelId: string, config: Record<string, unknown>): Promise<void> {
+  async saveConfig(
+    channelId: string,
+    config: Record<string, unknown>,
+  ): Promise<void> {
     const token = readString(config, 'token');
     const target = readString(config, 'target');
     await this.repo.save(
@@ -39,7 +42,11 @@ export class TelegramProvider implements NotificationProvider {
     };
   }
 
-  async send(channelId: string, _channelName: string, message: string): Promise<ProviderResult> {
+  async send(
+    channelId: string,
+    _channelName: string,
+    message: string,
+  ): Promise<ProviderResult> {
     const row = await this.repo.findOne({ where: { channelId } });
     const token = row?.token?.trim() ?? '';
     const target = row?.target?.trim() ?? '';
@@ -49,4 +56,3 @@ export class TelegramProvider implements NotificationProvider {
     return sendTelegramMessage(token, target, message);
   }
 }
-

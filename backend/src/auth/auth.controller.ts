@@ -7,13 +7,10 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import type { Response, Request } from 'express';
 
-
 @ApiTags('Auth')
 @Controller('/api/auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
 
   private readCookie(req: Request, key: string): string | undefined {
     const raw = req.headers.cookie ?? '';

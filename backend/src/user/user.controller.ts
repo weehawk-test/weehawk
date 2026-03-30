@@ -18,12 +18,12 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('/api/user')
 export class UserController {
-  constructor(
-    private readonly userService: UserService,
-  ) {}
+  constructor(private readonly userService: UserService) {}
 
   @Get('/profile')
-  getProfile(@Req() req: { user?: { email: string } }): Promise<UserProfileResponseDto> {
+  getProfile(
+    @Req() req: { user?: { email: string } },
+  ): Promise<UserProfileResponseDto> {
     const email = req.user?.email;
     if (!email) throw new UnauthorizedException();
     return this.userService.getProfile(email);

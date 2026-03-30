@@ -19,7 +19,11 @@ import { TokenModule } from '../token/token.module';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET', 'change-me-in-production'),
         signOptions: {
-          expiresIn: config.get<string>('JWT_EXP', '7d') as `${number}d` | `${number}h` | `${number}m` | `${number}s`,
+          expiresIn: config.get<string>('JWT_EXP', '7d') as
+            | `${number}d`
+            | `${number}h`
+            | `${number}m`
+            | `${number}s`,
         },
       }),
     }),

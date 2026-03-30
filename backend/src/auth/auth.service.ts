@@ -36,7 +36,9 @@ export class AuthService {
         'Registration is only allowed for the first account. Please sign in.',
       );
     }
-    if (await this.userRepo.exists({ where: { email: dto.email.toLowerCase() } })) {
+    if (
+      await this.userRepo.exists({ where: { email: dto.email.toLowerCase() } })
+    ) {
       throw new ConflictException('Email already in use: ' + dto.email);
     }
     const hash = await bcrypt.hash(dto.password, 10);
@@ -51,12 +53,15 @@ export class AuthService {
     });
     const saved = await this.userRepo.save(user);
     const accessToken = this.generateAccessToken(saved);
-    const refreshToken = await this.refreshTokenService.createRefreshToken(saved);
+    const refreshToken =
+      await this.refreshTokenService.createRefreshToken(saved);
     return this.buildAuthResponse(saved, accessToken, refreshToken.token);
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
-    const user = await this.userRepo.findOne({ where: { email: dto.email.toLowerCase() } });
+    const user = await this.userRepo.findOne({
+      where: { email: dto.email.toLowerCase() },
+    });
     if (!user) throw new UnauthorizedException('Invalid email or password');
 
     const match = await bcrypt.compare(dto.password, user.passwordHash);
@@ -66,12 +71,14 @@ export class AuthService {
     await this.userRepo.save(user);
 
     const accessToken = this.generateAccessToken(user);
-    const refreshToken = await this.refreshTokenService.createRefreshToken(user);
+    const refreshToken =
+      await this.refreshTokenService.createRefreshToken(user);
     return this.buildAuthResponse(user, accessToken, refreshToken.token);
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
-    const rt = await this.refreshTokenService.validateRefreshToken(refreshToken);
+    const rt =
+      await this.refreshTokenService.validateRefreshToken(refreshToken);
     const user = rt.user;
     const accessToken = this.generateAccessToken(user);
     const newRt = await this.refreshTokenService.createRefreshToken(user);
@@ -80,7 +87,9 @@ export class AuthService {
 
   async logout(refreshToken: string, email?: string): Promise<void> {
     if (email) {
-      const user = await this.userRepo.findOne({ where: { email: email.toLowerCase() } });
+      const user = await this.userRepo.findOne({
+        where: { email: email.toLowerCase() },
+      });
       if (user) {
         if (this.refreshTokenService.isMultipleDevicesAllowed()) {
           await this.refreshTokenService.deleteByToken(refreshToken);
@@ -100,7 +109,11 @@ export class AuthService {
     );
   }
 
-  private buildAuthResponse(user: User, accessToken: string, refreshToken: string): AuthResponseDto {
+  private buildAuthResponse(
+    user: User,
+    accessToken: string,
+    refreshToken: string,
+  ): AuthResponseDto {
     return {
       accessToken,
       refreshToken,

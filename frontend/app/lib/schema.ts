@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { databaseEngineIdSchema } from "./database-engines";
 
 // ─── Projects ────────────────────────────────────────────────────────────────
 
@@ -20,7 +21,7 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
 // ─── Services ────────────────────────────────────────────────────────────────
 
-export const serviceTypeSchema = z.enum(["docker-compose", "stack"]);
+export const serviceTypeSchema = z.enum(["docker-compose", "stack", "databases"]);
 export type ServiceType = z.infer<typeof serviceTypeSchema>;
 
 export const serviceSchema = z.object({
@@ -41,13 +42,82 @@ export const serviceSchema = z.object({
   appName: z.string().optional(),
 });
 export type Service = z.infer<typeof serviceSchema>;
-export const createServiceSchema = z.object({
-  name: z.string().min(1, "Name is required").max(50),
-  projectId: z.string().min(1),
-  type: serviceTypeSchema,
-  description: z.string().optional(),
-  config: z.string().default(""),
+const POSTGRES_IMAGE_REF = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,127}$/;
+
+const postgresCreateFieldsSchema = z.object({
+  dbName: z.string().default(""),
+  user: z.string().default(""),
+  pass: z.string().default(""),
+  replicas: z.coerce.number().int().min(1).max(10).default(1),
+  /** Empty = do not publish a host port */
+  publishPort: z.string().default(""),
+  /** Docker image ref; empty = server default */
+  image: z.string().default(""),
 });
+
+export const createServiceSchema = z
+  .object({
+    name: z.string().min(1, "Name is required").max(50),
+    projectId: z.string().min(1),
+    type: serviceTypeSchema,
+    description: z.string().optional(),
+    config: z.string().default(""),
+    databaseEngine: databaseEngineIdSchema.optional(),
+    /** Required when type is databases and engine is postgres (set at service creation). */
+    postgres: postgresCreateFieldsSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.type === "databases" && !data.databaseEngine) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a database engine.",
+        path: ["databaseEngine"],
+      });
+    }
+    if (data.type === "databases" && data.databaseEngine === "postgres") {
+      const p = data.postgres;
+      if (!p?.dbName?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Database name is required.",
+          path: ["postgres", "dbName"],
+        });
+      }
+      if (!p?.user?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Database user is required.",
+          path: ["postgres", "user"],
+        });
+      }
+      if (!p?.pass?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Database password is required.",
+          path: ["postgres", "pass"],
+        });
+      }
+      const pp = p?.publishPort?.trim();
+      if (pp) {
+        const n = Number(pp);
+        if (!Number.isInteger(n) || n < 1 || n > 65535) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Host port must be an integer from 1 to 65535 (or leave empty).",
+            path: ["postgres", "publishPort"],
+          });
+        }
+      }
+      const im = p?.image?.trim();
+      if (im && !POSTGRES_IMAGE_REF.test(im)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Invalid image reference (use letters, digits, ._/:@- only).",
+          path: ["postgres", "image"],
+        });
+      }
+    }
+  });
 export type CreateServiceInput = z.infer<typeof createServiceSchema>;
 
 // ─── Deploy Logs ─────────────────────────────────────────────────────────────

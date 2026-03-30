@@ -23,7 +23,10 @@ function resolveCorsOrigin(corsEnv: string | undefined): boolean | string[] {
   if (lower === '*' || lower === 'true') {
     return true;
   }
-  const list = raw.split(',').map((o) => o.trim()).filter(Boolean);
+  const list = raw
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
   return list.length > 0 ? list : false;
 }
 
@@ -37,7 +40,13 @@ async function bootstrap() {
     origin,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+    ],
     exposedHeaders: ['Content-Disposition'],
   });
 

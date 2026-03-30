@@ -1,4 +1,10 @@
-import { Column, Entity, JoinColumn, OneToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  OneToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { NotificationChannel } from './notification-channel.entity';
 
 @Entity({ name: 'notification_email' })
@@ -31,4 +37,3 @@ export class NotificationEmail {
   @Column({ name: 'to_addresses_json', type: 'text' })
   toAddressesJson!: string;
 }
-

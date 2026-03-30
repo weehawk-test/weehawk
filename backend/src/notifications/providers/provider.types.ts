@@ -12,4 +12,3 @@ export type ProviderContext = {
   channel: NotificationChannel;
   type: NotificationChannelType;
 };
-

@@ -1,5 +1,11 @@
-import { ApiProperty } from "@nestjs/swagger";
-import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
+import { ApiProperty } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateProjectDto {
   @ApiProperty({ example: 'weehawk' })
@@ -8,7 +14,10 @@ export class CreateProjectDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty({ example: 'platform for managing docker easily', required: false })
+  @ApiProperty({
+    example: 'platform for managing docker easily',
+    required: false,
+  })
   @IsString()
   @IsOptional()
   description?: string;

@@ -12,12 +12,16 @@ const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 @Injectable()
 export class RefreshTokenService {
   constructor(
-    @InjectRepository(RefreshToken) private readonly repo: Repository<RefreshToken>,
+    @InjectRepository(RefreshToken)
+    private readonly repo: Repository<RefreshToken>,
     private readonly config: ConfigService,
   ) {}
 
   private allowMultipleDevices(): boolean {
-    return this.config.get<string>('APP_AUTH_ALLOW_MULTIPLE_DEVICES', 'true') === 'true';
+    return (
+      this.config.get<string>('APP_AUTH_ALLOW_MULTIPLE_DEVICES', 'true') ===
+      'true'
+    );
   }
 
   async createRefreshToken(user: User): Promise<RefreshToken> {
@@ -37,7 +41,10 @@ export class RefreshTokenService {
   }
 
   async validateRefreshToken(token: string): Promise<RefreshToken> {
-    const rt = await this.repo.findOne({ where: { token }, relations: { user: true } });
+    const rt = await this.repo.findOne({
+      where: { token },
+      relations: { user: true },
+    });
     if (!rt) throw new UnauthorizedException('Invalid refresh token');
     if (rt.isExpired()) {
       await this.repo.delete({ id: rt.id });

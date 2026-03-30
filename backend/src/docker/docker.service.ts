@@ -137,9 +137,11 @@ export class DockerService {
    * Cache the (expensive) `docker system df -v` parsed map briefly.
    * This command is noticeably slower than `docker volume ls`.
    */
-  private volumeSizeCache:
-    | { at: number; ttlMs: number; map: Map<string, string> }
-    | null = null;
+  private volumeSizeCache: {
+    at: number;
+    ttlMs: number;
+    map: Map<string, string>;
+  } | null = null;
 
   private clampPage(page: number): number {
     return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
@@ -263,8 +265,11 @@ export class DockerService {
     const start = (page - 1) * pageSize;
     const pageNames = filteredNames.slice(start, start + pageSize);
 
-    const sizeByName = includeSizes ? await this.getVolumeSizesCached() : new Map<string, string>();
-    const inspected = pageNames.length > 0 ? await this.inspectVolumes(pageNames) : [];
+    const sizeByName = includeSizes
+      ? await this.getVolumeSizesCached()
+      : new Map<string, string>();
+    const inspected =
+      pageNames.length > 0 ? await this.inspectVolumes(pageNames) : [];
 
     const merged = inspected.map((v) => ({
       Name: v.Name,
@@ -301,7 +306,10 @@ export class DockerService {
   private async getVolumeSizesCached(): Promise<Map<string, string>> {
     const ttlMs = 30_000;
     const now = Date.now();
-    if (this.volumeSizeCache && now - this.volumeSizeCache.at < this.volumeSizeCache.ttlMs) {
+    if (
+      this.volumeSizeCache &&
+      now - this.volumeSizeCache.at < this.volumeSizeCache.ttlMs
+    ) {
       return this.volumeSizeCache.map;
     }
     try {
@@ -328,7 +336,9 @@ export class DockerService {
         'inspect',
         ...batch,
       ]);
-      const parsed = JSON.parse(inspectOut) as VolumeInspectRow | VolumeInspectRow[];
+      const parsed = JSON.parse(inspectOut) as
+        | VolumeInspectRow
+        | VolumeInspectRow[];
       const arr = Array.isArray(parsed) ? parsed : [parsed];
       rows.push(...arr);
     }
@@ -427,10 +437,14 @@ export class DockerService {
   async removeImage(ref: string) {
     const imageRef = assertNonEmptyParam(ref, 'Image reference');
     try {
-      const { stdout, stderr } = await execFileAsync('docker', ['rmi', '-f', imageRef], {
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const { stdout, stderr } = await execFileAsync(
+        'docker',
+        ['rmi', '-f', imageRef],
+        {
+          encoding: 'utf8',
+          maxBuffer: 10 * 1024 * 1024,
+        },
+      );
       const combined = `${stdout ?? ''}${stderr ?? ''}`.trim();
       // Defensive: treat daemon errors in output as failure even if the CLI exited 0 (rare).
       if (
@@ -439,7 +453,8 @@ export class DockerService {
         )
       ) {
         throw new InternalServerErrorException(
-          combined || 'Docker refused to remove this image (it may be in use by a container).',
+          combined ||
+            'Docker refused to remove this image (it may be in use by a container).',
         );
       }
       return { success: true };

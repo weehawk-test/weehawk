@@ -17,12 +17,20 @@ export class EmailProvider implements NotificationProvider {
     private readonly repo: Repository<NotificationEmail>,
   ) {}
 
-  async saveConfig(channelId: string, config: Record<string, unknown>): Promise<void> {
+  async saveConfig(
+    channelId: string,
+    config: Record<string, unknown>,
+  ): Promise<void> {
     const toRaw = config['toAddresses'];
     const toAddresses = Array.isArray(toRaw)
-      ? toRaw.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      ? toRaw.filter(
+          (v): v is string => typeof v === 'string' && v.trim().length > 0,
+        )
       : [];
-    const smtpPort = Number.parseInt(readString(config, 'smtpPort') || '587', 10);
+    const smtpPort = Number.parseInt(
+      readString(config, 'smtpPort') || '587',
+      10,
+    );
 
     await this.repo.save(
       this.repo.create({
@@ -47,7 +55,11 @@ export class EmailProvider implements NotificationProvider {
     };
   }
 
-  async send(channelId: string, channelName: string, message: string): Promise<ProviderResult> {
+  async send(
+    channelId: string,
+    channelName: string,
+    message: string,
+  ): Promise<ProviderResult> {
     const row = await this.repo.findOne({ where: { channelId } });
     if (!row) return { ok: false, description: 'Missing email configuration' };
 
@@ -58,10 +70,19 @@ export class EmailProvider implements NotificationProvider {
     const fromAddress = row.fromAddress.trim();
     const toRaw = row.toAddressesJson ? JSON.parse(row.toAddressesJson) : [];
     const toAddresses = Array.isArray(toRaw)
-      ? toRaw.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      ? toRaw.filter(
+          (v): v is string => typeof v === 'string' && v.trim().length > 0,
+        )
       : [];
 
-    if (!smtpServer || !smtpPort || !username || !password || !fromAddress || toAddresses.length === 0) {
+    if (
+      !smtpServer ||
+      !smtpPort ||
+      !username ||
+      !password ||
+      !fromAddress ||
+      toAddresses.length === 0
+    ) {
       return { ok: false, description: 'Missing SMTP configuration fields' };
     }
 
@@ -81,8 +102,10 @@ export class EmailProvider implements NotificationProvider {
       });
       return { ok: true };
     } catch (e) {
-      return { ok: false, description: e instanceof Error ? e.message : 'SMTP send failed' };
+      return {
+        ok: false,
+        description: e instanceof Error ? e.message : 'SMTP send failed',
+      };
     }
   }
 }
-

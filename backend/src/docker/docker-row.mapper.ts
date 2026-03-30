@@ -81,7 +81,8 @@ export function mapDockerPsRow(
 function normalizeImageIdFull(raw: string): string {
   const t = raw.trim();
   if (!t) return '';
-  if (/^sha256:[a-f0-9]{64}$/i.test(t)) return `sha256:${t.slice(7).toLowerCase()}`;
+  if (/^sha256:[a-f0-9]{64}$/i.test(t))
+    return `sha256:${t.slice(7).toLowerCase()}`;
   if (/^[a-f0-9]{64}$/i.test(t)) return `sha256:${t.toLowerCase()}`;
   return t;
 }
@@ -136,9 +137,7 @@ export function mapDockerVolumeRow(
   };
 }
 
-export function mapRawRowsToContainers(
-  raw: unknown[],
-): DockerContainerDto[] {
+export function mapRawRowsToContainers(raw: unknown[]): DockerContainerDto[] {
   return raw.map((item, i) =>
     mapDockerPsRow(item as Record<string, unknown>, i),
   );
@@ -160,7 +159,7 @@ function parseBoolish(v: unknown): boolean {
   if (v === true || v === 1) return true;
   if (v === false || v === 0) return false;
   const s = String(v).trim().toLowerCase();
-  return s === "true" || s === "1" || s === "yes";
+  return s === 'true' || s === '1' || s === 'yes';
 }
 
 function normalizeNetworkCreatedAt(raw: string): string {
@@ -177,9 +176,9 @@ function normalizeNetworkCreatedAt(raw: string): string {
 }
 
 function shortNetworkId(full: string): string {
-  const t = full.replace(/^sha256:/i, "").trim();
+  const t = full.replace(/^sha256:/i, '').trim();
   if (t.length >= 12) return t.slice(0, 12);
-  return t || "—";
+  return t || '—';
 }
 
 export function mapDockerNetworkRow(

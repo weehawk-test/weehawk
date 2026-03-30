@@ -19,6 +19,14 @@ import type {
 
 const execAsync = promisify(exec);
 
+/** Swarm stack deploy path (same CLI as explicit Stack services + database-generated YAML). */
+function isSwarmStackService(service: Service): boolean {
+  return (
+    service.composeType === composeType.STACK ||
+    service.composeType === composeType.DATABASES
+  );
+}
+
 @Injectable()
 export class ExecutorService {
   constructor(
@@ -53,6 +61,32 @@ export class ExecutorService {
     return { output: chunks.join('\n'), stderr: combinedStderr };
   }
 
+  /**
+   * Swarm service names are `stackname_servicekey`, not the stack name alone.
+   * Lists `docker stack services` and scales each to 0.
+   */
+  private async scaleAllStackServicesToZero(stackName: string): Promise<void> {
+    let stdout: string;
+    try {
+      const r = await execAsync(
+        `docker stack services ${stackName} --format "{{.Name}}"`,
+        { maxBuffer: 10 * 1024 * 1024 },
+      );
+      stdout = r.stdout;
+    } catch {
+      return;
+    }
+    const names = stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    for (const name of names) {
+      await execAsync(`docker service scale ${name}=0`, {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    }
+  }
+
   private stderrIndicatesDockerFailure(stderr: string): boolean {
     return (
       /level=(warning|error|fatal)/i.test(stderr) ||
@@ -67,12 +101,25 @@ export class ExecutorService {
    */
   async execute(id: number, mode: 'deploy' | 'reload' | 'redeploy' = 'deploy') {
     const service = await this.servicesService.findOne(id);
+    const rawConfig = (service.dockerConfig || '').trim();
+    if (!rawConfig) {
+      if (service.composeType === composeType.DATABASES) {
+        return {
+          success: false,
+          output:
+            'No stack file yet. Configure Postgres (or paste YAML), save, then deploy.',
+        };
+      }
+    }
     const deployDir = path.join(process.cwd(), 'deployments', service.appName);
 
     await fs.mkdir(deployDir, { recursive: true });
     const composeFile = path.join(deployDir, 'docker-compose.yml');
 
-    const finalConfig = service.dockerConfig.replace(/\${APP_NAME}/g, service.appName);
+    const finalConfig = service.dockerConfig.replace(
+      /\${APP_NAME}/g,
+      service.appName,
+    );
     await fs.writeFile(composeFile, finalConfig);
 
     const envVars = this.parseEnv(service.env || '');
@@ -82,14 +129,16 @@ export class ExecutorService {
     };
 
     try {
-      if (service.composeType === composeType.STACK) {
+      if (isSwarmStackService(service)) {
         const command = `docker stack deploy -c "${composeFile}" ${service.appName}`;
         const { stdout, stderr } = await execAsync(command, execOpts);
         let out = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
         let err = stderr ?? '';
 
         if (mode === 'redeploy') {
-          const forced = await this.forceRollingRestartStackServices(service.appName);
+          const forced = await this.forceRollingRestartStackServices(
+            service.appName,
+          );
           out = [out, forced.output].filter(Boolean).join('\n');
           err += forced.stderr;
         }
@@ -122,7 +171,9 @@ export class ExecutorService {
       if (mode === 'deploy') {
         await this.removeDeploymentFolder(deployDir);
       }
-      throw new InternalServerErrorException(`Deployment failed: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Deployment failed: ${error.message}`,
+      );
     }
   }
 
@@ -133,11 +184,14 @@ export class ExecutorService {
     const composeFile = path.join(deployDir, 'docker-compose.yml');
 
     await fs.mkdir(deployDir, { recursive: true });
-    const finalConfig = service.dockerConfig.replace(/\${APP_NAME}/g, service.appName);
+    const finalConfig = service.dockerConfig.replace(
+      /\${APP_NAME}/g,
+      service.appName,
+    );
     await fs.writeFile(composeFile, finalConfig);
     const envVars = this.parseEnv(service.env || '');
 
-    if (service.composeType === composeType.STACK) {
+    if (isSwarmStackService(service)) {
       return await this.execute(id, 'reload');
     }
 
@@ -158,7 +212,9 @@ export class ExecutorService {
         const outUp = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
         return { success: true, output: outUp };
       } catch (error) {
-        throw new InternalServerErrorException(`Start failed: ${error.message}`);
+        throw new InternalServerErrorException(
+          `Start failed: ${error.message}`,
+        );
       }
     }
   }
@@ -169,8 +225,10 @@ export class ExecutorService {
     const composeFile = path.join(deployDir, 'docker-compose.yml');
 
     try {
-      if (service.composeType === composeType.STACK) {
-        const { stdout } = await execAsync(`docker stack services ${service.appName} --format "{{.Replicas}}"`);
+      if (isSwarmStackService(service)) {
+        const { stdout } = await execAsync(
+          `docker stack services ${service.appName} --format "{{.Replicas}}"`,
+        );
         const running = stdout.split(/\r?\n/).some((line) => {
           const m = line.trim().match(/^(\d+)\//);
           return m !== null && parseInt(m[1], 10) > 0;
@@ -178,7 +236,10 @@ export class ExecutorService {
         return { running };
       }
 
-      const exists = await fs.access(composeFile).then(() => true).catch(() => false);
+      const exists = await fs
+        .access(composeFile)
+        .then(() => true)
+        .catch(() => false);
       if (!exists) return { running: false };
 
       const { stdout } = await execAsync(
@@ -198,7 +259,8 @@ export class ExecutorService {
     for (const line of lines) {
       const t = line.trim();
       if (!inServices) {
-        if (t === 'services:' || /^\s*services:\s*$/.test(line)) inServices = true;
+        if (t === 'services:' || /^\s*services:\s*$/.test(line))
+          inServices = true;
         continue;
       }
       if (!t || t.startsWith('#')) continue;
@@ -230,14 +292,11 @@ export class ExecutorService {
     const key = this.firstComposeServiceName(service.dockerConfig || '');
 
     try {
-      if (service.composeType === composeType.STACK) {
+      if (isSwarmStackService(service)) {
         const { stdout } = await execAsync(
           `docker ps -q -f "name=${service.appName}_${key}" -f "status=running"`,
         );
-        const cid = stdout
-          .trim()
-          .split(/\r?\n/)
-          .filter(Boolean)[0];
+        const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
         if (!cid) {
           return {
             error:
@@ -247,10 +306,14 @@ export class ExecutorService {
         return { id: cid };
       }
 
-      const exists = await fs.access(composeFile).then(() => true).catch(() => false);
+      const exists = await fs
+        .access(composeFile)
+        .then(() => true)
+        .catch(() => false);
       if (!exists) {
         return {
-          error: 'Compose file not found on the server. Deploy this service first.',
+          error:
+            'Compose file not found on the server. Deploy this service first.',
         };
       }
 
@@ -258,10 +321,7 @@ export class ExecutorService {
         `docker compose -f "${composeFile}" -p ${service.appName} ps -q --status running ${key}`,
         { cwd: deployDir },
       );
-      const cid = stdout
-        .trim()
-        .split(/\r?\n/)
-        .filter(Boolean)[0];
+      const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
       if (!cid) {
         return {
           error:
@@ -281,21 +341,31 @@ export class ExecutorService {
     const composeFile = path.join(deployDir, 'docker-compose.yml');
 
     try {
-      if (service.composeType === composeType.STACK) {
+      if (isSwarmStackService(service)) {
         await execAsync(`docker stack rm ${service.appName}`);
         console.log(`Stack ${service.appName} removed from Swarm.`);
       } else {
-        const fileExists = await fs.access(composeFile).then(() => true).catch(() => false);
+        const fileExists = await fs
+          .access(composeFile)
+          .then(() => true)
+          .catch(() => false);
         if (fileExists) {
-          await execAsync(`docker compose -f ${composeFile} -p ${service.appName} down -v`, { 
-            cwd: deployDir,
-            timeout: 30000
-          });
-          console.log(`Compose project ${service.appName} stopped and volumes removed.`);
+          await execAsync(
+            `docker compose -f ${composeFile} -p ${service.appName} down -v`,
+            {
+              cwd: deployDir,
+              timeout: 30000,
+            },
+          );
+          console.log(
+            `Compose project ${service.appName} stopped and volumes removed.`,
+          );
         }
       }
     } catch (error) {
-      console.error(`Clean stop failed, attempting force removal: ${error.message}`);
+      console.error(
+        `Clean stop failed, attempting force removal: ${error.message}`,
+      );
       await execAsync(`docker rm -f ${service.appName}`).catch(() => {});
     } finally {
       await this.removeDeploymentFolder(deployDir);
@@ -440,7 +510,7 @@ export class ExecutorService {
     const envVars: Record<string, string> = {};
     if (!envString) return envVars;
 
-    envString.split('\n').forEach(line => {
+    envString.split('\n').forEach((line) => {
       const trimmedLine = line.trim();
       if (trimmedLine && !trimmedLine.startsWith('#')) {
         const [key, ...valueParts] = trimmedLine.split('=');
@@ -473,7 +543,9 @@ export class ExecutorService {
         `docker run --rm -v "${safe}:/v:ro" -v "${hostMount}:/out" alpine tar czf "/out/${archiveBasename}" -C /v .`,
         { maxBuffer: 20 * 1024 * 1024, timeout: 600_000 },
       );
-      const out = [stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
+      const out = [stdout, stderr]
+        .filter((s) => s && String(s).trim())
+        .join('\n');
       const err = stderr ?? '';
       const failed = this.stderrIndicatesDockerFailure(err);
       return {
@@ -508,7 +580,8 @@ export class ExecutorService {
     if (!/^docker\s+/i.test(cmd)) {
       return {
         success: false,
-        output: 'Command must be a docker CLI invocation (e.g. docker ps, docker compose …).',
+        output:
+          'Command must be a docker CLI invocation (e.g. docker ps, docker compose …).',
       };
     }
     if (/[;&|`$\n\r]/.test(cmd)) {
@@ -526,7 +599,9 @@ export class ExecutorService {
         maxBuffer: 10 * 1024 * 1024,
         timeout: 180_000,
       });
-      const out = [stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
+      const out = [stdout, stderr]
+        .filter((s) => s && String(s).trim())
+        .join('\n');
       const err = stderr ?? '';
       const failed = this.stderrIndicatesDockerFailure(err);
       return { success: !failed, output: out || '(no output)' };
@@ -541,16 +616,20 @@ export class ExecutorService {
     const deployDir = path.join(process.cwd(), 'deployments', service.appName);
 
     try {
-      if (service.composeType === composeType.STACK) {
-        await execAsync(`docker service scale ${service.appName}=0`);
-        return { success: true, message: 'Service scaled to 0 (Stopped)' };
+      if (isSwarmStackService(service)) {
+        await this.scaleAllStackServicesToZero(service.appName);
+        return { success: true, message: 'Stack services scaled to 0 (Stopped)' };
       } else {
         const composeFile = path.join(deployDir, 'docker-compose.yml');
-        await execAsync(`docker compose -f "${composeFile}" -p ${service.appName} stop`);
+        await execAsync(
+          `docker compose -f "${composeFile}" -p ${service.appName} stop`,
+        );
         return { success: true, message: 'Containers stopped' };
       }
     } catch (error) {
-      throw new InternalServerErrorException(`Shutdown failed: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Shutdown failed: ${error.message}`,
+      );
     }
   }
 }

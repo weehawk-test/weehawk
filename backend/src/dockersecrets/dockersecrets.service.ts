@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import {
@@ -33,7 +37,9 @@ export class DockerSecretsService {
       const child = spawn('docker', ['secret', 'create', name, '-']);
 
       if (!child.stdin) {
-        return reject(new InternalServerErrorException('Stdin pipe not available'));
+        return reject(
+          new InternalServerErrorException('Stdin pipe not available'),
+        );
       }
 
       child.stdin.write(value);
@@ -51,9 +57,14 @@ export class DockerSecretsService {
 
   async findAll() {
     try {
-      const { stdout } = await execAsync('docker secret ls --format "{{json .}}"');
+      const { stdout } = await execAsync(
+        'docker secret ls --format "{{json .}}"',
+      );
       if (!stdout.trim()) return [];
-      return stdout.trim().split('\n').map((line) => JSON.parse(line));
+      return stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
     } catch (e) {
       throw new InternalServerErrorException('Docker Swarm mode is required');
     }
