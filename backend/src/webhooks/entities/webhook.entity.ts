@@ -9,14 +9,15 @@ import {
 } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
 
-/** service = run Docker action on a service; notify_only = only send Telegram if configured */
-export type WebhookTargetMode = 'service' | 'notify_only';
+/** service = run Docker action on a service */
+export type WebhookTargetMode = 'service';
 
 /** Action when targetMode is service */
 export type WebhookServiceAction =
   | 'redeploy'
   | 'volume_backup'
-  | 'docker_command';
+  | 'docker_command'
+  | 'no_action';
 
 @Entity({ name: 'webhooks' })
 export class Webhook {
@@ -75,6 +76,9 @@ export class Webhook {
 
   @Column({ name: 'notify_channel_id', type: 'uuid', nullable: true })
   notifyChannelId: string | null = null;
+
+  @Column({ name: 'notify_message', type: 'text', nullable: true })
+  notifyMessage: string | null = null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

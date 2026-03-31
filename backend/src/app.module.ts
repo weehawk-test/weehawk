@@ -9,6 +9,9 @@ import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { RegistryModule } from './registry/registry.module';
+import { S3Module } from './s3/s3.module';
+import { CronJobsModule } from './cron-jobs/cron-jobs.module';
 
 @Module({
   imports: [
@@ -37,6 +40,9 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     UserModule,
     NotificationsModule,
     WebhooksModule,
+    CronJobsModule,
+    RegistryModule,
+    S3Module,
   ],
   controllers: [],
   providers: [],

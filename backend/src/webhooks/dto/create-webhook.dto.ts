@@ -1,6 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsBoolean,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -29,21 +28,24 @@ export class CreateWebhookDto {
   @MaxLength(2000)
   description?: string;
 
-  @ApiProperty({ enum: ['service', 'notify_only'] })
-  @IsEnum(['service', 'notify_only'] as const)
+  @ApiProperty({ enum: ['service'] })
+  @IsEnum(['service'] as const)
   targetMode!: WebhookTargetMode;
 
   @ApiPropertyOptional()
-  @ValidateIf((o: CreateWebhookDto) => o.targetMode === 'service')
+  @ValidateIf(
+    (o: CreateWebhookDto) =>
+      o.targetMode === 'service' && o.serviceAction !== 'no_action',
+  )
   @IsInt()
   @Min(1)
   serviceId?: number;
 
   @ApiPropertyOptional({
-    enum: ['redeploy', 'volume_backup', 'docker_command'],
+    enum: ['redeploy', 'volume_backup', 'docker_command', 'no_action'],
   })
   @ValidateIf((o: CreateWebhookDto) => o.targetMode === 'service')
-  @IsEnum(['redeploy', 'volume_backup', 'docker_command'] as const)
+  @IsEnum(['redeploy', 'volume_backup', 'docker_command', 'no_action'] as const)
   serviceAction?: WebhookServiceAction;
 
   @ApiPropertyOptional()
@@ -66,13 +68,14 @@ export class CreateWebhookDto {
   @MaxLength(4000)
   dockerCommand?: string;
 
-  @ApiPropertyOptional({ default: false })
-  @IsOptional()
-  @IsBoolean()
-  notifyOnTrigger?: boolean;
-
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID('4')
   notifyChannelId?: string;
+
+  @ApiPropertyOptional({ example: 'Backup completed successfully.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  notifyMessage?: string;
 }

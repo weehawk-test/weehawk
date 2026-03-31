@@ -31,6 +31,7 @@ export type WebhookDetailRow = WebhookListRow & {
   volumeSource: string | null;
   dockerCommand: string | null;
   notifyChannelId: string | null;
+  notifyMessage: string | null;
   secretToken: string;
 };
 
@@ -46,9 +47,14 @@ export class WebhooksService {
 
   private validateCreate(dto: CreateWebhookDto): void {
     if (dto.targetMode === 'service') {
-      if (dto.serviceId == null || dto.serviceAction == null) {
+      if (dto.serviceAction == null) {
         throw new BadRequestException(
-          'Service webhooks require serviceId and serviceAction.',
+          'Service webhooks require serviceAction.',
+        );
+      }
+      if (dto.serviceAction !== 'no_action' && dto.serviceId == null) {
+        throw new BadRequestException(
+          'serviceId is required unless action is no_action.',
         );
       }
       if (dto.serviceAction === 'volume_backup' && !dto.volumeSource?.trim()) {
@@ -63,10 +69,11 @@ export class WebhooksService {
         throw new BadRequestException('dockerCommand is required.');
       }
     }
-    const notify = dto.notifyOnTrigger === true;
-    if (notify && !dto.notifyChannelId) {
+    const hasNotifyChannel = Boolean(dto.notifyChannelId?.trim());
+    const hasNotifyMessage = Boolean(dto.notifyMessage?.trim());
+    if (hasNotifyChannel !== hasNotifyMessage) {
       throw new BadRequestException(
-        'Select a Telegram notification channel when notify on trigger is enabled.',
+        'Provide both notifyChannelId and notifyMessage, or leave both empty.',
       );
     }
   }
@@ -82,13 +89,11 @@ export class WebhooksService {
   }
 
   private summaryLabel(w: Webhook): string {
-    if (w.targetMode === 'notify_only') {
-      return 'Notification only';
-    }
     const a = w.serviceAction ?? '—';
     if (a === 'redeploy') return 'Redeploy service';
     if (a === 'volume_backup') return `Backup volume: ${w.volumeSource ?? '—'}`;
     if (a === 'docker_command') return 'Custom docker command';
+    if (a === 'no_action') return 'No action (just notification)';
     return a;
   }
 
@@ -113,6 +118,7 @@ export class WebhooksService {
       volumeSource: w.volumeSource,
       dockerCommand: w.dockerCommand,
       notifyChannelId: w.notifyChannelId,
+      notifyMessage: w.notifyMessage,
       secretToken: w.secretToken,
     };
   }
@@ -122,7 +128,7 @@ export class WebhooksService {
     dto: CreateWebhookDto,
   ): Promise<WebhookDetailRow> {
     this.validateCreate(dto);
-    if (dto.notifyOnTrigger && dto.notifyChannelId) {
+    if (dto.notifyChannelId) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
     if (dto.targetMode === 'service' && dto.serviceId != null) {
@@ -141,7 +147,10 @@ export class WebhooksService {
       description: dto.description?.trim() ?? null,
       isActive: true,
       targetMode: dto.targetMode,
-      serviceId: dto.targetMode === 'service' ? dto.serviceId : null,
+      serviceId:
+        dto.targetMode === 'service' && dto.serviceAction !== 'no_action'
+          ? dto.serviceId
+          : null,
       serviceAction: dto.targetMode === 'service' ? dto.serviceAction : null,
       volumeSource:
         dto.targetMode === 'service' &&
@@ -155,9 +164,11 @@ export class WebhooksService {
         dto.dockerCommand
           ? dto.dockerCommand.trim()
           : null,
-      notifyOnTrigger: dto.notifyOnTrigger === true,
-      notifyChannelId:
-        dto.notifyOnTrigger === true ? (dto.notifyChannelId ?? null) : null,
+      notifyOnTrigger:
+        Boolean(dto.notifyChannelId?.trim()) &&
+        Boolean(dto.notifyMessage?.trim()),
+      notifyChannelId: dto.notifyChannelId?.trim() || null,
+      notifyMessage: dto.notifyMessage?.trim() || null,
     });
     const saved = await this.webhookRepo.save(w);
     return this.toDetailRow(saved);
@@ -190,19 +201,20 @@ export class WebhooksService {
       w.description = dto.description.trim() || null;
     }
     if (dto.isActive !== undefined) w.isActive = dto.isActive;
-    if (dto.notifyOnTrigger !== undefined) {
-      w.notifyOnTrigger = dto.notifyOnTrigger;
-      if (!dto.notifyOnTrigger) w.notifyChannelId = null;
-    }
     if (dto.notifyChannelId !== undefined) {
-      w.notifyChannelId = dto.notifyChannelId;
+      w.notifyChannelId = dto.notifyChannelId?.trim() || null;
     }
-    if (w.notifyOnTrigger && w.notifyChannelId) {
+    if (dto.notifyMessage !== undefined) {
+      w.notifyMessage = dto.notifyMessage?.trim() || null;
+    }
+    if (w.notifyChannelId && w.notifyMessage) {
+      w.notifyOnTrigger = true;
       await this.assertNotificationChannel(userId, w.notifyChannelId);
-    }
-    if (w.notifyOnTrigger && !w.notifyChannelId) {
+    } else if (!w.notifyChannelId && !w.notifyMessage) {
+      w.notifyOnTrigger = false;
+    } else {
       throw new BadRequestException(
-        'notifyChannelId is required when notify on trigger is enabled.',
+        'Provide both notifyChannelId and notifyMessage, or clear both.',
       );
     }
 
@@ -222,17 +234,16 @@ export class WebhooksService {
     if (!w || !w.isActive) {
       throw new NotFoundException('Unknown or inactive webhook');
     }
-
     let action = 'none';
     let success = true;
     let output = '';
 
     try {
-      if (w.targetMode === 'notify_only') {
-        action = 'notify_only';
-        output = 'No Docker action configured.';
-      } else if (w.targetMode === 'service' && w.serviceId != null) {
-        if (w.serviceAction === 'redeploy') {
+      if (w.targetMode === 'service') {
+        if (w.serviceAction === 'no_action') {
+          action = 'no_action';
+          output = 'No Docker action selected.';
+        } else if (w.serviceAction === 'redeploy' && w.serviceId != null) {
           action = 'redeploy';
           const r = await this.servicesService.executeDeployment(
             w.serviceId,
@@ -240,7 +251,11 @@ export class WebhooksService {
           );
           success = Boolean(r.success);
           output = String(r.output ?? '');
-        } else if (w.serviceAction === 'volume_backup' && w.volumeSource) {
+        } else if (
+          w.serviceAction === 'volume_backup' &&
+          w.volumeSource &&
+          w.serviceId != null
+        ) {
           action = 'volume_backup';
           const destDir = path.join(
             process.cwd(),
@@ -254,7 +269,11 @@ export class WebhooksService {
           );
           success = r.success;
           output = r.output;
-        } else if (w.serviceAction === 'docker_command' && w.dockerCommand) {
+        } else if (
+          w.serviceAction === 'docker_command' &&
+          w.dockerCommand &&
+          w.serviceId != null
+        ) {
           action = 'docker_command';
           const r = await this.executorService.runWebhookDockerCommand(
             w.serviceId,
@@ -279,19 +298,12 @@ export class WebhooksService {
       output: output.slice(0, 8000),
     };
 
-    if (w.notifyOnTrigger && w.notifyChannelId) {
-      const msg = [
-        `Webhook: ${w.name}`,
-        `Action: ${action}`,
-        `Success: ${success}`,
-        '',
-        output.slice(0, 3500),
-      ].join('\n');
+    if (w.notifyOnTrigger && w.notifyChannelId && w.notifyMessage) {
       try {
         await this.notificationsService.sendMessage(
           w.userId,
           w.notifyChannelId,
-          msg,
+          w.notifyMessage,
         );
       } catch {
         /* avoid failing the HTTP response */

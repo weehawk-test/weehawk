@@ -23,17 +23,19 @@ export class UpdateWebhookDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsBoolean()
-  notifyOnTrigger?: boolean;
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsString()
+  @MaxLength(4000)
+  notifyMessage?: string | null;
 
   @ApiPropertyOptional({ format: 'uuid', nullable: true })
   @IsOptional()
   @ValidateIf((_, v) => v != null && v !== '')
   @IsUUID('4')
   notifyChannelId?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

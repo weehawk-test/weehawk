@@ -21,7 +21,7 @@ import { WebhooksService } from './webhooks.service';
 
 type AuthedReq = { user?: { userId: number; email: string } };
 
-@ApiTags('Webhooks')
+@ApiTags('Triggers')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @UsePipes(

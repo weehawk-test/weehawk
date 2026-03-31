@@ -14,11 +14,10 @@ export function useProjects(initialData?: Project[]) {
     queryKey: ["projects"],
     queryFn: fetchProjects,
     initialData,
-    // Keep the query "fresh" when we receive server-side initial data,
-    // without calling impure functions (like Date.now) during render.
-    initialDataUpdatedAt: hasInitial ? 0 : undefined,
-    staleTime: hasInitial ? 0 : 10_000,
-    refetchOnMount: hasInitial ? "always" : undefined,
+    initialDataUpdatedAt: hasInitial ? Date.now() : undefined,
+    staleTime: hasInitial ? Infinity : 10_000,
+    refetchOnMount: hasInitial ? false : true,
+    refetchOnWindowFocus: false,
   });
 }
 

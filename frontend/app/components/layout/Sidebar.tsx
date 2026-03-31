@@ -5,7 +5,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, LayoutDashboard, FolderKanban, KeyRound, UserCircle, ChevronUp,
-  ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes,
+  ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useState } from "react";
@@ -23,8 +23,10 @@ const navSections = [
     label: "Integrations",
     items: [
       { href: "/webhooks",     label: "Webhooks",      icon: Webhook },
+      { href: "/cron-jobs",    label: "Cron Jobs",     icon: Clock3 },
       { href: "/notifications/channels", label: "Notifications", icon: Bell },
-      { href: "/s3",           label: "S3 Storage",    icon: HardDrive },
+      { href: "/s3/disitnation",  label: "S3 Storage",    icon: HardDrive },
+      { href: "/registry",     label: "Registry",      icon: ShieldCheck },
     ],
   },
   {

@@ -1,17 +1,20 @@
 import { API_BASE } from "./api";
 
-export type WebhookTargetMode = "service" | "notify_only";
-export type WebhookServiceAction = "redeploy" | "volume_backup" | "docker_command";
+export type WebhookTargetMode = "service";
+export type WebhookServiceAction = "redeploy" | "volume_backup" | "docker_command" | "no_action";
 
 export type WebhookListItem = {
   id: string;
   name: string;
   description: string;
   isActive: boolean;
+  triggerType: "webhook";
+  cronExpression: null;
   targetMode: WebhookTargetMode;
   serviceId: number | null;
   serviceAction: WebhookServiceAction | null;
   notifyOnTrigger: boolean;
+  notifyMessage?: string | null;
   createdAt: string;
   summary: string;
 };
@@ -20,6 +23,7 @@ export type WebhookDetail = WebhookListItem & {
   volumeSource: string | null;
   dockerCommand: string | null;
   notifyChannelId: string | null;
+  notifyMessage: string | null;
   secretToken: string;
 };
 
@@ -31,16 +35,16 @@ export type CreateWebhookBody = {
   serviceAction?: WebhookServiceAction;
   volumeSource?: string;
   dockerCommand?: string;
-  notifyOnTrigger?: boolean;
   notifyChannelId?: string;
+  notifyMessage?: string;
 };
 
 export type UpdateWebhookBody = {
   name?: string;
   description?: string;
   isActive?: boolean;
-  notifyOnTrigger?: boolean;
   notifyChannelId?: string | null;
+  notifyMessage?: string | null;
 };
 
 async function errorBody(res: Response): Promise<string> {
@@ -71,7 +75,8 @@ export async function fetchWebhooks(accessToken: string): Promise<WebhookListIte
     credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
-  return res.json();
+  const data = (await res.json()) as Omit<WebhookListItem, "triggerType" | "cronExpression">[];
+  return data.map((w) => ({ ...w, triggerType: "webhook", cronExpression: null }));
 }
 
 export async function fetchWebhook(accessToken: string, id: string): Promise<WebhookDetail> {
@@ -80,7 +85,8 @@ export async function fetchWebhook(accessToken: string, id: string): Promise<Web
     credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
-  return res.json();
+  const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
+  return { ...data, triggerType: "webhook", cronExpression: null };
 }
 
 export async function createWebhook(
@@ -97,7 +103,8 @@ export async function createWebhook(
     credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
-  return res.json();
+  const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
+  return { ...data, triggerType: "webhook", cronExpression: null };
 }
 
 export async function updateWebhook(
@@ -115,7 +122,8 @@ export async function updateWebhook(
     credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
-  return res.json();
+  const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
+  return { ...data, triggerType: "webhook", cronExpression: null };
 }
 
 export async function deleteWebhook(accessToken: string, id: string): Promise<void> {

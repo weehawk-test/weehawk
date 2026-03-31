@@ -5,9 +5,15 @@ import { useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmProvider } from "@/components/confirm/ConfirmProvider";
-import { AuthProvider } from "@/contexts/auth-context";
+import { AuthProvider, type AuthUser } from "@/contexts/auth-context";
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  initialUser,
+}: {
+  children: React.ReactNode;
+  initialUser: AuthUser | null;
+}) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -22,7 +28,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
+      <AuthProvider initialUser={initialUser}>
         <TooltipProvider>
           <ConfirmProvider>
             {children}

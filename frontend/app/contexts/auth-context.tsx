@@ -31,10 +31,19 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isReady, setIsReady] = useState(false);
+export function AuthProvider({
+  children,
+  initialUser,
+}: {
+  children: ReactNode;
+  /** From RootLayout SSR (`/api/user/profile`) — avoids a client-side profile fetch on load. */
+  initialUser: AuthUser | null;
+}) {
+  const [accessToken, setAccessToken] = useState<string | null>(() =>
+    initialUser ? "cookie-session" : null,
+  );
+  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  const [isReady] = useState(true);
 
   const refreshSession = useCallback(async () => {
     try {
@@ -48,21 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setAccessToken(null);
       setUser(null);
-    } finally {
-      setIsReady(true);
     }
   }, []);
 
   useEffect(() => {
-    void refreshSession();
     const onLocal = () => void refreshSession();
-    const onFocus = () => void refreshSession();
     window.addEventListener(AUTH_CHANGE_EVENT, onLocal);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.removeEventListener(AUTH_CHANGE_EVENT, onLocal);
-      window.removeEventListener("focus", onFocus);
-    };
+    return () => window.removeEventListener(AUTH_CHANGE_EVENT, onLocal);
   }, [refreshSession]);
 
   const setSession = useCallback((res: AuthResponse) => {

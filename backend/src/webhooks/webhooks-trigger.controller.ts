@@ -5,7 +5,7 @@ import { WebhooksService } from './webhooks.service';
 /**
  * Public ingress (no JWT). URL: `GET|POST {origin}/hooks/{secretToken}` (no `/api` prefix).
  */
-@ApiTags('Webhooks (public)')
+@ApiTags('Triggers (public)')
 @Controller('hooks')
 export class WebhooksTriggerController {
   constructor(private readonly webhooksService: WebhooksService) {}
