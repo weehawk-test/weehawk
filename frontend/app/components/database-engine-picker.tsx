@@ -67,11 +67,11 @@ export function DatabaseEnginePicker({
                 {DATABASE_ENGINES.map((eng) => {
                   const active = selectedId === eng.id;
                   return (
-                    <li key={eng.id}>
+                    <li key={eng.id} className="h-full">
                       <button
                         type="button"
                         onClick={() => onSelect(eng.id)}
-                        className={`w-full text-left rounded-xl border transition-colors p-4 flex gap-4 items-start focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
+                        className={`w-full h-[8.5rem] text-left rounded-xl border transition-colors p-4 flex gap-4 items-start focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
                           active
                             ? "border-sky-500/50 bg-sky-500/10 ring-1 ring-sky-500/20"
                             : "border-white/10 bg-zinc-900/50 hover:bg-zinc-900 hover:border-sky-500/25"
@@ -87,9 +87,9 @@ export function DatabaseEnginePicker({
                             sizes="112px"
                           />
                         </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="font-medium text-foreground block">{eng.name}</span>
-                          <span className="text-xs text-muted-foreground mt-1 leading-relaxed block">
+                        <span className="min-w-0 flex-1 overflow-hidden">
+                          <span className="font-medium text-foreground block truncate">{eng.name}</span>
+                          <span className="text-xs text-muted-foreground mt-1 leading-relaxed block h-10 overflow-hidden">
                             {eng.description}
                           </span>
                         </span>

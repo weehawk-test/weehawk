@@ -40,6 +40,18 @@ export interface DockerNetworkDto {
   createdAt: string;
 }
 
+export type DockerServiceStatus = 'running' | 'stopped' | 'degraded';
+
+export interface DockerServiceDto {
+  id: string;
+  name: string;
+  mode: string;
+  replicas: string;
+  image: string;
+  ports: string;
+  status: DockerServiceStatus;
+}
+
 function pickStr(row: Record<string, unknown>, ...keys: string[]): string {
   for (const k of keys) {
     const v = row[k];
@@ -205,6 +217,38 @@ export function mapRawRowsToNetworks(raw: unknown[]): DockerNetworkDto[] {
   );
 }
 
+function mapServiceStatus(replicas: string): DockerServiceStatus {
+  const m = replicas.trim().match(/^(\d+)\s*\/\s*(\d+)/);
+  if (!m) return 'stopped';
+  const running = parseInt(m[1], 10);
+  const desired = parseInt(m[2], 10);
+  if (desired === 0 || running === 0) return 'stopped';
+  if (running < desired) return 'degraded';
+  return 'running';
+}
+
+export function mapDockerServiceRow(
+  row: Record<string, unknown>,
+  index: number,
+): DockerServiceDto {
+  const replicas = pickStr(row, 'Replicas') || '0/0';
+  return {
+    id: pickStr(row, 'ID', 'Id') || `svc-${index}`,
+    name: pickStr(row, 'Name') || `service-${index}`,
+    mode: pickStr(row, 'Mode') || '—',
+    replicas,
+    image: pickStr(row, 'Image') || '—',
+    ports: pickStr(row, 'Ports') || '—',
+    status: mapServiceStatus(replicas),
+  };
+}
+
+export function mapRawRowsToServices(raw: unknown[]): DockerServiceDto[] {
+  return raw.map((item, i) =>
+    mapDockerServiceRow(item as Record<string, unknown>, i),
+  );
+}
+
 export function filterContainers(
   items: DockerContainerDto[],
   q: string,
@@ -252,5 +296,20 @@ export function filterNetworks(
       n.scope.toLowerCase().includes(s) ||
       n.id.toLowerCase().includes(s) ||
       n.networkIdShort.toLowerCase().includes(s),
+  );
+}
+
+export function filterServices(
+  items: DockerServiceDto[],
+  q: string,
+): DockerServiceDto[] {
+  const s = q.trim().toLowerCase();
+  if (!s) return items;
+  return items.filter(
+    (svc) =>
+      svc.name.toLowerCase().includes(s) ||
+      svc.image.toLowerCase().includes(s) ||
+      svc.mode.toLowerCase().includes(s) ||
+      svc.id.toLowerCase().includes(s),
   );
 }

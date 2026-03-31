@@ -7,9 +7,10 @@ import { ProjectsModule } from 'src/projects/projects.module';
 import { ExecutorService } from './ExecutorService';
 import { ServiceTerminalGateway } from './service-terminal.gateway';
 import { DatabaseGeneratorService } from './database-generator.service';
+import { DockersecretsModule } from 'src/dockersecrets/dockersecrets.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Service]), ProjectsModule],
+  imports: [TypeOrmModule.forFeature([Service]), ProjectsModule, DockersecretsModule],
   controllers: [ServicesController],
   providers: [
     ServicesService,

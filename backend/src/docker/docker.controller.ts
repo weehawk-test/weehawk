@@ -58,10 +58,67 @@ export class DockerController {
     );
   }
 
+  @Get('services')
+  @ApiOperation({ summary: 'Get all docker services' })
+  async services() {
+    return await this.dockerService.getServices();
+  }
+
+  @Get('services/paged')
+  @ApiOperation({ summary: 'List services (paginated, optional search)' })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'pageSize', required: false, example: 10 })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Filter by service name, image, or mode',
+  })
+  async servicesPaged(
+    @Query('page') pageStr?: string,
+    @Query('pageSize') pageSizeStr?: string,
+    @Query('q') q?: string,
+  ) {
+    const page = parseInt(pageStr ?? '1', 10);
+    const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    return this.dockerService.getServicesPaged(page, pageSize, q ?? '');
+  }
+
+  @Get('services/:id/logs')
+  @ApiOperation({ summary: 'Get recent service logs' })
+  @ApiQuery({
+    name: 'tail',
+    required: false,
+    description: 'Number of lines (1–10000)',
+    example: 500,
+  })
+  async serviceLogs(
+    @Param('id') id: string,
+    @Query('tail', new DefaultValuePipe(500), ParseIntPipe) tail: number,
+  ) {
+    return await this.dockerService.getServiceLogs(decodeURIComponent(id), tail);
+  }
+
+  @Delete('services/:id')
+  @ApiOperation({ summary: 'Remove a service' })
+  async removeService(
+    @Param('id') id: string,
+    @Query('force') forceStr?: string,
+  ) {
+    const force = (forceStr ?? '').toLowerCase() === 'true';
+    return await this.dockerService.removeService(decodeURIComponent(id), force);
+  }
+
   @Delete('containers/:id')
   @ApiOperation({ summary: 'Remove a container (force)' })
-  async removeContainer(@Param('id') id: string) {
-    return await this.dockerService.removeContainer(decodeURIComponent(id));
+  async removeContainer(
+    @Param('id') id: string,
+    @Query('force') forceStr?: string,
+  ) {
+    const force = (forceStr ?? '').toLowerCase() === 'true';
+    return await this.dockerService.removeContainer(
+      decodeURIComponent(id),
+      force,
+    );
   }
 
   @Get('images')
@@ -136,8 +193,12 @@ export class DockerController {
 
   @Delete('volumes/:name')
   @ApiOperation({ summary: 'Remove a volume' })
-  async removeVolume(@Param('name') name: string) {
-    return await this.dockerService.removeVolume(decodeURIComponent(name));
+  async removeVolume(
+    @Param('name') name: string,
+    @Query('force') forceStr?: string,
+  ) {
+    const force = (forceStr ?? '').toLowerCase() === 'true';
+    return await this.dockerService.removeVolume(decodeURIComponent(name), force);
   }
 
   @Get('networks')
@@ -167,8 +228,12 @@ export class DockerController {
 
   @Delete('networks/:id')
   @ApiOperation({ summary: 'Remove a network by name or id' })
-  async removeNetwork(@Param('id') id: string) {
-    return await this.dockerService.removeNetwork(decodeURIComponent(id));
+  async removeNetwork(
+    @Param('id') id: string,
+    @Query('force') forceStr?: string,
+  ) {
+    const force = (forceStr ?? '').toLowerCase() === 'true';
+    return await this.dockerService.removeNetwork(decodeURIComponent(id), force);
   }
 
   @Get('stats')

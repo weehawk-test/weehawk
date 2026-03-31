@@ -2,18 +2,28 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { format } from "date-fns";
-import { Box, Search, Clock, Activity, RefreshCw, Loader2, AlertCircle, Trash2, ScrollText, OctagonAlert } from "lucide-react";
+import {
+  Box,
+  Search,
+  Activity,
+  RefreshCw,
+  Loader2,
+  AlertCircle,
+  Trash2,
+  ScrollText,
+  OctagonAlert,
+  Network,
+} from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useDeleteDockerContainer } from "@/hooks/use-docker";
+import { useDeleteDockerService } from "@/hooks/use-docker";
 import {
   DOCKER_API_HELP,
-  deleteDockerContainer,
+  deleteDockerService,
   dockerPagedWsUrl,
-  fetchDockerContainerLogs,
-  type ContainerStatus,
+  fetchDockerServiceLogs,
+  type ServiceStatus,
 } from "@/lib/docker-api";
-import { DOCKER_LIST_PAGE_SIZE, type PaginatedContainersResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_LIST_PAGE_SIZE, type PaginatedServicesResponse } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -40,29 +50,23 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const STATUS_STYLE: Record<ContainerStatus, string> = {
+const STATUS_STYLE: Record<ServiceStatus, string> = {
   running: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
   stopped: "bg-zinc-500/10 text-zinc-400 border-zinc-500/20",
-  exited: "bg-red-500/10 text-red-400 border-red-500/20",
+  degraded: "bg-amber-500/10 text-amber-400 border-amber-500/20",
 };
 
-function formatCreated(value: string) {
-  const d = new Date(value);
-  if (!Number.isNaN(d.getTime())) return format(d, "MMM d");
-  return value.length > 18 ? `${value.slice(0, 18)}…` : value;
-}
-
 type Props = {
-  data: PaginatedContainersResponse | null;
+  data: PaginatedServicesResponse | null;
   error: string | null;
   urlPage: number;
   urlQ: string;
 };
 
-export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
+export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
   const router = useRouter();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
-  const del = useDeleteDockerContainer();
+  const del = useDeleteDockerService();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
@@ -74,7 +78,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
   const [logText, setLogText] = useState("");
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
-  const [liveData, setLiveData] = useState<PaginatedContainersResponse | null>(data);
+  const [liveData, setLiveData] = useState<PaginatedServicesResponse | null>(data);
   const [liveError, setLiveError] = useState<string | null>(error);
 
   useEffect(() => {
@@ -88,7 +92,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
     const connect = () => {
       ws = new WebSocket(
         dockerPagedWsUrl({
-          topic: "containers.paged",
+          topic: "services.paged",
           page,
           pageSize: DOCKER_LIST_PAGE_SIZE,
           q,
@@ -99,8 +103,8 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
         if (disposed || typeof ev.data !== "string") return;
         try {
           const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
-          if (msg.type === "containers.paged" && msg.data) {
-            setLiveData(msg.data as PaginatedContainersResponse);
+          if (msg.type === "services.paged" && msg.data) {
+            setLiveData(msg.data as PaginatedServicesResponse);
             setLiveError(null);
           } else if (msg.type === "error") {
             setLiveError(msg.message ?? "WebSocket error");
@@ -132,7 +136,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
     setLogLoading(true);
     setLogError(null);
     try {
-      const t = await fetchDockerContainerLogs(logTarget.id, logTail);
+      const t = await fetchDockerServiceLogs(logTarget.id, logTail);
       setLogText(t.trim() ? t : "(no log output in this range)");
     } catch (e) {
       setLogText("");
@@ -154,18 +158,15 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
   const handleBulkDelete = async () => {
     const targets = items.filter((c) => bulk.selectedInFiltered.includes(c.id));
     if (targets.length === 0) return;
-    const running = targets.filter((c) => c.status === "running").length;
     const confirmed = await confirm({
-      title: "Remove selected containers?",
-      description:
-        `Remove ${targets.length} container(s)?` +
-        (running > 0 ? ` ${running} are running and will be force-removed.` : ""),
+      title: "Remove selected services?",
+      description: `Remove ${targets.length} service(s)? This will stop scheduling tasks for them.`,
       confirmLabel: "Remove",
       variant: "destructive",
     });
     if (!confirmed) return;
     setBulkPending(true);
-    const results = await Promise.allSettled(targets.map((c) => deleteDockerContainer(c.id, true)));
+    const results = await Promise.allSettled(targets.map((c) => deleteDockerService(c.id, true)));
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - removed;
@@ -178,32 +179,32 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
     });
   };
 
-  const handleDelete = async (id: string, name: string, status: ContainerStatus) => {
+  const handleDelete = async (id: string, name: string) => {
     const ok = await confirm({
-      title: status === "running" ? "Force-remove running container?" : "Remove container?",
-      description:
-        status === "running"
-          ? `Remove “${name}”? Running containers usually require force delete.`
-          : `Remove “${name}”?`,
+      title: "Remove service?",
+      description: `Remove “${name}”?`,
       confirmLabel: "Remove",
       variant: "destructive",
     });
     if (!ok) return;
-    del.mutate(id, {
-      onSuccess: () => {
-        toast({ title: "Container removed", description: name });
-        router.refresh();
+    del.mutate(
+      { idOrName: id, force: false },
+      {
+        onSuccess: () => {
+          toast({ title: "Service removed", description: name });
+          router.refresh();
+        },
+        onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
       },
-      onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
-    });
+    );
   };
 
   const runForceDelete = async () => {
     if (!forceDialog) return;
     setForcePending(forceDialog.id);
     try {
-      await deleteDockerContainer(forceDialog.id, true);
-      toast({ title: "Container removed (force)", description: forceDialog.name });
+      await deleteDockerService(forceDialog.id, true);
+      toast({ title: "Service removed (force)", description: forceDialog.name });
       setForceDialog(null);
       router.refresh();
     } catch (e) {
@@ -232,15 +233,15 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
     <AppLayout>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold">Docker Containers</h1>
-          <p className="text-muted-foreground text-sm mt-1">Live data from Docker via the API (server-paged).</p>
+          <h1 className="text-3xl font-bold">Docker Services</h1>
+          <p className="text-muted-foreground text-sm mt-1">Live data from Docker Swarm services (server-paged).</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           {bulk.selectedInFiltered.length > 0 && (
             <button
               type="button"
               onClick={handleBulkDelete}
-              disabled={bulkPending || del.isPending}
+              disabled={bulkPending}
               className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2 text-sm"
             >
               {bulkPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -258,7 +259,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
         <div className="glass-panel rounded-xl p-4 mb-6 border border-destructive/30 flex items-start gap-3 text-sm">
           <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-medium text-destructive">Could not load containers</p>
+            <p className="font-medium text-destructive">Could not load services</p>
             <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{listError}</p>
             <p className="text-muted-foreground text-xs mt-2">{DOCKER_API_HELP}</p>
           </div>
@@ -267,9 +268,9 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
 
       {counts && !isError && (
         <div className="grid grid-cols-3 gap-4 mb-6">
-          {(["running", "stopped", "exited"] as ContainerStatus[]).map((s) => {
+          {(["running", "stopped", "degraded"] as ServiceStatus[]).map((s) => {
             const count =
-              s === "running" ? counts.running : s === "stopped" ? counts.stopped : counts.exited;
+              s === "running" ? counts.running : s === "stopped" ? counts.stopped : counts.degraded;
             return (
               <div key={s} className={`glass-panel rounded-xl p-4 border ${STATUS_STYLE[s].split(" ")[2]}`}>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1 capitalize">{s}</p>
@@ -284,7 +285,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <input
           className="input-field !pl-10 w-full"
-          placeholder="Search containers..."
+          placeholder="Search services..."
           value={localQ}
           onChange={(e) => setLocalQ(e.target.value)}
         />
@@ -309,10 +310,10 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
       {isError ? null : currentData && currentData.total === 0 ? (
         <div className="glass-panel rounded-2xl p-12 text-center">
           <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Box className="w-8 h-8 text-muted-foreground" />
+            <Network className="w-8 h-8 text-muted-foreground" />
           </div>
-          <h3 className="font-semibold mb-1">No containers found</h3>
-          <p className="text-muted-foreground text-sm">No containers match your search, or the engine returned an empty list.</p>
+          <h3 className="font-semibold mb-1">No services found</h3>
+          <p className="text-muted-foreground text-sm">No services match your search, or Swarm returned an empty list.</p>
         </div>
       ) : currentData ? (
         <>
@@ -338,14 +339,10 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
                       <span className={`text-[11px] border rounded-full px-2 py-0.5 font-medium capitalize ${STATUS_STYLE[c.status]}`}>{c.status}</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5 font-mono">{c.image}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Ports: {c.ports || "—"}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Replicas: {c.replicas} • Mode: {c.mode}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <span className="text-xs text-muted-foreground hidden sm:flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    {formatCreated(c.createdAt)}
-                  </span>
                   <button
                     type="button"
                     onClick={() => {
@@ -362,9 +359,9 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
                   <button
                     type="button"
                     onClick={() => setForceDialog({ id: c.id, name: c.name })}
-                    disabled={del.isPending || forcePending === c.id}
+                    disabled={forcePending === c.id}
                     className="p-2 rounded-lg hover:bg-amber-500/10 text-muted-foreground hover:text-amber-500 transition-colors"
-                    title="Force remove container"
+                    title="Force remove service"
                   >
                     {forcePending === c.id ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -374,10 +371,10 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDelete(c.id, c.name, c.status)}
-                    disabled={del.isPending || forcePending === c.id}
+                    onClick={() => handleDelete(c.id, c.name)}
+                    disabled={forcePending === c.id}
                     className="p-2 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                    title="Remove container"
+                    title="Remove service"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -417,7 +414,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
               )}
             </DialogTitle>
             <DialogDescription>
-              Last lines from <code className="text-xs bg-muted px-1 rounded">docker logs</code> on the server host.
+              Last lines from <code className="text-xs bg-muted px-1 rounded">docker service logs</code> on the server host.
             </DialogDescription>
           </DialogHeader>
 
@@ -474,23 +471,22 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
               <OctagonAlert className="w-5 h-5 shrink-0" />
-              Force delete container
+              Force delete service
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-left text-muted-foreground">
                 <p>
-                  This runs <strong className="text-foreground">docker rm -f</strong> and will stop then remove the
-                  container.
+                  This tries to scale the service to zero replicas, then runs{" "}
+                  <strong className="text-foreground">docker service rm</strong>.
                 </p>
                 <p>
-                  This can interrupt running workloads immediately. Use it only when normal remove fails or when this
-                  is intended.
+                  Running tasks may be interrupted. Use this when normal removal fails.
                 </p>
                 {forceDialog && (
                   <div>
                     <span className="text-xs font-medium text-foreground">Command on the API host:</span>
                     <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
-                      docker rm -f {forceDialog.id}
+                      docker service rm {forceDialog.id}
                     </code>
                   </div>
                 )}

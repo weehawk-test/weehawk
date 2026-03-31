@@ -30,6 +30,13 @@ export function parseYamlPostgresPublishPort(config: string): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
+export function parseYamlPublishPort(config: string, containerPort: number): number | null {
+  const m = config.match(new RegExp(`ports:\\s*\\n\\s*-\\s*"(\\d+):${containerPort}"`));
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isNaN(n) ? null : n;
+}
+
 /** `image:` line under the first service in stack YAML. */
 export function parseYamlPostgresImage(config: string): string | null {
   const m = config.match(/^\s*image:\s*(.+)$/m);
@@ -42,4 +49,8 @@ export function parseYamlPostgresImage(config: string): string | null {
     v = v.slice(1, -1);
   }
   return v || null;
+}
+
+export function parseYamlImage(config: string): string | null {
+  return parseYamlPostgresImage(config);
 }

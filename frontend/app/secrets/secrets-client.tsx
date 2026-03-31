@@ -14,6 +14,7 @@ import {
   Upload,
   Loader2,
   AlertCircle,
+  OctagonAlert,
 } from "lucide-react";
 import {
   useCreateDockerSecret,
@@ -41,6 +42,17 @@ import { useDockerListUrl } from "@/hooks/use-docker-list-url";
 import { deleteDockerSecretApi } from "@/lib/docker-secrets-api";
 import { formatSecretDate } from "@/lib/format-secret-date";
 import { DOCKER_LIST_PAGE_SIZE, type PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 function CreateSecretModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
@@ -274,11 +286,13 @@ function BulkImportPanel({ onClose }: { onClose: () => void }) {
 function SecretRow({
   secret,
   onEdit,
+  onForceDelete,
   selected,
   onToggleSelect,
 }: {
   secret: DockerSecretListItem;
   onEdit: (s: DockerSecretListItem) => void;
+  onForceDelete: (s: DockerSecretListItem) => void;
   selected: boolean;
   onToggleSelect: () => void;
 }) {
@@ -319,7 +333,7 @@ function SecretRow({
       <td className="py-4 px-5">
         <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <Lock className="w-3.5 h-3.5 shrink-0" />
-          Not readable (Docker Swarm)
+          Not readable (Docker Secrets)
         </span>
       </td>
       <td className="py-4 px-5">
@@ -337,7 +351,17 @@ function SecretRow({
           </button>
           <button
             type="button"
+            onClick={() => onForceDelete(secret)}
+            disabled={deleteSecret.isPending}
+            className="p-1.5 rounded-md hover:bg-amber-500/15 text-muted-foreground hover:text-amber-500 transition-colors"
+            title="Force delete"
+          >
+            <OctagonAlert className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
             onClick={handleDelete}
+            disabled={deleteSecret.isPending}
             className="p-1.5 rounded-md hover:bg-destructive/20 text-destructive transition-colors"
             title="Delete"
           >
@@ -362,6 +386,8 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
   const [editing, setEditing] = useState<DockerSecretListItem | null>(null);
   const [showBulk, setShowBulk] = useState(false);
   const [bulkPending, setBulkPending] = useState(false);
+  const [forceDialog, setForceDialog] = useState<DockerSecretListItem | null>(null);
+  const [forcePending, setForcePending] = useState(false);
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -448,6 +474,26 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
       description: `${removed} removed${fail ? `, ${fail} failed` : ""}.`,
       variant: fail ? "destructive" : "default",
     });
+  };
+
+  const runForceDelete = async () => {
+    if (!forceDialog) return;
+    setForcePending(true);
+    try {
+      await deleteDockerSecretApi(forceDialog.name, true);
+      toast({ title: "Secret deleted (force)", description: forceDialog.name });
+      setForceDialog(null);
+      router.refresh();
+    } catch (e) {
+      toast({
+        title: "Failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+      setForceDialog(null);
+    } finally {
+      setForcePending(false);
+    }
   };
 
   return (
@@ -569,6 +615,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
                   key={`${secret.id}-${secret.name}`}
                   secret={secret}
                   onEdit={setEditing}
+                  onForceDelete={setForceDialog}
                   selected={bulk.selected.has(secret.name)}
                   onToggleSelect={() => bulk.toggle(secret.name)}
                 />
@@ -586,6 +633,47 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
           />
         </div>
       ) : null}
+      <AlertDialog open={!!forceDialog} onOpenChange={(open) => !open && setForceDialog(null)}>
+        <AlertDialogContent className="max-w-lg border-amber-500/20">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
+              <OctagonAlert className="w-5 h-5 shrink-0" />
+              Force delete secret
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-left text-muted-foreground">
+                <p>
+                  This force flow tries to detach this secret from Docker services, then runs{" "}
+                  <strong className="text-foreground">docker secret rm</strong>.
+                </p>
+                <p>
+                  If a service still references the secret, Docker may refuse removal until the service update finishes.
+                </p>
+                {forceDialog && (
+                  <div>
+                    <span className="text-xs font-medium text-foreground">Command on the API host:</span>
+                    <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
+                      docker secret rm {forceDialog.name}
+                    </code>
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={forcePending}>Cancel</AlertDialogCancel>
+            <button
+              type="button"
+              disabled={forcePending}
+              className={cn(buttonVariants({ variant: "destructive" }), "gap-2")}
+              onClick={runForceDelete}
+            >
+              {forcePending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Confirm force delete
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

@@ -67,9 +67,10 @@ export async function createDockerSecretApi(body: { name: string; value: string 
   });
 }
 
-export async function deleteDockerSecretApi(name: string) {
+export async function deleteDockerSecretApi(name: string, force = false) {
   const enc = encodeURIComponent(name);
-  return request<{ success: boolean }>(`/docker-secrets/${enc}`, { method: "DELETE" });
+  const qs = force ? "?force=true" : "";
+  return request<{ success: boolean }>(`/docker-secrets/${enc}${qs}`, { method: "DELETE" });
 }
 
 /** Docker secrets are immutable; rotation = rm + create with same name. */

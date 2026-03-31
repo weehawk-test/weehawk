@@ -1,4 +1,4 @@
-import type { DockerContainer, DockerImage, DockerNetwork, DockerVolume } from "./docker-api";
+import type { DockerContainer, DockerImage, DockerNetwork, DockerService, DockerVolume } from "./docker-api";
 import type { DockerSecretListItem } from "./schema";
 import { getServerApiBase } from "./server-api";
 
@@ -33,6 +33,20 @@ export interface PaginatedContainersResponse {
     running: number;
     stopped: number;
     exited: number;
+    all: number;
+  };
+}
+
+export interface PaginatedServicesResponse {
+  items: DockerService[];
+  total: number;
+  totalAll: number;
+  page: number;
+  pageSize: number;
+  counts: {
+    running: number;
+    stopped: number;
+    degraded: number;
     all: number;
   };
 }
@@ -95,6 +109,15 @@ export async function fetchDockerImagesPaged(
 ): Promise<PaginatedImagesResponse> {
   const qs = buildQuery(page, pageSize, q);
   return fetchPaged<PaginatedImagesResponse>(`/docker-monitor/images/paged?${qs}`);
+}
+
+export async function fetchDockerServicesPaged(
+  page: number,
+  pageSize: number,
+  q: string,
+): Promise<PaginatedServicesResponse> {
+  const qs = buildQuery(page, pageSize, q);
+  return fetchPaged<PaginatedServicesResponse>(`/docker-monitor/services/paged?${qs}`);
 }
 
 export async function fetchDockerVolumesPaged(

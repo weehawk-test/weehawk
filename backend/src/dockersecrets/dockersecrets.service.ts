@@ -13,6 +13,10 @@ import {
 
 const execAsync = promisify(exec);
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function clampPage(page: number): number {
   return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
 }
@@ -32,6 +36,47 @@ export interface PaginatedSecretsDto {
 
 @Injectable()
 export class DockerSecretsService {
+  private async forceDetachSecretFromServices(secretName: string): Promise<void> {
+    try {
+      const { stdout } = await execAsync('docker service ls -q');
+      const serviceIds = stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const serviceId of serviceIds) {
+        try {
+          const { stdout: inspectOut } = await execAsync(
+            `docker service inspect ${serviceId}`,
+          );
+          const parsed = JSON.parse(inspectOut) as Array<{
+            Spec?: {
+              TaskTemplate?: {
+                ContainerSpec?: {
+                  Secrets?: Array<{ SecretName?: string; File?: { Name?: string } }>;
+                };
+              };
+            };
+          }>;
+          const item = Array.isArray(parsed) ? parsed[0] : undefined;
+          const secrets =
+            item?.Spec?.TaskTemplate?.ContainerSpec?.Secrets ?? [];
+          const matched = secrets.find(
+            (s) => s?.SecretName === secretName || s?.File?.Name === secretName,
+          );
+          if (!matched) continue;
+          await execAsync(
+            `docker service update --secret-rm ${secretName} ${serviceId}`,
+          );
+        } catch {
+          // Best effort only.
+        }
+      }
+    } catch {
+      // Swarm may be unavailable, keep default error behavior.
+    }
+  }
+
   async create(name: string, value: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = spawn('docker', ['secret', 'create', name, '-']);
@@ -103,12 +148,30 @@ export class DockerSecretsService {
     }
   }
 
-  async remove(name: string) {
-    try {
-      await execAsync(`docker secret rm ${name}`);
-      return { success: true };
-    } catch (e) {
-      throw new InternalServerErrorException(`Could not remove secret ${name}`);
+  async remove(name: string, force = false) {
+    let lastError = '';
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      try {
+        await execAsync(`docker secret rm ${name}`);
+        return { success: true };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        lastError = msg;
+        // Stack/service teardown can be asynchronous; retry when secret is still in use.
+        if (/in use|being used|currently in use/i.test(msg) && attempt < 6) {
+          if (force && attempt === 1) {
+            await this.forceDetachSecretFromServices(name);
+          }
+          await sleep(1200 * attempt);
+          continue;
+        }
+        throw new InternalServerErrorException(
+          `Could not remove secret ${name}: ${msg}`,
+        );
+      }
     }
+    throw new InternalServerErrorException(
+      `Could not remove secret ${name}: ${lastError}`,
+    );
   }
 }

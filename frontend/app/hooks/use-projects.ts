@@ -17,8 +17,8 @@ export function useProjects(initialData?: Project[]) {
     // Keep the query "fresh" when we receive server-side initial data,
     // without calling impure functions (like Date.now) during render.
     initialDataUpdatedAt: hasInitial ? 0 : undefined,
-    staleTime: hasInitial ? Infinity : 10_000,
-    refetchOnMount: hasInitial ? false : undefined,
+    staleTime: hasInitial ? 0 : 10_000,
+    refetchOnMount: hasInitial ? "always" : undefined,
   });
 }
 

@@ -6,14 +6,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { ArrowLeft, Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen } from "lucide-react";
 import { useProject } from "@/hooks/use-projects";
 import { useServices, useCreateService, useDeleteService } from "@/hooks/use-services";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createServiceSchema, type CreateServiceInput, type Project, type Service } from "@/lib/schema";
-import { applyPostgresDatabaseApi } from "@/lib/services-api";
+import { applyDatabaseApi } from "@/lib/services-api";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { DatabaseEnginePicker } from "@/components/database-engine-picker";
@@ -22,6 +22,8 @@ import {
   getDatabaseEngineById,
   parseDatabaseEngineFromConfig,
   POSTGRES_DOCKER_IMAGE,
+  defaultDatabaseImage,
+  defaultDatabaseVolumePath,
 } from "@/lib/database-engines";
 
 const SERVICE_TYPE_CONFIG = {
@@ -45,6 +47,14 @@ const SERVICE_TYPE_CONFIG = {
   },
 } as const;
 
+function dbPortByEngine(engine?: CreateServiceInput["databaseEngine"]): number {
+  if (engine === "postgres") return 5432;
+  if (engine === "mysql" || engine === "mariadb") return 3306;
+  if (engine === "mongodb") return 27017;
+  if (engine === "redis") return 6379;
+  return 5432;
+}
+
 function CreateServiceModal({
   projectId,
   onClose,
@@ -56,6 +66,7 @@ function CreateServiceModal({
   const create = useCreateService();
   const { toast } = useToast();
   const [dbPickerOpen, setDbPickerOpen] = useState(false);
+  const [imageUnlocked, setImageUnlocked] = useState(false);
   const { register, handleSubmit, formState: { errors }, watch, setValue, getValues } = useForm<CreateServiceInput>({
     resolver: zodResolver(createServiceSchema) as Resolver<CreateServiceInput>,
     defaultValues: {
@@ -69,6 +80,16 @@ function CreateServiceModal({
         dbName: "",
         user: "",
         pass: "",
+        rootUser: "",
+        rootPass: "",
+        password: "",
+        storeDbName: "env",
+        storeUser: "env",
+        storePass: "secret",
+        storeRootUser: "env",
+        storeRootPass: "secret",
+        storePassword: "secret",
+        volumePath: "",
         replicas: 1,
         publishPort: "",
         image: POSTGRES_DOCKER_IMAGE,
@@ -82,19 +103,38 @@ function CreateServiceModal({
   useEffect(() => {
     if (type !== "databases") {
       setValue("databaseEngine", undefined);
+      setImageUnlocked(false);
     }
   }, [type, setValue]);
 
   useEffect(() => {
-    if (type !== "databases" || databaseEngine !== "postgres") {
+    if (type !== "databases") {
       setValue("postgres", {
         dbName: "",
         user: "",
         pass: "",
+        rootUser: "",
+        rootPass: "",
+        password: "",
+        storeDbName: "env",
+        storeUser: "env",
+        storePass: "secret",
+        storeRootUser: "env",
+        storeRootPass: "secret",
+        storePassword: "secret",
+        volumePath: "",
         replicas: 1,
         publishPort: "",
         image: POSTGRES_DOCKER_IMAGE,
       });
+    }
+  }, [type, databaseEngine, setValue]);
+
+  useEffect(() => {
+    if (type === "databases" && databaseEngine) {
+      setValue("postgres.image", defaultDatabaseImage(databaseEngine));
+      setValue("postgres.volumePath", defaultDatabaseVolumePath(databaseEngine));
+      setImageUnlocked(false);
     }
   }, [type, databaseEngine, setValue]);
 
@@ -107,13 +147,23 @@ function CreateServiceModal({
   const onSubmit = async (data: CreateServiceInput) => {
     try {
       const created = await create.mutateAsync(data);
-      if (data.type === "databases" && data.databaseEngine === "postgres" && data.postgres) {
+      if (data.type === "databases" && data.databaseEngine && data.postgres) {
         const pp = data.postgres.publishPort?.trim();
         const img = data.postgres.image?.trim();
-        await applyPostgresDatabaseApi(created.id, {
+        await applyDatabaseApi(created.id, data.databaseEngine, {
           dbName: data.postgres.dbName.trim(),
-          user: data.postgres.user.trim(),
-          pass: data.postgres.pass,
+          user: data.postgres.user.trim() || undefined,
+          pass: data.postgres.pass || undefined,
+          rootUser: data.postgres.rootUser.trim() || undefined,
+          rootPass: data.postgres.rootPass || undefined,
+          password: data.postgres.password || undefined,
+          storeDbName: data.postgres.storeDbName,
+          storeUser: data.postgres.storeUser,
+          storePass: data.postgres.storePass,
+          storeRootUser: data.postgres.storeRootUser,
+          storeRootPass: data.postgres.storeRootPass,
+          storePassword: data.postgres.storePassword,
+          volumePath: data.postgres.volumePath.trim() || undefined,
           replicas: data.postgres.replicas ?? 1,
           ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
           ...(img ? { image: img } : {}),
@@ -123,8 +173,8 @@ function CreateServiceModal({
       toast({
         title: "Service Created",
         description:
-          data.type === "databases" && data.databaseEngine === "postgres"
-            ? "Postgres stack and credentials are saved. Deploy from the service page when ready."
+          data.type === "databases" && data.databaseEngine
+            ? "Database stack and credentials are saved. Deploy from the service page when ready."
             : "Your new service is ready.",
       });
       onClose();
@@ -207,30 +257,61 @@ function CreateServiceModal({
             <input {...register("description")} className="input-field" placeholder="Short description of this service" />
           </div>
 
-          {type === "databases" && databaseEngine === "postgres" && (
+          {type === "databases" && databaseEngine && (
             <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4 space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-sky-200 mb-0.5">Postgres</h3>
+                <h3 className="text-sm font-semibold text-sky-200 mb-0.5">
+                  {getDatabaseEngineById(databaseEngine)?.name ?? "Database"}
+                </h3>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Database name, user, and password are saved once. Credentials go to Environment; the stack file uses placeholders.
+                  Credentials are saved once based on the selected engine. Stack YAML uses environment placeholders.
                 </p>
                 <div className="sm:col-span-2 space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground block">Docker image</label>
-                  <input
-                    {...register("postgres.image")}
-                    className="input-field w-full font-mono text-sm"
-                    placeholder={POSTGRES_DOCKER_IMAGE}
-                    autoComplete="off"
-                  />
+                  <div className="relative">
+                    <input
+                      {...register("postgres.image")}
+                      readOnly={!imageUnlocked}
+                      title={!imageUnlocked ? "Unlock to edit image" : undefined}
+                      className={`input-field w-full font-mono text-sm pr-10 ${!imageUnlocked ? "bg-zinc-950/80 !text-zinc-500 border-white/10 cursor-not-allowed" : ""}`}
+                      placeholder={defaultDatabaseImage(databaseEngine)}
+                      autoComplete="off"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setImageUnlocked((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10"
+                      aria-label={imageUnlocked ? "Lock image field" : "Unlock image field"}
+                    >
+                      {imageUnlocked ? <LockOpen className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                    </button>
+                  </div>
                   {errors.postgres?.image && (
                     <p className="text-destructive text-xs">{errors.postgres.image.message}</p>
                   )}
-                  <p className="text-[11px] text-amber-500/90 leading-snug rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2">
-                    Changing the image can change PostgreSQL data paths inside the container between major versions. Existing volume mounts may not match a new layout — verify compatibility before switching.
-                  </p>
+                  {imageUnlocked && (
+                    <p className="text-[11px] text-amber-500/90 leading-snug rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2">
+                      Warning: Data storage path can differ between image versions. Verify the path and update the volume mount to match the selected version.
+                    </p>
+                  )}
+                  {imageUnlocked && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground block">Volume path</label>
+                      <input
+                        {...register("postgres.volumePath")}
+                        className="input-field w-full font-mono text-sm"
+                        placeholder={`default: ${defaultDatabaseVolumePath(databaseEngine)}`}
+                        autoComplete="off"
+                      />
+                      {errors.postgres?.volumePath && (
+                        <p className="text-destructive text-xs">{errors.postgres.volumePath.message}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {databaseEngine !== "redis" && (
                 <div className="sm:col-span-2">
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">Database name</label>
                   <input
@@ -239,10 +320,16 @@ function CreateServiceModal({
                     placeholder="myapp-db"
                     autoComplete="off"
                   />
+                  <select {...register("postgres.storeDbName")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
+                    <option value="env">Store in Environment</option>
+                    <option value="secret">Store in Docker Secret</option>
+                  </select>
                   {errors.postgres?.dbName && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.dbName.message}</p>
                   )}
                 </div>
+                )}
+                {(databaseEngine === "postgres" || databaseEngine === "mysql" || databaseEngine === "mariadb") && (
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">User</label>
                   <input
@@ -251,10 +338,16 @@ function CreateServiceModal({
                     placeholder="appuser"
                     autoComplete="off"
                   />
+                  <select {...register("postgres.storeUser")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
+                    <option value="env">Store in Environment</option>
+                    <option value="secret">Store in Docker Secret</option>
+                  </select>
                   {errors.postgres?.user && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.user.message}</p>
                   )}
                 </div>
+                )}
+                {(databaseEngine === "postgres" || databaseEngine === "mysql" || databaseEngine === "mariadb") && (
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
                   <input
@@ -264,10 +357,90 @@ function CreateServiceModal({
                     placeholder="••••••••"
                     autoComplete="new-password"
                   />
+                  <select {...register("postgres.storePass")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
+                    <option value="secret">Store in Docker Secret</option>
+                    <option value="env">Store in Environment</option>
+                  </select>
                   {errors.postgres?.pass && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.pass.message}</p>
                   )}
                 </div>
+                )}
+                {(databaseEngine === "mysql" || databaseEngine === "mariadb") && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root Password</label>
+                  <input
+                    type="password"
+                    {...register("postgres.rootPass")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                  />
+                  <select {...register("postgres.storeRootPass")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
+                    <option value="secret">Store in Docker Secret</option>
+                    <option value="env">Store in Environment</option>
+                  </select>
+                  {errors.postgres?.rootPass && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.rootPass.message}</p>
+                  )}
+                </div>
+                )}
+                {databaseEngine === "mongodb" && (
+                <>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root Username</label>
+                  <input
+                    {...register("postgres.rootUser")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="root"
+                    autoComplete="off"
+                  />
+                  <select {...register("postgres.storeRootUser")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
+                    <option value="env">Store in Environment</option>
+                    <option value="secret">Store in Docker Secret</option>
+                  </select>
+                  {errors.postgres?.rootUser && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.rootUser.message}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root Password</label>
+                  <input
+                    type="password"
+                    {...register("postgres.rootPass")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                  />
+                  <select {...register("postgres.storeRootPass")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
+                    <option value="secret">Store in Docker Secret</option>
+                    <option value="env">Store in Environment</option>
+                  </select>
+                  {errors.postgres?.rootPass && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.rootPass.message}</p>
+                  )}
+                </div>
+                </>
+                )}
+                {databaseEngine === "redis" && (
+                <div className="sm:col-span-2">
+                  <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
+                  <input
+                    type="password"
+                    {...register("postgres.password")}
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                  />
+                  <select {...register("postgres.storePassword")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
+                    <option value="secret">Store in Docker Secret</option>
+                    <option value="env">Store in Environment</option>
+                  </select>
+                  {errors.postgres?.password && (
+                    <p className="text-destructive text-xs mt-1">{errors.postgres.password.message}</p>
+                  )}
+                </div>
+                )}
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">Replicas (1–10)</label>
                   <input
@@ -285,7 +458,7 @@ function CreateServiceModal({
                   <input
                     {...register("postgres.publishPort")}
                     className="input-field w-full max-w-[8rem] font-mono text-sm"
-                    placeholder="e.g. 5432"
+                    placeholder={`e.g. ${dbPortByEngine(databaseEngine)}`}
                     inputMode="numeric"
                     autoComplete="off"
                   />
@@ -293,7 +466,7 @@ function CreateServiceModal({
                     <p className="text-destructive text-xs mt-1">{errors.postgres.publishPort.message}</p>
                   )}
                   <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                    Map host → container 5432. Leave empty so Postgres is not published on the host (internal / overlay only).
+                    Leave empty so this database is not published on the host (internal / overlay only).
                   </p>
                 </div>
               </div>

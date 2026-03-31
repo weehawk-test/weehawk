@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Network, Search, Clock, Loader2, AlertCircle, Trash2 } from "lucide-react";
+import { Network, Search, Clock, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useDeleteDockerNetwork } from "@/hooks/use-docker";
 import { DOCKER_API_HELP, deleteDockerNetwork, dockerPagedWsUrl } from "@/lib/docker-api";
@@ -14,6 +14,17 @@ import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { ListPagination } from "@/components/docker/ListPagination";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 function formatCreatedAt(value: string) {
   const d = new Date(value);
@@ -36,6 +47,8 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
+  const [forcePending, setForcePending] = useState<string | null>(null);
+  const [forceDialog, setForceDialog] = useState<string | null>(null);
   const [liveData, setLiveData] = useState<PaginatedNetworksResponse | null>(data);
   const [liveError, setLiveError] = useState<string | null>(error);
 
@@ -134,6 +147,26 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
       },
       onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
     });
+  };
+
+  const runForceDelete = async () => {
+    if (!forceDialog) return;
+    setForcePending(forceDialog);
+    try {
+      await deleteDockerNetwork(forceDialog, true);
+      toast({ title: "Network removed (force)", description: forceDialog });
+      setForceDialog(null);
+      router.refresh();
+    } catch (e) {
+      toast({
+        title: "Failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+      setForceDialog(null);
+    } finally {
+      setForcePending(null);
+    }
   };
 
   const listError = liveError;
@@ -268,15 +301,30 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
                     </span>
                   </td>
                   <td className="py-3.5 px-5">
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(n.name)}
-                      disabled={del.isPending}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
-                      title="Remove network"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setForceDialog(n.name)}
+                        disabled={del.isPending || forcePending === n.name}
+                        className="p-1.5 rounded-md hover:bg-amber-500/15 text-muted-foreground hover:text-amber-500"
+                        title="Force remove network"
+                      >
+                        {forcePending === n.name ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <OctagonAlert className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(n.name)}
+                        disabled={del.isPending || forcePending === n.name}
+                        className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
+                        title="Remove network"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -293,6 +341,48 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
           />
         </div>
       ) : null}
+      <AlertDialog open={!!forceDialog} onOpenChange={(open) => !open && setForceDialog(null)}>
+        <AlertDialogContent className="max-w-lg border-amber-500/20">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
+              <OctagonAlert className="w-5 h-5 shrink-0" />
+              Force delete network
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-left text-muted-foreground">
+                <p>
+                  This force flow tries to detach Docker services from this network, then runs{" "}
+                  <strong className="text-foreground">docker network rm</strong>.
+                </p>
+                <p>
+                  If running containers are still attached, Docker may refuse removal. Disconnect or remove those
+                  containers first.
+                </p>
+                {forceDialog && (
+                  <div>
+                    <span className="text-xs font-medium text-foreground">Command on the API host:</span>
+                    <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
+                      docker network rm {forceDialog}
+                    </code>
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!forcePending}>Cancel</AlertDialogCancel>
+            <button
+              type="button"
+              disabled={!!forcePending}
+              className={cn(buttonVariants({ variant: "destructive" }), "gap-2")}
+              onClick={runForceDelete}
+            >
+              {forcePending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Confirm force delete
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

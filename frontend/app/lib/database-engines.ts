@@ -12,6 +12,25 @@ export type DatabaseEngineId = z.infer<typeof databaseEngineIdSchema>;
 
 /** Docker image for generated Postgres stacks — keep in sync with backend `DatabaseGeneratorService.POSTGRES_DOCKER_IMAGE`. */
 export const POSTGRES_DOCKER_IMAGE = "postgres:18-alpine";
+export const MYSQL_DOCKER_IMAGE = "mysql:8.4";
+export const MARIADB_DOCKER_IMAGE = "mariadb:11.4";
+export const MONGODB_DOCKER_IMAGE = "mongo:8.0";
+export const REDIS_DOCKER_IMAGE = "redis:7.4";
+
+export function defaultDatabaseImage(engine: DatabaseEngineId): string {
+  if (engine === "postgres") return POSTGRES_DOCKER_IMAGE;
+  if (engine === "mysql") return MYSQL_DOCKER_IMAGE;
+  if (engine === "mariadb") return MARIADB_DOCKER_IMAGE;
+  if (engine === "mongodb") return MONGODB_DOCKER_IMAGE;
+  return REDIS_DOCKER_IMAGE;
+}
+
+export function defaultDatabaseVolumePath(engine: DatabaseEngineId): string {
+  if (engine === "postgres") return "/var/lib/postgresql/data";
+  if (engine === "mysql" || engine === "mariadb") return "/var/lib/mysql";
+  if (engine === "mongodb") return "/data/db";
+  return "/data";
+}
 
 export const DATABASE_ENGINES: {
   id: DatabaseEngineId;

@@ -125,7 +125,7 @@ export default function ProjectsClient({
   const handleDelete = async (id: string, name: string) => {
     const ok = await confirm({
       title: "Delete project?",
-      description: `“${name}” and its data in the app will be removed. This cannot be undone.`,
+      description: `“${name}” will be deleted only if it has no services. Delete all services inside it first. This cannot be undone.`,
       confirmLabel: "Delete project",
       variant: "destructive",
     });

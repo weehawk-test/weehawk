@@ -16,8 +16,9 @@ import {
 import { ServicesService } from './services.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
-import { PostgresDatabaseDto } from './dto/postgres-database.dto';
+import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
+import type { DatabaseEngine } from './database-generator.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Observable, map } from 'rxjs';
 
@@ -25,6 +26,20 @@ import { Observable, map } from 'rxjs';
 @Controller('services')
 export class ServicesController {
   constructor(private readonly servicesService: ServicesService) {}
+
+  private parseEngineOrThrow(engine: string): DatabaseEngine {
+    const e = engine.toLowerCase();
+    if (
+      e === 'postgres' ||
+      e === 'mysql' ||
+      e === 'mariadb' ||
+      e === 'mongodb' ||
+      e === 'redis'
+    ) {
+      return e;
+    }
+    throw new BadRequestException('Unsupported database engine');
+  }
 
   @Post()
   @ApiOperation({ summary: 'Create service record' })
@@ -40,9 +55,27 @@ export class ServicesController {
   })
   applyPostgresDatabase(
     @Param('id') id: string,
-    @Body() dto: PostgresDatabaseDto,
+    @Body() dto: DatabaseSetupDto,
   ) {
     return this.servicesService.applyPostgresDatabase(+id, dto);
+  }
+
+  @Post(':id/database/:engine')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Generate database docker-compose from form fields and save to dockerConfig (postgres/mysql/mariadb/mongodb/redis)',
+  })
+  applyDatabaseByEngine(
+    @Param('id') id: string,
+    @Param('engine') engine: string,
+    @Body() dto: DatabaseSetupDto,
+  ) {
+    return this.servicesService.applyDatabase(
+      +id,
+      this.parseEngineOrThrow(engine),
+      dto,
+    );
   }
 
   @Patch(':id/database/postgres/stack')
@@ -56,6 +89,24 @@ export class ServicesController {
     @Body() dto: PostgresStackUpdateDto,
   ) {
     return this.servicesService.updatePostgresStack(+id, dto);
+  }
+
+  @Patch(':id/database/:engine/stack')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Update database stack YAML by engine: optional publishPort (null = unpublish) and/or replicas (1–10). Omitted fields keep current values.',
+  })
+  updateDatabaseStackByEngine(
+    @Param('id') id: string,
+    @Param('engine') engine: string,
+    @Body() dto: PostgresStackUpdateDto,
+  ) {
+    return this.servicesService.updateDatabaseStack(
+      +id,
+      this.parseEngineOrThrow(engine),
+      dto,
+    );
   }
 
   @Post(':id/execute')

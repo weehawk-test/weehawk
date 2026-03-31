@@ -26,6 +26,10 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
 export function mapApiProjectToProject(raw: unknown): Project {
   const row = raw as Record<string, unknown>;
   const services = Array.isArray(row.services) ? row.services : [];
+  const explicitCount =
+    typeof row.serviceCount === "number" && Number.isFinite(row.serviceCount)
+      ? Math.max(0, Math.floor(row.serviceCount))
+      : undefined;
   const created = row.createdAt;
   let createdAt: string;
   if (created instanceof Date) createdAt = created.toISOString();
@@ -38,7 +42,7 @@ export function mapApiProjectToProject(raw: unknown): Project {
     description: typeof row.description === "string" ? row.description : "",
     createdAt,
     isActive: row.isActive !== false,
-    serviceCount: services.length,
+    serviceCount: explicitCount ?? services.length,
   };
 }
 

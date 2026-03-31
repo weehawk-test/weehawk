@@ -1,5 +1,6 @@
 import { API_BASE } from "./api";
 import type { CreateServiceInput, Service, ServiceType } from "./schema";
+import type { DatabaseEngineId } from "./database-engines";
 import { getServerApiBase } from "./server-api";
 
 function nestErrorMessage(text: string, fallback: string): string {
@@ -133,8 +134,18 @@ export async function applyPostgresDatabaseApi(
   id: string,
   body: {
     dbName: string;
-    user: string;
-    pass: string;
+    user?: string;
+    pass?: string;
+    rootUser?: string;
+    rootPass?: string;
+    password?: string;
+    storeDbName?: "env" | "secret";
+    storeUser?: "env" | "secret";
+    storePass?: "env" | "secret";
+    storeRootUser?: "env" | "secret";
+    storeRootPass?: "env" | "secret";
+    storePassword?: "env" | "secret";
+    volumePath?: string;
     replicas?: number;
     publishPort?: number;
     image?: string;
@@ -151,12 +162,61 @@ export async function applyPostgresDatabaseApi(
   return mapApiServiceToService(JSON.parse(text));
 }
 
+export async function applyDatabaseApi(
+  id: string,
+  engine: DatabaseEngineId,
+  body: {
+    dbName?: string;
+    user?: string;
+    pass?: string;
+    rootUser?: string;
+    rootPass?: string;
+    password?: string;
+    storeDbName?: "env" | "secret";
+    storeUser?: "env" | "secret";
+    storePass?: "env" | "secret";
+    storeRootUser?: "env" | "secret";
+    storeRootPass?: "env" | "secret";
+    storePassword?: "env" | "secret";
+    volumePath?: string;
+    replicas?: number;
+    publishPort?: number;
+    image?: string;
+  },
+): Promise<Service> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
 /** Update Postgres stack YAML after creation: host port and/or replicas (`publishPort: null` unpublishes). */
 export async function updatePostgresStackApi(
   id: string,
   body: { publishPort?: number | null; replicas?: number },
 ): Promise<Service> {
   const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/postgres/stack`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
+export async function updateDatabaseStackApi(
+  id: string,
+  engine: DatabaseEngineId,
+  body: { publishPort?: number | null; replicas?: number },
+): Promise<Service> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}/stack`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });

@@ -5,6 +5,7 @@ import {
   fetchDockerVolumes,
   fetchDockerStats,
   deleteDockerContainer,
+  deleteDockerService,
   deleteDockerImage,
   deleteDockerVolume,
   deleteDockerNetwork,
@@ -23,6 +24,15 @@ export function useDeleteDockerContainer() {
   return useMutation({
     mutationFn: (idOrName: string) => deleteDockerContainer(idOrName),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["docker", "containers"] }),
+  });
+}
+
+export function useDeleteDockerService() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ idOrName, force }: { idOrName: string; force?: boolean }) =>
+      deleteDockerService(idOrName, !!force),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["docker", "services"] }),
   });
 }
 

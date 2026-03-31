@@ -8,17 +8,21 @@ import {
   filterContainers,
   filterImages,
   filterNetworks,
+  filterServices,
   filterVolumes,
   mapRawRowsToContainers,
   mapRawRowsToImages,
   mapRawRowsToNetworks,
+  mapRawRowsToServices,
   mapRawRowsToVolumes,
 } from './docker-row.mapper';
 import {
+  countServicesByStatus,
   countByStatus,
   type PaginatedContainersDto,
   type PaginatedImagesDto,
   type PaginatedNetworksDto,
+  type PaginatedServicesDto,
   type PaginatedVolumesDto,
 } from './dto/paginated-list.dto';
 import { exec, execFile } from 'child_process';
@@ -129,6 +133,20 @@ type VolumeInspectRow = {
   Driver?: string;
   Mountpoint?: string;
   CreatedAt?: string;
+};
+
+type NetworkInspectRow = {
+  Id?: string;
+  Name?: string;
+};
+
+type ServiceInspectRow = {
+  Spec?: {
+    Name?: string;
+    TaskTemplate?: {
+      Networks?: Array<{ Target?: string }>;
+    };
+  };
 };
 
 @Injectable()
@@ -382,6 +400,43 @@ export class DockerService {
     };
   }
 
+  async getServices() {
+    try {
+      const { stdout } = await execAsync('docker service ls --format "{{json .}}"');
+      return stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+    } catch (error) {
+      rethrowDockerError(error, 'services');
+    }
+  }
+
+  async getServicesPaged(
+    pageRaw: number,
+    pageSizeRaw: number,
+    search: string,
+  ): Promise<PaginatedServicesDto> {
+    const page = this.clampPage(pageRaw);
+    const pageSize = this.clampPageSize(pageSizeRaw);
+    const raw = await this.getServices();
+    const mapped = mapRawRowsToServices(raw as unknown[]);
+    const counts = countServicesByStatus(mapped);
+    const filtered = filterServices(mapped, search ?? '');
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    const items = filtered.slice(start, start + pageSize);
+    return {
+      items,
+      total,
+      totalAll: mapped.length,
+      page,
+      pageSize,
+      counts,
+    };
+  }
+
   async getSystemStats() {
     try {
       const { stdout } = await execAsync(
@@ -422,11 +477,31 @@ export class DockerService {
     }
   }
 
-  /** Remove container (force-stops if running). */
-  async removeContainer(idOrName: string) {
+  async getServiceLogs(idOrName: string, tail = 500) {
+    const target = assertNonEmptyParam(idOrName, 'Service id or name');
+    const n = Math.min(Math.max(Number(tail) || 500, 1), 10000);
+    try {
+      const { stdout, stderr } = await execFileAsync('docker', [
+        'service',
+        'logs',
+        '--tail',
+        String(n),
+        '--timestamps',
+        '--raw',
+        target,
+      ]);
+      const combined = [stdout, stderr].filter(Boolean).join('\n');
+      return { logs: combined.trimEnd() };
+    } catch (error) {
+      rethrowDockerError(error, 'service logs');
+    }
+  }
+
+  /** Remove container (normal or force). */
+  async removeContainer(idOrName: string, force = false) {
     const target = assertNonEmptyParam(idOrName, 'Container id or name');
     try {
-      await execFileAsync('docker', ['rm', '-f', target]);
+      await execFileAsync('docker', force ? ['rm', '-f', target] : ['rm', target]);
       return { success: true };
     } catch (error) {
       rethrowDockerMutateError(error, 'Failed to remove container');
@@ -465,24 +540,119 @@ export class DockerService {
   }
 
   /** Remove a named volume. */
-  async removeVolume(name: string) {
+  async removeVolume(name: string, force = false) {
     const volumeName = assertNonEmptyParam(name, 'Volume name');
     try {
-      await execFileAsync('docker', ['volume', 'rm', volumeName]);
+      await execFileAsync(
+        'docker',
+        force ? ['volume', 'rm', '-f', volumeName] : ['volume', 'rm', volumeName],
+      );
       return { success: true };
     } catch (error) {
       rethrowDockerMutateError(error, 'Failed to remove volume');
     }
   }
 
+  private async resolveNetworkTarget(
+    idOrName: string,
+  ): Promise<{ id: string; name: string }> {
+    try {
+      const { stdout } = await execFileAsync('docker', [
+        'network',
+        'inspect',
+        idOrName,
+      ]);
+      const parsed = JSON.parse(stdout) as NetworkInspectRow[];
+      const first = Array.isArray(parsed) ? parsed[0] : undefined;
+      return {
+        id: String(first?.Id ?? '').trim(),
+        name: String(first?.Name ?? idOrName).trim() || idOrName,
+      };
+    } catch {
+      return { id: idOrName, name: idOrName };
+    }
+  }
+
+  private async forceDetachNetworkFromServices(networkIdOrName: string) {
+    const net = await this.resolveNetworkTarget(networkIdOrName);
+    try {
+      const { stdout } = await execFileAsync('docker', [
+        'service',
+        'ls',
+        '-q',
+      ]);
+      const serviceIds = stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const serviceId of serviceIds) {
+        try {
+          const { stdout: inspectOut } = await execFileAsync('docker', [
+            'service',
+            'inspect',
+            serviceId,
+          ]);
+          const parsed = JSON.parse(inspectOut) as ServiceInspectRow[];
+          const svc = Array.isArray(parsed) ? parsed[0] : undefined;
+          const targets =
+            svc?.Spec?.TaskTemplate?.Networks
+              ?.map((n) => String(n?.Target ?? '').trim())
+              .filter(Boolean) ?? [];
+          const matched = targets.find(
+            (t) => t === net.id || t === net.name || t.startsWith(net.id),
+          );
+          if (!matched) continue;
+          await execFileAsync('docker', [
+            'service',
+            'update',
+            '--network-rm',
+            matched,
+            serviceId,
+          ]);
+        } catch {
+          // Best effort only.
+        }
+      }
+    } catch {
+      // Swarm may be disabled; ignore.
+    }
+  }
+
   /** Remove a network by name or ID (fails for in-use or predefined networks). */
-  async removeNetwork(idOrName: string) {
+  async removeNetwork(idOrName: string, force = false) {
     const target = assertNonEmptyParam(idOrName, 'Network id or name');
     try {
       await execFileAsync('docker', ['network', 'rm', target]);
       return { success: true };
     } catch (error) {
+      if (force) {
+        try {
+          await this.forceDetachNetworkFromServices(target);
+          await execFileAsync('docker', ['network', 'rm', target]);
+          return { success: true };
+        } catch {
+          // Fall through to the standard API error formatter.
+        }
+      }
       rethrowDockerMutateError(error, 'Failed to remove network');
+    }
+  }
+
+  async removeService(idOrName: string, force = false) {
+    const target = assertNonEmptyParam(idOrName, 'Service id or name');
+    try {
+      if (force) {
+        try {
+          await execFileAsync('docker', ['service', 'scale', `${target}=0`]);
+        } catch {
+          // Best effort before remove.
+        }
+      }
+      await execFileAsync('docker', ['service', 'rm', target]);
+      return { success: true };
+    } catch (error) {
+      rethrowDockerMutateError(error, 'Failed to remove service');
     }
   }
 }

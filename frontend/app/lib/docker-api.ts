@@ -13,6 +13,7 @@ function pickStr(row: Record<string, unknown>, ...keys: string[]): string {
 }
 
 export type ContainerStatus = "running" | "stopped" | "exited";
+export type ServiceStatus = "running" | "stopped" | "degraded";
 
 export interface DockerContainer {
   id: string;
@@ -21,6 +22,16 @@ export interface DockerContainer {
   status: ContainerStatus;
   ports: string;
   createdAt: string;
+}
+
+export interface DockerService {
+  id: string;
+  name: string;
+  mode: string;
+  replicas: string;
+  image: string;
+  ports: string;
+  status: ServiceStatus;
 }
 
 export interface DockerImage {
@@ -256,6 +267,7 @@ export function dockerMonitorOverviewWsUrl(options?: { intervalMs?: number }) {
 
 export type DockerPagedWsTopic =
   | "containers.paged"
+  | "services.paged"
   | "images.paged"
   | "networks.paged"
   | "volumes.paged"
@@ -352,8 +364,14 @@ export function dockerImageForceDeleteRef(img: DockerImage): string {
   return raw;
 }
 
-export async function deleteDockerContainer(idOrName: string): Promise<void> {
-  await dockerDelete(`/docker-monitor/containers/${encodeURIComponent(idOrName)}`);
+export async function deleteDockerContainer(idOrName: string, force = false): Promise<void> {
+  const qs = force ? "?force=true" : "";
+  await dockerDelete(`/docker-monitor/containers/${encodeURIComponent(idOrName)}${qs}`);
+}
+
+export async function deleteDockerService(idOrName: string, force = false): Promise<void> {
+  const qs = force ? "?force=true" : "";
+  await dockerDelete(`/docker-monitor/services/${encodeURIComponent(idOrName)}${qs}`);
 }
 
 export async function fetchDockerContainerLogs(
@@ -381,14 +399,41 @@ export async function fetchDockerContainerLogs(
   return j.logs ?? "";
 }
 
+export async function fetchDockerServiceLogs(
+  idOrName: string,
+  tail = 500,
+): Promise<string> {
+  const q = new URLSearchParams({ tail: String(tail) });
+  const res = await fetch(
+    `${API_BASE}/docker-monitor/services/${encodeURIComponent(idOrName)}/logs?${q}`,
+    { cache: "no-store" },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    let msg = text || res.statusText || `HTTP ${res.status}`;
+    try {
+      const j = JSON.parse(text) as { message?: string | string[] };
+      if (typeof j.message === "string") msg = j.message;
+      else if (Array.isArray(j.message)) msg = j.message.join(", ");
+    } catch {
+      /* keep raw */
+    }
+    throw new Error(msg);
+  }
+  const j = JSON.parse(text) as { logs?: string };
+  return j.logs ?? "";
+}
+
 export async function deleteDockerImage(ref: string): Promise<void> {
   await dockerDelete(`/docker-monitor/images?ref=${encodeURIComponent(ref)}`);
 }
 
-export async function deleteDockerVolume(name: string): Promise<void> {
-  await dockerDelete(`/docker-monitor/volumes/${encodeURIComponent(name)}`);
+export async function deleteDockerVolume(name: string, force = false): Promise<void> {
+  const qs = force ? "?force=true" : "";
+  await dockerDelete(`/docker-monitor/volumes/${encodeURIComponent(name)}${qs}`);
 }
 
-export async function deleteDockerNetwork(nameOrId: string): Promise<void> {
-  await dockerDelete(`/docker-monitor/networks/${encodeURIComponent(nameOrId)}`);
+export async function deleteDockerNetwork(nameOrId: string, force = false): Promise<void> {
+  const qs = force ? "?force=true" : "";
+  await dockerDelete(`/docker-monitor/networks/${encodeURIComponent(nameOrId)}${qs}`);
 }

@@ -34,6 +34,7 @@ export class DockerMonitorGateway implements OnGatewayConnection {
       'stats',
       'overview',
       'containers.paged',
+      'services.paged',
       'images.paged',
       'networks.paged',
       'volumes.paged',
@@ -109,6 +110,8 @@ export class DockerMonitorGateway implements OnGatewayConnection {
         let data: unknown;
         if (topic === 'containers.paged') {
           data = await this.dockerService.getContainersPaged(page, pageSize, q);
+        } else if (topic === 'services.paged') {
+          data = await this.dockerService.getServicesPaged(page, pageSize, q);
         } else if (topic === 'images.paged') {
           data = await this.dockerService.getImagesPaged(page, pageSize, q);
         } else if (topic === 'networks.paged') {

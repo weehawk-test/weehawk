@@ -5,7 +5,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, LayoutDashboard, FolderKanban, KeyRound, UserCircle, ChevronUp,
-  ImageIcon, Box, Database, Bell, HardDrive, Network,
+  ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useState } from "react";
@@ -20,7 +20,7 @@ const navSections = [
     ],
   },
   {
-    label: "Automation",
+    label: "Integrations",
     items: [
       { href: "/webhooks",     label: "Webhooks",      icon: Webhook },
       { href: "/notifications/channels", label: "Notifications", icon: Bell },
@@ -32,6 +32,7 @@ const navSections = [
     items: [
       { href: "/docker/images",     label: "Images",     icon: ImageIcon },
       { href: "/docker/containers", label: "Containers", icon: Box },
+      { href: "/docker/services",   label: "Services",   icon: Boxes },
       { href: "/docker/networks",   label: "Networks",   icon: Network },
       { href: "/secrets",           label: "Secrets",    icon: KeyRound },
       { href: "/docker/volumes",    label: "Volumes",    icon: Database },

@@ -48,6 +48,16 @@ const postgresCreateFieldsSchema = z.object({
   dbName: z.string().default(""),
   user: z.string().default(""),
   pass: z.string().default(""),
+  rootUser: z.string().default(""),
+  rootPass: z.string().default(""),
+  password: z.string().default(""),
+  storeDbName: z.enum(["env", "secret"]).default("env"),
+  storeUser: z.enum(["env", "secret"]).default("env"),
+  storePass: z.enum(["env", "secret"]).default("secret"),
+  storeRootUser: z.enum(["env", "secret"]).default("env"),
+  storeRootPass: z.enum(["env", "secret"]).default("secret"),
+  storePassword: z.enum(["env", "secret"]).default("secret"),
+  volumePath: z.string().default(""),
   replicas: z.coerce.number().int().min(1).max(10).default(1),
   /** Empty = do not publish a host port */
   publishPort: z.string().default(""),
@@ -63,7 +73,7 @@ export const createServiceSchema = z
     description: z.string().optional(),
     config: z.string().default(""),
     databaseEngine: databaseEngineIdSchema.optional(),
-    /** Required when type is databases and engine is postgres (set at service creation). */
+    /** Required when type is databases (set at service creation). */
     postgres: postgresCreateFieldsSchema.optional(),
   })
   .superRefine((data, ctx) => {
@@ -74,27 +84,56 @@ export const createServiceSchema = z
         path: ["databaseEngine"],
       });
     }
-    if (data.type === "databases" && data.databaseEngine === "postgres") {
+    if (data.type === "databases") {
       const p = data.postgres;
-      if (!p?.dbName?.trim()) {
+      const engine = data.databaseEngine;
+      if (engine !== "redis" && !p?.dbName?.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Database name is required.",
           path: ["postgres", "dbName"],
         });
       }
-      if (!p?.user?.trim()) {
+      if ((engine === "postgres" || engine === "mysql" || engine === "mariadb") && !p?.user?.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Database user is required.",
           path: ["postgres", "user"],
         });
       }
-      if (!p?.pass?.trim()) {
+      if ((engine === "postgres" || engine === "mysql" || engine === "mariadb") && !p?.pass?.trim()) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Database password is required.",
           path: ["postgres", "pass"],
+        });
+      }
+      if ((engine === "mysql" || engine === "mariadb") && !p?.rootPass?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Root password is required.",
+          path: ["postgres", "rootPass"],
+        });
+      }
+      if (engine === "mongodb" && !p?.rootUser?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Root username is required.",
+          path: ["postgres", "rootUser"],
+        });
+      }
+      if (engine === "mongodb" && !p?.rootPass?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Root password is required.",
+          path: ["postgres", "rootPass"],
+        });
+      }
+      if (engine === "redis" && !p?.password?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Password is required.",
+          path: ["postgres", "password"],
         });
       }
       const pp = p?.publishPort?.trim();
@@ -114,6 +153,14 @@ export const createServiceSchema = z
           code: z.ZodIssueCode.custom,
           message: "Invalid image reference (use letters, digits, ._/:@- only).",
           path: ["postgres", "image"],
+        });
+      }
+      const vp = p?.volumePath?.trim();
+      if (vp && !/^\/[^\s]*$/.test(vp)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Volume path must start with / and contain no spaces.",
+          path: ["postgres", "volumePath"],
         });
       }
     }

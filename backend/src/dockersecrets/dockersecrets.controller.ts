@@ -85,8 +85,9 @@ export class DockerSecretsController {
 
   @Delete(':name')
   @ApiOperation({ summary: 'Delete a secret' })
-  async remove(@Param('name') name: string) {
-    return await this.secretsService.remove(name);
+  async remove(@Param('name') name: string, @Query('force') forceStr?: string) {
+    const force = (forceStr ?? '').toLowerCase() === 'true';
+    return await this.secretsService.remove(name, force);
   }
 
   @Get(':name/inspect')

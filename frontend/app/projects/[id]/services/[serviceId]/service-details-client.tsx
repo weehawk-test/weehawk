@@ -13,6 +13,7 @@ import {
   Terminal, Rocket, RefreshCw, Square, Play, RotateCw, Activity, Loader2,
   Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive,
   Database, Eye, EyeOff, Lock,
+  LockOpen,
 } from "lucide-react";
 import {
   useService,
@@ -33,19 +34,21 @@ import {
   databaseLogoBlendClass,
   parseDatabaseEngineFromConfig,
   getDatabaseEngineById,
-  POSTGRES_DOCKER_IMAGE,
+  defaultDatabaseImage,
+  defaultDatabaseVolumePath,
+  type DatabaseEngineId,
 } from "@/lib/database-engines";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  applyPostgresDatabaseApi,
+  applyDatabaseApi,
   streamServiceLogs,
-  updatePostgresStackApi,
+  updateDatabaseStackApi,
 } from "@/lib/services-api";
 import {
   parseServiceEnvLines,
-  parseYamlPostgresImage,
-  parseYamlPostgresPublishPort,
+  parseYamlImage,
+  parseYamlPublishPort,
   parseYamlReplicas,
 } from "@/lib/env-utils";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
@@ -629,8 +632,8 @@ export default function ServiceDetails({
           {activeTab === "overview" && (
             <motion.div key="overview" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="space-y-4">
-              {isDatabaseService && dbEngineId === "postgres" && (
-                <PostgresSetupPanel serviceId={service.id} service={service} />
+              {isDatabaseService && dbEngineId && (
+                <DatabaseSetupPanel serviceId={service.id} service={service} engine={dbEngineId} />
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <InfoCard icon={<Hash className="w-4 h-4 text-primary" />} label="Service ID" value={service.id} mono copyable
@@ -956,26 +959,54 @@ export default function ServiceDetails({
   );
 }
 
-// ─── Postgres (create flow uses modal; here: read-only or one-time legacy form) ──
+// ─── Database setup (overview cards + one-time legacy form) ──
 
-function PostgresSetupPanel({ serviceId, service }: { serviceId: string; service: Service }) {
-  const env = parseServiceEnvLines(service.env ?? "");
-  const hasStack = Boolean(service.config?.includes("services:"));
-  const locked = hasStack && Boolean(env.POSTGRES_PASSWORD);
-
-  if (locked) {
-    return <PostgresCredentialsReadOnly service={service} />;
-  }
-  return <PostgresSetupForm serviceId={serviceId} />;
+function dbPortByEngine(engine: DatabaseEngineId): number {
+  if (engine === "postgres") return 5432;
+  if (engine === "mysql" || engine === "mariadb") return 3306;
+  if (engine === "mongodb") return 27017;
+  return 6379;
 }
 
-function PostgresCredentialsReadOnly({ service }: { service: Service }) {
+function dbEnvKeys(engine: DatabaseEngineId) {
+  if (engine === "postgres") return { db: "POSTGRES_DB", user: "POSTGRES_USER", pass: "POSTGRES_PASSWORD" };
+  if (engine === "mysql") return { db: "MYSQL_DATABASE", user: "MYSQL_USER", pass: "MYSQL_PASSWORD" };
+  if (engine === "mariadb") return { db: "MARIADB_DATABASE", user: "MARIADB_USER", pass: "MARIADB_PASSWORD" };
+  if (engine === "mongodb") return { db: "MONGO_INITDB_DATABASE", user: "MONGO_INITDB_ROOT_USERNAME", pass: "MONGO_INITDB_ROOT_PASSWORD" };
+  return { db: "", user: "", pass: "REDIS_PASSWORD" };
+}
+
+function readStoreMode(config: string, key: string): "env" | "secret" | undefined {
+  const re = new RegExp(`^\\s*#\\s*store\\.${key}:\\s*(env|secret)\\s*$`, "m");
+  const m = config.match(re);
+  if (!m?.[1]) return undefined;
+  return m[1] as "env" | "secret";
+}
+
+function DatabaseSetupPanel({ service, engine }: { serviceId: string; service: Service; engine: DatabaseEngineId }) {
+  return <DatabaseCredentialsReadOnly service={service} engine={engine} />;
+}
+
+function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; engine: DatabaseEngineId }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const env = parseServiceEnvLines(service.env ?? "");
+  const hasStack = Boolean(service.config?.includes("services:"));
   const replicas = parseYamlReplicas(service.config ?? "") ?? 1;
-  const hostPort = parseYamlPostgresPublishPort(service.config ?? "");
-  const yamlImage = parseYamlPostgresImage(service.config ?? "") ?? POSTGRES_DOCKER_IMAGE;
+  const keys = dbEnvKeys(engine);
+  const containerPort = dbPortByEngine(engine);
+  const hostPort = parseYamlPublishPort(service.config ?? "", containerPort);
+  const yamlImage = parseYamlImage(service.config ?? "") ?? defaultDatabaseImage(engine);
+  const hasDbName = engine !== "redis";
+  const hasUser = engine === "postgres" || engine === "mysql" || engine === "mariadb" || engine === "mongodb";
+  const primaryPasswordLabel = engine === "mongodb" ? "Root password" : "Password";
+  const userLabel = engine === "mongodb" ? "Root user" : "User";
+  const rootPassKey =
+    engine === "mysql" ? "MYSQL_ROOT_PASSWORD" : engine === "mariadb" ? "MARIADB_ROOT_PASSWORD" : null;
+  const dbStoreMode = keys.db ? readStoreMode(service.config ?? "", keys.db) : undefined;
+  const userStoreMode = keys.user ? readStoreMode(service.config ?? "", keys.user) : undefined;
+  const passStoreMode = readStoreMode(service.config ?? "", keys.pass);
+  const rootPassStoreMode = rootPassKey ? readStoreMode(service.config ?? "", rootPassKey) : undefined;
   const [showPassword, setShowPassword] = useState(false);
   const [editingHostPort, setEditingHostPort] = useState(false);
   const [portDraft, setPortDraft] = useState("");
@@ -1011,7 +1042,7 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
     }
     setPortSaving(true);
     try {
-      await updatePostgresStackApi(service.id, {
+      await updateDatabaseStackApi(service.id, engine, {
         publishPort: t === "" ? null : parseInt(t, 10),
       });
       await queryClient.invalidateQueries({ queryKey: ["service", service.id] });
@@ -1043,7 +1074,7 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
     }
     setReplicasSaving(true);
     try {
-      await updatePostgresStackApi(service.id, { replicas: n });
+      await updateDatabaseStackApi(service.id, engine, { replicas: n });
       await queryClient.invalidateQueries({ queryKey: ["service", service.id] });
       setEditingReplicas(false);
       toast({
@@ -1065,34 +1096,69 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
     <div className="glass-panel rounded-2xl border border-sky-500/20 p-6 md:p-8">
       <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
         <Database className="w-5 h-5 text-sky-400" />
-        Postgres
+        {getDatabaseEngineById(engine)?.name ?? "Database"}
         <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground border border-border rounded-full px-2 py-0.5">
           <Lock className="w-3 h-3" />
           Saved
         </span>
       </h3>
       <p className="text-sm text-muted-foreground mb-5 max-w-2xl leading-relaxed">
-        Login fields are read-only (see <span className="text-foreground font-medium">Environment</span>); use Show to copy the password. Edit{" "}
+        Credentials can be stored in <span className="text-foreground font-medium">Environment</span> or{" "}
+        <span className="text-foreground font-medium">Docker Secrets</span>. Secret values are not readable from this page. Edit{" "}
         <span className="text-foreground font-medium">replicas</span> or <span className="text-foreground font-medium">host port</span> below, then redeploy.
       </p>
+      {!hasStack && (
+        <p className="text-xs text-amber-400/90 mb-4">
+          No stack YAML is saved yet for this service.
+        </p>
+      )}
       <p className="text-xs font-mono text-sky-300/90 mb-5">
         Docker image: <span className="text-foreground">{yamlImage}</span>
       </p>
       <dl className="grid gap-4 sm:grid-cols-2 max-w-2xl text-sm">
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground mb-1">Database name</dt>
-          <dd className="font-mono text-foreground break-all">{env.POSTGRES_DB ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-xs font-medium text-muted-foreground mb-1">User</dt>
-          <dd className="font-mono text-foreground break-all">{env.POSTGRES_USER ?? "—"}</dd>
-        </div>
+        {hasDbName && (
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground mb-1">Database name</dt>
+            <dd className="font-mono text-foreground break-all">
+              {keys.db && env[keys.db] ? env[keys.db] : dbStoreMode === "secret" ? (
+                <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
+                  <Lock className="w-3.5 h-3.5" />
+                  Not readable (Docker Secrets)
+                </span>
+              ) : "—"}
+            </dd>
+          </div>
+        )}
+        {hasUser && (
+          <div>
+            <dt className="text-xs font-medium text-muted-foreground mb-1">{userLabel}</dt>
+            <dd className="font-mono text-foreground break-all">
+              {keys.user && env[keys.user] ? env[keys.user] : userStoreMode === "secret" ? (
+                <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
+                  <Lock className="w-3.5 h-3.5" />
+                  Not readable (Docker Secrets)
+                </span>
+              ) : "—"}
+            </dd>
+          </div>
+        )}
         <div className="sm:col-span-2">
-          <dt className="text-xs font-medium text-muted-foreground mb-1">Password</dt>
+          <dt className="text-xs font-medium text-muted-foreground mb-1">{primaryPasswordLabel}</dt>
           <dd className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-foreground break-all">
-              {showPassword ? env.POSTGRES_PASSWORD ?? "—" : "••••••••"}
-            </span>
+            {showPassword ? (
+              env[keys.pass] ? (
+                <span className="font-mono text-foreground break-all">{env[keys.pass]}</span>
+              ) : passStoreMode === "secret" ? (
+                <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs">
+                  <Lock className="w-3.5 h-3.5" />
+                  Not readable (Docker Secrets)
+                </span>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )
+            ) : (
+              <span className="font-mono text-foreground break-all">••••••••</span>
+            )}
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
@@ -1104,6 +1170,27 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
             </button>
           </dd>
         </div>
+        {rootPassKey && (
+          <div className="sm:col-span-2">
+            <dt className="text-xs font-medium text-muted-foreground mb-1">Root password</dt>
+            <dd className="font-mono text-foreground break-all">
+              {showPassword ? (
+                rootPassKey && env[rootPassKey] ? (
+                  <span>{env[rootPassKey]}</span>
+                ) : rootPassStoreMode === "secret" ? (
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
+                    <Lock className="w-3.5 h-3.5" />
+                    Not readable (Docker Secrets)
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )
+              ) : (
+                "••••••••"
+              )}
+            </dd>
+          </div>
+        )}
         <div className="sm:col-span-2">
           <dt className="text-xs font-medium text-muted-foreground mb-1">Replicas</dt>
           <dd className="space-y-2">
@@ -1112,11 +1199,12 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
                 <span className="font-mono text-foreground">{replicas}</span>
                 <button
                   type="button"
+                  disabled={!hasStack}
                   onClick={() => {
                     setEditingReplicas(true);
                     setReplicasDraft(String(replicas));
                   }}
-                  className="btn-secondary text-xs py-1.5 h-8 self-start"
+                  className="btn-secondary text-xs py-1.5 h-8 self-start disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Change replicas
                 </button>
@@ -1162,7 +1250,7 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
           </dd>
         </div>
         <div className="sm:col-span-2">
-          <dt className="text-xs font-medium text-muted-foreground mb-1">Host port (→ 5432)</dt>
+          <dt className="text-xs font-medium text-muted-foreground mb-1">Host port (→ {containerPort})</dt>
           <dd className="space-y-2">
             {!editingHostPort ? (
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
@@ -1170,7 +1258,7 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
                   {hostPort != null ? (
                     <>
                       <span className="text-emerald-400">{hostPort}</span>
-                      <span className="text-muted-foreground"> → 5432 on host</span>
+                      <span className="text-muted-foreground"> → {containerPort} on host</span>
                     </>
                   ) : (
                     <span className="text-muted-foreground">
@@ -1180,11 +1268,12 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
                 </span>
                 <button
                   type="button"
+                  disabled={!hasStack}
                   onClick={() => {
                     setEditingHostPort(true);
                     setPortDraft(hostPort != null ? String(hostPort) : "");
                   }}
-                  className="btn-secondary text-xs py-1.5 h-8 self-start"
+                  className="btn-secondary text-xs py-1.5 h-8 self-start disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Change port
                 </button>
@@ -1201,7 +1290,7 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
                     autoComplete="off"
                     disabled={portSaving}
                   />
-                  <span className="text-xs text-muted-foreground">→ container 5432</span>
+                  <span className="text-xs text-muted-foreground">→ container {containerPort}</span>
                 </div>
                 <p className="text-[11px] text-muted-foreground leading-snug">
                   Leave empty and save to stop publishing on the host. After saving, redeploy the service.
@@ -1237,23 +1326,78 @@ function PostgresCredentialsReadOnly({ service }: { service: Service }) {
   );
 }
 
-function PostgresSetupForm({ serviceId }: { serviceId: string }) {
+function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: DatabaseEngineId }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [dbName, setDbName] = useState("");
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
+  const [storeDbName, setStoreDbName] = useState<"env" | "secret">("env");
+  const [storeUser, setStoreUser] = useState<"env" | "secret">("env");
+  const [storePass, setStorePass] = useState<"env" | "secret">("secret");
+  const [rootUser, setRootUser] = useState("");
+  const [rootPass, setRootPass] = useState("");
+  const [storeRootUser, setStoreRootUser] = useState<"env" | "secret">("env");
+  const [storeRootPass, setStoreRootPass] = useState<"env" | "secret">("secret");
+  const [password, setPassword] = useState("");
+  const [storePassword, setStorePassword] = useState<"env" | "secret">("secret");
   const [replicas, setReplicas] = useState(1);
   const [publishPort, setPublishPort] = useState("");
-  const [image, setImage] = useState(POSTGRES_DOCKER_IMAGE);
+  const [image, setImage] = useState(defaultDatabaseImage(engine));
+  const [volumePath, setVolumePath] = useState(defaultDatabaseVolumePath(engine));
+  const [imageUnlocked, setImageUnlocked] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setImage(defaultDatabaseImage(engine));
+    setVolumePath(defaultDatabaseVolumePath(engine));
+    setImageUnlocked(false);
+  }, [engine]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!dbName.trim() || !user.trim() || !pass.trim()) {
+    const dbRequired = engine !== "redis";
+    const needUserPass = engine === "postgres" || engine === "mysql" || engine === "mariadb";
+    const needRootPass = engine === "mysql" || engine === "mariadb";
+    const needMongoRoot = engine === "mongodb";
+    const needRedisPassword = engine === "redis";
+
+    if (dbRequired && !dbName.trim()) {
       toast({
         title: "Missing fields",
-        description: "Database name, user, and password are required.",
+        description: "Database name is required.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (needUserPass && (!user.trim() || !pass.trim())) {
+      toast({
+        title: "Missing fields",
+        description: "User and password are required.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (needRootPass && !rootPass.trim()) {
+      toast({
+        title: "Missing fields",
+        description: "Root password is required.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (needMongoRoot && (!rootUser.trim() || !rootPass.trim())) {
+      toast({
+        title: "Missing fields",
+        description: "Root username and root password are required.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (needRedisPassword && !password.trim()) {
+      toast({
+        title: "Missing fields",
+        description: "Password is required for Redis.",
         variant: "destructive",
       });
       return;
@@ -1281,10 +1425,18 @@ function PostgresSetupForm({ serviceId }: { serviceId: string }) {
     }
     setSaving(true);
     try {
-      await applyPostgresDatabaseApi(serviceId, {
-        dbName: dbName.trim(),
-        user: user.trim(),
-        pass,
+      await applyDatabaseApi(serviceId, engine, {
+        ...(dbRequired ? { dbName: dbName.trim() } : {}),
+        ...(needUserPass ? { user: user.trim(), pass } : {}),
+        ...(needMongoRoot ? { rootUser: rootUser.trim(), rootPass } : {}),
+        ...(needRootPass ? { rootPass } : {}),
+        ...(needRedisPassword ? { password } : {}),
+        ...(dbRequired ? { storeDbName } : {}),
+        ...(needUserPass ? { storeUser, storePass } : {}),
+        ...(needMongoRoot ? { storeRootUser, storeRootPass } : {}),
+        ...(needRootPass ? { storeRootPass } : {}),
+        ...(needRedisPassword ? { storePassword } : {}),
+        ...(volumePath.trim() ? { volumePath: volumePath.trim() } : {}),
         replicas: Math.min(10, Math.max(1, Math.floor(replicas) || 1)),
         ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
         ...(img ? { image: img } : {}),
@@ -1293,7 +1445,7 @@ function PostgresSetupForm({ serviceId }: { serviceId: string }) {
       toast({
         title: "Stack YAML saved",
         description:
-          "Credentials are stored under Environment (POSTGRES_*). Deploy from the header to run docker stack deploy.",
+          "Credentials are stored under Environment. Deploy from the header to run docker stack deploy.",
       });
     } catch (err) {
       toast({
@@ -1310,57 +1462,168 @@ function PostgresSetupForm({ serviceId }: { serviceId: string }) {
     <div className="glass-panel rounded-2xl border border-amber-500/20 p-6 md:p-8">
       <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
         <Database className="w-5 h-5 text-amber-400" />
-        Complete Postgres setup
+        Complete {getDatabaseEngineById(engine)?.name ?? "Database"} setup
       </h3>
       <p className="text-sm text-muted-foreground mb-5 max-w-2xl leading-relaxed">
-        This service has no saved stack yet. Prefer creating new Postgres services from{" "}
+        This service has no saved stack yet. Prefer creating database services from{" "}
         <span className="text-foreground font-medium">Add Service</span> so credentials are set at creation. Here you can generate the stack once; after that this form locks.
       </p>
       <div className="mb-5 space-y-1.5">
         <label className="text-xs font-medium text-muted-foreground block">Docker image</label>
-        <input
-          className="input-field w-full font-mono text-sm max-w-2xl"
-          value={image}
-          onChange={(e) => setImage(e.target.value)}
-          placeholder={POSTGRES_DOCKER_IMAGE}
-          autoComplete="off"
-        />
-        <p className="text-[11px] text-amber-500/90 leading-snug rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 max-w-2xl">
-          Changing the image can change PostgreSQL data paths between versions — check volume compatibility.
-        </p>
+        <div className="relative max-w-2xl">
+          <input
+            className={`input-field w-full font-mono text-sm pr-10 ${!imageUnlocked ? "bg-zinc-950/80 !text-zinc-500 border-white/10 cursor-not-allowed" : ""}`}
+            value={image}
+            onChange={(e) => setImage(e.target.value)}
+            placeholder={defaultDatabaseImage(engine)}
+            autoComplete="off"
+            readOnly={!imageUnlocked}
+            title={!imageUnlocked ? "Unlock to edit image" : undefined}
+          />
+          <button
+            type="button"
+            onClick={() => setImageUnlocked((v) => !v)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10"
+            aria-label={imageUnlocked ? "Lock image field" : "Unlock image field"}
+          >
+            {imageUnlocked ? <LockOpen className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+          </button>
+        </div>
+        {imageUnlocked && (
+          <p className="text-[11px] text-amber-500/90 leading-snug rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 max-w-2xl">
+            Warning: Data storage path can differ between image versions. Verify the path and update the volume mount to match the selected version.
+          </p>
+        )}
+        {imageUnlocked && (
+          <div className="max-w-2xl space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground block">Volume path</label>
+            <input
+              className="input-field w-full font-mono text-sm"
+              value={volumePath}
+              onChange={(e) => setVolumePath(e.target.value)}
+              placeholder={`default: ${defaultDatabaseVolumePath(engine)}`}
+              autoComplete="off"
+            />
+          </div>
+        )}
       </div>
       <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2 max-w-2xl">
-        <div className="sm:col-span-2">
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Database name</label>
-          <input
-            className="input-field w-full font-mono text-sm"
-            value={dbName}
-            onChange={(e) => setDbName(e.target.value)}
-            placeholder="myapp-db"
-            autoComplete="off"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">User</label>
-          <input
-            className="input-field w-full font-mono text-sm"
-            value={user}
-            onChange={(e) => setUser(e.target.value)}
-            placeholder="appuser"
-            autoComplete="off"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
-          <input
-            type="password"
-            className="input-field w-full font-mono text-sm"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            placeholder="••••••••"
-            autoComplete="new-password"
-          />
-        </div>
+        {engine !== "redis" && (
+          <div className="sm:col-span-2">
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Database name</label>
+            <input
+              className="input-field w-full font-mono text-sm"
+              value={dbName}
+              onChange={(e) => setDbName(e.target.value)}
+              placeholder="myapp-db"
+              autoComplete="off"
+            />
+            <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeDbName} onChange={(e) => setStoreDbName(e.target.value as "env" | "secret")}>
+              <option value="env">Store in Environment</option>
+              <option value="secret">Store in Docker Secret</option>
+            </select>
+          </div>
+        )}
+        {(engine === "postgres" || engine === "mysql" || engine === "mariadb") && (
+          <>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">User</label>
+              <input
+                className="input-field w-full font-mono text-sm"
+                value={user}
+                onChange={(e) => setUser(e.target.value)}
+                placeholder="appuser"
+                autoComplete="off"
+              />
+              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeUser} onChange={(e) => setStoreUser(e.target.value as "env" | "secret")}>
+                <option value="env">Store in Environment</option>
+                <option value="secret">Store in Docker Secret</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
+              <input
+                type="password"
+                className="input-field w-full font-mono text-sm"
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storePass} onChange={(e) => setStorePass(e.target.value as "env" | "secret")}>
+                <option value="secret">Store in Docker Secret</option>
+                <option value="env">Store in Environment</option>
+              </select>
+            </div>
+          </>
+        )}
+        {(engine === "mysql" || engine === "mariadb") && (
+          <div className="sm:col-span-2">
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root password</label>
+            <input
+              type="password"
+              className="input-field w-full font-mono text-sm"
+              value={rootPass}
+              onChange={(e) => setRootPass(e.target.value)}
+              placeholder="••••••••"
+              autoComplete="new-password"
+            />
+            <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeRootPass} onChange={(e) => setStoreRootPass(e.target.value as "env" | "secret")}>
+              <option value="secret">Store in Docker Secret</option>
+              <option value="env">Store in Environment</option>
+            </select>
+          </div>
+        )}
+        {engine === "mongodb" && (
+          <>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root username</label>
+              <input
+                className="input-field w-full font-mono text-sm"
+                value={rootUser}
+                onChange={(e) => setRootUser(e.target.value)}
+                placeholder="root"
+                autoComplete="off"
+              />
+              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeRootUser} onChange={(e) => setStoreRootUser(e.target.value as "env" | "secret")}>
+                <option value="env">Store in Environment</option>
+                <option value="secret">Store in Docker Secret</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root password</label>
+              <input
+                type="password"
+                className="input-field w-full font-mono text-sm"
+                value={rootPass}
+                onChange={(e) => setRootPass(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
+              />
+              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeRootPass} onChange={(e) => setStoreRootPass(e.target.value as "env" | "secret")}>
+                <option value="secret">Store in Docker Secret</option>
+                <option value="env">Store in Environment</option>
+              </select>
+            </div>
+          </>
+        )}
+        {engine === "redis" && (
+          <div className="sm:col-span-2">
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
+            <input
+              type="password"
+              className="input-field w-full font-mono text-sm"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              autoComplete="new-password"
+            />
+            <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storePassword} onChange={(e) => setStorePassword(e.target.value as "env" | "secret")}>
+              <option value="secret">Store in Docker Secret</option>
+              <option value="env">Store in Environment</option>
+            </select>
+          </div>
+        )}
         <div>
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Replicas (1–10)</label>
           <input
@@ -1380,7 +1643,7 @@ function PostgresSetupForm({ serviceId }: { serviceId: string }) {
             className="input-field w-full max-w-[8rem] font-mono text-sm"
             value={publishPort}
             onChange={(e) => setPublishPort(e.target.value)}
-            placeholder="e.g. 5432"
+            placeholder={`e.g. ${dbPortByEngine(engine)}`}
             inputMode="numeric"
             autoComplete="off"
           />
