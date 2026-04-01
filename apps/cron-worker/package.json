@@ -1,0 +1,8 @@
+{
+  "name": "cron-worker",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter api exec node -r tsconfig-paths/register -r ts-node/register src/cron-worker.ts",
+    "start": "pnpm --filter api exec node dist/cron-worker.js"
+  }
+}

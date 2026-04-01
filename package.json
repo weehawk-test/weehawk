@@ -1,0 +1,8 @@
+{
+    "name": "weehawk",
+    "private": true,
+    "scripts": {
+      "dev": "pnpm -r --parallel dev",
+      "dev:cron-worker": "pnpm --filter cron-worker dev"
+    }
+}
