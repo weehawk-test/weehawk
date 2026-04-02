@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useDeleteCronJob, useUpdateCronJob } from "@/hooks/use-cron-jobs";
 import type { CronJobDetail } from "@/lib/cron-jobs-api";
+import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 
 type Props = {
   id: string;
@@ -76,6 +77,43 @@ export function CronJobDetailsClient({ id, initialCronJob }: Props) {
             <div>
               <p className="text-xs text-muted-foreground mb-1">Service ID</p>
               <p className="font-mono">{cronJob.serviceId ?? "—"}</p>
+            </div>
+          )}
+          {cronJob.volumeSource && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Volume</p>
+              <p className="font-mono text-xs break-all">{cronJob.volumeSource}</p>
+              {cronJob.serviceAction === "volume_backup" && (
+                <VolumeBackupDbWarning className="mt-2" />
+              )}
+            </div>
+          )}
+          {cronJob.serviceAction === "database_backup" && cronJob.databaseBackupPreview && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">What will run</p>
+              <p className="font-mono text-xs text-foreground/95 whitespace-pre-wrap break-all leading-relaxed">
+                {cronJob.databaseBackupPreview}
+              </p>
+            </div>
+          )}
+          {cronJob.dockerCommand &&
+            (cronJob.serviceAction === "docker_command" ||
+              (cronJob.serviceAction === "database_backup" && !cronJob.databaseBackupConfig)) && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">
+                  {cronJob.serviceAction === "database_backup" ? "Legacy command" : "Docker command"}
+                </p>
+                <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                  {cronJob.dockerCommand}
+                </pre>
+              </div>
+            )}
+          {(cronJob.serviceAction === "volume_backup" || cronJob.serviceAction === "database_backup") && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">S3 destination</p>
+              <p className="font-mono text-sm">
+                {cronJob.backupS3ProfileName ?? "Not set — edit and choose a profile"}
+              </p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-4 text-sm pt-2 border-t border-white/5">

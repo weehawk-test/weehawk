@@ -38,7 +38,8 @@ export type S3ProfilePayload = {
   region: string;
   bucket: string;
   accessKeyId: string;
-  secretAccessKey: string;
+  /** Omit or leave empty when updating to keep the stored secret. */
+  secretAccessKey?: string;
   forcePathStyle?: boolean;
 };
 
@@ -49,6 +50,8 @@ export type S3ProfilePublic = {
   bucket: string;
   accessKeyId: string;
   forcePathStyle: boolean;
+  /** Set by API; older responses may omit (client falls back to updatedAt). */
+  createdAt?: string;
   updatedAt: string;
   secretAccessKeyMasked: string;
 };

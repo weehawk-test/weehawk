@@ -27,12 +27,22 @@ export class UpsertS3ProfileDto {
   @IsNotEmpty()
   accessKeyId: string;
 
-  @ApiProperty({ example: 'secret-value' })
+  @ApiProperty({
+    example: 'secret-value',
+    required: false,
+    description:
+      'Required when creating a profile. When updating an existing profile, omit or leave empty to keep the stored secret.',
+  })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  secretAccessKey: string;
+  secretAccessKey?: string;
 
-  @ApiProperty({ example: true, required: false })
+  @ApiProperty({
+    required: false,
+    deprecated: true,
+    description:
+      'Ignored. Path-style vs virtual-hosted is inferred from `endpoint` (same rules as AWS SDK for S3-compatible services).',
+  })
   @IsBoolean()
   @IsOptional()
   forcePathStyle?: boolean;

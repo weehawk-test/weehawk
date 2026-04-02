@@ -72,6 +72,24 @@ export class ServicesService {
     return t || fallback;
   }
 
+  /** Validates a Docker image reference for image-based application deploy (no local build). */
+  private validateDockerImageRef(ref: string): string {
+    const t = ref.trim();
+    if (!t.length) {
+      throw new BadRequestException('Image reference is required.');
+    }
+    if (t.length > 512) {
+      throw new BadRequestException('Image reference is too long.');
+    }
+    if (/\s/.test(t)) {
+      throw new BadRequestException('Image reference cannot contain whitespace.');
+    }
+    if (t.includes('..')) {
+      throw new BadRequestException('Invalid image reference.');
+    }
+    return t;
+  }
+
   /** Reads multi-network headers; falls back to legacy single `network.mode` lines. */
   private parseApplicationNetworksFromConfig(config: string): {
     external: string[];
@@ -227,6 +245,8 @@ export class ServicesService {
     dockerfilePath: string;
     buildMode: 'dockerfile' | 'buildpacks';
     dockerfileGenerated?: boolean;
+    deployMode: 'source' | 'image';
+    imageRef?: string;
     containerPort: number;
     publishPort?: number;
     replicas: number;
@@ -280,12 +300,41 @@ export class ServicesService {
     const dockerfileGenerated =
       dg === 'true' ? true : dg === 'false' ? false : undefined;
 
+    const builtTag = `${service.appName}:latest`;
+    const deployModeHeader = this.parseConfigHeaderValue(raw, 'deployMode')?.toLowerCase();
+    const imageRefHeader = this.parseConfigHeaderValue(raw, 'imageRef')?.trim();
+    const imageLineMatch = raw.match(/^\s*image:\s*(.+)$/m);
+    let normalizedImage = imageLineMatch?.[1]?.trim() ?? '';
+    if (normalizedImage.startsWith('"') && normalizedImage.endsWith('"')) {
+      normalizedImage = normalizedImage.slice(1, -1);
+    }
+    if (normalizedImage.startsWith("'") && normalizedImage.endsWith("'")) {
+      normalizedImage = normalizedImage.slice(1, -1);
+    }
+
+    let deployMode: 'source' | 'image';
+    let imageRef: string | undefined;
+
+    if (deployModeHeader === 'image' || imageRefHeader) {
+      deployMode = 'image';
+      imageRef = imageRefHeader || normalizedImage || undefined;
+    } else if (deployModeHeader === 'source') {
+      deployMode = 'source';
+    } else if (normalizedImage && normalizedImage !== builtTag) {
+      deployMode = 'image';
+      imageRef = normalizedImage;
+    } else {
+      deployMode = 'source';
+    }
+
     return {
       sourceDir,
       buildPath,
       dockerfilePath,
       buildMode,
       dockerfileGenerated,
+      deployMode,
+      imageRef,
       containerPort,
       publishPort,
       replicas,
@@ -301,6 +350,10 @@ export class ServicesService {
     buildMode: 'dockerfile' | 'buildpacks';
     /** True when Weehawk generated Dockerfile; omitted when unknown (legacy). */
     dockerfileGenerated?: boolean;
+    /** Source = build from uploaded context; image = use pre-built imageRef / imageName. */
+    deployMode: 'source' | 'image';
+    /** Echoed in header when deployMode is image. */
+    imageRef?: string;
     imageName: string;
     containerPort: number;
     publishPort?: number;
@@ -369,12 +422,17 @@ export class ServicesService {
       args.dockerfileGenerated !== undefined
         ? `# dockerfileGenerated: ${args.dockerfileGenerated ? 'true' : 'false'}\n`
         : '';
+    const imageRefLine =
+      args.deployMode === 'image' && args.imageRef
+        ? `# imageRef: ${args.imageRef}\n`
+        : '';
     return `# weehawk application service
 # sourceDir: ${args.sourceDir}
 # buildPath: ${args.buildPath}
 # dockerfilePath: ${args.dockerfilePath}
 # buildMode: ${args.buildMode}
-${dockerfileGenLine}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
+# deployMode: ${args.deployMode}
+${imageRefLine}${dockerfileGenLine}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
 
 services:
   app:
@@ -491,13 +549,19 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     const { external: ext, stack: stk } = this.normalizeApplicationNetworkPayload(dto);
 
     const args = this.extractApplicationComposeRegenerationArgs(service);
+    const imageName =
+      args.deployMode === 'image' && args.imageRef?.trim()
+        ? args.imageRef.trim()
+        : `${service.appName}:latest`;
     service.dockerConfig = this.composeApplicationDockerConfig({
       sourceDir: args.sourceDir,
       buildPath: args.buildPath,
       dockerfilePath: args.dockerfilePath,
       buildMode: args.buildMode,
       dockerfileGenerated: args.dockerfileGenerated,
-      imageName: `${service.appName}:latest`,
+      deployMode: args.deployMode,
+      imageRef: args.deployMode === 'image' ? args.imageRef : undefined,
+      imageName,
       containerPort: args.containerPort,
       publishPort: args.publishPort,
       replicas: args.replicas,
@@ -611,6 +675,8 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       buildPath,
       dockerfilePath,
       buildMode,
+      deployMode: 'source',
+      imageRef: undefined,
       dockerfileGenerated,
       imageName: `${service.appName}:latest`,
       containerPort,
@@ -624,6 +690,75 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     return {
       success: true,
       message: 'Archive uploaded and application stack generated.',
+      service: saved,
+    };
+  }
+
+  /**
+   * Configure Swarm stack to run a pre-built image (no ZIP / docker build on deploy).
+   */
+  async setApplicationImageDeploy(
+    id: number,
+    options: {
+      imageRef: string;
+      containerPort?: number;
+      publishPort?: number;
+      replicas?: number;
+      variablesJson?: string;
+      networksJson?: string;
+      externalNetworks?: string;
+      stackNetworks?: string;
+    },
+  ) {
+    const service = await this.findOne(id);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException('This service is not an application-type service.');
+    }
+    const imageRef = this.validateDockerImageRef(options.imageRef);
+    let containerPort = options.containerPort ?? 3000;
+    const publishPort = options.publishPort;
+    const replicas = Math.min(10, Math.max(1, Math.floor(options.replicas ?? 1)));
+    const parsedVars = this.parseApplicationVariables(options?.variablesJson);
+    const storageMap = this.resolveApplicationStorageMap(parsedVars);
+    const valuesMap = this.resolveApplicationValuesMap(parsedVars);
+    const envValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'env');
+    const secretValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'secret');
+
+    const previousConfig = service.dockerConfig || '';
+    const secretRefs = this.mergeApplicationSecretRefs(
+      service.appName,
+      secretValues,
+      storageMap,
+      previousConfig,
+    );
+    await this.removeObsoleteManagedSecrets(previousConfig, secretRefs);
+    await this.ensureSecretsExist(secretRefs, secretValues);
+    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
+    const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
+    service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, envValues);
+
+    const network = this.resolveUploadNetworks(options, previousConfig);
+
+    service.dockerConfig = this.composeApplicationDockerConfig({
+      sourceDir: 'app-source',
+      buildPath: '.',
+      dockerfilePath: 'Dockerfile',
+      buildMode: 'dockerfile',
+      deployMode: 'image',
+      imageRef,
+      dockerfileGenerated: undefined,
+      imageName: imageRef,
+      containerPort,
+      publishPort,
+      replicas,
+      envKeys: Object.keys(envValues),
+      secretRefs,
+      network,
+    });
+    const saved = await this.serviceRepository.save(service);
+    return {
+      success: true,
+      message: 'Application stack configured for image deploy.',
       service: saved,
     };
   }

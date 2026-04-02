@@ -55,6 +55,21 @@ export function parseYamlImage(config: string): string | null {
   return parseYamlPostgresImage(config);
 }
 
+/** `# deployMode: source | image` from generated application stack header. */
+export function parseApplicationDeployMode(config: string): "source" | "image" | null {
+  const m = config.match(/^\s*#\s*deployMode:\s*(source|image)\s*$/im);
+  if (!m?.[1]) return null;
+  return m[1].toLowerCase() === "image" ? "image" : "source";
+}
+
+/** `# imageRef: ...` when deploying a pre-built image (not built from ZIP). */
+export function parseApplicationImageRef(config: string): string | null {
+  const m = config.match(/^\s*#\s*imageRef:\s*(.+)\s*$/im);
+  if (!m?.[1]) return null;
+  const v = m[1].trim();
+  return v.length ? v : null;
+}
+
 /** `# buildMode: dockerfile | buildpacks` (legacy `nixpacks` → buildpacks) from generated application stack header. */
 export function parseApplicationBuildMode(config: string): "dockerfile" | "buildpacks" | null {
   const m = config.match(/^\s*#\s*buildMode:\s*(dockerfile|nixpacks|buildpacks)\s*$/im);

@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
+import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
 
 /** service = run Docker action on a service */
 export type WebhookTargetMode = 'service';
@@ -16,6 +17,7 @@ export type WebhookTargetMode = 'service';
 export type WebhookServiceAction =
   | 'redeploy'
   | 'volume_backup'
+  | 'database_backup'
   | 'docker_command'
   | 'no_action';
 
@@ -70,6 +72,14 @@ export class Webhook {
   /** Full docker CLI line; server enforces `docker` prefix */
   @Column({ name: 'docker_command', type: 'text', nullable: true })
   dockerCommand: string | null = null;
+
+  /** Structured database backup (preferred over `docker_command` for database_backup) */
+  @Column({ name: 'database_backup_config', type: 'json', nullable: true })
+  databaseBackupConfig: DatabaseBackupConfig | null = null;
+
+  /** Saved S3 profile name (`s3_profiles.name`) for optional upload after volume/database backup */
+  @Column({ name: 'backup_s3_profile_name', type: 'varchar', length: 191, nullable: true })
+  backupS3ProfileName: string | null = null;
 
   @Column({ name: 'notify_on_trigger', default: false })
   notifyOnTrigger!: boolean;

@@ -1,4 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsOptional,
@@ -6,7 +7,9 @@ import {
   IsUUID,
   MaxLength,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { DatabaseBackupConfigDto } from './database-backup-config.dto';
 
 export class UpdateWebhookDto {
   @ApiPropertyOptional()
@@ -38,4 +41,19 @@ export class UpdateWebhookDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Saved S3 profile name for backup upload, or null to clear.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(191)
+  backupS3ProfileName?: string | null;
+
+  @ApiPropertyOptional({ type: DatabaseBackupConfigDto, nullable: true })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DatabaseBackupConfigDto)
+  databaseBackupConfig?: DatabaseBackupConfigDto | null;
 }

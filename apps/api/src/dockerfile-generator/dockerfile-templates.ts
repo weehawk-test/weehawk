@@ -120,3 +120,49 @@ EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 `;
 }
+
+export function springBootMavenDockerfile(opts: { port: number }): string {
+  const p = String(opts.port);
+  return `# syntax=docker/dockerfile:1
+# Weehawk auto-generated — Spring Boot (Maven)
+FROM maven:3.9-eclipse-temurin-21-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN chmod +x mvnw 2>/dev/null || true
+RUN if [ -f ./mvnw ]; then ./mvnw -B -DskipTests package; else mvn -B -DskipTests package; fi
+RUN JAR=$(find target -maxdepth 1 -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -1) \\
+  && test -n "$JAR" && cp "$JAR" /app/app.jar || (echo "No runnable JAR in target/" >&2; exit 1)
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=builder /app/app.jar app.jar
+ENV SERVER_PORT=${p}
+ENV JAVA_OPTS=""
+EXPOSE ${p}
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -Dserver.port=\${SERVER_PORT} -jar app.jar"]
+`;
+}
+
+export function springBootGradleDockerfile(opts: { port: number }): string {
+  const p = String(opts.port);
+  return `# syntax=docker/dockerfile:1
+# Weehawk auto-generated — Spring Boot (Gradle)
+FROM eclipse-temurin:21-jdk-alpine AS builder
+WORKDIR /app
+RUN apk add --no-cache bash
+COPY . .
+RUN chmod +x gradlew
+RUN ./gradlew bootJar --no-daemon
+RUN sh -c 'J=$(find build/libs -maxdepth 1 -name "*.jar" ! -name "*-plain.jar" | head -1); \\
+  if [ -z "$J" ]; then J=$(find build/libs -maxdepth 1 -name "*.jar" | head -1); fi; \\
+  test -n "$J" && cp "$J" /app/app.jar || (echo "No runnable JAR in build/libs/" >&2; exit 1)'
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=builder /app/app.jar app.jar
+ENV SERVER_PORT=${p}
+ENV JAVA_OPTS=""
+EXPOSE ${p}
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -Dserver.port=\${SERVER_PORT} -jar app.jar"]
+`;
+}

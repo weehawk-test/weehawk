@@ -22,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { motion } from "framer-motion";
 import { publicWebhookTriggerUrl, type WebhookDetail } from "@/lib/webhooks-api";
+import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 
 type Props = {
   id: string;
@@ -184,16 +185,40 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
                     <div>
                       <p className="text-muted-foreground text-xs mb-1">Volume</p>
                       <p className="font-mono text-xs break-all">{webhook.volumeSource}</p>
+                      {webhook.serviceAction === "volume_backup" && (
+                        <VolumeBackupDbWarning className="mt-2" />
+                      )}
                     </div>
                   )}
-                  {webhook.dockerCommand && (
+                  {webhook.serviceAction === "database_backup" && webhook.databaseBackupPreview && (
                     <div>
-                      <p className="text-muted-foreground text-xs mb-1">Docker command</p>
-                      <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                        {webhook.dockerCommand}
-                      </pre>
+                      <p className="text-muted-foreground text-xs mb-1">What will run</p>
+                      <p className="font-mono text-xs text-foreground/95 whitespace-pre-wrap break-all leading-relaxed">
+                        {webhook.databaseBackupPreview}
+                      </p>
                     </div>
                   )}
+                  {webhook.dockerCommand &&
+                    (webhook.serviceAction === "docker_command" ||
+                      (webhook.serviceAction === "database_backup" && !webhook.databaseBackupConfig)) && (
+                      <div>
+                        <p className="text-muted-foreground text-xs mb-1">
+                          {webhook.serviceAction === "database_backup" ? "Legacy command" : "Docker command"}
+                        </p>
+                        <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                          {webhook.dockerCommand}
+                        </pre>
+                      </div>
+                    )}
+                  {(webhook.serviceAction === "volume_backup" ||
+                    webhook.serviceAction === "database_backup") && (
+                      <div>
+                        <p className="text-muted-foreground text-xs mb-1">S3 destination</p>
+                        <p className="font-mono text-sm">
+                          {webhook.backupS3ProfileName ?? "Not set — edit and choose a profile"}
+                        </p>
+                      </div>
+                    )}
                 </>
               )}
             </div>

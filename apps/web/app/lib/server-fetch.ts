@@ -3,6 +3,7 @@ import type { WebhookDetail, WebhookListItem } from "./webhooks-api";
 import type { CronJobDetail, CronJobListItem } from "./cron-jobs-api";
 import type { Project, Service } from "./schema";
 import type { NotificationChannel } from "./notifications-api";
+import type { S3ProfilePublic } from "./s3-api";
 import { mapApiServiceToService } from "./services-api";
 import { mapApiProjectToProject } from "./projects-api";
 import { getServerApiBase } from "./server-api";
@@ -28,7 +29,13 @@ export async function fetchWebhookSSR(id: string): Promise<WebhookDetail | null>
   });
   if (!res.ok) return null;
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
-  return { ...data, triggerType: "webhook", cronExpression: null };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "webhook",
+    cronExpression: null,
+  };
 }
 
 export async function fetchWebhooksSSR(): Promise<WebhookListItem[]> {
@@ -48,7 +55,12 @@ export async function fetchCronJobSSR(id: string): Promise<CronJobDetail | null>
   });
   if (!res.ok) return null;
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
-  return { ...data, triggerType: "cron" };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "cron",
+  };
 }
 
 export async function fetchCronJobsSSR(): Promise<CronJobListItem[]> {
@@ -102,5 +114,16 @@ export async function fetchNotificationChannelsSSR(): Promise<NotificationChanne
   });
   if (!res.ok) return [];
   return res.json() as Promise<NotificationChannel[]>;
+}
+
+export async function fetchS3ProfilesSSR(): Promise<S3ProfilePublic[]> {
+  const res = await fetch(`${apiBase()}/s3/profiles`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data as S3ProfilePublic[];
 }
 

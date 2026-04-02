@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
@@ -9,11 +10,13 @@ import {
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import type {
   WebhookServiceAction,
   WebhookTargetMode,
 } from '../../webhooks/entities/webhook.entity';
+import { DatabaseBackupConfigDto } from '../../webhooks/dto/database-backup-config.dto';
 
 export class CreateCronJobDto {
   @ApiProperty({ example: 'Nightly redeploy' })
@@ -48,10 +51,12 @@ export class CreateCronJobDto {
   serviceId?: number;
 
   @ApiPropertyOptional({
-    enum: ['redeploy', 'volume_backup', 'docker_command', 'no_action'],
+    enum: ['redeploy', 'volume_backup', 'database_backup', 'docker_command', 'no_action'],
   })
   @ValidateIf((o: CreateCronJobDto) => o.targetMode === 'service')
-  @IsEnum(['redeploy', 'volume_backup', 'docker_command', 'no_action'] as const)
+  @IsEnum(
+    ['redeploy', 'volume_backup', 'database_backup', 'docker_command', 'no_action'] as const,
+  )
   serviceAction?: WebhookServiceAction;
 
   @ApiPropertyOptional()
@@ -73,6 +78,29 @@ export class CreateCronJobDto {
   @IsNotEmpty()
   @MaxLength(4000)
   dockerCommand?: string;
+
+  @ApiPropertyOptional({ type: DatabaseBackupConfigDto })
+  @ValidateIf(
+    (o: CreateCronJobDto) =>
+      o.targetMode === 'service' && o.serviceAction === 'database_backup',
+  )
+  @ValidateNested()
+  @Type(() => DatabaseBackupConfigDto)
+  databaseBackupConfig?: DatabaseBackupConfigDto;
+
+  @ApiProperty({
+    description:
+      'Saved S3 profile name (required when serviceAction is volume_backup or database_backup).',
+  })
+  @ValidateIf(
+    (o: CreateCronJobDto) =>
+      o.targetMode === 'service' &&
+      (o.serviceAction === 'volume_backup' || o.serviceAction === 'database_backup'),
+  )
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(191)
+  backupS3ProfileName?: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
+import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
 import type { WebhookServiceAction, WebhookTargetMode } from '../../webhooks/entities/webhook.entity';
 
 @Entity({ name: 'cron_jobs' })
@@ -53,6 +54,12 @@ export class CronJob {
 
   @Column({ name: 'docker_command', type: 'text', nullable: true })
   dockerCommand: string | null = null;
+
+  @Column({ name: 'database_backup_config', type: 'json', nullable: true })
+  databaseBackupConfig: DatabaseBackupConfig | null = null;
+
+  @Column({ name: 'backup_s3_profile_name', type: 'varchar', length: 191, nullable: true })
+  backupS3ProfileName: string | null = null;
 
   @Column({ name: 'notify_on_trigger', default: false })
   notifyOnTrigger!: boolean;

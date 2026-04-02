@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import {
+  detectSpringBootBuildTool,
   detectStackKind,
   hasUserDockerfileAtContextRoot,
   type DetectedStackKind,
@@ -10,6 +11,8 @@ import {
   goDistrolessDockerfile,
   nodeMultiStageDockerfile,
   pythonAlpineDockerfile,
+  springBootGradleDockerfile,
+  springBootMavenDockerfile,
   staticNginxDockerfile,
 } from './dockerfile-templates';
 
@@ -51,6 +54,12 @@ export class DockerfileGeneratorService {
       }
       case 'go':
         return goDistrolessDockerfile({ port });
+      case 'spring-boot': {
+        const tool = await detectSpringBootBuildTool(contextDir);
+        return tool === 'gradle'
+          ? springBootGradleDockerfile({ port })
+          : springBootMavenDockerfile({ port });
+      }
       case 'python':
         return pythonAlpineDockerfile({ port });
       case 'static':
@@ -58,7 +67,8 @@ export class DockerfileGeneratorService {
       default:
         throw new BadRequestException(
           'Could not detect a supported stack. Add a Dockerfile at the build context root, or include ' +
-            'package.json (Node), go.mod (Go), requirements.txt / pyproject.toml (Python), or index.html (static).',
+            'package.json (Node), go.mod (Go), a Spring Boot pom.xml / Gradle build (spring-boot), ' +
+            'requirements.txt / pyproject.toml (Python), or index.html (static).',
         );
     }
   }

@@ -25,6 +25,7 @@ import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { UploadApplicationZipDto } from './dto/upload-application-zip.dto';
 import { PatchApplicationNetworksDto } from './dto/patch-application-networks.dto';
+import { PatchApplicationImageDeployDto } from './dto/patch-application-image.dto';
 import type { DatabaseEngine } from './database-generator.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Observable, map } from 'rxjs';
@@ -184,6 +185,19 @@ export class ServicesController {
     @Body() dto: PatchApplicationNetworksDto,
   ) {
     return this.servicesService.patchApplicationNetworks(+id, dto);
+  }
+
+  @Patch(':id/application/image')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Configure application stack to run a pre-built Docker image (no source ZIP; deploy skips docker build)',
+  })
+  patchApplicationImage(
+    @Param('id') id: string,
+    @Body() dto: PatchApplicationImageDeployDto,
+  ) {
+    return this.servicesService.setApplicationImageDeploy(+id, dto);
   }
 
   @Post(':id/start')

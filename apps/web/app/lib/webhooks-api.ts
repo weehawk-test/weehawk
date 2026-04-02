@@ -1,7 +1,15 @@
 import { API_BASE } from "./api";
+import type { DatabaseBackupConfig } from "./database-backup-preview";
+
+export type { DatabaseBackupConfig };
 
 export type WebhookTargetMode = "service";
-export type WebhookServiceAction = "redeploy" | "volume_backup" | "docker_command" | "no_action";
+export type WebhookServiceAction =
+  | "redeploy"
+  | "volume_backup"
+  | "database_backup"
+  | "docker_command"
+  | "no_action";
 
 export type WebhookListItem = {
   id: string;
@@ -22,6 +30,9 @@ export type WebhookListItem = {
 export type WebhookDetail = WebhookListItem & {
   volumeSource: string | null;
   dockerCommand: string | null;
+  databaseBackupConfig: DatabaseBackupConfig | null;
+  databaseBackupPreview: string | null;
+  backupS3ProfileName: string | null;
   notifyChannelId: string | null;
   notifyMessage: string | null;
   secretToken: string;
@@ -35,6 +46,8 @@ export type CreateWebhookBody = {
   serviceAction?: WebhookServiceAction;
   volumeSource?: string;
   dockerCommand?: string;
+  databaseBackupConfig?: DatabaseBackupConfig;
+  backupS3ProfileName?: string;
   notifyChannelId?: string;
   notifyMessage?: string;
 };
@@ -45,6 +58,8 @@ export type UpdateWebhookBody = {
   isActive?: boolean;
   notifyChannelId?: string | null;
   notifyMessage?: string | null;
+  backupS3ProfileName?: string | null;
+  databaseBackupConfig?: DatabaseBackupConfig | null;
 };
 
 async function errorBody(res: Response): Promise<string> {
@@ -86,7 +101,13 @@ export async function fetchWebhook(accessToken: string, id: string): Promise<Web
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
-  return { ...data, triggerType: "webhook", cronExpression: null };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "webhook",
+    cronExpression: null,
+  };
 }
 
 export async function createWebhook(
@@ -104,7 +125,13 @@ export async function createWebhook(
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
-  return { ...data, triggerType: "webhook", cronExpression: null };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "webhook",
+    cronExpression: null,
+  };
 }
 
 export async function updateWebhook(
@@ -123,7 +150,13 @@ export async function updateWebhook(
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
-  return { ...data, triggerType: "webhook", cronExpression: null };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "webhook",
+    cronExpression: null,
+  };
 }
 
 export async function deleteWebhook(accessToken: string, id: string): Promise<void> {

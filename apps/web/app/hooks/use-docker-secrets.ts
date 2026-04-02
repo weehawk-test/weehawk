@@ -26,9 +26,13 @@ export function useDockerSecretsPaged(page: number, q: string) {
 function useDockerSecretsPagedWithInitial(
   page: number,
   q: string,
-  options?: { initialData?: import("@/lib/docker-paged-fetch").PaginatedSecretsResponse },
+  options?: {
+    initialData?: import("@/lib/docker-paged-fetch").PaginatedSecretsResponse;
+    enabled?: boolean;
+  },
 ) {
   const hasInitial = options?.initialData !== undefined;
+  const enabled = options?.enabled ?? true;
   return useQuery({
     queryKey: ["docker-secrets-paged", page, q],
     queryFn: () => fetchDockerSecretsPagedApi(page, DOCKER_LIST_PAGE_SIZE, q),
@@ -36,6 +40,7 @@ function useDockerSecretsPagedWithInitial(
     initialDataUpdatedAt: hasInitial ? 0 : undefined,
     staleTime: hasInitial ? Infinity : 15_000,
     refetchOnMount: hasInitial ? false : undefined,
+    enabled,
   });
 }
 
@@ -43,7 +48,10 @@ function useDockerSecretsPagedWithInitial(
 export function useDockerSecretsPagedWithInitialData(
   page: number,
   q: string,
-  options?: { initialData?: import("@/lib/docker-paged-fetch").PaginatedSecretsResponse },
+  options?: {
+    initialData?: import("@/lib/docker-paged-fetch").PaginatedSecretsResponse;
+    enabled?: boolean;
+  },
 ) {
   return useDockerSecretsPagedWithInitial(page, q, options);
 }

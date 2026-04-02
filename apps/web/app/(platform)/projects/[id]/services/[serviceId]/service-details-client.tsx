@@ -44,10 +44,13 @@ import {
   applyDatabaseApi,
   streamServiceLogs,
   updateDatabaseStackApi,
+  patchApplicationImageDeployApi,
   uploadApplicationArchiveApi,
 } from "@/lib/services-api";
 import {
   parseApplicationBuildPath,
+  parseApplicationDeployMode,
+  parseApplicationImageRef,
   parseApplicationNetworkHeaders,
   parseApplicationStoreHeaders,
   parseServiceEnvLines,
@@ -252,6 +255,7 @@ export default function ServiceDetails({
   });
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(1, "", {
     initialData: initialSecretsPaged ?? undefined,
+    enabled: (service ?? initialService)?.type !== "application",
   });
   const deleteService = useDeleteService();
   const shutdownService = useShutdownService();
@@ -276,7 +280,7 @@ export default function ServiceDetails({
       { id: "overview", label: "Overview", icon: Info },
       { id: "config", label: "Configuration", icon: FileCode },
     ];
-    const appConf: TabDef = { id: "appconf", label: "Application conf", icon: PackageOpen };
+    const appConf: TabDef = { id: "appconf", label: "Build & deployment", icon: PackageOpen };
     const tail: TabDef[] = [
       { id: "env", label: "Environment", icon: Variable, count: envEntryCount || undefined },
       { id: "backup", label: "Backup", icon: Archive },
@@ -286,8 +290,11 @@ export default function ServiceDetails({
       { id: "terminal", label: "Terminal", icon: Terminal },
     ];
     const allTabs: TabDef[] = isApplicationService ? [...head, appConf, ...tail] : [...head, ...tail];
-    if (!isDatabaseService) return allTabs;
-    const withoutDomainSecrets = allTabs.filter((t) => t.id !== "domain" && t.id !== "secrets");
+    const withoutAppComposeTabs = isApplicationService
+      ? allTabs.filter((t) => t.id !== "config" && t.id !== "env" && t.id !== "secrets")
+      : allTabs;
+    if (!isDatabaseService) return withoutAppComposeTabs;
+    const withoutDomainSecrets = withoutAppComposeTabs.filter((t) => t.id !== "domain" && t.id !== "secrets");
     if (!hasDatabaseCompose) {
       return withoutDomainSecrets.filter((t) => !DATABASE_PRECOMPOSE_HIDDEN.includes(t.id));
     }
@@ -749,22 +756,26 @@ export default function ServiceDetails({
                 <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
                   value={formatServiceDateUtc(service.createdAt)} />
               )}
-              <InfoCard icon={<Tag className="w-4 h-4 text-primary" />} label="Configuration"
-                value={
-                  isDatabaseService
-                    ? "Use engine cards above (YAML provisioning later)"
-                    : service.config
-                      ? `${service.config.split("\n").length} lines`
-                      : "Not configured"
-                }
-              />
-              <InfoCard icon={<Variable className="w-4 h-4 text-primary" />} label="Environment (.env)"
-                value={envEntryCount > 0 ? `${envEntryCount} variable${envEntryCount !== 1 ? "s" : ""}` : "Not set"} />
+              {!isApplicationService && (
+                <>
+                  <InfoCard icon={<Tag className="w-4 h-4 text-primary" />} label="Configuration"
+                    value={
+                      isDatabaseService
+                        ? "Use engine cards above (YAML provisioning later)"
+                        : service.config
+                          ? `${service.config.split("\n").length} lines`
+                          : "Not configured"
+                    }
+                  />
+                  <InfoCard icon={<Variable className="w-4 h-4 text-primary" />} label="Environment (.env)"
+                    value={envEntryCount > 0 ? `${envEntryCount} variable${envEntryCount !== 1 ? "s" : ""}` : "Not set"} />
+                </>
+              )}
               </div>
             </motion.div>
           )}
 
-          {/* ── APPLICATION CONF (ZIP upload + build + connections + env for deploy) ── */}
+          {/* ── Build & deployment (ZIP upload + build + connections + env for deploy) ── */}
           {activeTab === "appconf" && isApplicationService && projectId && (
             <motion.div
               key="appconf"
@@ -1761,6 +1772,9 @@ function ApplicationArchivePanel({
   const [connectionExternal, setConnectionExternal] = useState<string[]>([]);
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "env" | null>(null);
+  const [deployTarget, setDeployTarget] = useState<"source" | "image">("source");
+  const [imageRef, setImageRef] = useState("");
+  const [savingImage, setSavingImage] = useState(false);
 
   const filledEnvVarCount = useMemo(
     () => variables.filter((v) => v.key.trim()).length,
@@ -1799,6 +1813,33 @@ function ApplicationArchivePanel({
     const savedPath = parseApplicationBuildPath(cfg);
     if (savedPath) setBuildPath(savedPath);
   }, [serviceRow?.config]);
+
+  useEffect(() => {
+    const cfg = serviceRow?.config ?? "";
+    if (!cfg.includes("# weehawk application service")) {
+      setDeployTarget("source");
+      setImageRef("");
+      return;
+    }
+    const dm = parseApplicationDeployMode(cfg);
+    const ir = parseApplicationImageRef(cfg);
+    const yamlImg = parseYamlImage(cfg);
+    const app = serviceRow?.appName ?? "";
+    const built = app ? `${app}:latest` : "";
+    if (dm === "image") {
+      setDeployTarget("image");
+      setImageRef(ir ?? yamlImg ?? "");
+    } else if (dm === "source") {
+      setDeployTarget("source");
+      setImageRef("");
+    } else if (yamlImg && built && yamlImg !== built) {
+      setDeployTarget("image");
+      setImageRef(yamlImg);
+    } else {
+      setDeployTarget("source");
+      setImageRef("");
+    }
+  }, [serviceRow?.config, serviceRow?.appName]);
 
   const updateVariable = (idx: number, patch: Partial<AppEnvVarRow>) => {
     setVariables((prev) =>
@@ -1945,6 +1986,89 @@ function ApplicationArchivePanel({
     }
   };
 
+  const onSaveImageStack = async () => {
+    const ref = imageRef.trim();
+    if (!ref.length) {
+      toast({
+        title: "Image required",
+        description: "Enter a Docker image reference (e.g. nginx:1.27-alpine).",
+        variant: "destructive",
+      });
+      return;
+    }
+    const cp = parseInt(containerPort || "3000", 10);
+    const rp = publishPort.trim() ? parseInt(publishPort.trim(), 10) : undefined;
+    const rep = parseInt(replicas || "1", 10);
+    const cleanVars = variables
+      .map((v) => ({ key: v.key.trim(), value: v.value, store: v.store }))
+      .filter((v) => v.key.length > 0);
+    for (const v of cleanVars) {
+      if (!/^[A-Z_][A-Z0-9_]*$/i.test(v.key)) {
+        toast({ title: "Invalid variable key", description: `Key "${v.key}" is invalid.`, variant: "destructive" });
+        return;
+      }
+    }
+    if (!Number.isInteger(cp) || cp < 1 || cp > 65535) {
+      toast({ title: "Invalid container port", description: "Use 1-65535.", variant: "destructive" });
+      return;
+    }
+    if (rp != null && (!Number.isInteger(rp) || rp < 1 || rp > 65535)) {
+      toast({ title: "Invalid host port", description: "Use 1-65535 or leave empty.", variant: "destructive" });
+      return;
+    }
+    if (!Number.isInteger(rep) || rep < 1 || rep > 10) {
+      toast({ title: "Invalid replicas", description: "Use a value between 1 and 10.", variant: "destructive" });
+      return;
+    }
+    const stk = connectionStackKeys.map((k) => k.trim()).filter(Boolean);
+    const seen = new Set<string>();
+    for (const k of stk) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,62}$/.test(k)) {
+        toast({
+          title: "Invalid extra path name",
+          description: "Use letters and numbers; start with a letter.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const low = k.toLowerCase();
+      if (seen.has(low)) {
+        toast({
+          title: "Duplicate name",
+          description: "Each extra path needs a unique name.",
+          variant: "destructive",
+        });
+        return;
+      }
+      seen.add(low);
+    }
+
+    setSavingImage(true);
+    try {
+      await patchApplicationImageDeployApi(serviceId, {
+        imageRef: ref,
+        containerPort: cp,
+        publishPort: rp,
+        replicas: rep,
+        variables: cleanVars,
+        networks: { external: connectionExternal, stack: stk },
+      });
+      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      toast({
+        title: "Image stack saved",
+        description: "Deploy to pull the image and run the stack (no source build on the host).",
+      });
+    } catch (e) {
+      toast({
+        title: "Save failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setSavingImage(false);
+    }
+  };
+
   const formatZipSize = (bytes: number) =>
     bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
 
@@ -1955,6 +2079,40 @@ function ApplicationArchivePanel({
         Application deploy Form
       </h3>
       <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
+        <div className="sm:col-span-2 space-y-2">
+          <label className="text-xs font-medium text-muted-foreground block">Deploy from</label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setDeployTarget("source")}
+              className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                deployTarget === "source"
+                  ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
+                  : "border-white/10 bg-black/25 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Source code (ZIP)
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeployTarget("image")}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                deployTarget === "image"
+                  ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
+                  : "border-white/10 bg-black/25 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Container className="h-3.5 w-3.5 shrink-0 opacity-90" />
+              Pre-built image
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground/90 max-w-xl leading-relaxed">
+            {deployTarget === "source"
+              ? "Upload sources; Weehawk builds a Docker image on deploy using your Dockerfile or an auto-generated one."
+              : "Point at an image already in a registry (or Docker Hub). Deploy pulls the image and skips building from source."}
+          </p>
+        </div>
+        {deployTarget === "source" && (
         <div className="sm:col-span-2 space-y-3">
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1.5">Source</label>
@@ -2080,6 +2238,26 @@ function ApplicationArchivePanel({
             </div>
           </div>
         </div>
+        )}
+        {deployTarget === "image" && (
+        <div className="sm:col-span-2 space-y-2">
+          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Image reference</label>
+          <input
+            className="input-field font-mono text-sm w-full max-w-xl"
+            value={imageRef}
+            onChange={(e) => setImageRef(e.target.value)}
+            placeholder="e.g. nginx:1.27-alpine or registry.example.com/my/app:v1"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <p className="text-[11px] text-muted-foreground leading-relaxed max-w-xl">
+            The stack uses this image as-is. Ensure the process listens on the{" "}
+            <span className="text-foreground font-medium">container port</span> you set below (maps to Swarm / health expectations).
+          </p>
+        </div>
+        )}
+        {deployTarget === "source" && (
+        <>
         <div className="sm:col-span-2">
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Build path</label>
           <input className="input-field font-mono text-sm" value={buildPath} onChange={(e) => setBuildPath(e.target.value)} placeholder="." />
@@ -2092,6 +2270,8 @@ function ApplicationArchivePanel({
             <code className="text-[10px]">/app</code>, symlink-safe, and <code className="text-[10px]">npm ci</code> for Node.
           </p>
         </div>
+        </>
+        )}
         <div>
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Container port</label>
           <input className="input-field font-mono text-sm" value={containerPort} onChange={(e) => setContainerPort(e.target.value)} placeholder="3000" />
@@ -2140,7 +2320,7 @@ function ApplicationArchivePanel({
                   )}
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-                  Keys & values — Docker Secret or env; included when you upload.
+                  Keys & values — Docker Secret or env; applied when you save the stack.
                 </p>
               </div>
               <ChevronDown
@@ -2266,16 +2446,28 @@ function ApplicationArchivePanel({
             </div>
           </details>
         </div>
-        <div className="sm:col-span-2">
-          <button
-            type="button"
-            onClick={() => void onUpload()}
-            disabled={uploading}
-            className="btn-primary text-sm inline-flex items-center gap-2"
-          >
-            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackageOpen className="w-4 h-4" />}
-            {uploading ? "Uploading..." : "Upload and generate stack"}
-          </button>
+        <div className="sm:col-span-2 flex flex-wrap gap-2">
+          {deployTarget === "source" ? (
+            <button
+              type="button"
+              onClick={() => void onUpload()}
+              disabled={uploading}
+              className="btn-primary text-sm inline-flex items-center gap-2"
+            >
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackageOpen className="w-4 h-4" />}
+              {uploading ? "Uploading..." : "Upload and generate stack"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onSaveImageStack()}
+              disabled={savingImage}
+              className="btn-primary text-sm inline-flex items-center gap-2"
+            >
+              {savingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Container className="w-4 h-4" />}
+              {savingImage ? "Saving..." : "Save image stack"}
+            </button>
+          )}
         </div>
       </div>
     </div>

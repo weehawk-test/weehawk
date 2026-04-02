@@ -410,6 +410,47 @@ export async function uploadApplicationArchiveApi(
   return mapApiServiceToService(json.service);
 }
 
+/** Configure Swarm stack to use a pre-built image (no ZIP upload / docker build on deploy). */
+export async function patchApplicationImageDeployApi(
+  id: string,
+  options: {
+    imageRef: string;
+    containerPort?: number;
+    publishPort?: number;
+    replicas?: number;
+    variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    networks?: { external: string[]; stack: string[] };
+  },
+): Promise<Service> {
+  const body: Record<string, unknown> = {
+    imageRef: options.imageRef.trim(),
+    containerPort: options.containerPort,
+    publishPort: options.publishPort,
+    replicas: options.replicas,
+  };
+  if (options.variables !== undefined) {
+    body.variablesJson = JSON.stringify(options.variables);
+  }
+  if (options.networks) {
+    const { external, stack } = options.networks;
+    body.externalNetworks = external.join("|");
+    body.stackNetworks = stack.join("|");
+    body.networksJson = JSON.stringify(options.networks);
+  }
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/image`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const json = JSON.parse(text) as { service?: unknown };
+  if (!json.service) throw new Error("Request succeeded but no service payload was returned.");
+  return mapApiServiceToService(json.service);
+}
+
 /** SSE endpoint: `GET /services/:id/logs/stream` (see `ServicesController.streamLogs`). */
 export function serviceLogsStreamUrl(serviceId: string): string {
   return `${API_BASE}/services/${encodeURIComponent(serviceId)}/logs/stream`;

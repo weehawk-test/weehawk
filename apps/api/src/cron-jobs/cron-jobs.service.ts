@@ -4,11 +4,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import * as path from 'path';
 import { Repository } from 'typeorm';
 import { NotificationsService } from '../notifications/notifications.service';
-import { getVolumeBackupDestDir } from '../services/deployment-paths';
+import {
+  createBackupTempDir,
+  removeBackupTempDir,
+} from '../services/deployment-paths';
 import { ExecutorService } from '../executor/executor.service';
+import { S3Service } from '../s3/s3.service';
 import { ServicesService } from '../services/services.service';
+import { getErrorMessage } from '../utils/error-message';
+import type { DatabaseBackupConfig } from '../backup/database-backup.types';
+import { describeDatabaseBackupPreview } from '../backup/database-backup.types';
 import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
@@ -30,6 +38,9 @@ export type CronJobListRow = {
 export type CronJobDetailRow = CronJobListRow & {
   volumeSource: string | null;
   dockerCommand: string | null;
+  databaseBackupConfig: DatabaseBackupConfig | null;
+  databaseBackupPreview: string | null;
+  backupS3ProfileName: string | null;
   notifyChannelId: string | null;
   notifyMessage: string | null;
 };
@@ -45,6 +56,7 @@ export class CronJobsService {
     private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationsService,
+    private readonly s3Service: S3Service,
   ) {}
 
   private validateCronField(value: string, min: number, max: number): boolean {
@@ -127,6 +139,23 @@ export class CronJobsService {
       ) {
         throw new BadRequestException('dockerCommand is required.');
       }
+      if (
+        dto.serviceAction === 'database_backup' &&
+        !dto.databaseBackupConfig
+      ) {
+        throw new BadRequestException(
+          'databaseBackupConfig is required for database backup.',
+        );
+      }
+      if (
+        (dto.serviceAction === 'volume_backup' ||
+          dto.serviceAction === 'database_backup') &&
+        !dto.backupS3ProfileName?.trim()
+      ) {
+        throw new BadRequestException(
+          'backupS3ProfileName is required: backups are stored in S3 only.',
+        );
+      }
     }
     const hasNotifyChannel = Boolean(dto.notifyChannelId?.trim());
     const hasNotifyMessage = Boolean(dto.notifyMessage?.trim());
@@ -139,12 +168,18 @@ export class CronJobsService {
 
   private summaryLabel(w: CronJob): string {
     const a = w.serviceAction ?? '—';
-    if (a === 'redeploy') return `[Cron ${w.cronExpression}] Redeploy service`;
+    if (a === 'redeploy') return `[Cron ${w.cronExpression}] Redeploy`;
     if (a === 'volume_backup') {
-      return `[Cron ${w.cronExpression}] Backup volume: ${w.volumeSource ?? '—'}`;
+      return `[Cron ${w.cronExpression}] Volume → S3: ${w.volumeSource ?? '—'}`;
     }
-    if (a === 'docker_command') return `[Cron ${w.cronExpression}] Custom docker command`;
-    if (a === 'no_action') return `[Cron ${w.cronExpression}] No action (just notification)`;
+    if (a === 'database_backup') {
+      const eng = w.databaseBackupConfig?.engine;
+      return eng
+        ? `[Cron ${w.cronExpression}] Database → S3 (${eng})`
+        : `[Cron ${w.cronExpression}] Database → S3`;
+    }
+    if (a === 'docker_command') return `[Cron ${w.cronExpression}] Docker command`;
+    if (a === 'no_action') return `[Cron ${w.cronExpression}] No action`;
     return `[Cron ${w.cronExpression}] ${a}`;
   }
 
@@ -182,13 +217,54 @@ export class CronJobsService {
   }
 
   private toDetailRow(w: CronJob): CronJobDetailRow {
+    const cfg = w.databaseBackupConfig;
     return {
       ...this.toListRow(w),
       volumeSource: w.volumeSource,
       dockerCommand: w.dockerCommand,
+      databaseBackupConfig: cfg,
+      databaseBackupPreview: cfg ? describeDatabaseBackupPreview(cfg) : null,
+      backupS3ProfileName: w.backupS3ProfileName,
       notifyChannelId: w.notifyChannelId,
       notifyMessage: w.notifyMessage,
     };
+  }
+
+  private async finalizeBackupWithS3(
+    userId: number,
+    contextId: string,
+    profileName: string | null | undefined,
+    destDir: string,
+    r: { success: boolean; output: string; archiveBasename?: string },
+  ): Promise<{ success: boolean; output: string }> {
+    if (!r.success || !r.archiveBasename) {
+      return { success: r.success, output: r.output };
+    }
+    const trimmed = profileName?.trim();
+    if (!trimmed) {
+      return {
+        success: false,
+        output: `${r.output}\nS3 destination is not configured.`,
+      };
+    }
+    const localPath = path.join(destDir, r.archiveBasename);
+    const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    try {
+      const { bucket, key: uploadedKey } = await this.s3Service.uploadLocalFile(
+        trimmed,
+        localPath,
+        key,
+      );
+      return {
+        success: true,
+        output: `${r.output}\nUploaded to s3://${bucket}/${uploadedKey}`,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
+      };
+    }
   }
 
   async create(userId: number, dto: CreateCronJobDto): Promise<CronJobDetailRow> {
@@ -203,6 +279,17 @@ export class CronJobsService {
         throw new BadRequestException('Service not found.');
       }
     }
+
+    const backupProfile =
+      dto.targetMode === 'service' &&
+      (dto.serviceAction === 'volume_backup' ||
+        dto.serviceAction === 'database_backup')
+        ? dto.backupS3ProfileName!.trim()
+        : null;
+    if (backupProfile) {
+      await this.s3Service.assertProfileExists(backupProfile);
+    }
+
     const job = this.cronJobRepo.create({
       userId,
       name: dto.name.trim(),
@@ -227,6 +314,13 @@ export class CronJobsService {
         dto.dockerCommand
           ? dto.dockerCommand.trim()
           : null,
+      databaseBackupConfig:
+        dto.targetMode === 'service' &&
+        dto.serviceAction === 'database_backup' &&
+        dto.databaseBackupConfig
+          ? (dto.databaseBackupConfig as unknown as DatabaseBackupConfig)
+          : null,
+      backupS3ProfileName: backupProfile,
       notifyOnTrigger:
         Boolean(dto.notifyChannelId?.trim()) &&
         Boolean(dto.notifyMessage?.trim()),
@@ -275,6 +369,34 @@ export class CronJobsService {
     if (dto.notifyMessage !== undefined) {
       job.notifyMessage = dto.notifyMessage?.trim() || null;
     }
+    if (dto.backupS3ProfileName !== undefined) {
+      const v = dto.backupS3ProfileName?.trim() || null;
+      if (v) {
+        await this.s3Service.assertProfileExists(v);
+      }
+      if (
+        (job.serviceAction === 'volume_backup' ||
+          job.serviceAction === 'database_backup') &&
+        !v
+      ) {
+        throw new BadRequestException(
+          'S3 destination is required for backup actions.',
+        );
+      }
+      job.backupS3ProfileName = v;
+    }
+    if (dto.databaseBackupConfig !== undefined) {
+      if (job.serviceAction === 'database_backup') {
+        if (!dto.databaseBackupConfig) {
+          throw new BadRequestException(
+            'databaseBackupConfig is required for database backup.',
+          );
+        }
+        job.databaseBackupConfig =
+          dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
+        job.dockerCommand = null;
+      }
+    }
     if (job.notifyChannelId && job.notifyMessage) {
       job.notifyOnTrigger = true;
       await this.assertNotificationChannel(userId, job.notifyChannelId);
@@ -319,13 +441,96 @@ export class CronJobsService {
           job.serviceId != null
         ) {
           action = 'volume_backup';
-          const destDir = getVolumeBackupDestDir(job.userId, job.id);
-          const r = await this.executorService.backupDockerVolume(
-            job.volumeSource,
-            destDir,
-          );
-          success = r.success;
-          output = r.output;
+          if (!job.backupS3ProfileName?.trim()) {
+            success = false;
+            output =
+              'S3 destination is not configured. Edit the cron job and choose a saved S3 profile.';
+          } else {
+            let destDir: string | null = null;
+            try {
+              destDir = await createBackupTempDir();
+              const r = await this.executorService.backupDockerVolume(
+                job.volumeSource,
+                destDir,
+              );
+              const final = await this.finalizeBackupWithS3(
+                job.userId,
+                job.id,
+                job.backupS3ProfileName,
+                destDir,
+                r,
+              );
+              success = final.success;
+              output = final.output;
+            } finally {
+              if (destDir) {
+                await removeBackupTempDir(destDir).catch(() => {
+                  /* best effort */
+                });
+              }
+            }
+          }
+        } else if (job.serviceAction === 'database_backup' && job.serviceId != null) {
+          action = 'database_backup';
+          if (!job.backupS3ProfileName?.trim()) {
+            success = false;
+            output =
+              'S3 destination is not configured. Edit the cron job and choose a saved S3 profile.';
+          } else if (job.databaseBackupConfig) {
+            let destDir: string | null = null;
+            try {
+              destDir = await createBackupTempDir();
+              const r = await this.executorService.backupDatabaseStructured(
+                job.serviceId,
+                job.databaseBackupConfig,
+                destDir,
+              );
+              const final = await this.finalizeBackupWithS3(
+                job.userId,
+                job.id,
+                job.backupS3ProfileName,
+                destDir,
+                r,
+              );
+              success = final.success;
+              output = final.output;
+            } finally {
+              if (destDir) {
+                await removeBackupTempDir(destDir).catch(() => {
+                  /* best effort */
+                });
+              }
+            }
+          } else if (job.dockerCommand) {
+            let destDir: string | null = null;
+            try {
+              destDir = await createBackupTempDir();
+              const r = await this.executorService.backupDatabaseFromDockerCommand(
+                job.serviceId,
+                job.dockerCommand,
+                destDir,
+              );
+              const final = await this.finalizeBackupWithS3(
+                job.userId,
+                job.id,
+                job.backupS3ProfileName,
+                destDir,
+                r,
+              );
+              success = final.success;
+              output = final.output;
+            } finally {
+              if (destDir) {
+                await removeBackupTempDir(destDir).catch(() => {
+                  /* best effort */
+                });
+              }
+            }
+          } else {
+            success = false;
+            output =
+              'Database backup is not configured (missing databaseBackupConfig).';
+          }
         } else if (
           job.serviceAction === 'docker_command' &&
           job.dockerCommand &&

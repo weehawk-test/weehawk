@@ -5,11 +5,19 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
+import * as path from 'path';
 import { Repository } from 'typeorm';
 import { NotificationsService } from '../notifications/notifications.service';
-import { getVolumeBackupDestDir } from '../services/deployment-paths';
+import {
+  createBackupTempDir,
+  removeBackupTempDir,
+} from '../services/deployment-paths';
 import { ExecutorService } from '../executor/executor.service';
+import { S3Service } from '../s3/s3.service';
 import { ServicesService } from '../services/services.service';
+import { getErrorMessage } from '../utils/error-message';
+import type { DatabaseBackupConfig } from '../backup/database-backup.types';
+import { describeDatabaseBackupPreview } from '../backup/database-backup.types';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
 import { Webhook } from './entities/webhook.entity';
@@ -30,6 +38,9 @@ export type WebhookListRow = {
 export type WebhookDetailRow = WebhookListRow & {
   volumeSource: string | null;
   dockerCommand: string | null;
+  databaseBackupConfig: DatabaseBackupConfig | null;
+  databaseBackupPreview: string | null;
+  backupS3ProfileName: string | null;
   notifyChannelId: string | null;
   notifyMessage: string | null;
   secretToken: string;
@@ -43,6 +54,7 @@ export class WebhooksService {
     private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationsService,
+    private readonly s3Service: S3Service,
   ) {}
 
   private validateCreate(dto: CreateWebhookDto): void {
@@ -68,6 +80,23 @@ export class WebhooksService {
       ) {
         throw new BadRequestException('dockerCommand is required.');
       }
+      if (
+        dto.serviceAction === 'database_backup' &&
+        !dto.databaseBackupConfig
+      ) {
+        throw new BadRequestException(
+          'databaseBackupConfig is required for database backup.',
+        );
+      }
+      if (
+        (dto.serviceAction === 'volume_backup' ||
+          dto.serviceAction === 'database_backup') &&
+        !dto.backupS3ProfileName?.trim()
+      ) {
+        throw new BadRequestException(
+          'backupS3ProfileName is required: backups are stored in S3 only.',
+        );
+      }
     }
     const hasNotifyChannel = Boolean(dto.notifyChannelId?.trim());
     const hasNotifyMessage = Boolean(dto.notifyMessage?.trim());
@@ -90,10 +119,14 @@ export class WebhooksService {
 
   private summaryLabel(w: Webhook): string {
     const a = w.serviceAction ?? '—';
-    if (a === 'redeploy') return 'Redeploy service';
-    if (a === 'volume_backup') return `Backup volume: ${w.volumeSource ?? '—'}`;
-    if (a === 'docker_command') return 'Custom docker command';
-    if (a === 'no_action') return 'No action (just notification)';
+    if (a === 'redeploy') return 'Redeploy';
+    if (a === 'volume_backup') return `Volume → S3: ${w.volumeSource ?? '—'}`;
+    if (a === 'database_backup') {
+      const eng = w.databaseBackupConfig?.engine;
+      return eng ? `Database → S3 (${eng})` : 'Database → S3';
+    }
+    if (a === 'docker_command') return 'Docker command';
+    if (a === 'no_action') return 'No action';
     return a;
   }
 
@@ -113,14 +146,55 @@ export class WebhooksService {
   }
 
   private toDetailRow(w: Webhook): WebhookDetailRow {
+    const cfg = w.databaseBackupConfig;
     return {
       ...this.toListRow(w),
       volumeSource: w.volumeSource,
       dockerCommand: w.dockerCommand,
+      databaseBackupConfig: cfg,
+      databaseBackupPreview: cfg ? describeDatabaseBackupPreview(cfg) : null,
+      backupS3ProfileName: w.backupS3ProfileName,
       notifyChannelId: w.notifyChannelId,
       notifyMessage: w.notifyMessage,
       secretToken: w.secretToken,
     };
+  }
+
+  private async finalizeBackupWithS3(
+    userId: number,
+    contextId: string,
+    profileName: string | null | undefined,
+    destDir: string,
+    r: { success: boolean; output: string; archiveBasename?: string },
+  ): Promise<{ success: boolean; output: string }> {
+    if (!r.success || !r.archiveBasename) {
+      return { success: r.success, output: r.output };
+    }
+    const trimmed = profileName?.trim();
+    if (!trimmed) {
+      return {
+        success: false,
+        output: `${r.output}\nS3 destination is not configured.`,
+      };
+    }
+    const localPath = path.join(destDir, r.archiveBasename);
+    const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    try {
+      const { bucket, key: uploadedKey } = await this.s3Service.uploadLocalFile(
+        trimmed,
+        localPath,
+        key,
+      );
+      return {
+        success: true,
+        output: `${r.output}\nUploaded to s3://${bucket}/${uploadedKey}`,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
+      };
+    }
   }
 
   async create(
@@ -137,6 +211,16 @@ export class WebhooksService {
       } catch {
         throw new BadRequestException('Service not found.');
       }
+    }
+
+    const backupProfile =
+      dto.targetMode === 'service' &&
+      (dto.serviceAction === 'volume_backup' ||
+        dto.serviceAction === 'database_backup')
+        ? dto.backupS3ProfileName!.trim()
+        : null;
+    if (backupProfile) {
+      await this.s3Service.assertProfileExists(backupProfile);
     }
 
     const secretToken = randomBytes(32).toString('hex');
@@ -164,6 +248,13 @@ export class WebhooksService {
         dto.dockerCommand
           ? dto.dockerCommand.trim()
           : null,
+      databaseBackupConfig:
+        dto.targetMode === 'service' &&
+        dto.serviceAction === 'database_backup' &&
+        dto.databaseBackupConfig
+          ? (dto.databaseBackupConfig as unknown as DatabaseBackupConfig)
+          : null,
+      backupS3ProfileName: backupProfile,
       notifyOnTrigger:
         Boolean(dto.notifyChannelId?.trim()) &&
         Boolean(dto.notifyMessage?.trim()),
@@ -206,6 +297,34 @@ export class WebhooksService {
     }
     if (dto.notifyMessage !== undefined) {
       w.notifyMessage = dto.notifyMessage?.trim() || null;
+    }
+    if (dto.backupS3ProfileName !== undefined) {
+      const v = dto.backupS3ProfileName?.trim() || null;
+      if (v) {
+        await this.s3Service.assertProfileExists(v);
+      }
+      if (
+        (w.serviceAction === 'volume_backup' ||
+          w.serviceAction === 'database_backup') &&
+        !v
+      ) {
+        throw new BadRequestException(
+          'S3 destination is required for backup actions.',
+        );
+      }
+      w.backupS3ProfileName = v;
+    }
+    if (dto.databaseBackupConfig !== undefined) {
+      if (w.serviceAction === 'database_backup') {
+        if (!dto.databaseBackupConfig) {
+          throw new BadRequestException(
+            'databaseBackupConfig is required for database backup.',
+          );
+        }
+        w.databaseBackupConfig =
+          dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
+        w.dockerCommand = null;
+      }
     }
     if (w.notifyChannelId && w.notifyMessage) {
       w.notifyOnTrigger = true;
@@ -257,13 +376,96 @@ export class WebhooksService {
           w.serviceId != null
         ) {
           action = 'volume_backup';
-          const destDir = getVolumeBackupDestDir(w.userId, w.id);
-          const r = await this.executorService.backupDockerVolume(
-            w.volumeSource,
-            destDir,
-          );
-          success = r.success;
-          output = r.output;
+          if (!w.backupS3ProfileName?.trim()) {
+            success = false;
+            output =
+              'S3 destination is not configured. Edit the webhook and choose a saved S3 profile.';
+          } else {
+            let destDir: string | null = null;
+            try {
+              destDir = await createBackupTempDir();
+              const r = await this.executorService.backupDockerVolume(
+                w.volumeSource,
+                destDir,
+              );
+              const final = await this.finalizeBackupWithS3(
+                w.userId,
+                w.id,
+                w.backupS3ProfileName,
+                destDir,
+                r,
+              );
+              success = final.success;
+              output = final.output;
+            } finally {
+              if (destDir) {
+                await removeBackupTempDir(destDir).catch(() => {
+                  /* best effort */
+                });
+              }
+            }
+          }
+        } else if (w.serviceAction === 'database_backup' && w.serviceId != null) {
+          action = 'database_backup';
+          if (!w.backupS3ProfileName?.trim()) {
+            success = false;
+            output =
+              'S3 destination is not configured. Edit the webhook and choose a saved S3 profile.';
+          } else if (w.databaseBackupConfig) {
+            let destDir: string | null = null;
+            try {
+              destDir = await createBackupTempDir();
+              const r = await this.executorService.backupDatabaseStructured(
+                w.serviceId,
+                w.databaseBackupConfig,
+                destDir,
+              );
+              const final = await this.finalizeBackupWithS3(
+                w.userId,
+                w.id,
+                w.backupS3ProfileName,
+                destDir,
+                r,
+              );
+              success = final.success;
+              output = final.output;
+            } finally {
+              if (destDir) {
+                await removeBackupTempDir(destDir).catch(() => {
+                  /* best effort */
+                });
+              }
+            }
+          } else if (w.dockerCommand) {
+            let destDir: string | null = null;
+            try {
+              destDir = await createBackupTempDir();
+              const r = await this.executorService.backupDatabaseFromDockerCommand(
+                w.serviceId,
+                w.dockerCommand,
+                destDir,
+              );
+              const final = await this.finalizeBackupWithS3(
+                w.userId,
+                w.id,
+                w.backupS3ProfileName,
+                destDir,
+                r,
+              );
+              success = final.success;
+              output = final.output;
+            } finally {
+              if (destDir) {
+                await removeBackupTempDir(destDir).catch(() => {
+                  /* best effort */
+                });
+              }
+            }
+          } else {
+            success = false;
+            output =
+              'Database backup is not configured (missing databaseBackupConfig).';
+          }
         } else if (
           w.serviceAction === 'docker_command' &&
           w.dockerCommand &&

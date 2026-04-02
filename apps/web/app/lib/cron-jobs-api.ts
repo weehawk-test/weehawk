@@ -1,5 +1,8 @@
 import { API_BASE } from "./api";
+import type { DatabaseBackupConfig } from "./database-backup-preview";
 import type { WebhookServiceAction, WebhookTargetMode } from "./webhooks-api";
+
+export type { DatabaseBackupConfig };
 
 export type CronJobListItem = {
   id: string;
@@ -20,6 +23,9 @@ export type CronJobListItem = {
 export type CronJobDetail = CronJobListItem & {
   volumeSource: string | null;
   dockerCommand: string | null;
+  databaseBackupConfig: DatabaseBackupConfig | null;
+  databaseBackupPreview: string | null;
+  backupS3ProfileName: string | null;
   notifyChannelId: string | null;
   notifyMessage: string | null;
 };
@@ -33,6 +39,8 @@ export type CreateCronJobBody = {
   serviceAction?: WebhookServiceAction;
   volumeSource?: string;
   dockerCommand?: string;
+  databaseBackupConfig?: DatabaseBackupConfig;
+  backupS3ProfileName?: string;
   notifyChannelId?: string;
   notifyMessage?: string;
 };
@@ -44,6 +52,8 @@ export type UpdateCronJobBody = {
   isActive?: boolean;
   notifyChannelId?: string | null;
   notifyMessage?: string | null;
+  backupS3ProfileName?: string | null;
+  databaseBackupConfig?: DatabaseBackupConfig | null;
 };
 
 async function errorBody(res: Response): Promise<string> {
@@ -77,7 +87,12 @@ export async function fetchCronJob(accessToken: string, id: string): Promise<Cro
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
-  return { ...data, triggerType: "cron" };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "cron",
+  };
 }
 
 export async function createCronJob(
@@ -95,7 +110,12 @@ export async function createCronJob(
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
-  return { ...data, triggerType: "cron" };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "cron",
+  };
 }
 
 export async function updateCronJob(
@@ -114,7 +134,12 @@ export async function updateCronJob(
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
-  return { ...data, triggerType: "cron" };
+  return {
+    ...data,
+    databaseBackupConfig: data.databaseBackupConfig ?? null,
+    databaseBackupPreview: data.databaseBackupPreview ?? null,
+    triggerType: "cron",
+  };
 }
 
 export async function deleteCronJob(accessToken: string, id: string): Promise<void> {

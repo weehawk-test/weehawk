@@ -44,10 +44,12 @@ export default async function ServiceDetailsPage({
       initialRuntime = null;
     }
 
-    try {
-      initialSecretsPaged = await fetchDockerSecretsPaged(1, DOCKER_LIST_PAGE_SIZE, "");
-    } catch {
-      initialSecretsPaged = null;
+    if (initialService?.type !== "application") {
+      try {
+        initialSecretsPaged = await fetchDockerSecretsPaged(1, DOCKER_LIST_PAGE_SIZE, "");
+      } catch {
+        initialSecretsPaged = null;
+      }
     }
   }
 

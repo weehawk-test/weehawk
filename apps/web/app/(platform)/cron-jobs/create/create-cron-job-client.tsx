@@ -1,19 +1,29 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateCronJob } from "@/hooks/use-cron-jobs";
 import { type WebhookServiceAction, type WebhookTargetMode } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
+import type { S3ProfilePublic } from "@/lib/s3-api";
 import { X, Loader2, Terminal, Type, AlignLeft } from "lucide-react";
 import { useServiceVolumes } from "@/hooks/use-services";
 import { useToast } from "@/hooks/use-toast";
+import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
+import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
+import {
+  resolveBackupFormat,
+  validateDatabaseBackupForm,
+  type DatabaseBackupFormValues,
+} from "@/lib/database-backup-preview";
+import { listDatabaseBackupOptions } from "@/lib/database-backup-from-service";
 
 type Props = {
   initialServices: Service[];
   initialChannels: NotificationChannel[];
+  initialS3Profiles: S3ProfilePublic[];
 };
 
 type CronPreset =
@@ -26,7 +36,7 @@ type CronPreset =
   | "every_15_minutes"
   | "every_weekday_midnight";
 
-export function CreateCronJobClient({ initialServices, initialChannels }: Props) {
+export function CreateCronJobClient({ initialServices, initialChannels, initialS3Profiles }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const createMutation = useCreateCronJob();
@@ -40,6 +50,14 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
   const [serviceAction, setServiceAction] = useState<WebhookServiceAction | "">("");
   const [volumeSource, setVolumeSource] = useState("");
   const [dockerCommand, setDockerCommand] = useState("docker ");
+  const [dbBackup, setDbBackup] = useState<DatabaseBackupFormValues>({
+    engine: "postgres",
+    composeService: "",
+    databaseName: "",
+    dbUser: "",
+    backupFormat: "postgres_sql_gzip",
+  });
+  const [backupS3ProfileName, setBackupS3ProfileName] = useState("");
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [notifyChannelId, setNotifyChannelId] = useState("");
   const [notifyMessage, setNotifyMessage] = useState("");
@@ -56,6 +74,44 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
     return items.filter((v) => v.mountType === "volume" && v.source && v.source !== "—");
   }, [volQuery.data]);
 
+  const databaseServices = useMemo(
+    () => initialServices.filter((s) => s.type === "databases"),
+    [initialServices],
+  );
+
+  const selectedService = useMemo(
+    () => initialServices.find((s) => s.id === serviceId) ?? null,
+    [initialServices, serviceId],
+  );
+
+  useEffect(() => {
+    if (serviceAction !== "database_backup") return;
+    if (!serviceId) {
+      setDbBackup({
+        engine: "postgres",
+        composeService: "",
+        databaseName: "",
+        dbUser: "",
+        backupFormat: "postgres_sql_gzip",
+      });
+      return;
+    }
+    const svc = selectedService;
+    if (!svc || svc.type !== "databases") return;
+    const opts = listDatabaseBackupOptions(svc);
+    if (opts.length > 0) {
+      setDbBackup(opts[0]!.form);
+    } else {
+      setDbBackup({
+        engine: "postgres",
+        composeService: "",
+        databaseName: "",
+        dbUser: "",
+        backupFormat: "postgres_sql_gzip",
+      });
+    }
+  }, [serviceAction, serviceId, selectedService]);
+
   const submit = () => {
     if (!name.trim()) {
       toast({ title: "Name required", variant: "destructive" });
@@ -70,11 +126,38 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
       return;
     }
     if (serviceAction !== "no_action" && !serviceId) {
-      toast({ title: "Select a service", variant: "destructive" });
+      toast({
+        title: serviceAction === "database_backup" ? "Select a database" : "Select a service",
+        variant: "destructive",
+      });
       return;
     }
     if (serviceAction === "volume_backup" && !volumeSource.trim()) {
       toast({ title: "Select or enter a volume name", variant: "destructive" });
+      return;
+    }
+    if (
+      (serviceAction === "volume_backup" ||
+        (serviceAction === "database_backup" && Boolean(serviceId))) &&
+      initialS3Profiles.length === 0
+    ) {
+      toast({
+        title: "Add an S3 destination first",
+        description: "Backups are stored in S3 only. Create a destination under S3.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (
+      (serviceAction === "volume_backup" ||
+        (serviceAction === "database_backup" && Boolean(serviceId))) &&
+      !backupS3ProfileName.trim()
+    ) {
+      toast({
+        title: "S3 destination required",
+        description: "Choose which saved S3 profile to upload backups to.",
+        variant: "destructive",
+      });
       return;
     }
     if (serviceAction === "docker_command") {
@@ -85,6 +168,22 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
           description: "Command must start with docker (e.g. docker compose ps).",
           variant: "destructive",
         });
+        return;
+      }
+    }
+    if (serviceAction === "database_backup") {
+      const svc = initialServices.find((s) => s.id === serviceId);
+      if (!svc || svc.type !== "databases") {
+        toast({
+          title: "Database service required",
+          description: "Choose a Database-type service (your managed DB stack).",
+          variant: "destructive",
+        });
+        return;
+      }
+      const v = validateDatabaseBackupForm(dbBackup);
+      if (!v.ok) {
+        toast({ title: "Database backup", description: v.message, variant: "destructive" });
         return;
       }
     }
@@ -115,6 +214,22 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
         serviceAction: serviceAction as WebhookServiceAction,
         ...(serviceAction === "volume_backup" ? { volumeSource: volumeSource.trim() } : {}),
         ...(serviceAction === "docker_command" ? { dockerCommand: dockerCommand.trim() } : {}),
+        ...(serviceAction === "database_backup"
+          ? {
+              databaseBackupConfig: {
+                engine: dbBackup.engine,
+                composeService: dbBackup.composeService.trim(),
+                backupFormat: resolveBackupFormat(dbBackup.engine, dbBackup.backupFormat),
+                ...(dbBackup.engine !== "redis"
+                  ? { databaseName: dbBackup.databaseName.trim() }
+                  : {}),
+                ...(dbBackup.dbUser.trim() ? { dbUser: dbBackup.dbUser.trim() } : {}),
+              },
+            }
+          : {}),
+        ...(serviceAction === "volume_backup" || serviceAction === "database_backup"
+          ? { backupS3ProfileName: backupS3ProfileName.trim() }
+          : {}),
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId, notifyMessage: notifyMessage.trim() }
           : {}),
@@ -220,24 +335,72 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
                     if (nextAction === "no_action") {
                       setNotificationEnabled(true);
                     }
+                    if (
+                      nextAction === "database_backup" &&
+                      serviceId &&
+                      !initialServices.some((s) => s.id === serviceId && s.type === "databases")
+                    ) {
+                      setServiceId("");
+                    }
                   }}
                 >
                   <option value="">Select action...</option>
-                  <option value="no_action">No action (just notification)</option>
-                  <option value="redeploy">Redeploy (compose up / rolling restart)</option>
-                  <option value="volume_backup">Volume backup (tar.gz on server)</option>
-                  <option value="docker_command">Custom docker command</option>
+                  <option value="no_action">No action</option>
+                  <option value="redeploy">Redeploy</option>
+                  <option value="volume_backup">Volume → S3</option>
+                  <option value="database_backup">Database → S3</option>
+                  <option value="docker_command">Docker command</option>
                 </select>
               </div>
-              {Boolean(serviceAction) && serviceAction !== "no_action" && (
+              {Boolean(serviceAction) &&
+                serviceAction !== "no_action" &&
+                serviceAction !== "database_backup" && (
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Service</label>
+                    <select
+                      className="input-field"
+                      value={serviceId}
+                      onChange={(e) => {
+                        setServiceId(e.target.value);
+                        setVolumeSource("");
+                      }}
+                    >
+                      <option value="">Select service…</option>
+                      {initialServices.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} (id {s.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              {serviceAction === "database_backup" && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Service</label>
-                  <select className="input-field" value={serviceId} onChange={(e) => { setServiceId(e.target.value); setVolumeSource(""); }}>
-                    <option value="">Select service…</option>
-                    {initialServices.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} (id {s.id})</option>
+                  <label className="text-xs text-muted-foreground mb-1 block">Select database</label>
+                  <select
+                    className="input-field"
+                    value={serviceId}
+                    onChange={(e) => {
+                      setServiceId(e.target.value);
+                      setVolumeSource("");
+                    }}
+                  >
+                    <option value="">Select database…</option>
+                    {databaseServices.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} (id {s.id})
+                      </option>
                     ))}
                   </select>
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    Your managed <span className="text-foreground/90">Database</span> stacks — backup uses that
+                    stack&apos;s compose file on the server.
+                  </p>
+                  {databaseServices.length === 0 && (
+                    <p className="text-xs text-amber-400/90 mt-2">
+                      No database services yet. Create a Database service under a project first.
+                    </p>
+                  )}
                 </div>
               )}
               {serviceAction === "volume_backup" && (
@@ -253,6 +416,25 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
                     </select>
                   ) : null}
                   <input className="input-field font-mono text-sm mt-2" placeholder="Or type volume name manually" value={volumeSource} onChange={(e) => setVolumeSource(e.target.value)} />
+                  <VolumeBackupDbWarning className="mt-2" />
+                </div>
+              )}
+              {serviceAction === "database_backup" && serviceId && (
+                <div>
+                  <p className="text-xs font-medium text-foreground mb-2">Backup options</p>
+                  <DatabaseBackupFormFields
+                    key={serviceId ? `db-${serviceId}` : "db-none"}
+                    service={
+                      selectedService?.type === "databases" ? selectedService : null
+                    }
+                    values={dbBackup}
+                    onChange={(patch) => setDbBackup((prev) => ({ ...prev, ...patch }))}
+                    onReplaceValues={setDbBackup}
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    Output is compressed and uploaded to S3 from a temp folder on the server (Postgres/MySQL/MariaDB:
+                    SQL gzip; MongoDB: archive gzip; Redis: RDB).
+                  </p>
                 </div>
               )}
               {serviceAction === "docker_command" && (
@@ -260,7 +442,43 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
                   <label className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
                     <Terminal className="w-3.5 h-3.5" /> Docker command
                   </label>
-                  <textarea className="input-field font-mono text-sm min-h-[88px] resize-y" value={dockerCommand} onChange={(e) => setDockerCommand(e.target.value)} placeholder="docker compose ps" />
+                  <textarea
+                    className="input-field font-mono text-sm min-h-[88px] resize-y"
+                    value={dockerCommand}
+                    onChange={(e) => setDockerCommand(e.target.value)}
+                    placeholder="docker compose ps"
+                  />
+                </div>
+              )}
+              {(serviceAction === "volume_backup" ||
+                (serviceAction === "database_backup" && Boolean(serviceId))) && (
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">S3 destination (required)</label>
+                  <select
+                    className="input-field"
+                    value={backupS3ProfileName}
+                    onChange={(e) => setBackupS3ProfileName(e.target.value)}
+                    required
+                  >
+                    <option value="">Select S3 profile…</option>
+                    {initialS3Profiles.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name} — {p.bucket}
+                      </option>
+                    ))}
+                  </select>
+                  {initialS3Profiles.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground mt-2">
+                      <Link href="/s3" className="text-primary hover:underline">
+                        Add an S3 destination
+                      </Link>{" "}
+                      — backups are stored in S3 only (short-lived temp files on the server during upload).
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground mt-1.5">
+                      The archive is written to a temp folder during upload, then removed — only S3 retains the backup.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -268,8 +486,8 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
             <div className="rounded-xl border border-white/10 p-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-medium">
-                  Optional notification
-                  {notificationRequired ? " (required for no action)" : ""}
+                  Notification
+                  {notificationRequired ? " — required" : " (optional)"}
                 </p>
                 {!notificationRequired && (
                   <button

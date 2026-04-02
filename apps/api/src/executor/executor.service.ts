@@ -8,6 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { gzipSync } from 'zlib';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ServicesService } from '../services/services.service';
@@ -33,6 +34,12 @@ import {
   scaleAllStackServicesToZero,
 } from './executor-swarm';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
+import { runStructuredDatabaseBackup } from './executor-structured-db-backup';
+import { runDockerVolumeBackup } from './executor-volume-backup';
+import {
+  assertSafeComposeService,
+  type DatabaseBackupConfig,
+} from '../backup/database-backup.types';
 
 export type { ExecuteDeployOptions } from './executor-types';
 
@@ -92,6 +99,8 @@ export class ExecutorService {
       if (isSwarmStackService(service)) {
         let buildLogPrefix = '';
         if (service.composeType === composeType.APPLICATION) {
+          const deployMode =
+            parseConfigHeaderValue(rawConfig, 'deployMode')?.toLowerCase() || 'source';
           const sourceDir = parseConfigHeaderValue(rawConfig, 'sourceDir') || 'app-source';
           const buildPath = parseConfigHeaderValue(rawConfig, 'buildPath') || '.';
           const dockerfilePath =
@@ -103,7 +112,7 @@ export class ExecutorService {
             .access(sourceRoot)
             .then(() => true)
             .catch(() => false);
-          if (sourceRootExists) {
+          if (deployMode !== 'image' && sourceRootExists) {
             await fs.access(fullContext).catch(() => {
               throw new InternalServerErrorException(
                 `Application build path not found: "${buildPath}" under ${sourceDir}.`,
@@ -272,9 +281,12 @@ export class ExecutorService {
 
   /**
    * Resolves a running container ID for docker exec (compose project or Swarm stack task).
+   * @param composeServiceKey Optional exact `services:` key (e.g. database backup `composeService`).
+   *   When omitted, uses the first service name in the compose YAML (legacy behavior).
    */
   async getExecContainerId(
     id: number,
+    composeServiceKey?: string,
   ): Promise<{ id: string } | { error: string }> {
     let service: Service;
     try {
@@ -291,7 +303,16 @@ export class ExecutorService {
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
-    const key = firstComposeServiceName(service.dockerConfig || '');
+    let key: string;
+    if (composeServiceKey !== undefined && composeServiceKey.trim() !== '') {
+      try {
+        key = assertSafeComposeService(composeServiceKey);
+      } catch {
+        return { error: 'Invalid compose service name.' };
+      }
+    } else {
+      key = firstComposeServiceName(service.dockerConfig || '');
+    }
 
     try {
       if (isSwarmStackService(service)) {
@@ -424,32 +445,118 @@ export class ExecutorService {
   /**
    * Backup a named Docker volume to `destDir` as a .tar.gz (host path must be absolute).
    */
+  async backupDatabaseStructured(
+    serviceId: number,
+    config: DatabaseBackupConfig,
+    destDir: string,
+  ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
+    const service = await this.servicesService.findOne(serviceId);
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    await fs.mkdir(deployDir, { recursive: true });
+    const composeFile = path.join(deployDir, 'docker-compose.yml');
+    const finalConfig = (service.dockerConfig || '').replace(
+      /\$\{APP_NAME\}/g,
+      service.appName,
+    );
+    await fs.writeFile(composeFile, finalConfig, 'utf8');
+
+    const resolved = await this.getExecContainerId(
+      serviceId,
+      config.composeService,
+    );
+    if ('error' in resolved) {
+      return { success: false, output: resolved.error };
+    }
+
+    const envVars = parseEnv(service.env || '');
+    return runStructuredDatabaseBackup(
+      deployDir,
+      config,
+      destDir,
+      service.appName,
+      { ...process.env, ...envVars },
+      resolved.id,
+    );
+  }
+
   async backupDockerVolume(
     volumeName: string,
     destDir: string,
   ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
-    const safe = volumeName.trim();
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(safe)) {
-      return { success: false, output: 'Invalid volume name.' };
+    return runDockerVolumeBackup(volumeName, destDir);
+  }
+
+  /**
+   * Run a docker command that prints a SQL/text dump on stdout; gzip and write under `destDir`.
+   * Use plain `pg_dump` text output (not `-Fc`). Command rules match `runWebhookDockerCommand`.
+   */
+  async backupDatabaseFromDockerCommand(
+    serviceId: number,
+    rawInput: string,
+    destDir: string,
+  ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
+    const service = await this.servicesService.findOne(serviceId);
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    await fs.mkdir(deployDir, { recursive: true });
+    let cmd = rawInput.trim().replace(/\s+/g, ' ');
+    const lower = cmd.toLowerCase();
+    if (!lower.startsWith('docker')) {
+      cmd = `docker ${cmd}`;
+    } else if (!lower.startsWith('docker ')) {
+      cmd = `docker ${cmd.slice(6).trim()}`;
     }
-    await fs.mkdir(destDir, { recursive: true });
-    const outDir = path.resolve(destDir);
-    const archiveBasename = `vol-${safe}-${Date.now()}.tar.gz`;
-    const hostOut = path.join(outDir, archiveBasename);
-    const hostMount = outDir.replace(/\\/g, '/').replace(/"/g, '\\"');
+    if (!/^docker\s+/i.test(cmd)) {
+      return {
+        success: false,
+        output:
+          'Command must be a docker CLI invocation (e.g. docker compose exec -T db pg_dump …).',
+      };
+    }
+    if (/[;&|`$\n\r]/.test(cmd)) {
+      return {
+        success: false,
+        output:
+          'Forbidden characters: use one docker command without ; | & ` $ or newlines.',
+      };
+    }
+    const envVars = parseEnv(service.env || '');
     try {
-      const { stdout, stderr } = await execAsync(
-        `docker run --rm -v "${safe}:/v:ro" -v "${hostMount}:/out" alpine tar czf "/out/${archiveBasename}" -C /v .`,
-        { maxBuffer: 20 * 1024 * 1024, timeout: 600_000 },
-      );
+      const { stdout, stderr } = await execAsync(cmd, {
+        cwd: deployDir,
+        env: { ...process.env, ...envVars },
+        maxBuffer: 512 * 1024 * 1024,
+        timeout: 600_000,
+      });
+      const err = stderr ?? '';
+      const failed = stderrIndicatesDockerFailure(err);
+      if (failed) {
+        const out = [stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
+        return { success: false, output: out || '(no output)' };
+      }
+      const rawOut = stdout ?? '';
+      if (!rawOut.length) {
+        return {
+          success: false,
+          output: 'Database backup produced no output on stdout.',
+        };
+      }
+      await fs.mkdir(destDir, { recursive: true });
+      const archiveBasename = `db-${service.appName}-${Date.now()}.sql.gz`;
+      const fullPath = path.join(path.resolve(destDir), archiveBasename);
+      const gz = gzipSync(Buffer.from(rawOut, 'utf8'));
+      await fs.writeFile(fullPath, gz);
       const out = [stdout, stderr]
         .filter((s) => s && String(s).trim())
         .join('\n');
-      const err = stderr ?? '';
-      const failed = stderrIndicatesDockerFailure(err);
       return {
-        success: !failed,
-        output: [out, `Archive: ${hostOut}`].filter(Boolean).join('\n'),
+        success: true,
+        output: [out, `Archive: ${fullPath}`].filter(Boolean).join('\n'),
         archiveBasename,
       };
     } catch (e) {
