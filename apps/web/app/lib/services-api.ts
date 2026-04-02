@@ -108,12 +108,18 @@ export async function fetchService(id: string): Promise<Service> {
 }
 
 export async function createServiceApi(input: CreateServiceInput): Promise<Service> {
-  const { databaseEngine, postgres: _postgres, ...rest } = input;
+  const { databaseEngine, postgres: _postgres, appExternalNetworkNames, appStackNetworkKeys, ...rest } = input;
   let dockerConfig = rest.config?.trim() ? rest.config : "";
   if (rest.type === "databases" && databaseEngine) {
     dockerConfig = `# weehawk database service\n# engine: ${databaseEngine}\n`;
   } else if (rest.type === "application") {
-    dockerConfig = "# weehawk application service\n";
+    const ext = (appExternalNetworkNames ?? []).map((s) => s.trim()).filter(Boolean);
+    const stk = (appStackNetworkKeys ?? []).map((s) => s.trim()).filter(Boolean);
+    let header = "# weehawk application service\n";
+    if (ext.length) header += `# app.networks.external: ${ext.join("|")}\n`;
+    if (stk.length) header += `# app.networks.stack: ${stk.join("|")}\n`;
+    if (!ext.length && !stk.length) header += "# app.networks: none\n";
+    dockerConfig = header;
   }
   const body = {
     name: rest.name,
@@ -254,6 +260,21 @@ export async function updateServiceApi(
   return mapApiServiceToService(JSON.parse(text));
 }
 
+export async function patchApplicationNetworksApi(
+  id: string,
+  body: { external: string[]; stack: string[] },
+): Promise<Service> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/networks`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
 export async function deleteServiceApi(id: string): Promise<void> {
   const res = await apiFetch(`/services/${encodeURIComponent(id)}`, { method: "DELETE" });
   const text = await res.text();
@@ -345,24 +366,36 @@ export async function uploadApplicationArchiveApi(
   options?: {
     buildPath?: string;
     dockerfilePath?: string;
-    buildMode?: "dockerfile" | "nixpacks";
+    buildMode?: "dockerfile" | "buildpacks";
     containerPort?: number;
     publishPort?: number;
     replicas?: number;
     variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    /** Applied with the upload; avoids a separate PATCH to `/application/networks`. */
+    networks?: { external: string[]; stack: string[] };
   },
 ): Promise<Service> {
   const fd = new FormData();
-  fd.append("file", file);
+  // Append all text fields before `file`. Multer/Nest often only bind body fields that appear
+  // before the file part; putting `file` first can drop `networksJson` and other metadata.
   if (options?.buildPath) fd.append("buildPath", options.buildPath);
   if (options?.dockerfilePath) fd.append("dockerfilePath", options.dockerfilePath);
   if (options?.buildMode) fd.append("buildMode", options.buildMode);
   if (options?.containerPort != null) fd.append("containerPort", String(options.containerPort));
   if (options?.publishPort != null) fd.append("publishPort", String(options.publishPort));
   if (options?.replicas != null) fd.append("replicas", String(options.replicas));
-  if (options?.variables && options.variables.length > 0) {
+  // Always send when the caller passes `variables` (even `[]`) so the API can drop removed keys
+  // and prune Docker secrets; omitting the field would skip cleanup on empty env lists.
+  if (options?.variables !== undefined) {
     fd.append("variablesJson", JSON.stringify(options.variables));
   }
+  if (options?.networks) {
+    const { external, stack } = options.networks;
+    fd.append("externalNetworks", external.join("|"));
+    fd.append("stackNetworks", stack.join("|"));
+    fd.append("networksJson", JSON.stringify(options.networks));
+  }
+  fd.append("file", file);
 
   const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/upload`, {
     method: "POST",

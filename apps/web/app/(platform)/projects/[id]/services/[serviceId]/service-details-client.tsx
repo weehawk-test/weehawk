@@ -5,13 +5,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
 import {
   Container, Layers, Copy, Trash2, FileCode,
   Info, Hash, FolderKanban, CheckCircle, XCircle,
   Download, Edit3, Save, X, Calendar, Tag, Plus,
   Terminal, Rocket, RefreshCw, Square, Play, RotateCw, Activity, Loader2,
-  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive,
+  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive, ChevronDown,
   Database, Eye, EyeOff, Lock,
   LockOpen,
   PackageOpen,
@@ -47,16 +47,30 @@ import {
   uploadApplicationArchiveApi,
 } from "@/lib/services-api";
 import {
-  parseApplicationBuildMode,
   parseApplicationBuildPath,
+  parseApplicationNetworkHeaders,
+  parseApplicationStoreHeaders,
   parseServiceEnvLines,
   parseYamlImage,
   parseYamlPublishPort,
   parseYamlReplicas,
 } from "@/lib/env-utils";
+import { ApplicationConnectionsPanel } from "./application-connections-panel";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceSecretsTab } from "./service-secrets-tab";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
+
+/** Deterministic on server + client (avoids hydration mismatch from `format()` using local TZ). */
+function formatServiceDateUtc(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} at ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -146,7 +160,16 @@ networks:
   },
 };
 
-type Tab = "overview" | "config" | "env" | "backup" | "domain" | "secrets" | "logs" | "terminal";
+type Tab =
+  | "overview"
+  | "config"
+  | "appconf"
+  | "env"
+  | "backup"
+  | "domain"
+  | "secrets"
+  | "logs"
+  | "terminal";
 
 /** Hidden for database services until stack YAML exists (Postgres form saved). */
 const DATABASE_PRECOMPOSE_HIDDEN: Tab[] = ["config", "backup", "terminal"];
@@ -248,9 +271,13 @@ export default function ServiceDetails({
   const actionBusy = deploy.isPending || startService.isPending || shutdownService.isPending;
 
   const tabs = useMemo(() => {
-    const allTabs: { id: Tab; label: string; icon: typeof Info; count?: number }[] = [
+    type TabDef = { id: Tab; label: string; icon: typeof Info; count?: number };
+    const head: TabDef[] = [
       { id: "overview", label: "Overview", icon: Info },
       { id: "config", label: "Configuration", icon: FileCode },
+    ];
+    const appConf: TabDef = { id: "appconf", label: "Application conf", icon: PackageOpen };
+    const tail: TabDef[] = [
       { id: "env", label: "Environment", icon: Variable, count: envEntryCount || undefined },
       { id: "backup", label: "Backup", icon: Archive },
       { id: "domain", label: "Domains", icon: Globe, count: service?.domains?.length },
@@ -258,13 +285,21 @@ export default function ServiceDetails({
       { id: "logs", label: "Logs", icon: ScrollText },
       { id: "terminal", label: "Terminal", icon: Terminal },
     ];
+    const allTabs: TabDef[] = isApplicationService ? [...head, appConf, ...tail] : [...head, ...tail];
     if (!isDatabaseService) return allTabs;
     const withoutDomainSecrets = allTabs.filter((t) => t.id !== "domain" && t.id !== "secrets");
     if (!hasDatabaseCompose) {
       return withoutDomainSecrets.filter((t) => !DATABASE_PRECOMPOSE_HIDDEN.includes(t.id));
     }
     return withoutDomainSecrets;
-  }, [isDatabaseService, hasDatabaseCompose, envEntryCount, service?.domains?.length, secretsPaged?.totalAll]);
+  }, [
+    isDatabaseService,
+    isApplicationService,
+    hasDatabaseCompose,
+    envEntryCount,
+    service?.domains?.length,
+    secretsPaged?.totalAll,
+  ]);
 
   useEffect(() => {
     const allowed = new Set(tabs.map((t) => t.id));
@@ -528,7 +563,7 @@ export default function ServiceDetails({
                 {service.description && <p className="text-muted-foreground text-sm">{service.description}</p>}
                 <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
                   <Calendar className="w-3 h-3" />
-                  Created {format(new Date(service.createdAt), "MMMM d, yyyy 'at' HH:mm")}
+                  Created {formatServiceDateUtc(service.createdAt)}
                 </p>
               </div>
             </div>
@@ -646,9 +681,6 @@ export default function ServiceDetails({
               {isDatabaseService && dbEngineId && (
                 <DatabaseSetupPanel serviceId={service.id} service={service} engine={dbEngineId} />
               )}
-              {isApplicationService && (
-                <ApplicationArchivePanel serviceId={service.id} />
-              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <InfoCard icon={<Hash className="w-4 h-4 text-primary" />} label="Service ID" value={service.id} mono copyable
                 onCopy={() => { navigator.clipboard.writeText(service.id); toast({ title: "Copied", description: "Service ID copied." }); }} />
@@ -697,7 +729,7 @@ export default function ServiceDetails({
                     }
                   />
                   <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
-                    value={format(new Date(service.createdAt), "MMMM d, yyyy 'at' HH:mm")} />
+                    value={formatServiceDateUtc(service.createdAt)} />
                   <InfoCard
                     icon={<Rocket className="w-4 h-4 text-primary" />}
                     label="Docker on host"
@@ -715,7 +747,7 @@ export default function ServiceDetails({
               )}
               {isDatabaseService && (
                 <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
-                  value={format(new Date(service.createdAt), "MMMM d, yyyy 'at' HH:mm")} />
+                  value={formatServiceDateUtc(service.createdAt)} />
               )}
               <InfoCard icon={<Tag className="w-4 h-4 text-primary" />} label="Configuration"
                 value={
@@ -729,6 +761,20 @@ export default function ServiceDetails({
               <InfoCard icon={<Variable className="w-4 h-4 text-primary" />} label="Environment (.env)"
                 value={envEntryCount > 0 ? `${envEntryCount} variable${envEntryCount !== 1 ? "s" : ""}` : "Not set"} />
               </div>
+            </motion.div>
+          )}
+
+          {/* ── APPLICATION CONF (ZIP upload + build + connections + env for deploy) ── */}
+          {activeTab === "appconf" && isApplicationService && projectId && (
+            <motion.div
+              key="appconf"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-4"
+            >
+              <ApplicationArchivePanel serviceId={service.id} projectId={projectId} service={service} />
             </motion.div>
           )}
 
@@ -1680,39 +1726,111 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
   );
 }
 
-function ApplicationArchivePanel({ serviceId }: { serviceId: string }) {
+function ApplicationArchivePanel({
+  serviceId,
+  projectId,
+  service,
+}: {
+  serviceId: string;
+  projectId: string;
+  service: Service;
+}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: serviceRow } = useService(serviceId);
   const [file, setFile] = useState<File | null>(null);
   const [buildPath, setBuildPath] = useState(".");
-  const [buildMode, setBuildMode] = useState<"dockerfile" | "nixpacks">("dockerfile");
   const [containerPort, setContainerPort] = useState("3000");
   const [publishPort, setPublishPort] = useState("");
   const [replicas, setReplicas] = useState("1");
   const [uploading, setUploading] = useState(false);
   const [variablesText, setVariablesText] = useState("");
-  const [variables, setVariables] = useState<Array<{ key: string; value: string; store: "env" | "secret" }>>([]);
+  type AppEnvVarRow = {
+    key: string;
+    value: string;
+    store: "env" | "secret";
+    /** True when this row was loaded from saved stack for a Docker Secret (value not readable from API). */
+    unreadableDockerSecret?: boolean;
+  };
+  const [variables, setVariables] = useState<AppEnvVarRow[]>([]);
+  /** Show/hide value for Environment and editable Docker Secret rows (default hidden). Hidden after generate for unreadable secrets. */
+  const [valueVisibleByRow, setValueVisibleByRow] = useState<Record<number, boolean>>({});
   const [showEnvPaste, setShowEnvPaste] = useState(false);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const [zipDragOver, setZipDragOver] = useState(false);
+  const [connectionExternal, setConnectionExternal] = useState<string[]>([]);
+  const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
+  const [openAppSection, setOpenAppSection] = useState<"connections" | "env" | null>(null);
+
+  const filledEnvVarCount = useMemo(
+    () => variables.filter((v) => v.key.trim()).length,
+    [variables],
+  );
+
+  useEffect(() => {
+    const cfg = serviceRow?.config ?? "";
+    const p = parseApplicationNetworkHeaders(cfg);
+    setConnectionExternal(p.external);
+    setConnectionStackKeys(p.stack.length ? p.stack : []);
+  }, [serviceRow?.id, serviceRow?.config]);
 
   useEffect(() => {
     const cfg = serviceRow?.config ?? "";
     if (!cfg.includes("# weehawk application service")) return;
-    const savedMode = parseApplicationBuildMode(cfg);
-    if (savedMode) setBuildMode(savedMode);
+    const stores = parseApplicationStoreHeaders(cfg);
+    const keys = Object.keys(stores);
+    if (keys.length === 0) return;
+    const envMap = parseServiceEnvLines(serviceRow?.env ?? "");
+    setVariables(
+      keys.map((key) => ({
+        key,
+        // Secret values are not readable back from Docker; keep blank in UI.
+        value: stores[key] === "env" ? (envMap[key] ?? "") : "",
+        store: stores[key],
+        unreadableDockerSecret: stores[key] === "secret",
+      })),
+    );
+    setValueVisibleByRow({});
+  }, [serviceRow?.id, serviceRow?.config, serviceRow?.env]);
+
+  useEffect(() => {
+    const cfg = serviceRow?.config ?? "";
+    if (!cfg.includes("# weehawk application service")) return;
     const savedPath = parseApplicationBuildPath(cfg);
     if (savedPath) setBuildPath(savedPath);
   }, [serviceRow?.config]);
 
-  const updateVariable = (idx: number, patch: Partial<{ key: string; value: string; store: "env" | "secret" }>) => {
-    setVariables((prev) => prev.map((v, i) => (i === idx ? { ...v, ...patch } : v)));
+  const updateVariable = (idx: number, patch: Partial<AppEnvVarRow>) => {
+    setVariables((prev) =>
+      prev.map((v, i) => {
+        if (i !== idx) return v;
+        const next = { ...v, ...patch };
+        if (patch.value !== undefined && patch.value.trim() !== "") {
+          next.unreadableDockerSecret = false;
+        }
+        if (patch.store !== undefined && patch.store !== "secret") {
+          next.unreadableDockerSecret = false;
+        }
+        return next;
+      }),
+    );
   };
   const addVariable = () => setVariables((prev) => [...prev, { key: "", value: "", store: "secret" }]);
-  const removeVariable = (idx: number) => setVariables((prev) => prev.filter((_, i) => i !== idx));
+  const removeVariable = (idx: number) => {
+    setVariables((prev) => prev.filter((_, i) => i !== idx));
+    setValueVisibleByRow((prev) => {
+      const next: Record<number, boolean> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        const i = Number(k);
+        if (Number.isNaN(i)) continue;
+        if (i < idx) next[i] = v;
+        else if (i > idx) next[i - 1] = v;
+      }
+      return next;
+    });
+  };
   const parseVariablesText = () => {
-    const parsed: Array<{ key: string; value: string; store: "env" | "secret" }> = [];
+    const parsed: AppEnvVarRow[] = [];
     for (const rawLine of variablesText.split("\n")) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#")) continue;
@@ -1723,6 +1841,7 @@ function ApplicationArchivePanel({ serviceId }: { serviceId: string }) {
       parsed.push({ key, value, store: "secret" });
     }
     setVariables(parsed);
+    setValueVisibleByRow({});
     toast({
       title: "Variables loaded",
       description: `${parsed.length} variable(s) parsed. Default store is Docker Secret.`,
@@ -1775,15 +1894,39 @@ function ApplicationArchivePanel({ serviceId }: { serviceId: string }) {
       return;
     }
 
+    const stk = connectionStackKeys.map((k) => k.trim()).filter(Boolean);
+    const seen = new Set<string>();
+    for (const k of stk) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,62}$/.test(k)) {
+        toast({
+          title: "Invalid extra path name",
+          description: "Use letters and numbers; start with a letter.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const low = k.toLowerCase();
+      if (seen.has(low)) {
+        toast({
+          title: "Duplicate name",
+          description: "Each extra path needs a unique name.",
+          variant: "destructive",
+        });
+        return;
+      }
+      seen.add(low);
+    }
+
     setUploading(true);
     try {
       await uploadApplicationArchiveApi(serviceId, file, {
         buildPath: buildPath.trim() || ".",
-        buildMode,
+        buildMode: "dockerfile",
         containerPort: cp,
         publishPort: rp,
         replicas: rep,
         variables: cleanVars,
+        networks: { external: connectionExternal, stack: stk },
       });
       await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
       toast({
@@ -1809,13 +1952,8 @@ function ApplicationArchivePanel({ serviceId }: { serviceId: string }) {
     <div className="glass-panel rounded-2xl border border-violet-500/20 p-6 md:p-8">
       <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
         <PackageOpen className="w-5 h-5 text-violet-300" />
-        Application source upload
+        Application deploy Form
       </h3>
-      <p className="text-sm text-muted-foreground mb-5 max-w-2xl leading-relaxed">
-        Pick how the image is built — <span className="text-foreground font-medium">Dockerfile</span> (your file, auto-detected) or{" "}
-        <span className="text-foreground font-medium">Nixpacks</span> (generated build; requires the{" "}
-        <code className="text-[11px] bg-muted px-1 rounded">nixpacks</code> CLI on the server). Then upload a ZIP. On deploy, the server builds and runs a Swarm stack.
-      </p>
       <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
         <div className="sm:col-span-2 space-y-3">
           <div>
@@ -1946,22 +2084,12 @@ function ApplicationArchivePanel({ serviceId }: { serviceId: string }) {
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Build path</label>
           <input className="input-field font-mono text-sm" value={buildPath} onChange={(e) => setBuildPath(e.target.value)} placeholder="." />
         </div>
-        <div className="sm:col-span-2">
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Build method</label>
-          <select
-            className="input-field font-mono text-sm w-full"
-            value={buildMode}
-            onChange={(e) => setBuildMode(e.target.value as "dockerfile" | "nixpacks")}
-          >
-            <option value="dockerfile">Dockerfile — build from Dockerfile in the archive (auto-detect)</option>
-            <option value="nixpacks">Nixpacks — detect stack and build via Nixpacks (no Dockerfile required)</option>
-          </select>
-        </div>
-        <div className="sm:col-span-2">
-          <p className="text-xs text-muted-foreground">
-            {buildMode === "dockerfile"
-              ? "Dockerfile is auto-detected inside the selected build path (case-insensitive)."
-              : "No Dockerfile in the archive is required. Deploy runs: nixpacks build <build path> --name <app>:latest (Docker must be available)."}
+        <div className="sm:col-span-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
+          <p className="text-xs font-medium text-foreground mb-1">Dockerfile-first build</p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            If your project includes a <code className="text-[10px]">Dockerfile</code> in the build path, it is used as-is.
+            Otherwise Weehawk generates a multi-stage Dockerfile (Node, Go, Python, or static) inside the same context — flat{" "}
+            <code className="text-[10px]">/app</code>, symlink-safe, and <code className="text-[10px]">npm ci</code> for Node.
           </p>
         </div>
         <div>
@@ -1976,84 +2104,167 @@ function ApplicationArchivePanel({ serviceId }: { serviceId: string }) {
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Replicas (1-10)</label>
           <input className="input-field font-mono text-sm" value={replicas} onChange={(e) => setReplicas(e.target.value)} placeholder="1" />
         </div>
-        <div className="sm:col-span-2">
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Environment and secrets</label>
-          <div className="space-y-2">
-            {variables.length === 0 && (
-              <p className="text-xs text-muted-foreground">Paste .env then click parse. You can still add rows manually.</p>
-            )}
-            {variables.map((row, idx) => (
-              <div key={idx} className="grid grid-cols-12 gap-2">
-                <input
-                  className="input-field font-mono text-sm col-span-4"
-                  value={row.key}
-                  onChange={(e) => updateVariable(idx, { key: e.target.value })}
-                  placeholder="DATABASE_URL"
-                />
-                <input
-                  className="input-field font-mono text-sm col-span-5"
-                  value={row.value}
-                  onChange={(e) => updateVariable(idx, { value: e.target.value })}
-                  placeholder="value"
-                />
-                <select
-                  className="input-field text-sm col-span-2"
-                  value={row.store}
-                  onChange={(e) => updateVariable(idx, { store: e.target.value as "env" | "secret" })}
-                >
-                  <option value="secret">Docker Secret</option>
-                  <option value="env">Environment</option>
-                </select>
+        <div className="sm:col-span-2 flex flex-col gap-2">
+          <ApplicationConnectionsPanel
+            service={service}
+            projectId={projectId}
+            variant="embedded"
+            external={connectionExternal}
+            stackKeys={connectionStackKeys}
+            onExternalChange={setConnectionExternal}
+            onStackKeysChange={setConnectionStackKeys}
+            open={openAppSection === "connections"}
+            onOpenChange={(next) => setOpenAppSection(next ? "connections" : null)}
+          />
+          <details
+            className="group"
+            open
+          >
+            <summary
+              onClick={(e) => {
+                e.preventDefault();
+                setOpenAppSection((prev) => (prev === "env" ? null : "env"));
+              }}
+              className="flex cursor-pointer list-none items-center gap-3 rounded-xl border border-white/10 bg-zinc-950/30 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-violet-500/30 bg-violet-500/10">
+                <Variable className="h-3.5 w-3.5 text-violet-300" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-violet-100">Environment and secrets</h3>
+                  {filledEnvVarCount > 0 && (
+                    <span className="rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-200">
+                      {filledEnvVarCount}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                  Keys & values — Docker Secret or env; included when you upload.
+                </p>
+              </div>
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ${
+                  openAppSection === "env" ? "rotate-180" : ""
+                }`}
+              />
+            </summary>
+            <div
+              className={`grid min-h-0 overflow-hidden transition-[grid-template-rows,opacity] duration-300 ease-out ${
+                openAppSection === "env" ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-80"
+              }`}
+            >
+              <div className="min-h-0 space-y-2 pt-3">
+              {variables.length === 0 && (
+                <p className="text-xs text-muted-foreground">Paste .env then click parse. You can still add rows manually.</p>
+              )}
+              {variables.map((row, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2">
+                  <input
+                    className="input-field font-mono text-sm col-span-4"
+                    value={row.key}
+                    onChange={(e) => updateVariable(idx, { key: e.target.value })}
+                    placeholder="DATABASE_URL"
+                  />
+                  {row.store === "secret" && row.unreadableDockerSecret && !row.value.trim() ? (
+                    <div className="input-field col-span-5 flex min-h-[2.5rem] items-center px-3 font-mono text-xs text-muted-foreground">
+                      Not readable (Docker Secrets)
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type={valueVisibleByRow[idx] ? "text" : "password"}
+                        className="input-field font-mono text-sm col-span-4"
+                        value={row.value}
+                        onChange={(e) => updateVariable(idx, { value: e.target.value })}
+                        placeholder="value"
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs col-span-1"
+                        onClick={() =>
+                          setValueVisibleByRow((prev) => ({ ...prev, [idx]: !prev[idx] }))
+                        }
+                        title={valueVisibleByRow[idx] ? "Hide value" : "Show value"}
+                        aria-label={valueVisibleByRow[idx] ? "Hide value" : "Show value"}
+                      >
+                        {valueVisibleByRow[idx] ? (
+                          <EyeOff className="w-3.5 h-3.5 mx-auto" />
+                        ) : (
+                          <Eye className="w-3.5 h-3.5 mx-auto" />
+                        )}
+                      </button>
+                    </>
+                  )}
+                  <select
+                    className="input-field text-sm col-span-2"
+                    value={row.store}
+                    onChange={(e) => {
+                      const nextStore = e.target.value as "env" | "secret";
+                      updateVariable(idx, { store: nextStore });
+                      setValueVisibleByRow((prev) => {
+                        const next = { ...prev };
+                        delete next[idx];
+                        return next;
+                      });
+                    }}
+                  >
+                    <option value="secret">Docker Secret</option>
+                    <option value="env">Environment</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs col-span-1"
+                    onClick={() => removeVariable(idx)}
+                    disabled={variables.length === 0}
+                    title="Remove row"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                  </button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={addVariable} className="btn-secondary text-xs inline-flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5" /> Add variable
+                </button>
                 <button
                   type="button"
-                  className="btn-secondary text-xs col-span-1"
-                  onClick={() => removeVariable(idx)}
-                  disabled={variables.length === 0}
-                  title="Remove row"
+                  onClick={() => setShowEnvPaste((v) => !v)}
+                  className="btn-secondary text-xs inline-flex items-center gap-1.5"
                 >
-                  <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                  <Plus className="w-3.5 h-3.5" /> Paste .env values
                 </button>
               </div>
-            ))}
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={addVariable} className="btn-secondary text-xs inline-flex items-center gap-1.5">
-                <Plus className="w-3.5 h-3.5" /> Add variable
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowEnvPaste((v) => !v)}
-                className="btn-secondary text-xs inline-flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" /> Paste .env values
-              </button>
-            </div>
-            <AnimatePresence initial={false}>
-              {showEnvPaste && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.2 }}
-                  className="overflow-hidden"
-                >
-                  <div className="pt-2">
-                    <label className="text-xs font-medium text-muted-foreground block mb-1.5">Paste .env values</label>
-                    <textarea
-                      className="input-field w-full min-h-[140px] font-mono text-xs"
-                      value={variablesText}
-                      onChange={(e) => setVariablesText(e.target.value)}
-                      placeholder={"DATABASE_URL=postgres://...\nNODE_ENV=production\nPORT=3000"}
-                    />
-                    <div className="mt-2">
-                      <button type="button" onClick={parseVariablesText} className="btn-secondary text-xs inline-flex items-center gap-1.5">
-                        <Plus className="w-3.5 h-3.5" /> Parse from .env
-                      </button>
+              <AnimatePresence initial={false}>
+                {showEnvPaste && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="pt-2">
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">Paste .env values</label>
+                      <textarea
+                        className="input-field w-full min-h-[140px] font-mono text-xs"
+                        value={variablesText}
+                        onChange={(e) => setVariablesText(e.target.value)}
+                        placeholder={"DATABASE_URL=postgres://...\nNODE_ENV=production\nPORT=3000"}
+                      />
+                      <div className="mt-2">
+                        <button type="button" onClick={parseVariablesText} className="btn-secondary text-xs inline-flex items-center gap-1.5">
+                          <Plus className="w-3.5 h-3.5" /> Parse from .env
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              </div>
+            </div>
+          </details>
         </div>
         <div className="sm:col-span-2">
           <button

@@ -4,11 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateWebhook } from "@/hooks/use-webhooks";
-import {
-  publicWebhookTriggerUrl,
-  type WebhookServiceAction,
-  type WebhookTargetMode,
-} from "@/lib/webhooks-api";
+import { type WebhookServiceAction, type WebhookTargetMode } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import { X, Loader2, Terminal, Type, AlignLeft } from "lucide-react";
@@ -35,12 +31,6 @@ export function CreateWebhookClient({ initialServices, initialChannels }: Props)
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [notifyChannelId, setNotifyChannelId] = useState("");
   const [notifyMessage, setNotifyMessage] = useState("");
-  const [previewToken] = useState(() => {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID().replace(/-/g, "");
-    }
-    return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
-  });
   const notificationRequired = serviceAction === "no_action";
   const showNotificationFields = notificationEnabled || notificationRequired;
 
@@ -120,8 +110,6 @@ export function CreateWebhookClient({ initialServices, initialChannels }: Props)
       },
     );
   };
-
-  const previewUrl = publicWebhookTriggerUrl(previewToken);
 
   return (
     <>
@@ -253,11 +241,6 @@ export function CreateWebhookClient({ initialServices, initialChannels }: Props)
                   </div>
                 </>
               )}
-            </div>
-
-            <div className="bg-black/50 border border-white/5 rounded-xl p-4">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Trigger endpoint</h4>
-              <code className="text-xs font-mono text-primary break-all block">{previewUrl}</code>
             </div>
 
             <div className="flex justify-end gap-3 pt-2">

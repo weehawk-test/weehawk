@@ -5,10 +5,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
-import * as path from 'path';
 import { Repository } from 'typeorm';
 import { NotificationsService } from '../notifications/notifications.service';
-import { ExecutorService } from '../services/ExecutorService';
+import { getVolumeBackupDestDir } from '../services/deployment-paths';
+import { ExecutorService } from '../executor/executor.service';
 import { ServicesService } from '../services/services.service';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
@@ -257,12 +257,7 @@ export class WebhooksService {
           w.serviceId != null
         ) {
           action = 'volume_backup';
-          const destDir = path.join(
-            process.cwd(),
-            'webhook-backups',
-            String(w.userId),
-            w.id,
-          );
+          const destDir = getVolumeBackupDestDir(w.userId, w.id);
           const r = await this.executorService.backupDockerVolume(
             w.volumeSource,
             destDir,

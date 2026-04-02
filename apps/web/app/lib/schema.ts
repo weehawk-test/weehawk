@@ -72,6 +72,10 @@ export const createServiceSchema = z
     type: serviceTypeSchema,
     description: z.string().optional(),
     config: z.string().default(""),
+    /** Full Docker network names (e.g. stack_key) to attach as external. */
+    appExternalNetworkNames: z.array(z.string()).default([]),
+    /** Compose network keys to create in this stack (overlay; Docker name `{stack}_{key}`). */
+    appStackNetworkKeys: z.array(z.string()).default([]),
     databaseEngine: databaseEngineIdSchema.optional(),
     /** Required when type is databases (set at service creation). */
     postgres: postgresCreateFieldsSchema.optional(),
@@ -162,6 +166,32 @@ export const createServiceSchema = z
           message: "Volume path must start with / and contain no spaces.",
           path: ["postgres", "volumePath"],
         });
+      }
+    }
+
+    if (data.type === "application") {
+      const keys = (data.appStackNetworkKeys ?? []).map((k) => k.trim()).filter(Boolean);
+      const seen = new Set<string>();
+      for (const key of keys) {
+        if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,62}$/.test(key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "Each network key must start with a letter and use letters, digits, dot, dash, underscore (max 63).",
+            path: ["appStackNetworkKeys"],
+          });
+          return;
+        }
+        const low = key.toLowerCase();
+        if (seen.has(low)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Duplicate stack network key.",
+            path: ["appStackNetworkKeys"],
+          });
+          return;
+        }
+        seen.add(low);
       }
     }
   });

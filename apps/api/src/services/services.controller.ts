@@ -14,7 +14,9 @@ import {
   ValidationPipe,
   UseInterceptors,
   UploadedFile,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ServicesService } from './services.service';
 import { CreateServiceDto } from './dto/create-service.dto';
@@ -22,6 +24,7 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { UploadApplicationZipDto } from './dto/upload-application-zip.dto';
+import { PatchApplicationNetworksDto } from './dto/patch-application-networks.dto';
 import type { DatabaseEngine } from './database-generator.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Observable, map } from 'rxjs';
@@ -133,14 +136,54 @@ export class ServicesController {
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
     summary:
-      'Upload application ZIP, extract source, generate stack config (Dockerfile auto-detect or Nixpacks build)',
+      'Upload application ZIP, extract source, generate stack config (Dockerfile auto-detect or Cloud Native Buildpacks)',
   })
   uploadApplicationZip(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: UploadApplicationZipDto,
+    @Req() req: Request,
   ) {
-    return this.servicesService.uploadApplicationArchive(+id, file, dto);
+    const raw = req.body as Record<string, unknown>;
+    const fromDto =
+      typeof dto.networksJson === 'string' && dto.networksJson.trim()
+        ? dto.networksJson.trim()
+        : undefined;
+    const fromRaw =
+      typeof raw?.networksJson === 'string' && String(raw.networksJson).trim()
+        ? String(raw.networksJson).trim()
+        : undefined;
+    const networksJson = fromDto ?? fromRaw;
+
+    const extFromDto = typeof dto.externalNetworks === 'string' ? dto.externalNetworks : undefined;
+    const extFromRaw =
+      typeof raw?.externalNetworks === 'string' ? String(raw.externalNetworks) : undefined;
+    const externalNetworks = extFromDto ?? extFromRaw;
+
+    const stkFromDto = typeof dto.stackNetworks === 'string' ? dto.stackNetworks : undefined;
+    const stkFromRaw =
+      typeof raw?.stackNetworks === 'string' ? String(raw.stackNetworks) : undefined;
+    const stackNetworks = stkFromDto ?? stkFromRaw;
+
+    return this.servicesService.uploadApplicationArchive(+id, file, {
+      ...dto,
+      ...(networksJson !== undefined ? { networksJson } : {}),
+      ...(externalNetworks !== undefined ? { externalNetworks } : {}),
+      ...(stackNetworks !== undefined ? { stackNetworks } : {}),
+    });
+  }
+
+  @Patch(':id/application/networks')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Update application networks (multiple external + multiple stack overlays) and regenerate compose YAML',
+  })
+  patchApplicationNetworks(
+    @Param('id') id: string,
+    @Body() dto: PatchApplicationNetworksDto,
+  ) {
+    return this.servicesService.patchApplicationNetworks(+id, dto);
   }
 
   @Post(':id/start')

@@ -1,0 +1,39 @@
+{
+  "name": "weehawk",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspaces/weehawk",
+  "remoteEnv": {
+    "CHOKIDAR_USEPOLLING": "true",
+    "CHOKIDAR_INTERVAL": "1000",
+    "WATCHPACK_POLLING": "true"
+  },
+  "postCreateCommand": "pnpm install",
+  "mounts": [
+    "source=${localWorkspaceFolderBasename}-root-node-modules,target=/workspaces/weehawk/node_modules,type=volume",
+    "source=${localWorkspaceFolderBasename}-api-node-modules,target=/workspaces/weehawk/apps/api/node_modules,type=volume",
+    "source=${localWorkspaceFolderBasename}-web-node-modules,target=/workspaces/weehawk/apps/web/node_modules,type=volume",
+    "source=${localWorkspaceFolderBasename}-cron-node-modules,target=/workspaces/weehawk/apps/cron-worker/node_modules,type=volume"
+  ],
+  "forwardPorts": [3000, 8080],
+  "portsAttributes": {
+    "3000": { "label": "Next.js (web)" },
+    "8080": { "label": "API (Nest)" }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "editor.formatOnSave": true
+      }
+    }
+  }
+}

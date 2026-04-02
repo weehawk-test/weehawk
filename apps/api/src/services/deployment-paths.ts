@@ -62,3 +62,23 @@ export function getServiceDeploymentDir(
 
   return deploymentDir;
 }
+
+const VOLUME_BACKUPS_BASE = path.join('/etc', 'weehawk', 'backups');
+
+/** Root for a user's volume backup archives (`…/backups/<userId>/`). */
+export function getVolumeBackupsUserDir(userId: number | string): string {
+  return path.join(VOLUME_BACKUPS_BASE, String(userId));
+}
+
+/** Host directory for volume backup archives (webhooks & cron). */
+export function getVolumeBackupDestDir(
+  userId: number | string,
+  webhookOrJobId: string,
+): string {
+  return path.join(getVolumeBackupsUserDir(userId), webhookOrJobId);
+}
+
+/** Pre-change default: `cwd/webhook-backups/<userId>` (still listed for download). */
+export function getLegacyWebhookBackupsUserDir(userId: number | string): string {
+  return path.join(process.cwd(), 'webhook-backups', String(userId));
+}

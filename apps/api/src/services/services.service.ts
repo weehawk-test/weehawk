@@ -13,7 +13,7 @@ import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { Project } from 'src/projects/entities/project.entity';
 import { randomBytes } from 'crypto';
-import { ExecutorService } from './ExecutorService';
+import { ExecutorService } from '../executor/executor.service';
 import { spawn, type ChildProcess } from 'child_process';
 import { Observable } from 'rxjs';
 import { composeType } from './entities/composeType.enum';
@@ -29,6 +29,8 @@ import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { DockerSecretsService } from 'src/dockersecrets/dockersecrets.service';
 import * as unzipper from 'unzipper';
 import { getServiceDeploymentDir } from './deployment-paths';
+import type { EventEmitter } from 'events';
+import { DockerfileGeneratorService } from '../dockerfile-generator/dockerfile-generator.service';
 
 @Injectable()
 export class ServicesService {
@@ -41,6 +43,7 @@ export class ServicesService {
     private readonly executorService: ExecutorService,
     private readonly configService: ConfigService,
     private readonly databaseGenerator: DatabaseGeneratorService,
+    private readonly dockerfileGenerator: DockerfileGeneratorService,
     private readonly dockerSecrets: DockerSecretsService,
   ) {}
 
@@ -59,22 +62,252 @@ export class ServicesService {
     return await this.serviceRepository.save(service);
   }
 
+  private parseConfigHeaderValue(config: string, key: string): string | null {
+    const m = (config || '').match(new RegExp(`^\\s*#\\s*${key}:\\s*(.+)$`, 'm'));
+    return m?.[1]?.trim() || null;
+  }
+
   private normalizeArchivePath(raw: string, fallback: string): string {
     const t = (raw || fallback).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
     return t || fallback;
+  }
+
+  /** Reads multi-network headers; falls back to legacy single `network.mode` lines. */
+  private parseApplicationNetworksFromConfig(config: string): {
+    external: string[];
+    stack: string[];
+  } {
+    const raw = config || '';
+    const extLine = raw.match(/^\s*#\s*app\.networks\.external:\s*(.+)$/m);
+    const stackLine = raw.match(/^\s*#\s*app\.networks\.stack:\s*(.+)$/m);
+    if (extLine || stackLine) {
+      const external =
+        extLine?.[1]
+          ?.split('|')
+          .map((s) => s.trim())
+          .filter(Boolean) ?? [];
+      const stack =
+        stackLine?.[1]
+          ?.split('|')
+          .map((s) => s.trim())
+          .filter(Boolean) ?? [];
+      return { external, stack };
+    }
+    const mode = (
+      this.parseConfigHeaderValue(raw, 'network.mode') || 'none'
+    )
+      .toLowerCase()
+      .trim();
+    if (mode === 'external') {
+      const name = this.parseConfigHeaderValue(raw, 'network.name')?.trim();
+      return { external: name ? [name] : [], stack: [] };
+    }
+    if (mode === 'stack') {
+      const key =
+        this.parseConfigHeaderValue(raw, 'network.key')?.trim() || 'app-network';
+      return { external: [], stack: [key] };
+    }
+    return { external: [], stack: [] };
+  }
+
+  private normalizeApplicationNetworkPayload(dto: {
+    external?: string[];
+    stack?: string[];
+  }): { external: string[]; stack: string[] } {
+    const ext = (dto.external ?? []).map((s) => String(s).trim()).filter(Boolean);
+    const stk = (dto.stack ?? []).map((k) => String(k).trim()).filter(Boolean);
+    const seen = new Set<string>();
+    for (const k of stk) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,62}$/.test(k)) {
+        throw new BadRequestException(`Invalid stack network key: ${k}`);
+      }
+      const low = k.toLowerCase();
+      if (seen.has(low)) {
+        throw new BadRequestException(`Duplicate stack network key: ${k}`);
+      }
+      seen.add(low);
+    }
+    return { external: ext, stack: stk };
+  }
+
+  private splitPipeNetworkField(raw: string | undefined): string[] {
+    if (raw === undefined || raw === '') return [];
+    return raw
+      .split('|')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * Resolves networks for upload: pipe fields (multipart-friendly) win, then networksJson,
+   * then headers from the previous saved compose.
+   */
+  private resolveUploadNetworks(
+    options:
+      | {
+          networksJson?: string;
+          externalNetworks?: string;
+          stackNetworks?: string;
+        }
+      | undefined,
+    previousConfig: string,
+  ): { external: string[]; stack: string[] } {
+    const hasPipe =
+      typeof options?.externalNetworks === 'string' ||
+      typeof options?.stackNetworks === 'string';
+    if (hasPipe) {
+      const external = this.splitPipeNetworkField(
+        typeof options?.externalNetworks === 'string'
+          ? options.externalNetworks
+          : undefined,
+      );
+      const stack = this.splitPipeNetworkField(
+        typeof options?.stackNetworks === 'string'
+          ? options.stackNetworks
+          : undefined,
+      );
+      return this.normalizeApplicationNetworkPayload({ external, stack });
+    }
+    if (options?.networksJson?.trim()) {
+      return this.parseNetworksJson(options.networksJson);
+    }
+    return this.parseApplicationNetworksFromConfig(previousConfig);
+  }
+
+  private parseNetworksJson(raw: string): { external: string[]; stack: string[] } {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new BadRequestException('networksJson must be valid JSON.');
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      throw new BadRequestException('networksJson must be an object.');
+    }
+    const obj = parsed as Record<string, unknown>;
+    const external = Array.isArray(obj.external)
+      ? (obj.external as unknown[]).map((s) => String(s).trim()).filter(Boolean)
+      : [];
+    const stack = Array.isArray(obj.stack)
+      ? (obj.stack as unknown[]).map((s) => String(s).trim()).filter(Boolean)
+      : [];
+    return this.normalizeApplicationNetworkPayload({ external, stack });
+  }
+
+  /** Unique compose key for a user-defined stack network (overlay). */
+  private composeStackNetworkAlias(
+    userKey: string,
+    index: number,
+    used: Set<string>,
+  ): string {
+    let base = userKey
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_.-]/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/--+/g, '-');
+    if (!base) base = 'net';
+    let alias = `stk_${base}`;
+    if (alias.length > 63) alias = alias.slice(0, 63);
+    let candidate = alias;
+    let n = 0;
+    while (used.has(candidate)) {
+      n += 1;
+      candidate = `stk_${index}_${n}`;
+      if (candidate.length > 63) candidate = candidate.slice(0, 63);
+    }
+    used.add(candidate);
+    return candidate;
+  }
+
+  /** Rebuild args for `composeApplicationDockerConfig` from saved service (headers + YAML). */
+  private extractApplicationComposeRegenerationArgs(service: Service): {
+    sourceDir: string;
+    buildPath: string;
+    dockerfilePath: string;
+    buildMode: 'dockerfile' | 'buildpacks';
+    dockerfileGenerated?: boolean;
+    containerPort: number;
+    publishPort?: number;
+    replicas: number;
+    envKeys: string[];
+    secretRefs: Record<string, string>;
+  } {
+    const raw = service.dockerConfig || '';
+    const sourceDir = this.parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
+    const buildPath = this.parseConfigHeaderValue(raw, 'buildPath') || '.';
+    const dockerfilePath = this.parseConfigHeaderValue(raw, 'dockerfilePath') || 'Dockerfile';
+    const buildModeRaw = this.parseConfigHeaderValue(raw, 'buildMode') || 'dockerfile';
+    const bm = (buildModeRaw || 'dockerfile').toLowerCase();
+    const buildMode =
+      bm === 'nixpacks' || bm === 'buildpacks' ? 'buildpacks' : 'dockerfile';
+
+    const secretRefs = this.parseApplicationSecretRefsFromDockerConfig(raw);
+
+    const envKeys: string[] = [];
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(/^\s*#\s*app\.store\.([A-Z0-9_]+):\s*env\s*$/i);
+      if (m) envKeys.push(m[1]);
+    }
+
+    if (envKeys.length === 0) {
+      const re = /\n\s{6}([A-Z0-9_]+):\s*\$\{([A-Z0-9_]+)\}/g;
+      let mm: RegExpExecArray | null;
+      const seen = new Set<string>();
+      while ((mm = re.exec(raw)) !== null) {
+        if (mm[1] === mm[2] && !seen.has(mm[1])) {
+          seen.add(mm[1]);
+          envKeys.push(mm[1]);
+        }
+      }
+    }
+
+    let containerPort = 3000;
+    let publishPort: number | undefined;
+    let replicas = 1;
+    const pm = raw.match(/ports:\s*\n\s*-\s*"(\d+):(\d+)"/);
+    if (pm) {
+      publishPort = parseInt(pm[1], 10);
+      containerPort = parseInt(pm[2], 10);
+    }
+    const rm = raw.match(/replicas:\s*(\d+)/);
+    if (rm) {
+      const n = parseInt(rm[1], 10);
+      if (!Number.isNaN(n)) replicas = Math.min(10, Math.max(1, n));
+    }
+
+    const dg = this.parseConfigHeaderValue(raw, 'dockerfileGenerated');
+    const dockerfileGenerated =
+      dg === 'true' ? true : dg === 'false' ? false : undefined;
+
+    return {
+      sourceDir,
+      buildPath,
+      dockerfilePath,
+      buildMode,
+      dockerfileGenerated,
+      containerPort,
+      publishPort,
+      replicas,
+      envKeys,
+      secretRefs,
+    };
   }
 
   private composeApplicationDockerConfig(args: {
     sourceDir: string;
     buildPath: string;
     dockerfilePath: string;
-    buildMode: 'dockerfile' | 'nixpacks';
+    buildMode: 'dockerfile' | 'buildpacks';
+    /** True when Weehawk generated Dockerfile; omitted when unknown (legacy). */
+    dockerfileGenerated?: boolean;
     imageName: string;
     containerPort: number;
     publishPort?: number;
     replicas: number;
     envKeys: string[];
     secretRefs: Record<string, string>;
+    network: { external: string[]; stack: string[] };
   }): string {
     const ports =
       args.publishPort != null
@@ -92,17 +325,56 @@ export class ServicesService {
     const rootSecretsSection = secretNames.length
       ? `secrets:\n${secretNames.map((n) => `  ${n}:\n    external: true`).join('\n')}\n`
       : '';
+
+    const ext = (args.network.external ?? []).map((n) => n.trim()).filter(Boolean);
+    const stk = (args.network.stack ?? []).map((k) => k.trim()).filter(Boolean);
+
+    const networkHeaderLines: string[] = [];
+    if (ext.length) networkHeaderLines.push(`# app.networks.external: ${ext.join('|')}`);
+    if (stk.length) networkHeaderLines.push(`# app.networks.stack: ${stk.join('|')}`);
+    if (!ext.length && !stk.length) networkHeaderLines.push(`# app.networks: none`);
+    const networkHeader = networkHeaderLines.map((l) => `${l}\n`).join('');
+
+    const svcNetLines: string[] = [];
+    const rootNetBlocks: string[] = [];
+    const usedAliases = new Set<string>();
+
+    ext.forEach((name, i) => {
+      const alias = `ext${i}`;
+      usedAliases.add(alias);
+      svcNetLines.push(`      - ${alias}`);
+      rootNetBlocks.push(`  ${alias}:\n    external: true\n    name: ${name}`);
+    });
+
+    stk.forEach((userKey, i) => {
+      const alias = this.composeStackNetworkAlias(userKey, i, usedAliases);
+      svcNetLines.push(`      - ${alias}`);
+      rootNetBlocks.push(`  ${alias}:\n    driver: overlay\n    attachable: true`);
+    });
+
+    const svcNetworkSection = svcNetLines.length
+      ? `    networks:\n${svcNetLines.join('\n')}\n`
+      : '';
+
+    const rootNetworkSection = rootNetBlocks.length
+      ? `networks:\n${rootNetBlocks.join('\n')}\n`
+      : '';
+
     const storageHeader = [
       ...args.envKeys.map((k) => `# app.store.${k}: env`),
       ...Object.keys(args.secretRefs).map((k) => `# app.store.${k}: secret`),
       ...Object.entries(args.secretRefs).map(([k, n]) => `# secret.${k}: ${n}`),
     ].join('\n');
+    const dockerfileGenLine =
+      args.dockerfileGenerated !== undefined
+        ? `# dockerfileGenerated: ${args.dockerfileGenerated ? 'true' : 'false'}\n`
+        : '';
     return `# weehawk application service
 # sourceDir: ${args.sourceDir}
 # buildPath: ${args.buildPath}
 # dockerfilePath: ${args.dockerfilePath}
 # buildMode: ${args.buildMode}
-${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
+${dockerfileGenLine}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
 
 services:
   app:
@@ -114,7 +386,7 @@ ${ports}    deploy:
       placement:
         constraints:
           - node.role == manager
-${envSection}${serviceSecretsSection}${rootSecretsSection}`;
+${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${rootNetworkSection}`;
   }
 
   private async extractZipSafely(zipPath: string, targetDir: string): Promise<void> {
@@ -202,17 +474,57 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
     return dockerfileCandidates[0];
   }
 
+  /**
+   * Update application stack networks (external attach + overlay keys) and regenerate
+   * `dockerConfig` while preserving build metadata and env/secret wiring.
+   */
+  async patchApplicationNetworks(
+    id: number,
+    dto: { external?: string[]; stack?: string[] },
+  ) {
+    const service = await this.findOne(id);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException(
+        'This service is not an application-type service.',
+      );
+    }
+    const { external: ext, stack: stk } = this.normalizeApplicationNetworkPayload(dto);
+
+    const args = this.extractApplicationComposeRegenerationArgs(service);
+    service.dockerConfig = this.composeApplicationDockerConfig({
+      sourceDir: args.sourceDir,
+      buildPath: args.buildPath,
+      dockerfilePath: args.dockerfilePath,
+      buildMode: args.buildMode,
+      dockerfileGenerated: args.dockerfileGenerated,
+      imageName: `${service.appName}:latest`,
+      containerPort: args.containerPort,
+      publishPort: args.publishPort,
+      replicas: args.replicas,
+      envKeys: args.envKeys,
+      secretRefs: args.secretRefs,
+      network: { external: ext, stack: stk },
+    });
+    return await this.serviceRepository.save(service);
+  }
+
   async uploadApplicationArchive(
     id: number,
     file: Express.Multer.File,
     options?: {
       buildPath?: string;
       dockerfilePath?: string;
-      buildMode?: 'dockerfile' | 'nixpacks';
+      buildMode?: 'dockerfile' | 'buildpacks' | 'nixpacks';
       containerPort?: number;
       publishPort?: number;
       replicas?: number;
       variablesJson?: string;
+      /** JSON `{ "external": string[], "stack": string[] }` — overrides networks from previous config when set. */
+      networksJson?: string;
+      /** Pipe-separated external network names (multipart-friendly). */
+      externalNetworks?: string;
+      /** Pipe-separated stack overlay keys (multipart-friendly). */
+      stackNetworks?: string;
     },
   ) {
     if (!file || !file.buffer?.length) {
@@ -222,11 +534,11 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
-    const buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
+    let buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
     let dockerfilePath = this.normalizeArchivePath(options?.dockerfilePath || '', '');
-    const buildMode: 'dockerfile' | 'nixpacks' =
-      options?.buildMode === 'nixpacks' ? 'nixpacks' : 'dockerfile';
-    const containerPort = options?.containerPort ?? 3000;
+    /** Dockerfile-first only; buildpacks/nixpacks are deprecated and mapped to this flow. */
+    const buildMode: 'dockerfile' = 'dockerfile';
+    let containerPort = options?.containerPort ?? 3000;
     const publishPort = options?.publishPort;
     const replicas = Math.min(10, Math.max(1, Math.floor(options?.replicas ?? 1)));
     const parsedVars = this.parseApplicationVariables(options?.variablesJson);
@@ -244,24 +556,33 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
     await fs.mkdir(deployDir, { recursive: true });
     await fs.rm(sourceDir, { recursive: true, force: true });
     await fs.writeFile(zipPath, file.buffer);
+    let dockerfileGenerated: boolean | undefined;
     try {
       await this.extractZipSafely(zipPath, sourceDir);
-      if (buildMode === 'nixpacks') {
-        const contextDir = path.join(sourceDir, buildPath);
-        try {
-          await fs.access(contextDir);
-        } catch {
-          throw new BadRequestException(
-            `Build path not found in archive: "${buildPath}".`,
-          );
-        }
-        dockerfilePath = 'nixpacks';
-      } else {
+      const contextDir = path.join(sourceDir, buildPath);
+      try {
+        await fs.access(contextDir);
+      } catch {
+        throw new BadRequestException(`Build path not found in archive: "${buildPath}".`);
+      }
+
+      const gen = await this.dockerfileGenerator.ensureDockerfileForContext(contextDir, {
+        port: containerPort,
+      });
+
+      if (gen.usedUserDockerfile) {
+        dockerfileGenerated = false;
         dockerfilePath = await this.resolveDockerfilePath(
           sourceDir,
           buildPath,
           dockerfilePath || undefined,
         );
+      } else {
+        dockerfileGenerated = true;
+        dockerfilePath = 'Dockerfile';
+        if (gen.kind === 'static' && options?.containerPort === undefined) {
+          containerPort = 80;
+        }
       }
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
@@ -270,24 +591,34 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
       await fs.rm(zipPath, { force: true });
     }
 
-    await this.removeManagedSecretsForService(service.dockerConfig || '');
-    const secretRefs = this.buildSecretRefs(service.appName, secretValues);
+    const previousConfig = service.dockerConfig || '';
+    const secretRefs = this.mergeApplicationSecretRefs(
+      service.appName,
+      secretValues,
+      storageMap,
+      previousConfig,
+    );
+    await this.removeObsoleteManagedSecrets(previousConfig, secretRefs);
     await this.ensureSecretsExist(secretRefs, secretValues);
-    const managedKeys = this.parseManagedApplicationKeysFromHeader(service.dockerConfig || '');
+    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, envValues);
+
+    const network = this.resolveUploadNetworks(options, previousConfig);
 
     service.dockerConfig = this.composeApplicationDockerConfig({
       sourceDir: 'app-source',
       buildPath,
       dockerfilePath,
       buildMode,
+      dockerfileGenerated,
       imageName: `${service.appName}:latest`,
       containerPort,
       publishPort,
       replicas,
       envKeys: Object.keys(envValues),
       secretRefs,
+      network,
     });
     const saved = await this.serviceRepository.save(service);
     return {
@@ -480,9 +811,13 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
     });
   }
 
-  async executeDeployment(id: number, mode: 'deploy' | 'reload' | 'redeploy' = 'deploy') {
+  async executeDeployment(
+    id: number,
+    mode: 'deploy' | 'reload' | 'redeploy' = 'deploy',
+    options?: { deployLogEmitter?: EventEmitter },
+  ) {
     await this.findOne(id);
-    const result = await this.executorService.execute(id, mode);
+    const result = await this.executorService.execute(id, mode, options);
     if (result.success) {
       await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
     }
@@ -1014,6 +1349,34 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
     return refs;
   }
 
+  /**
+   * Declared secret keys (from variablesJson) must stay in YAML headers even when
+   * the client sends an empty value (e.g. unreadable/redacted secrets after generate).
+   * Otherwise `pickCredentialsByStorage` drops them and the UI loses those rows.
+   * Reuse previous `# secret.KEY: name` when present so Docker secrets are not
+   * orphaned by name churn.
+   */
+  private mergeApplicationSecretRefs(
+    appName: string | undefined,
+    secretValues: Record<string, string>,
+    storageMap: Record<string, 'env' | 'secret'>,
+    previousConfig: string,
+  ): Record<string, string> {
+    const prevByKey = this.parseApplicationSecretRefsFromDockerConfig(previousConfig || '');
+    const built = this.buildSecretRefs(appName, secretValues);
+    const app = this.sanitizeSecretToken(appName || 'app');
+    const out: Record<string, string> = {};
+    for (const [key, store] of Object.entries(storageMap)) {
+      if (store !== 'secret') continue;
+      if (built[key]) {
+        out[key] = built[key];
+      } else {
+        out[key] = prevByKey[key] ?? `${app}_${this.sanitizeSecretToken(key)}`;
+      }
+    }
+    return out;
+  }
+
   private parseSecretRefsFromHeader(raw: string): Record<string, string> {
     const out: Record<string, string> = {};
     for (const line of raw.split(/\r?\n/)) {
@@ -1022,6 +1385,47 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
       out[m[1]] = m[2].trim();
     }
     return out;
+  }
+
+  /**
+   * Managed app secrets: `# secret.KEY: name` plus `KEY_FILE: /run/secrets/name` in the service env
+   * (needed when headers are missing or reformatted).
+   */
+  private parseApplicationSecretRefsFromDockerConfig(raw: string): Record<string, string> {
+    const out: Record<string, string> = { ...this.parseSecretRefsFromHeader(raw) };
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(
+        /^\s*([A-Za-z_][A-Za-z0-9_]*)_FILE:\s*\/run\/secrets\/(\S+)\s*$/,
+      );
+      if (m?.[1] && m[2]) out[m[1]] = m[2].trim();
+    }
+    return out;
+  }
+
+  /** External Swarm secret names declared in the root `secrets:` block (before `networks:`). */
+  private parseRootExternalSecretNamesFromApplicationCompose(raw: string): string[] {
+    const lines = raw.split(/\r?\n/);
+    const names: string[] = [];
+    let i = 0;
+    while (i < lines.length && !/^secrets:\s*$/.test(lines[i])) i++;
+    if (i >= lines.length) return names;
+    i++;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (/^networks:\s*$/.test(line)) break;
+      if (/^[a-zA-Z].*:\s*$/.test(line)) break;
+      const m = line.match(/^  ([a-zA-Z0-9_.-]+):\s*$/);
+      if (m) {
+        const next = lines[i + 1] ?? '';
+        if (/^\s+external:\s*true\s*$/.test(next)) {
+          names.push(m[1]);
+          i += 2;
+          continue;
+        }
+      }
+      i++;
+    }
+    return names;
   }
 
   private async ensureSecretsExist(
@@ -1039,16 +1443,47 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
     }
   }
 
-  private async removeManagedSecretsForService(rawConfig: string): Promise<void> {
-    const refs = this.parseSecretRefsFromHeader(rawConfig || '');
-    for (const secretName of Object.values(refs)) {
-      if (!secretName) continue;
+  /**
+   * When variables no longer reference a key (or the secret name changes), remove the
+   * previous Swarm secret via `docker secret rm` (see `DockerSecretsService.remove`).
+   * `force` detaches the secret from services first when Swarm reports it is still in use.
+   */
+  private async removeObsoleteManagedSecrets(
+    previousConfig: string,
+    newRefs: Record<string, string>,
+  ): Promise<void> {
+    const prev = previousConfig || '';
+    const oldByKey = this.parseApplicationSecretRefsFromDockerConfig(prev);
+    const newNames = new Set(Object.values(newRefs));
+    const toRemove = new Set<string>();
+
+    for (const [key, oldName] of Object.entries(oldByKey)) {
+      if (!oldName) continue;
+      if (newRefs[key] === oldName) continue;
+      toRemove.add(oldName);
+    }
+    for (const name of this.parseRootExternalSecretNamesFromApplicationCompose(prev)) {
+      if (!newNames.has(name)) toRemove.add(name);
+    }
+
+    const failures: string[] = [];
+    for (const oldName of toRemove) {
       try {
-        await this.dockerSecrets.remove(secretName);
-      } catch {
-        // Best-effort cleanup: secret may already be missing or still in use.
+        await this.dockerSecrets.removePrune(oldName);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        failures.push(`${oldName} (${msg})`);
       }
     }
+    if (failures.length) {
+      throw new BadRequestException(
+        `Failed to remove Docker secrets: ${failures.join(', ')}`,
+      );
+    }
+  }
+
+  private async removeManagedSecretsForService(rawConfig: string): Promise<void> {
+    await this.removeObsoleteManagedSecrets(rawConfig || '', {});
   }
 
   private nonEmpty(v: string | undefined): string | null {
@@ -1118,3 +1553,9 @@ ${envSection}${serviceSecretsSection}${rootSecretsSection}`;
     return 6379;
   }
 }
+
+export {
+  writeWeehawkGeneratedDockerfile,
+  resolveEffectiveDockerfileRel,
+  WEEHAWK_GENERATED_DOCKERFILE_REL,
+} from './weehawk-build-paths';

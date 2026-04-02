@@ -3,7 +3,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { exec, spawn } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import {
   filterSecrets,
@@ -12,6 +12,7 @@ import {
 } from './docker-secret-row.mapper';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,8 +37,26 @@ export interface PaginatedSecretsDto {
 
 @Injectable()
 export class DockerSecretsService {
+  /** Resolve Swarm secret ID for matching against service spec (SecretName can be omitted in some engines). */
+  private async resolveSecretId(secretName: string): Promise<string | undefined> {
+    try {
+      const { stdout } = await execFileAsync('docker', [
+        'secret',
+        'inspect',
+        secretName,
+        '--format',
+        '{{.ID}}',
+      ]);
+      const id = stdout.trim();
+      return id || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async forceDetachSecretFromServices(secretName: string): Promise<void> {
     try {
+      const secretId = await this.resolveSecretId(secretName);
       const { stdout } = await execAsync('docker service ls -q');
       const serviceIds = stdout
         .trim()
@@ -46,14 +65,20 @@ export class DockerSecretsService {
         .filter(Boolean);
       for (const serviceId of serviceIds) {
         try {
-          const { stdout: inspectOut } = await execAsync(
-            `docker service inspect ${serviceId}`,
-          );
+          const { stdout: inspectOut } = await execFileAsync('docker', [
+            'service',
+            'inspect',
+            serviceId,
+          ]);
           const parsed = JSON.parse(inspectOut) as Array<{
             Spec?: {
               TaskTemplate?: {
                 ContainerSpec?: {
-                  Secrets?: Array<{ SecretName?: string; File?: { Name?: string } }>;
+                  Secrets?: Array<{
+                    SecretID?: string;
+                    SecretName?: string;
+                    File?: { Name?: string };
+                  }>;
                 };
               };
             };
@@ -61,13 +86,40 @@ export class DockerSecretsService {
           const item = Array.isArray(parsed) ? parsed[0] : undefined;
           const secrets =
             item?.Spec?.TaskTemplate?.ContainerSpec?.Secrets ?? [];
-          const matched = secrets.find(
-            (s) => s?.SecretName === secretName || s?.File?.Name === secretName,
-          );
+          const matched = secrets.find((s) => {
+            if (secretId && s?.SecretID === secretId) return true;
+            if (s?.SecretName === secretName) return true;
+            if (s?.File?.Name === secretName) return true;
+            return false;
+          });
           if (!matched) continue;
-          await execAsync(
-            `docker service update --secret-rm ${secretName} ${serviceId}`,
+          const rmCandidates = Array.from(
+            new Set(
+              [secretName, matched?.SecretName, matched?.File?.Name]
+                .map((v) => (v ?? '').trim())
+                .filter(Boolean),
+            ),
           );
+          let detached = false;
+          for (const rm of rmCandidates) {
+            try {
+              await execFileAsync('docker', [
+                'service',
+                'update',
+                '--secret-rm',
+                rm,
+                serviceId,
+              ]);
+              detached = true;
+              break;
+            } catch {
+              // Try next candidate name.
+            }
+          }
+          if (!detached) {
+            // Fall back to remove flow retries; this service may reject update now.
+            continue;
+          }
         } catch {
           // Best effort only.
         }
@@ -75,6 +127,17 @@ export class DockerSecretsService {
     } catch {
       // Swarm may be unavailable, keep default error behavior.
     }
+  }
+
+  /**
+   * Remove a Swarm secret after it is no longer referenced in compose.
+   * Detaches from every service first (generate/upload runs before stack redeploy, so the
+   * secret is often still attached — plain `docker secret rm` fails with "in use").
+   */
+  async removePrune(secretName: string): Promise<{ success: boolean }> {
+    await this.forceDetachSecretFromServices(secretName);
+    await sleep(800);
+    return this.remove(secretName, true);
   }
 
   async create(name: string, value: string): Promise<void> {

@@ -4,10 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import * as path from 'path';
 import { Repository } from 'typeorm';
 import { NotificationsService } from '../notifications/notifications.service';
-import { ExecutorService } from '../services/ExecutorService';
+import { getVolumeBackupDestDir } from '../services/deployment-paths';
+import { ExecutorService } from '../executor/executor.service';
 import { ServicesService } from '../services/services.service';
 import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
@@ -319,12 +319,7 @@ export class CronJobsService {
           job.serviceId != null
         ) {
           action = 'volume_backup';
-          const destDir = path.join(
-            process.cwd(),
-            'webhook-backups',
-            String(job.userId),
-            job.id,
-          );
+          const destDir = getVolumeBackupDestDir(job.userId, job.id);
           const r = await this.executorService.backupDockerVolume(
             job.volumeSource,
             destDir,

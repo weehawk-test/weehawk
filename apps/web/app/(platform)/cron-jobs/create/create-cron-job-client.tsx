@@ -16,6 +16,16 @@ type Props = {
   initialChannels: NotificationChannel[];
 };
 
+type CronPreset =
+  | "custom"
+  | "every_minute"
+  | "every_hour"
+  | "every_day_midnight"
+  | "every_sunday_midnight"
+  | "every_month_1_midnight"
+  | "every_15_minutes"
+  | "every_weekday_midnight";
+
 export function CreateCronJobClient({ initialServices, initialChannels }: Props) {
   const router = useRouter();
   const { toast } = useToast();
@@ -23,6 +33,7 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [cronPreset, setCronPreset] = useState<CronPreset>("every_15_minutes");
   const [cronExpression, setCronExpression] = useState("*/15 * * * *");
   const [targetMode] = useState<WebhookTargetMode>("service");
   const [serviceId, setServiceId] = useState("");
@@ -148,8 +159,51 @@ export function CreateCronJobClient({ initialServices, initialChannels }: Props)
                 <textarea className="input-field min-h-[72px] resize-none" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this schedule do?" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Cron expression</label>
-                <input className="input-field font-mono text-sm" value={cronExpression} onChange={(e) => setCronExpression(e.target.value)} placeholder="*/15 * * * *" />
+                <label className="text-xs text-muted-foreground mb-1 block">Cron presets</label>
+                <select
+                  className="input-field mb-2"
+                  value={cronPreset}
+                  onChange={(e) => {
+                    const nextPreset = e.target.value as CronPreset;
+                    setCronPreset(nextPreset);
+                    if (nextPreset === "custom") {
+                      // Default cron for manual editing mode.
+                      setCronExpression("");
+                      return;
+                    }
+                    const presetById: Record<Exclude<CronPreset, "custom">, string> = {
+                      every_minute: "* * * * *",
+                      every_hour: "0 * * * *",
+                      every_day_midnight: "0 0 * * *",
+                      every_sunday_midnight: "0 0 * * 0",
+                      every_month_1_midnight: "0 0 1 * *",
+                      every_15_minutes: "*/15 * * * *",
+                      every_weekday_midnight: "0 0 * * 1-5",
+                    };
+                    setCronExpression(presetById[nextPreset]);
+                  }}
+                >
+                  <option value="every_minute">Every minute (* * * * *)</option>
+                  <option value="every_hour">Every hour (0 * * * *)</option>
+                  <option value="every_day_midnight">Every day at midnight (0 0 * * *)</option>
+                  <option value="every_sunday_midnight">Every Sunday at midnight (0 0 * * 0)</option>
+                  <option value="every_month_1_midnight">Every month on the 1st at midnight (0 0 1 * *)</option>
+                  <option value="every_15_minutes">Every 15 minutes (*/15 * * * *)</option>
+                  <option value="every_weekday_midnight">Every weekday at midnight (0 0 * * 1-5)</option>
+                  <option value="custom">Custom</option>
+                </select>
+
+                {cronPreset === "custom" && (
+                  <>
+                    <label className="text-xs text-muted-foreground mb-1 block">Cron expression</label>
+                    <input
+                      className="input-field font-mono text-sm"
+                      value={cronExpression}
+                      onChange={(e) => setCronExpression(e.target.value)}
+                      placeholder="0 * * * *"
+                    />
+                  </>
+                )}
               </div>
             </div>
 

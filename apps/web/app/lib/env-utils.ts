@@ -55,11 +55,13 @@ export function parseYamlImage(config: string): string | null {
   return parseYamlPostgresImage(config);
 }
 
-/** `# buildMode: dockerfile | nixpacks` from generated application stack header. */
-export function parseApplicationBuildMode(config: string): "dockerfile" | "nixpacks" | null {
-  const m = config.match(/^\s*#\s*buildMode:\s*(dockerfile|nixpacks)\s*$/im);
+/** `# buildMode: dockerfile | buildpacks` (legacy `nixpacks` → buildpacks) from generated application stack header. */
+export function parseApplicationBuildMode(config: string): "dockerfile" | "buildpacks" | null {
+  const m = config.match(/^\s*#\s*buildMode:\s*(dockerfile|nixpacks|buildpacks)\s*$/im);
   if (!m?.[1]) return null;
-  return m[1].toLowerCase() === "nixpacks" ? "nixpacks" : "dockerfile";
+  const v = m[1].toLowerCase();
+  if (v === "nixpacks" || v === "buildpacks") return "buildpacks";
+  return "dockerfile";
 }
 
 /** `# buildPath: ...` from generated application stack header. */
@@ -68,4 +70,53 @@ export function parseApplicationBuildPath(config: string): string | null {
   if (!m?.[1]) return null;
   const v = m[1].trim();
   return v.length ? v : null;
+}
+
+/** Parsed from `# app.networks.*` headers (legacy single-network headers supported). */
+export function parseApplicationNetworkHeaders(config: string): {
+  external: string[];
+  stack: string[];
+} {
+  const raw = config || "";
+  const extLine = raw.match(/^\s*#\s*app\.networks\.external:\s*(.+)$/m);
+  const stackLine = raw.match(/^\s*#\s*app\.networks\.stack:\s*(.+)$/m);
+  if (extLine || stackLine) {
+    const external =
+      extLine?.[1]
+        ?.split("|")
+        .map((s) => s.trim())
+        .filter(Boolean) ?? [];
+    const stack =
+      stackLine?.[1]
+        ?.split("|")
+        .map((s) => s.trim())
+        .filter(Boolean) ?? [];
+    return { external, stack };
+  }
+  const mode = raw.match(/^\s*#\s*network\.mode:\s*(\w+)\s*$/im)?.[1]?.toLowerCase();
+  if (mode === "external") {
+    const name = raw.match(/^\s*#\s*network\.name:\s*(.+)$/im)?.[1]?.trim();
+    return { external: name ? [name] : [], stack: [] };
+  }
+  if (mode === "stack") {
+    const key =
+      raw.match(/^\s*#\s*network\.key:\s*(.+)$/im)?.[1]?.trim() || "app-network";
+    return { external: [], stack: [key] };
+  }
+  return { external: [], stack: [] };
+}
+
+/** Parse `# app.store.KEY: env|secret` headers from generated application config. */
+export function parseApplicationStoreHeaders(
+  config: string,
+): Record<string, "env" | "secret"> {
+  const out: Record<string, "env" | "secret"> = {};
+  for (const line of (config || "").split(/\r?\n/)) {
+    const m = line.match(/^\s*#\s*app\.store\.([A-Z0-9_]+)\s*:\s*(env|secret)\s*$/i);
+    if (!m?.[1] || !m?.[2]) continue;
+    const key = m[1].trim();
+    const store = m[2].toLowerCase() === "secret" ? "secret" : "env";
+    out[key] = store;
+  }
+  return out;
 }

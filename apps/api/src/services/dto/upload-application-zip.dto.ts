@@ -23,14 +23,14 @@ export class UploadApplicationZipDto {
 
   @ApiPropertyOptional({
     description:
-      'Build strategy: `dockerfile` (auto-detect Dockerfile) or `nixpacks` (Nixpacks generates Dockerfile and builds; requires `nixpacks` CLI on the server).',
+      'Always Dockerfile-based: if a Dockerfile exists in the build context it is used; otherwise the server generates one (Node / Go / Python / static). Legacy values `buildpacks` / `nixpacks` are ignored.',
     example: 'dockerfile',
-    enum: ['dockerfile', 'nixpacks'],
+    enum: ['dockerfile', 'buildpacks', 'nixpacks'],
     default: 'dockerfile',
   })
   @IsOptional()
-  @IsIn(['dockerfile', 'nixpacks'])
-  buildMode?: 'dockerfile' | 'nixpacks';
+  @IsIn(['dockerfile', 'buildpacks', 'nixpacks'])
+  buildMode?: 'dockerfile' | 'buildpacks' | 'nixpacks';
 
   @ApiPropertyOptional({
     description: 'Container port exposed by the app',
@@ -76,4 +76,31 @@ export class UploadApplicationZipDto {
   @IsOptional()
   @IsString()
   variablesJson?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'JSON object { "external": string[], "stack": string[] } for application networks. If omitted, networks from the existing config are kept.',
+    example: '{"external":["myapp_default"],"stack":[]}',
+  })
+  @IsOptional()
+  @IsString()
+  networksJson?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Pipe-separated Docker network names to attach (same as `external` in networksJson). Prefer this over JSON for multipart reliability.',
+    example: 'mydb_default|otherapp_default',
+  })
+  @IsOptional()
+  @IsString()
+  externalNetworks?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Pipe-separated stack overlay keys (same as `stack` in networksJson).',
+    example: 'cache|sidecar',
+  })
+  @IsOptional()
+  @IsString()
+  stackNetworks?: string;
 }

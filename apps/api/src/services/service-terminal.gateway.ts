@@ -8,7 +8,7 @@ import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import { URL } from 'url';
 import * as pty from 'node-pty';
-import { ExecutorService } from './ExecutorService';
+import { ExecutorService } from '../executor/executor.service';
 
 @WebSocketGateway({
   path: '/ws/service-terminal',

@@ -10,6 +10,7 @@ import {
   shutdownServiceApi,
   startServiceApi,
   updateServiceApi,
+  patchApplicationNetworksApi,
 } from "@/lib/services-api";
 
 export function useServices(
@@ -96,6 +97,26 @@ export function useUpdateService() {
       qc.invalidateQueries({ queryKey: ["service-volumes", String(data.id)] });
       qc.invalidateQueries({ queryKey: ["projects", data.projectId] });
       qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function usePatchApplicationNetworks() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      external,
+      stack,
+    }: {
+      id: string;
+      external: string[];
+      stack: string[];
+    }) => patchApplicationNetworksApi(id, { external, stack }),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["services", data.projectId] });
+      qc.invalidateQueries({ queryKey: ["services"] });
+      qc.invalidateQueries({ queryKey: ["service", data.id] });
     },
   });
 }
