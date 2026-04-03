@@ -23,6 +23,11 @@ type Props = {
   values: DatabaseBackupFormValues;
   onChange: (patch: Partial<DatabaseBackupFormValues>) => void;
   onReplaceValues: (next: DatabaseBackupFormValues) => void;
+  /**
+   * When true, only the backup format control is shown. Engine, compose target, DB name, and user
+   * stay synced from the stack in state (effects still run) for backup/import APIs.
+   */
+  formatOnly?: boolean;
 };
 
 /**
@@ -34,6 +39,7 @@ export function DatabaseBackupFormFields({
   values,
   onChange,
   onReplaceValues,
+  formatOnly = false,
 }: Props) {
   const options = useMemo(
     () => listDatabaseBackupOptions(service, service?.name),
@@ -71,6 +77,29 @@ export function DatabaseBackupFormFields({
       onChange({ composeService: keys[0]! });
     }
   }, [service, values.composeService, onChange]);
+
+  if (formatOnly) {
+    return (
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Backup format</label>
+          <select
+            className="input-field"
+            value={resolveBackupFormat(values.engine, values.backupFormat)}
+            onChange={(e) =>
+              onChange({ backupFormat: e.target.value as DatabaseBackupFormatId })
+            }
+          >
+            {backupFormatOptionsForEngine(values.engine).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">

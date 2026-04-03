@@ -10,6 +10,8 @@ import {
   Patch,
   Query,
   BadRequestException,
+  UnauthorizedException,
+  UseGuards,
   UsePipes,
   ValidationPipe,
   UseInterceptors,
@@ -26,14 +28,23 @@ import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { UploadApplicationZipDto } from './dto/upload-application-zip.dto';
 import { PatchApplicationNetworksDto } from './dto/patch-application-networks.dto';
 import { PatchApplicationImageDeployDto } from './dto/patch-application-image.dto';
+import { RunServiceBackupDto } from './dto/run-service-backup.dto';
+import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s3.dto';
 import type { DatabaseEngine } from './database-generator.service';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Observable, map } from 'rxjs';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Services')
 @Controller('services')
 export class ServicesController {
   constructor(private readonly servicesService: ServicesService) {}
+
+  private uid(req: { user?: { userId: number } }): number {
+    const id = req.user?.userId;
+    if (id == null) throw new UnauthorizedException();
+    return id;
+  }
 
   private parseEngineOrThrow(engine: string): DatabaseEngine {
     const e = engine.toLowerCase();
@@ -130,6 +141,82 @@ export class ServicesController {
     const mode =
       m === 'reload' ? 'reload' : m === 'redeploy' ? 'redeploy' : 'deploy';
     return this.servicesService.executeDeployment(+id, mode);
+  }
+
+  @Post(':id/backup')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Run one-off volume or database backup and upload to S3',
+  })
+  backupNow(
+    @Param('id') id: string,
+    @Body() dto: RunServiceBackupDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.runServiceBackupNow(
+      this.uid(req),
+      +id,
+      dto,
+    );
+  }
+
+  @Post(':id/backup/import')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 512 * 1024 * 1024 } }),
+  )
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'Import a database dump or a volume .tar.gz backup (multipart file; runs on host)',
+  })
+  importBackup(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body()
+    body: {
+      action?: string;
+      databaseBackupConfig?: string;
+      volumeSource?: string;
+    },
+    @Req() req: { user?: { userId: number } },
+  ) {
+    if (!file) {
+      throw new BadRequestException('file is required.');
+    }
+    const action = body?.action;
+    if (action !== 'import_database' && action !== 'import_volume') {
+      throw new BadRequestException(
+        'action must be import_database or import_volume.',
+      );
+    }
+    return this.servicesService.runServiceImportBackup(
+      this.uid(req),
+      +id,
+      file,
+      action,
+      body.databaseBackupConfig,
+      body.volumeSource,
+    );
+  }
+
+  @Post(':id/backup/import-from-s3')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Import database or volume backup from an object in a saved S3 profile (server downloads then imports)',
+  })
+  importBackupFromS3(
+    @Param('id') id: string,
+    @Body() dto: ImportServiceBackupFromS3Dto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    void req;
+    return this.servicesService.runServiceImportBackupFromS3(+id, dto);
   }
 
   @Post(':id/application/upload')

@@ -6,9 +6,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { ArrowLeft, Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen } from "lucide-react";
+import { Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban } from "lucide-react";
 import { useProject } from "@/hooks/use-projects";
-import { useServices, useCreateService, useDeleteService } from "@/hooks/use-services";
+import { useServices, useCreateService, useDeleteService, useServiceRuntime } from "@/hooks/use-services";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createServiceSchema, type CreateServiceInput, type Project, type Service } from "@/lib/schema";
@@ -58,6 +58,48 @@ function dbPortByEngine(engine?: CreateServiceInput["databaseEngine"]): number {
   if (engine === "mongodb") return 27017;
   if (engine === "redis") return 6379;
   return 5432;
+}
+
+/** Dot + label under the type badge: Running / Stopped. */
+function ServiceRuntimeStatus({ serviceId }: { serviceId: string }) {
+  const { data, isPending, isError } = useServiceRuntime(serviceId);
+  if (isPending) {
+    return (
+      <div className="flex w-full items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40 animate-pulse" aria-hidden />
+        <span className="font-medium tabular-nums">…</span>
+      </div>
+    );
+  }
+  if (isError) {
+    return (
+      <div
+        className="flex w-full items-center justify-center gap-1.5 text-[10px] text-muted-foreground"
+        title="Could not load runtime"
+      >
+        <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50 ring-1 ring-border" aria-hidden />
+        <span className="font-medium">—</span>
+      </div>
+    );
+  }
+  const running = data?.running === true;
+  return (
+    <div
+      className={`flex w-full items-center justify-center gap-1.5 text-[10px] font-medium ${
+        running ? "text-emerald-400/95" : "text-red-400/95"
+      }`}
+    >
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full ${
+          running
+            ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.55)]"
+            : "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.35)]"
+        }`}
+        aria-hidden
+      />
+      <span>{running ? "Running" : "Stopped"}</span>
+    </div>
+  );
 }
 
 function CreateServiceModal({
@@ -563,8 +605,8 @@ export default function ProjectsIdClient({
           <p className="text-muted-foreground">
             {initialProjectError ? initialProjectError : "Project not found."}
           </p>
-          <Link href="/projects">
-            <button className="btn-secondary mt-4">Back to Projects</button>
+          <Link href="/projects" className="btn-secondary mt-4 inline-flex items-center gap-2">
+            <FolderKanban className="w-4 h-4" /> Projects
           </Link>
         </div>
       </>
@@ -577,11 +619,15 @@ export default function ProjectsIdClient({
         {showCreate && <CreateServiceModal projectId={projectId} onClose={() => setShowCreate(false)} />}
       </AnimatePresence>
 
-      <Link href="/projects">
-        <button className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-8 text-sm font-medium">
-          <ArrowLeft className="w-4 h-4" /> Back to Projects
-        </button>
-      </Link>
+      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-8">
+        <Link href="/projects">
+          <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors">
+            <FolderKanban className="w-3.5 h-3.5" /> Projects
+          </span>
+        </Link>
+        <span className="text-white/20">/</span>
+        <span className="text-foreground font-medium">{project.name}</span>
+      </div>
 
       {/* Project Header */}
       <div className="glass-panel rounded-2xl p-6 mb-8 relative overflow-hidden">
@@ -692,9 +738,14 @@ export default function ProjectsIdClient({
                             <Icon className="h-4 w-4" />
                           )}
                         </div>
-                        <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${typeConf.color}`}>
-                          {typeConf.label}
-                        </span>
+                        <div className="flex min-w-0 flex-col items-center gap-1">
+                          <span
+                            className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${typeConf.color}`}
+                          >
+                            {typeConf.label}
+                          </span>
+                          <ServiceRuntimeStatus serviceId={service.id} />
+                        </div>
                       </div>
 
                       <h3 className="line-clamp-2 pr-0.5 text-sm font-semibold leading-tight" title={service.name}>

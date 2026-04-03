@@ -37,6 +37,19 @@ export function parseYamlPublishPort(config: string, containerPort: number): num
   return Number.isNaN(n) ? null : n;
 }
 
+/** First `ports: - "host:container"` in application stack YAML (same pattern as API `extractApplicationComposeRegenerationArgs`). */
+export function parseApplicationYamlPorts(config: string): {
+  containerPort: number;
+  publishPort: number;
+} | null {
+  const m = config.match(/ports:\s*\n\s*-\s*"(\d+):(\d+)"/);
+  if (!m) return null;
+  const publishPort = parseInt(m[1], 10);
+  const containerPort = parseInt(m[2], 10);
+  if (Number.isNaN(publishPort) || Number.isNaN(containerPort)) return null;
+  return { containerPort, publishPort };
+}
+
 /** `image:` line under the first service in stack YAML. */
 export function parseYamlPostgresImage(config: string): string | null {
   const m = config.match(/^\s*image:\s*(.+)$/m);

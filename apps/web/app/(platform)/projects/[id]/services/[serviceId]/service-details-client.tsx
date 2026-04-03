@@ -12,9 +12,10 @@ import {
   Download, Edit3, Save, X, Calendar, Tag, Plus,
   Terminal, Rocket, RefreshCw, Square, Play, RotateCw, Activity, Loader2,
   Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive, ChevronDown,
-  Database, Eye, EyeOff, Lock,
+  Database, Eye, EyeOff, Lock, HardDrive, AlertCircle, Upload, Cloud,
   LockOpen,
   PackageOpen,
+  ArrowDownToLine,
 } from "lucide-react";
 import {
   useService,
@@ -22,6 +23,7 @@ import {
   useShutdownService,
   useStartService,
   useServiceRuntime,
+  useServiceVolumes,
   useUpdateService,
 } from "@/hooks/use-services";
 import { useProject } from "@/hooks/use-projects";
@@ -39,13 +41,15 @@ import {
   type DatabaseEngineId,
 } from "@/lib/database-engines";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   applyDatabaseApi,
   streamServiceLogs,
   updateDatabaseStackApi,
   patchApplicationImageDeployApi,
   uploadApplicationArchiveApi,
+  runServiceBackupNowApi,
+  importServiceBackupFromS3Api,
 } from "@/lib/services-api";
 import {
   parseApplicationBuildPath,
@@ -53,6 +57,7 @@ import {
   parseApplicationImageRef,
   parseApplicationNetworkHeaders,
   parseApplicationStoreHeaders,
+  parseApplicationYamlPorts,
   parseServiceEnvLines,
   parseYamlImage,
   parseYamlPublishPort,
@@ -61,6 +66,18 @@ import {
 import { ApplicationConnectionsPanel } from "./application-connections-panel";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceSecretsTab } from "./service-secrets-tab";
+import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
+import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
+import { S3ImportObjectPicker } from "@/components/s3/S3ImportObjectPicker";
+import { listDatabaseBackupOptions } from "@/lib/database-backup-from-service";
+import {
+  resolveBackupFormat,
+  validateDatabaseBackupForm,
+  type DatabaseBackupConfig,
+  type DatabaseBackupFormValues,
+} from "@/lib/database-backup-preview";
+import { buildDatabaseInternalConnectionUrl, DB_URL_PASSWORD_PLACEHOLDER } from "@/lib/database-internal-url";
+import { listS3ProfilesApi } from "@/lib/s3-api";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
 
 /** Deterministic on server + client (avoids hydration mismatch from `format()` using local TZ). */
@@ -165,6 +182,7 @@ networks:
 
 type Tab =
   | "overview"
+  | "dbdetails"
   | "config"
   | "appconf"
   | "env"
@@ -276,8 +294,11 @@ export default function ServiceDetails({
 
   const tabs = useMemo(() => {
     type TabDef = { id: Tab; label: string; icon: typeof Info; count?: number };
+    const dbEngineForTabs =
+      service?.type === "databases" ? parseDatabaseEngineFromConfig(service.config ?? "") : undefined;
     const head: TabDef[] = [
       { id: "overview", label: "Overview", icon: Info },
+      ...(dbEngineForTabs ? [{ id: "dbdetails" as Tab, label: "Database", icon: Database }] : []),
       { id: "config", label: "Configuration", icon: FileCode },
     ];
     const appConf: TabDef = { id: "appconf", label: "Build & deployment", icon: PackageOpen };
@@ -294,7 +315,13 @@ export default function ServiceDetails({
       ? allTabs.filter((t) => t.id !== "config" && t.id !== "env" && t.id !== "secrets")
       : allTabs;
     if (!isDatabaseService) return withoutAppComposeTabs;
-    const withoutDomainSecrets = withoutAppComposeTabs.filter((t) => t.id !== "domain" && t.id !== "secrets");
+    const withoutDomainSecrets = withoutAppComposeTabs.filter(
+      (t) =>
+        t.id !== "domain" &&
+        t.id !== "secrets" &&
+        t.id !== "env" &&
+        t.id !== "config",
+    );
     if (!hasDatabaseCompose) {
       return withoutDomainSecrets.filter((t) => !DATABASE_PRECOMPOSE_HIDDEN.includes(t.id));
     }
@@ -306,6 +333,8 @@ export default function ServiceDetails({
     envEntryCount,
     service?.domains?.length,
     secretsPaged?.totalAll,
+    service?.type,
+    service?.config,
   ]);
 
   useEffect(() => {
@@ -685,9 +714,6 @@ export default function ServiceDetails({
           {activeTab === "overview" && (
             <motion.div key="overview" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="space-y-4">
-              {isDatabaseService && dbEngineId && (
-                <DatabaseSetupPanel serviceId={service.id} service={service} engine={dbEngineId} />
-              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <InfoCard icon={<Hash className="w-4 h-4 text-primary" />} label="Service ID" value={service.id} mono copyable
                 onCopy={() => { navigator.clipboard.writeText(service.id); toast({ title: "Copied", description: "Service ID copied." }); }} />
@@ -772,6 +798,20 @@ export default function ServiceDetails({
                 </>
               )}
               </div>
+            </motion.div>
+          )}
+
+          {/* ── Database (credentials, replicas, port, internal URL) — databases + engine in compose only ── */}
+          {activeTab === "dbdetails" && isDatabaseService && dbEngineId && (
+            <motion.div
+              key="dbdetails"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-4"
+            >
+              <DatabaseSetupPanel serviceId={service.id} service={service} engine={dbEngineId} />
             </motion.div>
           )}
 
@@ -889,13 +929,11 @@ export default function ServiceDetails({
           {activeTab === "backup" && (
             <motion.div key="backup" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="space-y-4">
-              <div className="glass-panel rounded-xl border border-border/60 p-10 md:p-14 text-center max-w-lg mx-auto">
-                <Archive className="w-12 h-12 text-muted-foreground/80 mx-auto mb-4" />
-                <h2 className="text-lg font-semibold tracking-tight mb-2">Backup</h2>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  Volume and snapshot backups will be available here in a future update.
-                </p>
-              </div>
+              <ServiceBackupPanel
+                serviceId={serviceId}
+                service={service ?? null}
+                isDatabaseService={isDatabaseService}
+              />
             </motion.div>
           )}
 
@@ -1030,6 +1068,708 @@ export default function ServiceDetails({
   );
 }
 
+function serviceVolumeRowKey(v: { composeService: string; source: string; hostVolumeName?: string }) {
+  return `${v.composeService}\0${v.source}\0${v.hostVolumeName ?? ""}`;
+}
+
+function BackupImportModeToggle({
+  value,
+  onChange,
+  disabled,
+  backupLabel,
+  importLabel,
+}: {
+  value: "backup" | "import";
+  onChange: (v: "backup" | "import") => void;
+  disabled?: boolean;
+  backupLabel: string;
+  importLabel: string;
+}) {
+  return (
+    <div className="flex rounded-xl border border-border/60 bg-muted/20 p-1 gap-1 w-full max-w-lg">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={value === "backup"}
+        disabled={disabled}
+        onClick={() => onChange("backup")}
+        className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors inline-flex items-center justify-center gap-2 ${
+          value === "backup"
+            ? "bg-background/80 text-foreground shadow-sm border border-border/50"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+        }`}
+      >
+        <Upload className="w-4 h-4 shrink-0" />
+        {backupLabel}
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={value === "import"}
+        disabled={disabled}
+        onClick={() => onChange("import")}
+        className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors inline-flex items-center justify-center gap-2 ${
+          value === "import"
+            ? "bg-background/80 text-foreground shadow-sm border border-border/50"
+            : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+        }`}
+      >
+        <ArrowDownToLine className="w-4 h-4 shrink-0" />
+        {importLabel}
+      </button>
+    </div>
+  );
+}
+
+function ServiceBackupPanel({
+  serviceId,
+  service,
+  isDatabaseService,
+}: {
+  serviceId: string;
+  service: Service | null;
+  isDatabaseService: boolean;
+}) {
+  const { toast } = useToast();
+
+  const volumesEnabled = Boolean(service?.config) && !isDatabaseService;
+  const volumesQuery = useServiceVolumes(serviceId, volumesEnabled);
+
+  const volumeOptions = useMemo(() => {
+    const items = volumesQuery.data?.items ?? [];
+    return items.filter((v) => v.mountType === "volume" && v.source && v.source !== "—");
+  }, [volumesQuery.data]);
+
+  const [selectedVolumeKey, setSelectedVolumeKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (volumeOptions.length === 0) {
+      setSelectedVolumeKey(null);
+      return;
+    }
+    setSelectedVolumeKey((prev) => {
+      if (prev && volumeOptions.some((v) => serviceVolumeRowKey(v) === prev)) return prev;
+      return serviceVolumeRowKey(volumeOptions[0]!);
+    });
+  }, [volumeOptions]);
+
+  const selectedVolume = useMemo(() => {
+    if (!selectedVolumeKey) return undefined;
+    return volumeOptions.find((v) => serviceVolumeRowKey(v) === selectedVolumeKey);
+  }, [volumeOptions, selectedVolumeKey]);
+
+  const volumeBackupName = selectedVolume ? String(selectedVolume.hostVolumeName ?? selectedVolume.source).trim() : "";
+
+  const [backupS3ProfileName, setBackupS3ProfileName] = useState("");
+  const s3ProfilesQuery = useQuery({
+    queryKey: ["s3-profiles"],
+    queryFn: listS3ProfilesApi,
+    staleTime: 60_000,
+  });
+
+  const s3Profiles = s3ProfilesQuery.data ?? [];
+
+  useEffect(() => {
+    if (backupS3ProfileName.trim()) return;
+    if (s3Profiles.length === 0) return;
+    setBackupS3ProfileName(s3Profiles[0]!.name);
+  }, [s3Profiles, backupS3ProfileName]);
+
+  const [dbBackup, setDbBackup] = useState<DatabaseBackupFormValues>({
+    engine: "postgres",
+    composeService: "",
+    databaseName: "",
+    dbUser: "",
+    backupFormat: "postgres_sql_gzip",
+  });
+
+  useEffect(() => {
+    if (!isDatabaseService || !service || service.type !== "databases") return;
+    const opts = listDatabaseBackupOptions(service, service.name);
+    if (opts.length > 0) setDbBackup(opts[0]!.form);
+  }, [service, isDatabaseService]);
+
+  const engineFromConfig = service ? parseDatabaseEngineFromConfig(service.config ?? "") : undefined;
+  const engineMeta = engineFromConfig ? getDatabaseEngineById(engineFromConfig) : undefined;
+
+  const [saving, setSaving] = useState(false);
+  const [output, setOutput] = useState("");
+  const [importDbS3, setImportDbS3] = useState<{ profileName: string; key: string } | null>(null);
+  const [importVolS3, setImportVolS3] = useState<{ profileName: string; key: string } | null>(null);
+  const [importDbPickerOpen, setImportDbPickerOpen] = useState(false);
+  const [importVolPickerOpen, setImportVolPickerOpen] = useState(false);
+  const [importDbSaving, setImportDbSaving] = useState(false);
+  const [importVolSaving, setImportVolSaving] = useState(false);
+  const [importOutDb, setImportOutDb] = useState("");
+  const [importOutVol, setImportOutVol] = useState("");
+  const [dbBackupTab, setDbBackupTab] = useState<"backup" | "import">("backup");
+  const [volBackupTab, setVolBackupTab] = useState<"backup" | "import">("backup");
+
+  const runVolumeBackup = async () => {
+    const profile = backupS3ProfileName.trim();
+    if (!profile) {
+      toast({
+        title: "S3 destination required",
+        description: "Choose a saved S3 profile to upload backups.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const v = volumeBackupName;
+    if (!v) {
+      toast({
+        title: "No volume selected",
+        description: "This service has no named Docker volumes in compose, or volumes could not be resolved.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(v)) {
+      toast({
+        title: "Invalid volume name",
+        description: "Resolved volume name is not in the expected format.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSaving(true);
+    setOutput("");
+    try {
+      const r = await runServiceBackupNowApi(serviceId, {
+        action: "volume_backup",
+        volumeSource: v,
+        backupS3ProfileName: profile,
+      });
+      setOutput(r.output);
+      if (r.ok) toast({ title: "Backup completed", description: "Volume backup uploaded to S3." });
+      else toast({ title: "Backup failed", description: r.output, variant: "destructive" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput(msg);
+      toast({ title: "Backup failed", description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runDatabaseBackup = async () => {
+    const profile = backupS3ProfileName.trim();
+    if (!profile) {
+      toast({
+        title: "S3 destination required",
+        description: "Choose a saved S3 profile to upload backups.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const v = validateDatabaseBackupForm(dbBackup);
+    if (!v.ok) {
+      toast({ title: "Invalid backup configuration", description: v.message, variant: "destructive" });
+      return;
+    }
+
+    const cfg: DatabaseBackupConfig = {
+      engine: dbBackup.engine,
+      composeService: dbBackup.composeService.trim(),
+      backupFormat: resolveBackupFormat(dbBackup.engine, dbBackup.backupFormat),
+      ...(dbBackup.engine !== "redis" ? { databaseName: dbBackup.databaseName.trim() } : {}),
+      ...(dbBackup.dbUser.trim() ? { dbUser: dbBackup.dbUser.trim() } : {}),
+    };
+
+    setSaving(true);
+    setOutput("");
+    try {
+      const r = await runServiceBackupNowApi(serviceId, {
+        action: "database_backup",
+        databaseBackupConfig: cfg,
+        backupS3ProfileName: profile,
+      });
+      setOutput(r.output);
+      if (r.ok) toast({ title: "Backup completed", description: "Database backup uploaded to S3." });
+      else toast({ title: "Backup failed", description: r.output, variant: "destructive" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setOutput(msg);
+      toast({ title: "Backup failed", description: msg, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const runImportDatabase = async () => {
+    const v = validateDatabaseBackupForm(dbBackup);
+    if (!v.ok) {
+      toast({ title: "Invalid configuration", description: v.message, variant: "destructive" });
+      return;
+    }
+    if (!importDbS3) {
+      toast({
+        title: "Object required",
+        description: "Choose a database dump from an S3 destination.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const cfg: DatabaseBackupConfig = {
+      engine: dbBackup.engine,
+      composeService: dbBackup.composeService.trim(),
+      backupFormat: resolveBackupFormat(dbBackup.engine, dbBackup.backupFormat),
+      ...(dbBackup.engine !== "redis" ? { databaseName: dbBackup.databaseName.trim() } : {}),
+      ...(dbBackup.dbUser.trim() ? { dbUser: dbBackup.dbUser.trim() } : {}),
+    };
+    setImportDbSaving(true);
+    setImportOutDb("");
+    try {
+      const r = await importServiceBackupFromS3Api(serviceId, {
+        action: "import_database",
+        backupS3ProfileName: importDbS3.profileName,
+        s3Key: importDbS3.key,
+        databaseBackupConfig: JSON.stringify(cfg),
+      });
+      setImportOutDb(r.output);
+      if (r.ok) toast({ title: "Import finished", description: "See output below." });
+      else toast({ title: "Import failed", description: r.output.slice(0, 400), variant: "destructive" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setImportOutDb(msg);
+      toast({ title: "Import failed", description: msg, variant: "destructive" });
+    } finally {
+      setImportDbSaving(false);
+    }
+  };
+
+  const runImportVolume = async () => {
+    const vol = volumeBackupName;
+    if (!vol) {
+      toast({
+        title: "No volume",
+        description: "Select a named volume or ensure compose has volumes.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!importVolS3) {
+      toast({
+        title: "Object required",
+        description: "Choose a .tar.gz volume backup from an S3 destination.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!importVolS3.key.toLowerCase().endsWith(".tar.gz")) {
+      toast({
+        title: "Invalid object",
+        description: "Volume import expects a .tar.gz produced by Weehawk volume backup.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setImportVolSaving(true);
+    setImportOutVol("");
+    try {
+      const r = await importServiceBackupFromS3Api(serviceId, {
+        action: "import_volume",
+        backupS3ProfileName: importVolS3.profileName,
+        s3Key: importVolS3.key,
+        volumeSource: vol,
+      });
+      setImportOutVol(r.output);
+      if (r.ok) toast({ title: "Import finished", description: "See output below." });
+      else toast({ title: "Import failed", description: r.output.slice(0, 400), variant: "destructive" });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setImportOutVol(msg);
+      toast({ title: "Import failed", description: msg, variant: "destructive" });
+    } finally {
+      setImportVolSaving(false);
+    }
+  };
+
+  const serviceForDbPanel = service?.type === "databases" ? service : null;
+
+  const s3Block = (
+    <div>
+      <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Backup destination (S3)</label>
+      {s3ProfilesQuery.isPending ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading S3 profiles…
+        </div>
+      ) : s3Profiles.length === 0 ? (
+        <p className="text-xs text-amber-400/90">
+          No S3 profiles found. Create one under <code className="text-[11px] bg-muted px-1 rounded">S3</code> first.
+        </p>
+      ) : (
+        <select
+          className="input-field w-full"
+          value={backupS3ProfileName}
+          onChange={(e) => setBackupS3ProfileName(e.target.value)}
+          disabled={saving || importDbSaving || importVolSaving}
+        >
+          {s3Profiles.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name} ({p.bucket})
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+
+  if (isDatabaseService) {
+    return (
+      <div className="glass-panel rounded-xl border border-border/60 p-10 md:p-14 text-center max-w-3xl mx-auto">
+        <div className="flex items-start gap-4 flex-col md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-3">
+            <Database className="w-12 h-12 text-muted-foreground/80" />
+            <div className="text-left">
+              <h2 className="text-lg font-semibold tracking-tight mb-1">Database backup &amp; restore</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Back up or restore from S3. Compose targets come from your stack; export format only on Backup to S3.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 flex justify-center md:justify-start">
+          <BackupImportModeToggle
+            value={dbBackupTab}
+            onChange={setDbBackupTab}
+            disabled={saving || importDbSaving}
+            backupLabel="Backup to S3"
+            importLabel="Import from S3"
+          />
+        </div>
+
+        <div className="mt-8 space-y-4 text-left">
+          <div className="rounded-lg border border-border/50 bg-muted/20 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Database type</p>
+              {engineMeta ? (
+                <p className="text-sm font-medium mt-0.5">{engineMeta.name}</p>
+              ) : (
+                <p className="text-xs text-amber-400/90 mt-0.5">
+                  Add <code className="text-[11px] bg-muted px-1 rounded"># engine: …</code> to your compose so we can
+                  detect the engine.
+                </p>
+              )}
+            </div>
+            {engineMeta?.logoSrc ? (
+              <div className="relative h-10 w-10 shrink-0 opacity-90">
+                <Image src={engineMeta.logoSrc} alt="" fill className="object-contain" sizes="40px" />
+              </div>
+            ) : null}
+          </div>
+
+          {dbBackupTab === "backup" ? (
+            <>
+              <div className="space-y-3">
+                <DatabaseBackupFormFields
+                  formatOnly
+                  service={serviceForDbPanel}
+                  values={dbBackup}
+                  onChange={(patch) => setDbBackup((prev) => ({ ...prev, ...patch }))}
+                  onReplaceValues={setDbBackup}
+                />
+              </div>
+
+              {s3Block}
+
+              <div className="flex items-center gap-3 pt-2 border-t border-white/5">
+                <button
+                  type="button"
+                  className="btn-primary flex items-center gap-2"
+                  onClick={() => void runDatabaseBackup()}
+                  disabled={
+                    saving ||
+                    importDbSaving ||
+                    s3ProfilesQuery.isPending ||
+                    s3Profiles.length === 0 ||
+                    !dbBackup.composeService.trim()
+                  }
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                  {saving ? "Backing up…" : "Backup database"}
+                </button>
+              </div>
+
+              {output ? (
+                <pre className="mt-4 text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+                  {output}
+                </pre>
+              ) : null}
+            </>
+          ) : (
+            <div className="pt-2 border-t border-white/5 space-y-4">
+              <h3 className="text-sm font-semibold tracking-tight">Import database from S3</h3>
+              {importDbS3 ? (
+                <div className="rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-left">
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <p className="text-[11px] text-muted-foreground">Selected object</p>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                      aria-label="Clear selection"
+                      disabled={saving || importDbSaving}
+                      onClick={() => setImportDbS3(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs font-mono text-foreground break-all">
+                    <span className="text-muted-foreground">{importDbS3.profileName}</span> → {importDbS3.key}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground text-left">No object selected.</p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="btn-secondary text-sm inline-flex items-center gap-2"
+                  disabled={saving || importDbSaving || s3Profiles.length === 0}
+                  onClick={() => setImportDbPickerOpen(true)}
+                >
+                  <Cloud className="w-4 h-4" />
+                  Choose from S3…
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary flex items-center gap-2 text-sm"
+                  onClick={() => void runImportDatabase()}
+                  disabled={saving || importDbSaving || !dbBackup.composeService.trim() || !importDbS3}
+                >
+                  {importDbSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
+                  {importDbSaving ? "Importing…" : "Import database"}
+                </button>
+              </div>
+              {importOutDb ? (
+                <pre className="text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+                  {importOutDb}
+                </pre>
+              ) : null}
+            </div>
+          )}
+
+          <S3ImportObjectPicker
+            open={importDbPickerOpen}
+            onOpenChange={setImportDbPickerOpen}
+            defaultProfileName={backupS3ProfileName}
+            title="Choose database dump"
+            description="Browse your bucket and select one file compatible with this database service."
+            onPick={(p) => setImportDbS3(p)}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="glass-panel rounded-xl border border-border/60 p-10 md:p-14 text-center max-w-3xl mx-auto">
+      <div className="flex items-start gap-4 flex-col md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <HardDrive className="w-12 h-12 text-muted-foreground/80" />
+          <div className="text-left">
+            <h2 className="text-lg font-semibold tracking-tight mb-1">Volume backup &amp; restore</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Named volumes from this service&apos;s compose are detected automatically. Back up to S3 or restore from a
+              Weehawk archive already in your bucket.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 flex justify-center md:justify-start">
+        <BackupImportModeToggle
+          value={volBackupTab}
+          onChange={setVolBackupTab}
+          disabled={saving || importVolSaving}
+          backupLabel="Backup to S3"
+          importLabel="Import from S3"
+        />
+      </div>
+
+      <div className="mt-8 space-y-4 text-left">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Volume to back up</label>
+          {volumesQuery.isPending ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Resolving compose volumes…
+            </div>
+          ) : volumesQuery.isError ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive flex gap-2 items-start">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>Could not load volumes. Check the service configuration and try again.</span>
+            </div>
+          ) : volumesQuery.data?.error ? (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/90 flex gap-2 items-start">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span className="whitespace-pre-wrap">{volumesQuery.data.error}</span>
+            </div>
+          ) : volumeOptions.length === 0 ? (
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              No named Docker volumes were found for this service. Add a <code className="text-[11px] bg-muted px-1 rounded">volumes:</code>{" "}
+              entry under the service in compose, then save and try again.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {volumeOptions.map((v) => {
+                const key = serviceVolumeRowKey(v);
+                const name = String(v.hostVolumeName ?? v.source);
+                const selected = key === selectedVolumeKey;
+                return (
+                  <li key={key}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedVolumeKey(key)}
+                      disabled={saving || importVolSaving}
+                      className={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${
+                        selected
+                          ? "border-primary/50 bg-primary/10"
+                          : "border-border/60 bg-muted/10 hover:bg-muted/20"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <span
+                          className={`mt-1 h-3.5 w-3.5 rounded-full border-2 shrink-0 ${
+                            selected ? "border-primary bg-primary" : "border-muted-foreground/40"
+                          }`}
+                          aria-hidden
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium font-mono truncate">{name}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Service <span className="font-mono">{v.composeService}</span>
+                            {" · "}
+                            <span className="font-mono">{v.source}</span>
+                            {v.target ? (
+                              <>
+                                {" → "}
+                                <span className="font-mono">{v.target}</span>
+                              </>
+                            ) : null}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <VolumeBackupDbWarning className="mt-3" />
+        </div>
+
+        {volBackupTab === "backup" ? (
+          <>
+            {s3Block}
+
+            <div className="flex items-center gap-3 pt-2 border-t border-white/5">
+              <button
+                type="button"
+                className="btn-primary flex items-center gap-2"
+                onClick={() => void runVolumeBackup()}
+                disabled={
+                  saving ||
+                  importVolSaving ||
+                  s3ProfilesQuery.isPending ||
+                  s3Profiles.length === 0 ||
+                  !volumeBackupName ||
+                  volumesQuery.isPending
+                }
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+                {saving ? "Backing up…" : "Backup volume"}
+              </button>
+            </div>
+
+            {output ? (
+              <pre className="mt-4 text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+                {output}
+              </pre>
+            ) : null}
+          </>
+        ) : (
+          <div className="pt-2 border-t border-white/5 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold tracking-tight">Import volume from S3</h3>
+              <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                Select a <code className="text-[11px] bg-muted px-1 rounded">.tar.gz</code> produced by Weehawk volume
+                backup. The server downloads it from S3, then restores into the volume above (overwrites files on the host).
+              </p>
+            </div>
+            {importVolS3 ? (
+              <div className="rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-left">
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <p className="text-[11px] text-muted-foreground">Selected object</p>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                    aria-label="Clear selection"
+                    disabled={saving || importVolSaving}
+                    onClick={() => setImportVolS3(null)}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <p className="text-xs font-mono text-foreground break-all">
+                  <span className="text-muted-foreground">{importVolS3.profileName}</span> → {importVolS3.key}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground text-left">No object selected.</p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="btn-secondary text-sm inline-flex items-center gap-2"
+                disabled={saving || importVolSaving || !volumeBackupName || s3Profiles.length === 0}
+                onClick={() => setImportVolPickerOpen(true)}
+              >
+                <Cloud className="w-4 h-4" />
+                Choose from S3…
+              </button>
+              <button
+                type="button"
+                className="btn-primary flex items-center gap-2 text-sm"
+                onClick={() => void runImportVolume()}
+                disabled={
+                  saving ||
+                  importVolSaving ||
+                  !volumeBackupName ||
+                  !importVolS3 ||
+                  volumesQuery.isPending ||
+                  volumeOptions.length === 0
+                }
+              >
+                {importVolSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
+                {importVolSaving ? "Importing…" : "Import volume"}
+              </button>
+            </div>
+            {importOutVol ? (
+              <pre className="text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+                {importOutVol}
+              </pre>
+            ) : null}
+          </div>
+        )}
+
+        <S3ImportObjectPicker
+          open={importVolPickerOpen}
+          onOpenChange={setImportVolPickerOpen}
+          defaultProfileName={backupS3ProfileName}
+          requireTarGz
+          title="Choose volume archive"
+          description="Only .tar.gz objects can be selected (Weehawk volume backup format)."
+          onPick={(p) => setImportVolS3(p)}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Database setup (overview cards + one-time legacy form) ──
 
 function dbPortByEngine(engine: DatabaseEngineId): number {
@@ -1079,6 +1819,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
   const passStoreMode = readStoreMode(service.config ?? "", keys.pass);
   const rootPassStoreMode = rootPassKey ? readStoreMode(service.config ?? "", rootPassKey) : undefined;
   const [showPassword, setShowPassword] = useState(false);
+  const [showInternalUrl, setShowInternalUrl] = useState(false);
   const [editingHostPort, setEditingHostPort] = useState(false);
   const [portDraft, setPortDraft] = useState("");
   const [portSaving, setPortSaving] = useState(false);
@@ -1097,6 +1838,8 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
       setReplicasDraft(String(replicas));
     }
   }, [service.config, replicas, editingReplicas]);
+
+  const internalUrl = useMemo(() => buildDatabaseInternalConnectionUrl(service), [service]);
 
   const saveHostPort = async () => {
     const t = portDraft.trim();
@@ -1164,235 +1907,334 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
   };
 
   return (
-    <div className="glass-panel rounded-2xl border border-sky-500/20 p-6 md:p-8">
-      <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
-        <Database className="w-5 h-5 text-sky-400" />
-        {getDatabaseEngineById(engine)?.name ?? "Database"}
-        <span className="inline-flex items-center gap-1 text-xs font-normal text-muted-foreground border border-border rounded-full px-2 py-0.5">
-          <Lock className="w-3 h-3" />
-          Saved
-        </span>
-      </h3>
-      <p className="text-sm text-muted-foreground mb-5 max-w-2xl leading-relaxed">
-        Credentials can be stored in <span className="text-foreground font-medium">Environment</span> or{" "}
-        <span className="text-foreground font-medium">Docker Secrets</span>. Secret values are not readable from this page. Edit{" "}
-        <span className="text-foreground font-medium">replicas</span> or <span className="text-foreground font-medium">host port</span> below, then redeploy.
-      </p>
-      {!hasStack && (
-        <p className="text-xs text-amber-400/90 mb-4">
-          No stack YAML is saved yet for this service.
-        </p>
-      )}
-      <p className="text-xs font-mono text-sky-300/90 mb-5">
-        Docker image: <span className="text-foreground">{yamlImage}</span>
-      </p>
-      <dl className="grid gap-4 sm:grid-cols-2 max-w-2xl text-sm">
-        {hasDbName && (
+    <div className="glass-panel rounded-2xl border border-sky-500/20 overflow-hidden">
+      {/* Header */}
+      <div className="px-5 md:px-8 pt-6 md:pt-8 pb-5 border-b border-white/5">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
-            <dt className="text-xs font-medium text-muted-foreground mb-1">Database name</dt>
-            <dd className="font-mono text-foreground break-all">
-              {keys.db && env[keys.db] ? env[keys.db] : dbStoreMode === "secret" ? (
-                <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
-                  <Lock className="w-3.5 h-3.5" />
-                  Not readable (Docker Secrets)
-                </span>
-              ) : "—"}
-            </dd>
+            <h3 className="text-lg font-semibold tracking-tight flex flex-wrap items-center gap-2">
+              <Database className="w-5 h-5 text-sky-400 shrink-0" />
+              <span>{getDatabaseEngineById(engine)?.name ?? "Database"}</span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground border border-border/80 rounded-full px-2 py-0.5">
+                <Lock className="w-3 h-3" />
+                Saved
+              </span>
+            </h3>
+            <p className="text-sm text-muted-foreground mt-2 max-w-xl leading-relaxed">
+              Values may live in <span className="text-foreground/90">Environment</span> or{" "}
+              <span className="text-foreground/90">Docker Secrets</span> (secrets are not shown). After changing replicas or
+              port, redeploy the stack.
+            </p>
           </div>
-        )}
-        {hasUser && (
-          <div>
-            <dt className="text-xs font-medium text-muted-foreground mb-1">{userLabel}</dt>
-            <dd className="font-mono text-foreground break-all">
-              {keys.user && env[keys.user] ? env[keys.user] : userStoreMode === "secret" ? (
-                <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
-                  <Lock className="w-3.5 h-3.5" />
-                  Not readable (Docker Secrets)
-                </span>
-              ) : "—"}
-            </dd>
-          </div>
-        )}
-        <div className="sm:col-span-2">
-          <dt className="text-xs font-medium text-muted-foreground mb-1">{primaryPasswordLabel}</dt>
-          <dd className="flex items-center gap-2 flex-wrap">
-            {showPassword ? (
-              env[keys.pass] ? (
-                <span className="font-mono text-foreground break-all">{env[keys.pass]}</span>
-              ) : passStoreMode === "secret" ? (
-                <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs">
-                  <Lock className="w-3.5 h-3.5" />
-                  Not readable (Docker Secrets)
-                </span>
-              ) : (
-                <span className="text-muted-foreground">—</span>
-              )
-            ) : (
-              <span className="font-mono text-foreground break-all">••••••••</span>
-            )}
-            <button
-              type="button"
-              onClick={() => setShowPassword((v) => !v)}
-              className="btn-secondary text-xs py-1 h-8 inline-flex items-center gap-1"
-              aria-label={showPassword ? "Hide password" : "Show password"}
-            >
-              {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              {showPassword ? "Hide" : "Show"}
-            </button>
-          </dd>
         </div>
-        {rootPassKey && (
-          <div className="sm:col-span-2">
-            <dt className="text-xs font-medium text-muted-foreground mb-1">Root password</dt>
-            <dd className="font-mono text-foreground break-all">
-              {showPassword ? (
-                rootPassKey && env[rootPassKey] ? (
-                  <span>{env[rootPassKey]}</span>
-                ) : rootPassStoreMode === "secret" ? (
-                  <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
-                    <Lock className="w-3.5 h-3.5" />
-                    Not readable (Docker Secrets)
-                  </span>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )
-              ) : (
-                "••••••••"
-              )}
-            </dd>
+      </div>
+
+      {/* Image + stack status */}
+      <div className="px-5 md:px-8 py-4 bg-muted/15 border-b border-white/5">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between gap-y-2 max-w-3xl">
+          <div className="min-w-0">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-1">Image</p>
+            <p className="font-mono text-sm text-foreground break-all">{yamlImage}</p>
           </div>
-        )}
-        <div className="sm:col-span-2">
-          <dt className="text-xs font-medium text-muted-foreground mb-1">Replicas</dt>
-          <dd className="space-y-2">
-            {!editingReplicas ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
-                <span className="font-mono text-foreground">{replicas}</span>
-                <button
-                  type="button"
-                  disabled={!hasStack}
-                  onClick={() => {
-                    setEditingReplicas(true);
-                    setReplicasDraft(String(replicas));
-                  }}
-                  className="btn-secondary text-xs py-1.5 h-8 self-start disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Change replicas
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 max-w-md">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    className="input-field font-mono text-sm max-w-[8rem] py-2"
-                    value={replicasDraft}
-                    onChange={(e) => setReplicasDraft(e.target.value)}
-                    disabled={replicasSaving}
-                  />
-                  <span className="text-xs text-muted-foreground">(1–10, Swarm)</span>
+          {!hasStack ? (
+            <p className="text-xs text-amber-300/95 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 sm:max-w-xs shrink-0">
+              No stack YAML saved yet — generate the stack from Overview to deploy.
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="px-5 md:px-8 py-6 space-y-6">
+        {/* Credentials */}
+        <section aria-labelledby="db-creds-heading">
+          <h4
+            id="db-creds-heading"
+            className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-4"
+          >
+            Credentials
+          </h4>
+          <div className="rounded-xl border border-white/10 bg-black/20 p-4 md:p-5">
+            <dl className="grid gap-5 sm:grid-cols-2 text-sm">
+              {hasDbName && (
+                <div className="min-w-0">
+                  <dt className="text-[11px] font-medium text-muted-foreground mb-1.5">Database name</dt>
+                  <dd className="font-mono text-foreground break-all text-[13px] leading-snug">
+                    {keys.db && env[keys.db] ? env[keys.db] : dbStoreMode === "secret" ? (
+                      <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        Not readable (Docker Secrets)
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </dd>
                 </div>
-                <div className="flex flex-wrap gap-2">
+              )}
+              {hasUser && (
+                <div className="min-w-0">
+                  <dt className="text-[11px] font-medium text-muted-foreground mb-1.5">{userLabel}</dt>
+                  <dd className="font-mono text-foreground break-all text-[13px] leading-snug">
+                    {keys.user && env[keys.user] ? env[keys.user] : userStoreMode === "secret" ? (
+                      <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
+                        <Lock className="w-3.5 h-3.5 shrink-0" />
+                        Not readable (Docker Secrets)
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </dd>
+                </div>
+              )}
+              <div className="sm:col-span-2">
+                <dt className="text-[11px] font-medium text-muted-foreground mb-1.5">{primaryPasswordLabel}</dt>
+                <dd className="flex items-center gap-2 flex-wrap">
+                  {showPassword ? (
+                    env[keys.pass] ? (
+                      <span className="font-mono text-foreground break-all text-[13px]">{env[keys.pass]}</span>
+                    ) : passStoreMode === "secret" ? (
+                      <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs">
+                        <Lock className="w-3.5 h-3.5" />
+                        Not readable (Docker Secrets)
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )
+                  ) : (
+                    <span className="font-mono text-foreground break-all">••••••••</span>
+                  )}
                   <button
                     type="button"
-                    disabled={replicasSaving}
-                    onClick={() => void saveReplicas()}
-                    className="btn-primary text-xs py-1.5 h-8 inline-flex items-center gap-1.5"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="btn-secondary text-xs py-1 h-8 inline-flex items-center gap-1"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
-                    {replicasSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                    {replicasSaving ? "Saving…" : "Save"}
+                    {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    {showPassword ? "Hide" : "Show"}
                   </button>
+                </dd>
+              </div>
+              {rootPassKey ? (
+                <div className="sm:col-span-2 pt-1 border-t border-white/5">
+                  <dt className="text-[11px] font-medium text-muted-foreground mb-1.5">Root password</dt>
+                  <dd className="font-mono text-foreground break-all text-[13px]">
+                    {showPassword ? (
+                      rootPassKey && env[rootPassKey] ? (
+                        <span>{env[rootPassKey]}</span>
+                      ) : rootPassStoreMode === "secret" ? (
+                        <span className="inline-flex items-center gap-1.5 text-muted-foreground text-xs font-normal">
+                          <Lock className="w-3.5 h-3.5" />
+                          Not readable (Docker Secrets)
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )
+                    ) : (
+                      "••••••••"
+                    )}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+        </section>
+
+        {/* Scaling & host access */}
+        <section aria-labelledby="db-net-heading">
+          <h4
+            id="db-net-heading"
+            className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-4"
+          >
+            Scaling &amp; host access
+          </h4>
+          <div className="grid gap-4 md:grid-cols-2 max-w-3xl">
+            <div className="rounded-xl border border-white/10 bg-black/15 p-4">
+              <p className="text-[11px] font-medium text-muted-foreground mb-2">Replicas</p>
+              {!editingReplicas ? (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="font-mono text-lg text-foreground tabular-nums">{replicas}</span>
                   <button
                     type="button"
-                    disabled={replicasSaving}
+                    disabled={!hasStack}
                     onClick={() => {
-                      setEditingReplicas(false);
+                      setEditingReplicas(true);
                       setReplicasDraft(String(replicas));
                     }}
-                    className="btn-secondary text-xs py-1.5 h-8"
+                    className="btn-secondary text-xs py-1.5 h-8 self-start disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Cancel
+                    Change
                   </button>
                 </div>
-              </div>
-            )}
-          </dd>
-        </div>
-        <div className="sm:col-span-2">
-          <dt className="text-xs font-medium text-muted-foreground mb-1">Host port (→ {containerPort})</dt>
-          <dd className="space-y-2">
-            {!editingHostPort ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap">
-                <span className="font-mono text-foreground">
-                  {hostPort != null ? (
-                    <>
-                      <span className="text-emerald-400">{hostPort}</span>
-                      <span className="text-muted-foreground"> → {containerPort} on host</span>
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground">
-                      Not published
-                    </span>
-                  )}
-                </span>
-                <button
-                  type="button"
-                  disabled={!hasStack}
-                  onClick={() => {
-                    setEditingHostPort(true);
-                    setPortDraft(hostPort != null ? String(hostPort) : "");
-                  }}
-                  className="btn-secondary text-xs py-1.5 h-8 self-start disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Change port
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 max-w-md">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    className="input-field font-mono text-sm max-w-[10rem] py-2"
-                    value={portDraft}
-                    onChange={(e) => setPortDraft(e.target.value)}
-                    placeholder="e.g. 5432"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    disabled={portSaving}
-                  />
-                  <span className="text-xs text-muted-foreground">→ container {containerPort}</span>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      className="input-field font-mono text-sm max-w-[8rem] py-2"
+                      value={replicasDraft}
+                      onChange={(e) => setReplicasDraft(e.target.value)}
+                      disabled={replicasSaving}
+                    />
+                    <span className="text-xs text-muted-foreground">1–10 (Swarm)</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={replicasSaving}
+                      onClick={() => void saveReplicas()}
+                      className="btn-primary text-xs py-1.5 h-8 inline-flex items-center gap-1.5"
+                    >
+                      {replicasSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                      {replicasSaving ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={replicasSaving}
+                      onClick={() => {
+                        setEditingReplicas(false);
+                        setReplicasDraft(String(replicas));
+                      }}
+                      className="btn-secondary text-xs py-1.5 h-8"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  Leave empty and save to stop publishing on the host. After saving, redeploy the service.
-                </p>
-                <div className="flex flex-wrap gap-2">
+              )}
+            </div>
+            <div className="rounded-xl border border-white/10 bg-black/15 p-4">
+              <p className="text-[11px] font-medium text-muted-foreground mb-2">
+                Host port <span className="text-muted-foreground/80 font-normal">→ container {containerPort}</span>
+              </p>
+              {!editingHostPort ? (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <span className="font-mono text-sm">
+                    {hostPort != null ? (
+                      <>
+                        <span className="text-emerald-400 text-lg tabular-nums">{hostPort}</span>
+                        <span className="text-muted-foreground"> → {containerPort}</span>
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Not published</span>
+                    )}
+                  </span>
                   <button
                     type="button"
-                    disabled={portSaving}
-                    onClick={() => void saveHostPort()}
-                    className="btn-primary text-xs py-1.5 h-8 inline-flex items-center gap-1.5"
-                  >
-                    {portSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                    {portSaving ? "Saving…" : "Save"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={portSaving}
+                    disabled={!hasStack}
                     onClick={() => {
-                      setEditingHostPort(false);
+                      setEditingHostPort(true);
                       setPortDraft(hostPort != null ? String(hostPort) : "");
                     }}
-                    className="btn-secondary text-xs py-1.5 h-8"
+                    className="btn-secondary text-xs py-1.5 h-8 self-start disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Cancel
+                    Change
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      className="input-field font-mono text-sm max-w-[10rem] py-2"
+                      value={portDraft}
+                      onChange={(e) => setPortDraft(e.target.value)}
+                      placeholder="e.g. 5432"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      disabled={portSaving}
+                    />
+                    <span className="text-xs text-muted-foreground">→ {containerPort}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Empty + Save unpublishes the port on the host. Redeploy after saving.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={portSaving}
+                      onClick={() => void saveHostPort()}
+                      className="btn-primary text-xs py-1.5 h-8 inline-flex items-center gap-1.5"
+                    >
+                      {portSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                      {portSaving ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={portSaving}
+                      onClick={() => {
+                        setEditingHostPort(false);
+                        setPortDraft(hostPort != null ? String(hostPort) : "");
+                      }}
+                      className="btn-secondary text-xs py-1.5 h-8"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Internal URL */}
+        {internalUrl ? (
+          <section aria-labelledby="db-internal-url-heading" className="pt-2 border-t border-white/10">
+            <h4
+              id="db-internal-url-heading"
+              className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-3"
+            >
+              Internal connection URL
+            </h4>
+            <div className="rounded-xl border border-sky-500/15 bg-sky-500/[0.06] p-4 md:p-5 space-y-3">
+              <p className="text-[11px] text-muted-foreground leading-relaxed max-w-2xl">
+                Same overlay network as this stack — Swarm DNS host{" "}
+                <span className="font-mono text-foreground/90">{internalUrl.host}</span>.
+              </p>
+              {internalUrl.passwordPlaceholder ? (
+                <p className="text-[11px] text-sky-100/85 leading-relaxed rounded-lg border border-sky-500/20 bg-black/20 px-3 py-2">
+                  Secrets use placeholder{" "}
+                  <code className="text-[10px] font-mono bg-black/35 px-1 py-0.5 rounded">{DB_URL_PASSWORD_PLACEHOLDER}</code>{" "}
+                  — substitute your password when connecting, or store the password in Environment to show it in the URL
+                  here.
+                </p>
+              ) : null}
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-4">
+                <code className="block flex-1 min-w-0 rounded-lg border border-white/10 bg-black/30 px-3 py-2.5 text-xs font-mono text-sky-100/90 break-all leading-relaxed">
+                  {showInternalUrl ? (
+                    internalUrl.displayUrl
+                  ) : (
+                    <span className="select-none tracking-wide text-muted-foreground">
+                      {internalUrl.displayUrl.replace(/./g, "•")}
+                    </span>
+                  )}
+                </code>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowInternalUrl((v) => !v)}
+                    className="btn-secondary text-xs py-1.5 h-9 inline-flex items-center gap-1.5"
+                    aria-label={showInternalUrl ? "Hide internal connection URL" : "Show internal connection URL"}
+                  >
+                    {showInternalUrl ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    {showInternalUrl ? "Hide" : "Show"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(internalUrl.copyUrl);
+                      toast({ title: "Copied", description: "Internal connection URL copied to clipboard." });
+                    }}
+                    className="btn-secondary text-xs py-1.5 h-9 inline-flex items-center gap-1.5"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Copy
                   </button>
                 </div>
               </div>
-            )}
-          </dd>
-        </div>
-      </dl>
+            </div>
+          </section>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1840,6 +2682,20 @@ function ApplicationArchivePanel({
       setImageRef("");
     }
   }, [serviceRow?.config, serviceRow?.appName]);
+
+  useEffect(() => {
+    const cfg = serviceRow?.config ?? "";
+    if (!cfg.includes("# weehawk application service")) return;
+    const ports = parseApplicationYamlPorts(cfg);
+    if (ports) {
+      setContainerPort(String(ports.containerPort));
+      setPublishPort(String(ports.publishPort));
+    } else {
+      setPublishPort("");
+    }
+    const rep = parseYamlReplicas(cfg);
+    if (rep != null) setReplicas(String(rep));
+  }, [serviceRow?.id, serviceRow?.config]);
 
   const updateVariable = (idx: number, patch: Partial<AppEnvVarRow>) => {
     setVariables((prev) =>

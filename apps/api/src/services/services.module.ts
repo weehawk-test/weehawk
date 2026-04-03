@@ -9,6 +9,7 @@ import { DatabaseGeneratorService } from './database-generator.service';
 import { DockersecretsModule } from 'src/dockersecrets/dockersecrets.module';
 import { ExecutorModule } from '../executor/executor.module';
 import { DockerfileGeneratorModule } from '../dockerfile-generator/dockerfile-generator.module';
+import { S3Module } from '../s3/s3.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { DockerfileGeneratorModule } from '../dockerfile-generator/dockerfile-ge
     DockersecretsModule,
     DockerfileGeneratorModule,
     forwardRef(() => ExecutorModule),
+    S3Module,
   ],
   controllers: [ServicesController],
   providers: [ServicesService, ServiceTerminalGateway, DatabaseGeneratorService],

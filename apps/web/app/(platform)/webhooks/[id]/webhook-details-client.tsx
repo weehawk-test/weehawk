@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUpdateWebhook, useDeleteWebhook } from "@/hooks/use-webhooks";
 import {
-  ArrowLeft,
+  X,
   Copy,
   CheckCircle2,
   Terminal,
@@ -81,17 +81,17 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
 
   return (
     <>
-      <div className="max-w-3xl mx-auto">
-        <Link href="/webhooks">
-          <button
-            type="button"
-            className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 text-sm font-medium"
-          >
-            <ArrowLeft className="w-4 h-4" /> Back to webhooks
-          </button>
-        </Link>
+      <div className="max-w-3xl mx-auto relative">
+        <button
+          type="button"
+          onClick={() => router.push("/webhooks")}
+          className="absolute top-0 right-0 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+          aria-label="Close"
+        >
+          <X className="h-5 w-5" />
+        </button>
 
-        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6 pr-12">
           <div>
             <div className="flex items-center gap-2.5 mb-1.5 flex-wrap">
               <h1 className="text-2xl font-bold text-foreground">{webhook.name}</h1>

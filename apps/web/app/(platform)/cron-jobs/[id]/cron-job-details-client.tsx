@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bell, Clock, Hash, Trash2, Pencil } from "lucide-react";
+import { X, Bell, Clock, Hash, Trash2, Pencil } from "lucide-react";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -25,14 +25,17 @@ export function CronJobDetailsClient({ id, initialCronJob }: Props) {
 
   return (
     <>
-      <div className="max-w-3xl mx-auto">
-        <Link href="/cron-jobs">
-          <button type="button" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 text-sm font-medium">
-            <ArrowLeft className="w-4 h-4" /> Back to cron jobs
-          </button>
-        </Link>
+      <div className="max-w-3xl mx-auto relative">
+        <button
+          type="button"
+          onClick={() => router.push("/cron-jobs")}
+          className="absolute top-0 right-0 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+          aria-label="Close"
+        >
+          <X className="h-5 w-5" />
+        </button>
 
-        <div className="flex items-center justify-between mb-6 gap-3">
+        <div className="flex items-center justify-between mb-6 gap-3 pr-12">
           <div>
             <h1 className="text-2xl font-bold">{cronJob.name}</h1>
             {cronJob.description && <p className="text-muted-foreground">{cronJob.description}</p>}

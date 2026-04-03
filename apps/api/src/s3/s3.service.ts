@@ -6,8 +6,17 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { createReadStream } from 'fs';
+import {
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import { createReadStream, createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
+import type { Readable } from 'stream';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Repository } from 'typeorm';
@@ -303,6 +312,441 @@ export class S3Service implements OnModuleInit {
   /**
    * Upload a local file to the bucket for a saved profile. `objectKey` is the full key (no leading slash).
    */
+  private assertSafeObjectKey(objectKey: string): string {
+    const key = objectKey.replace(/^\/+/, '').trim();
+    if (!key) {
+      throw new BadRequestException('Object key is required.');
+    }
+    if (key.includes('..') || key.includes('\\')) {
+      throw new BadRequestException('Invalid object key.');
+    }
+    return key;
+  }
+
+  private normalizeListPrefix(raw: string | undefined): string {
+    const t = raw?.trim() ?? '';
+    if (!t) return '';
+    let p = t.replace(/^\/+/, '');
+    if (!p.endsWith('/')) p += '/';
+    return p;
+  }
+
+  /**
+   * List “folders” (common prefixes) and objects at one level under `prefix` (virtual directories via delimiter).
+   */
+  async listBucketObjects(
+    profileName: string,
+    prefixRaw: string | undefined,
+    continuationToken: string | undefined,
+  ): Promise<{
+    bucket: string;
+    prefix: string;
+    folders: { prefix: string; name: string }[];
+    objects: { key: string; name: string; size: number; lastModified: string }[];
+    isTruncated: boolean;
+    continuationToken?: string;
+  }> {
+    const safeName = profileName?.trim();
+    if (!safeName) {
+      throw new BadRequestException('S3 profile name is required.');
+    }
+    const row = await this.profileRepo.findOne({ where: { name: safeName } });
+    if (!row) {
+      throw new NotFoundException(`S3 profile "${safeName}" not found`);
+    }
+    const input = rowToCredentials(row);
+    const normalizedPrefix = this.normalizeListPrefix(prefixRaw);
+    const client = createS3Client(input);
+    try {
+      const result = await client.send(
+        new ListObjectsV2Command({
+          Bucket: input.bucket,
+          Prefix: normalizedPrefix,
+          Delimiter: '/',
+          MaxKeys: 500,
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      const folders = (result.CommonPrefixes ?? []).map((cp) => {
+        const p = cp.Prefix ?? '';
+        const trimmed = p.replace(/\/$/, '');
+        const name = trimmed.slice(trimmed.lastIndexOf('/') + 1) || trimmed;
+        return { prefix: p, name };
+      });
+
+      const objects = (result.Contents ?? [])
+        .map((c) => {
+          const key = c.Key;
+          if (!key || key.endsWith('/')) return null;
+          const rel = normalizedPrefix ? key.slice(normalizedPrefix.length) : key;
+          if (rel.includes('/')) return null;
+          return {
+            key,
+            name: rel,
+            size: c.Size ?? 0,
+            lastModified: c.LastModified?.toISOString() ?? '',
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+
+      return {
+        bucket: input.bucket,
+        prefix: normalizedPrefix,
+        folders,
+        objects,
+        isTruncated: Boolean(result.IsTruncated),
+        continuationToken: result.NextContinuationToken,
+      };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 list failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  async deleteObject(
+    profileName: string,
+    objectKey: string,
+  ): Promise<{ success: boolean; key: string }> {
+    const safeName = profileName?.trim();
+    if (!safeName) {
+      throw new BadRequestException('S3 profile name is required.');
+    }
+    const row = await this.profileRepo.findOne({ where: { name: safeName } });
+    if (!row) {
+      throw new NotFoundException(`S3 profile "${safeName}" not found`);
+    }
+    const input = rowToCredentials(row);
+    const key = this.assertSafeObjectKey(objectKey);
+    const client = createS3Client(input);
+    try {
+      await client.send(
+        new DeleteObjectCommand({ Bucket: input.bucket, Key: key }),
+      );
+      return { success: true, key };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 delete failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /**
+   * Delete up to 1000 objects in one S3 DeleteObjects call.
+   */
+  async deleteObjectsBatch(
+    profileName: string,
+    keys: string[],
+  ): Promise<{
+    deleted: string[];
+    errors: { key: string; message: string }[];
+  }> {
+    const safeName = profileName?.trim();
+    if (!safeName) {
+      throw new BadRequestException('S3 profile name is required.');
+    }
+    if (!Array.isArray(keys) || keys.length === 0) {
+      throw new BadRequestException('keys must be a non-empty array.');
+    }
+    if (keys.length > 1000) {
+      throw new BadRequestException('At most 1000 keys per batch.');
+    }
+    const sanitized: string[] = [];
+    const seen = new Set<string>();
+    for (const raw of keys) {
+      const k = this.assertSafeObjectKey(String(raw));
+      if (!seen.has(k)) {
+        seen.add(k);
+        sanitized.push(k);
+      }
+    }
+    const row = await this.profileRepo.findOne({ where: { name: safeName } });
+    if (!row) {
+      throw new NotFoundException(`S3 profile "${safeName}" not found`);
+    }
+    const input = rowToCredentials(row);
+    const client = createS3Client(input);
+    try {
+      const result = await client.send(
+        new DeleteObjectsCommand({
+          Bucket: input.bucket,
+          Delete: {
+            Objects: sanitized.map((Key) => ({ Key })),
+            Quiet: false,
+          },
+        }),
+      );
+      const deleted = (result.Deleted ?? [])
+        .map((d) => d.Key)
+        .filter((k): k is string => Boolean(k));
+      const errors = (result.Errors ?? []).map((e) => ({
+        key: e.Key ?? '',
+        message: e.Message ?? 'Unknown error',
+      }));
+      return { deleted, errors };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 batch delete failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /**
+   * Normalize a folder prefix (must be non-empty; always ends with `/`).
+   */
+  private normalizeFolderPrefix(raw: string): string {
+    let p = raw.replace(/^\/+/, '').trim();
+    if (!p) {
+      throw new BadRequestException('prefix is required.');
+    }
+    if (p.includes('..') || p.includes('\\')) {
+      throw new BadRequestException('Invalid prefix.');
+    }
+    return p.endsWith('/') ? p : `${p}/`;
+  }
+
+  /**
+   * Aggregate size, count, and latest LastModified for all objects under a prefix (recursive).
+   * Stops after PREFIX_SUMMARY_MAX_PAGES pages; sets isPartialSummary if more keys remain.
+   */
+  async summarizePrefix(
+    profileName: string,
+    prefixRaw: string,
+  ): Promise<{
+    objectCount: number;
+    totalSize: number;
+    lastModified: string | null;
+    isPartialSummary: boolean;
+  }> {
+    const PREFIX_SUMMARY_MAX_PAGES = 200;
+    const safeName = profileName?.trim();
+    if (!safeName) {
+      throw new BadRequestException('S3 profile name is required.');
+    }
+    const prefix = this.normalizeFolderPrefix(prefixRaw);
+    const row = await this.profileRepo.findOne({ where: { name: safeName } });
+    if (!row) {
+      throw new NotFoundException(`S3 profile "${safeName}" not found`);
+    }
+    const input = rowToCredentials(row);
+    const client = createS3Client(input);
+    let objectCount = 0;
+    let totalSize = 0;
+    let lastModified: Date | null = null;
+    let continuationToken: string | undefined;
+    try {
+      for (let page = 0; page < PREFIX_SUMMARY_MAX_PAGES; page++) {
+        const result = await client.send(
+          new ListObjectsV2Command({
+            Bucket: input.bucket,
+            Prefix: prefix,
+            MaxKeys: 1000,
+            ContinuationToken: continuationToken,
+          }),
+        );
+        for (const c of result.Contents ?? []) {
+          const k = c.Key;
+          if (!k) continue;
+          objectCount++;
+          totalSize += c.Size ?? 0;
+          const lm = c.LastModified;
+          if (lm && (!lastModified || lm > lastModified)) {
+            lastModified = lm;
+          }
+        }
+        if (!result.IsTruncated || !result.NextContinuationToken) {
+          continuationToken = undefined;
+          break;
+        }
+        continuationToken = result.NextContinuationToken;
+      }
+      const isPartialSummary = Boolean(continuationToken);
+      return {
+        objectCount,
+        totalSize,
+        lastModified: lastModified?.toISOString() ?? null,
+        isPartialSummary,
+      };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 prefix summary failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /**
+   * List and delete every object whose key starts with `prefix` (recursive). Streams in batches to limit memory.
+   */
+  async deleteObjectsUnderPrefix(
+    profileName: string,
+    prefixRaw: string,
+  ): Promise<{
+    deletedCount: number;
+    errors: { key: string; message: string }[];
+  }> {
+    const MAX_LIST = 1_000_000;
+    const safeName = profileName?.trim();
+    if (!safeName) {
+      throw new BadRequestException('S3 profile name is required.');
+    }
+    const prefix = this.normalizeFolderPrefix(prefixRaw);
+    const row = await this.profileRepo.findOne({ where: { name: safeName } });
+    if (!row) {
+      throw new NotFoundException(`S3 profile "${safeName}" not found`);
+    }
+    const input = rowToCredentials(row);
+    const client = createS3Client(input);
+    const errors: { key: string; message: string }[] = [];
+    let deletedCount = 0;
+    let totalListed = 0;
+    const pending: string[] = [];
+    let continuationToken: string | undefined;
+
+    const flushDelete = async (keys: string[]) => {
+      if (keys.length === 0) return;
+      const result = await client.send(
+        new DeleteObjectsCommand({
+          Bucket: input.bucket,
+          Delete: {
+            Objects: keys.map((Key) => ({ Key })),
+            Quiet: false,
+          },
+        }),
+      );
+      deletedCount += (result.Deleted ?? []).filter((d) => d.Key).length;
+      for (const e of result.Errors ?? []) {
+        errors.push({
+          key: e.Key ?? '',
+          message: e.Message ?? 'Unknown error',
+        });
+      }
+    };
+
+    try {
+      do {
+        const result = await client.send(
+          new ListObjectsV2Command({
+            Bucket: input.bucket,
+            Prefix: prefix,
+            MaxKeys: 1000,
+            ContinuationToken: continuationToken,
+          }),
+        );
+        for (const c of result.Contents ?? []) {
+          const k = c.Key;
+          if (!k) continue;
+          totalListed++;
+          if (totalListed > MAX_LIST) {
+            throw new BadRequestException(
+              `Too many objects under this prefix (limit ${MAX_LIST}). Split the workload or use another tool.`,
+            );
+          }
+          pending.push(k);
+          if (pending.length >= 1000) {
+            await flushDelete(pending.splice(0, 1000));
+          }
+        }
+        continuationToken = result.IsTruncated
+          ? result.NextContinuationToken
+          : undefined;
+      } while (continuationToken);
+      while (pending.length > 0) {
+        await flushDelete(pending.splice(0, 1000));
+      }
+      return { deletedCount, errors };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 prefix delete failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /**
+   * Stream object bytes for download (caller must consume the stream; client is destroyed when the stream ends or errors).
+   */
+  async getObjectStream(
+    profileName: string,
+    objectKey: string,
+  ): Promise<{
+    stream: Readable;
+    contentType: string;
+    contentLength?: number;
+    filename: string;
+  }> {
+    const safeName = profileName?.trim();
+    if (!safeName) {
+      throw new BadRequestException('S3 profile name is required.');
+    }
+    const row = await this.profileRepo.findOne({ where: { name: safeName } });
+    if (!row) {
+      throw new NotFoundException(`S3 profile "${safeName}" not found`);
+    }
+    const input = rowToCredentials(row);
+    const key = this.assertSafeObjectKey(objectKey);
+    const client = createS3Client(input);
+    try {
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: input.bucket, Key: key }),
+      );
+      const body = response.Body;
+      if (!body) {
+        client.destroy();
+        throw new InternalServerErrorException('Empty S3 object body.');
+      }
+      const stream = body as Readable;
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        client.destroy();
+      };
+      stream.once('end', cleanup);
+      stream.once('error', cleanup);
+      stream.once('close', cleanup);
+      const filename = path.basename(key) || 'download';
+      return {
+        stream,
+        contentType: response.ContentType ?? 'application/octet-stream',
+        contentLength: response.ContentLength,
+        filename,
+      };
+    } catch (e) {
+      client.destroy();
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 download failed: ${getErrorMessage(e)}`,
+      );
+    }
+  }
+
   async uploadLocalFile(
     profileName: string,
     localAbsolutePath: string,
@@ -317,10 +761,7 @@ export class S3Service implements OnModuleInit {
       throw new NotFoundException(`S3 profile "${safeName}" not found`);
     }
     const input = rowToCredentials(row);
-    const key = objectKey.replace(/^\/+/, '');
-    if (!key) {
-      throw new BadRequestException('Object key is required.');
-    }
+    const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
     const resolvedPath = path.resolve(localAbsolutePath);
     try {
@@ -354,6 +795,48 @@ export class S3Service implements OnModuleInit {
       }
       throw new InternalServerErrorException(
         `S3 upload failed: ${getErrorMessage(e)} (file: ${resolvedPath})`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /**
+   * Download an object to a local file path (writes the full object, then returns).
+   */
+  async downloadObjectToFile(
+    profileName: string,
+    objectKey: string,
+    destAbsolutePath: string,
+  ): Promise<void> {
+    const safeName = profileName?.trim();
+    if (!safeName) {
+      throw new BadRequestException('S3 profile name is required.');
+    }
+    const row = await this.profileRepo.findOne({ where: { name: safeName } });
+    if (!row) {
+      throw new NotFoundException(`S3 profile "${safeName}" not found`);
+    }
+    const input = rowToCredentials(row);
+    const key = this.assertSafeObjectKey(objectKey);
+    const resolvedPath = path.resolve(destAbsolutePath);
+    const client = createS3Client(input);
+    try {
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: input.bucket, Key: key }),
+      );
+      const body = response.Body;
+      if (!body) {
+        throw new InternalServerErrorException('Empty S3 object body.');
+      }
+      const rs = body as Readable;
+      await pipeline(rs, createWriteStream(resolvedPath));
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 download failed: ${getErrorMessage(e)}`,
       );
     } finally {
       client.destroy();

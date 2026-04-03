@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { HardDrive, Plus, Search, Trash2, Loader2, PlugZap, Save, X, Pencil, ChevronRight, Clock } from "lucide-react";
+import { HardDrive, Plus, Search, Trash2, Loader2, PlugZap, Save, X, Pencil, ChevronRight, Clock, FolderOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -16,6 +17,33 @@ import {
   type S3ProfilePublic,
 } from "@/lib/s3-api";
 import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
+
+/** Short provider label from endpoint host (card badges). */
+function s3ProviderLabelFromEndpoint(endpoint: string): string {
+  const raw = endpoint.trim();
+  if (!raw) return "S3";
+  try {
+    const url = raw.includes("://") ? new URL(raw) : new URL(`https://${raw}`);
+    const h = url.hostname.toLowerCase();
+    if (h.includes("r2.cloudflarestorage.com") || h.endsWith(".r2.dev")) return "R2";
+    if (h.includes("amazonaws.com")) return "AWS";
+    if (h.includes("digitaloceanspaces.com")) return "Spaces";
+    if (h.includes("wasabisys.com")) return "Wasabi";
+    if (h.includes("backblazeb2.com")) return "B2";
+    if (h === "localhost" || h.startsWith("127.") || h.includes("minio")) return "MinIO";
+    if (h.includes("storage.googleapis.com")) return "GCS";
+    return "S3";
+  } catch {
+    return "S3";
+  }
+}
+
+/** e.g. f02e12ec…b65516ee for long keys; keeps short strings as-is. */
+function shortenCredentialPreview(s: string, head = 4, tail = 4): string {
+  const t = s.trim();
+  if (t.length <= head + tail + 1) return t;
+  return `${t.slice(0, head)}…${t.slice(-tail)}`;
+}
 
 type S3ProviderPreset = {
   id: string;
@@ -99,7 +127,7 @@ export function S3Client({
       form.bucket.trim() &&
       form.accessKeyId.trim();
     if (!base) return false;
-    if (secretRequired && !form.secretAccessKey.trim()) return false;
+    if (secretRequired && !(form.secretAccessKey ?? "").trim()) return false;
     return true;
   }, [form, secretRequired]);
 
@@ -171,7 +199,7 @@ export function S3Client({
 
   const payloadForApi = useMemo((): S3ProfilePayload => {
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
-    const secret = form.secretAccessKey.trim();
+    const secret = (form.secretAccessKey ?? "").trim();
     if (modal?.type === "edit" && !secret) {
       return {
         name: form.name.trim(),
@@ -195,7 +223,7 @@ export function S3Client({
 
   const onTest = async () => {
     if (!canSubmit) return;
-    if (modal?.type === "edit" && !form.secretAccessKey.trim()) {
+    if (modal?.type === "edit" && !(form.secretAccessKey ?? "").trim()) {
       toast({
         title: "Secret required",
         description: "Enter the secret access key to verify the connection, or save without verifying.",
@@ -370,15 +398,15 @@ export function S3Client({
             >
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="p-2 rounded-lg flex-shrink-0 bg-primary/10 text-primary">
-                    <HardDrive className="w-5 h-5" />
+                  <div className="w-10 h-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                    <HardDrive className="w-5 h-5 text-primary" />
                   </div>
                   <div className="min-w-0">
                     <h3 className="font-semibold text-lg leading-tight truncate" title={item.name}>
                       {item.name}
                     </h3>
-                    <p className="text-xs text-muted-foreground mt-1 truncate font-mono" title={item.endpoint}>
-                      {item.endpoint}
+                    <p className="text-xs text-muted-foreground mt-1 truncate" title={item.endpoint}>
+                      {s3ProviderLabelFromEndpoint(item.endpoint)} · {item.region}
                     </p>
                   </div>
                 </div>
@@ -406,16 +434,31 @@ export function S3Client({
                 </div>
               </div>
 
-              <p className="text-sm text-muted-foreground mb-4 line-clamp-2">
-                {item.bucket} · {item.region} — AK: {item.accessKeyId} — Secret: {item.secretAccessKeyMasked}
-              </p>
+              <div className="space-y-2 text-sm text-muted-foreground mb-4">
+                <p className="text-xs font-mono truncate" title={item.bucket}>
+                  Bucket: {item.bucket}
+                </p>
+                <p className="text-xs font-mono truncate" title={item.accessKeyId}>
+                  Access key: {shortenCredentialPreview(item.accessKeyId)}
+                </p>
+                <p className="text-xs font-mono truncate" title={item.secretAccessKeyMasked}>
+                  Secret: {item.secretAccessKeyMasked}
+                </p>
+              </div>
 
               <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
                 <div className="flex items-center gap-1">
-                  <Clock className="w-3 h-3 flex-shrink-0" />
+                  <Clock className="w-3 h-3" />
                   <span title="Created (UTC)">{formatDateUTC(profileCreatedAtIso(item))}</span>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap justify-end">
+                  <Link
+                    href={`/s3/bucket?name=${encodeURIComponent(item.name)}`}
+                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
+                  >
+                    <FolderOpen className="w-3 h-3" />
+                    Browse
+                  </Link>
                   <button
                     type="button"
                     onClick={() => openEdit(item)}
@@ -511,6 +554,14 @@ export function S3Client({
                 <button type="button" onClick={closeModal} className="btn-secondary text-sm">
                   Close
                 </button>
+                <Link
+                  href={`/s3/bucket?name=${encodeURIComponent(modal.profile.name)}`}
+                  className="btn-secondary text-sm inline-flex items-center gap-2"
+                  onClick={closeModal}
+                >
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  Browse bucket
+                </Link>
                 <button
                   type="button"
                   onClick={() => {

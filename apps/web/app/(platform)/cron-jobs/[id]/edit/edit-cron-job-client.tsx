@@ -8,7 +8,7 @@ import type { CronJobDetail } from "@/lib/cron-jobs-api";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { Service } from "@/lib/schema";
-import { ArrowLeft } from "lucide-react";
+import { X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
@@ -147,14 +147,16 @@ export function EditCronJobClient({
   return (
     <>
       <div className="max-w-2xl mx-auto">
-        <Link href="/cron-jobs">
-          <button type="button" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors mb-6 text-sm font-medium">
-            <ArrowLeft className="w-4 h-4" /> Back to cron jobs
+        <div className="glass-panel p-6 md:p-8 rounded-2xl relative">
+          <button
+            type="button"
+            onClick={() => router.push("/cron-jobs")}
+            className="absolute top-4 right-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
           </button>
-        </Link>
-
-        <div className="glass-panel p-6 md:p-8 rounded-2xl">
-          <h1 className="text-2xl font-bold text-foreground mb-6">Edit cron job</h1>
+          <h1 className="text-2xl font-bold text-foreground mb-6 pr-12">Edit cron job</h1>
           <div className="space-y-4">
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Name</label>

@@ -13,6 +13,7 @@ import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { Project } from 'src/projects/entities/project.entity';
 import { randomBytes } from 'crypto';
+import * as os from 'os';
 import { ExecutorService } from '../executor/executor.service';
 import { spawn, type ChildProcess } from 'child_process';
 import { Observable } from 'rxjs';
@@ -28,9 +29,15 @@ import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { DockerSecretsService } from 'src/dockersecrets/dockersecrets.service';
 import * as unzipper from 'unzipper';
-import { getServiceDeploymentDir } from './deployment-paths';
+import { createBackupTempDir, getServiceDeploymentDir, removeBackupTempDir } from './deployment-paths';
 import type { EventEmitter } from 'events';
 import { DockerfileGeneratorService } from '../dockerfile-generator/dockerfile-generator.service';
+import type { DatabaseBackupConfig } from '../backup/database-backup.types';
+import { resolveBackupFormat } from '../backup/database-backup.types';
+import { RunServiceBackupDto } from './dto/run-service-backup.dto';
+import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s3.dto';
+import { S3Service } from '../s3/s3.service';
+import { getErrorMessage } from '../utils/error-message';
 
 @Injectable()
 export class ServicesService {
@@ -45,6 +52,7 @@ export class ServicesService {
     private readonly databaseGenerator: DatabaseGeneratorService,
     private readonly dockerfileGenerator: DockerfileGeneratorService,
     private readonly dockerSecrets: DockerSecretsService,
+    private readonly s3Service: S3Service,
   ) {}
 
   async create(createServiceDto: CreateServiceDto) {
@@ -957,6 +965,273 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
     }
     return result;
+  }
+
+  private async finalizeBackupWithS3(
+    userId: number,
+    contextId: string,
+    profileName: string | null | undefined,
+    destDir: string,
+    r: { success: boolean; output: string; archiveBasename?: string },
+  ): Promise<{ success: boolean; output: string }> {
+    if (!r.success || !r.archiveBasename) {
+      return { success: r.success, output: r.output };
+    }
+    const trimmed = profileName?.trim();
+    if (!trimmed) {
+      return {
+        success: false,
+        output: `${r.output}\nS3 destination is not configured.`,
+      };
+    }
+    const localPath = path.join(destDir, r.archiveBasename);
+    const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    try {
+      const { bucket, key: uploadedKey } =
+        await this.s3Service.uploadLocalFile(
+          trimmed,
+          localPath,
+          key,
+        );
+      return {
+        success: true,
+        output: `${r.output}\nUploaded to s3://${bucket}/${uploadedKey}`,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
+      };
+    }
+  }
+
+  /**
+   * One-off backup trigger from the service details UI.
+   * Mirrors the same execution flow as webhooks/cron jobs:
+   * - run volume/db backup on the server (temp folder)
+   * - upload produced archive to S3 (if configured)
+   */
+  async runServiceBackupNow(
+    userId: number,
+    serviceId: number,
+    dto: RunServiceBackupDto,
+  ): Promise<{ ok: boolean; action: RunServiceBackupDto['action']; output: string }> {
+    await this.findOne(serviceId);
+    const contextId = `manual-service-${serviceId}-${Date.now()}`;
+    const profileName = dto.backupS3ProfileName?.trim();
+    if (!profileName) {
+      throw new BadRequestException('backupS3ProfileName is required.');
+    }
+
+    let destDir: string | null = null;
+    try {
+      await this.s3Service.assertProfileExists(profileName);
+      destDir = await createBackupTempDir();
+
+      if (dto.action === 'volume_backup') {
+        const volumeSource = dto.volumeSource?.trim();
+        if (!volumeSource) {
+          throw new BadRequestException('volumeSource is required for volume backup.');
+        }
+
+        const r = await this.executorService.backupDockerVolume(
+          volumeSource,
+          destDir,
+        );
+        const final = await this.finalizeBackupWithS3(
+          userId,
+          contextId,
+          profileName,
+          destDir,
+          r,
+        );
+        return { ok: final.success, action: dto.action, output: final.output.slice(0, 8000) };
+      }
+
+      if (dto.action === 'database_backup') {
+        if (!dto.databaseBackupConfig) {
+          throw new BadRequestException('databaseBackupConfig is required for database backup.');
+        }
+        const cfg = dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
+        const r = await this.executorService.backupDatabaseStructured(
+          serviceId,
+          cfg,
+          destDir,
+        );
+        const final = await this.finalizeBackupWithS3(
+          userId,
+          contextId,
+          profileName,
+          destDir,
+          r,
+        );
+        return { ok: final.success, action: dto.action, output: final.output.slice(0, 8000) };
+      }
+
+      // Should be unreachable due to DTO validation, but keeps TS safe.
+      throw new BadRequestException('Unsupported backup action.');
+    } catch (e) {
+      const msg = getErrorMessage(e).slice(0, 8000);
+      return { ok: false, action: dto.action, output: msg };
+    } finally {
+      if (destDir) {
+        await removeBackupTempDir(destDir).catch(() => {
+          /* best effort cleanup */
+        });
+      }
+    }
+  }
+
+  /**
+   * Import a database dump or volume backup archive from multipart upload; runs on the host like backup jobs.
+   */
+  async runServiceImportBackup(
+    userId: number,
+    serviceId: number,
+    file: Express.Multer.File,
+    action: 'import_database' | 'import_volume',
+    databaseBackupConfigJson?: string,
+    volumeSource?: string,
+  ): Promise<{ ok: boolean; output: string }> {
+    void userId;
+    await this.findOne(serviceId);
+    if (!file || (!(file as { buffer?: Buffer }).buffer?.length && !file.path)) {
+      throw new BadRequestException('file is required.');
+    }
+    const buf = (file as { buffer?: Buffer }).buffer;
+    if (buf && buf.length === 0) {
+      throw new BadRequestException('Empty file.');
+    }
+    const safeName =
+      path.basename(file.originalname || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_') ||
+      'upload.bin';
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wh-import-'));
+    const tmpPath = path.join(tmpDir, safeName);
+    try {
+      if (buf?.length) {
+        await fs.writeFile(tmpPath, buf);
+      } else if (file.path) {
+        await fs.copyFile(file.path, tmpPath);
+      } else {
+        throw new BadRequestException('Could not read uploaded file.');
+      }
+
+      if (action === 'import_volume') {
+        const vol = volumeSource?.trim();
+        if (!vol) {
+          throw new BadRequestException('volumeSource is required.');
+        }
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(vol)) {
+          throw new BadRequestException('Invalid volume name.');
+        }
+        const r = await this.executorService.importDockerVolume(vol, tmpPath);
+        return { ok: r.success, output: r.output };
+      }
+
+      if (action === 'import_database') {
+        const raw = databaseBackupConfigJson?.trim();
+        if (!raw) {
+          throw new BadRequestException('databaseBackupConfig JSON is required.');
+        }
+        let cfg: DatabaseBackupConfig;
+        try {
+          cfg = JSON.parse(raw) as DatabaseBackupConfig;
+        } catch {
+          throw new BadRequestException('Invalid databaseBackupConfig JSON.');
+        }
+        cfg.backupFormat = resolveBackupFormat(cfg.engine, cfg.backupFormat);
+        const r = await this.executorService.importDatabaseStructured(
+          serviceId,
+          cfg,
+          tmpPath,
+        );
+        return { ok: r.success, output: r.output };
+      }
+
+      throw new BadRequestException('Unsupported import action.');
+    } catch (e) {
+      if (e instanceof BadRequestException) {
+        throw e;
+      }
+      return { ok: false, output: getErrorMessage(e).slice(0, 8000) };
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  /**
+   * Import from an object already stored in S3 (downloads to a temp file, then same path as multipart import).
+   */
+  async runServiceImportBackupFromS3(
+    serviceId: number,
+    dto: ImportServiceBackupFromS3Dto,
+  ): Promise<{ ok: boolean; output: string }> {
+    await this.findOne(serviceId);
+    const profile = dto.backupS3ProfileName.trim();
+    const key = dto.s3Key.trim();
+    if (!profile || !key) {
+      throw new BadRequestException('backupS3ProfileName and s3Key are required.');
+    }
+    if (dto.action === 'import_volume') {
+      if (!key.toLowerCase().endsWith('.tar.gz')) {
+        throw new BadRequestException(
+          'Volume import requires an object key ending with .tar.gz',
+        );
+      }
+    }
+    const rawBase = path.basename(key.replace(/\\/g, '/')) || 'import.bin';
+    const safeName =
+      rawBase.replace(/[^a-zA-Z0-9._-]/g, '_') || 'import.bin';
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wh-import-s3-'));
+    const tmpPath = path.join(tmpDir, safeName);
+    try {
+      await this.s3Service.downloadObjectToFile(profile, key, tmpPath);
+      const st = await fs.stat(tmpPath);
+      if (st.size === 0) {
+        throw new BadRequestException('Downloaded object is empty.');
+      }
+
+      if (dto.action === 'import_volume') {
+        const vol = dto.volumeSource?.trim();
+        if (!vol) {
+          throw new BadRequestException('volumeSource is required.');
+        }
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(vol)) {
+          throw new BadRequestException('Invalid volume name.');
+        }
+        const r = await this.executorService.importDockerVolume(vol, tmpPath);
+        return { ok: r.success, output: r.output };
+      }
+
+      if (dto.action === 'import_database') {
+        const raw = dto.databaseBackupConfig?.trim();
+        if (!raw) {
+          throw new BadRequestException('databaseBackupConfig JSON is required.');
+        }
+        let cfg: DatabaseBackupConfig;
+        try {
+          cfg = JSON.parse(raw) as DatabaseBackupConfig;
+        } catch {
+          throw new BadRequestException('Invalid databaseBackupConfig JSON.');
+        }
+        cfg.backupFormat = resolveBackupFormat(cfg.engine, cfg.backupFormat);
+        const r = await this.executorService.importDatabaseStructured(
+          serviceId,
+          cfg,
+          tmpPath,
+        );
+        return { ok: r.success, output: r.output };
+      }
+
+      throw new BadRequestException('Unsupported import action.');
+    } catch (e) {
+      if (e instanceof BadRequestException) {
+        throw e;
+      }
+      return { ok: false, output: getErrorMessage(e).slice(0, 8000) };
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   async startService(id: number) {

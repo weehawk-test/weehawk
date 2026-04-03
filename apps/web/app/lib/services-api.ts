@@ -1,6 +1,7 @@
 import { API_BASE } from "./api";
 import type { CreateServiceInput, Service, ServiceType } from "./schema";
 import type { DatabaseEngineId } from "./database-engines";
+import type { DatabaseBackupConfig } from "./database-backup-preview";
 import { getServerApiBase } from "./server-api";
 
 function nestErrorMessage(text: string, fallback: string): string {
@@ -16,13 +17,19 @@ function nestErrorMessage(text: string, fallback: string): string {
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
+  const isBrowser = typeof window !== "undefined";
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const headers: HeadersInit = {
     Accept: "application/json",
     ...(!isFormData && init?.body ? { "Content-Type": "application/json" } : {}),
     ...init?.headers,
   };
-  return fetch(`${base}${path}`, { ...init, cache: "no-store", headers });
+  return fetch(`${base}${path}`, {
+    ...init,
+    cache: "no-store",
+    headers,
+    ...(isBrowser ? { credentials: init?.credentials ?? "include" } : {}),
+  });
 }
 
 /** Produces a valid `appName` for CreateServiceDto `@Matches` (lowercase, start/end letter). */
@@ -309,6 +316,75 @@ export async function executeServiceDeploymentApi(
   }
   const j = JSON.parse(text) as { success?: boolean; output?: string };
   return { success: j.success !== false, output: typeof j.output === "string" ? j.output : "" };
+}
+
+export async function runServiceBackupNowApi(
+  id: string,
+  body:
+    | {
+        action: "volume_backup";
+        volumeSource: string;
+        backupS3ProfileName: string;
+      }
+    | {
+        action: "database_backup";
+        databaseBackupConfig: DatabaseBackupConfig;
+        backupS3ProfileName: string;
+      },
+): Promise<{ ok: boolean; action: "volume_backup" | "database_backup"; output: string }> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/backup`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { ok?: boolean; action?: string; output?: string };
+  return {
+    ok: j.ok === true,
+    action: j.action as "volume_backup" | "database_backup",
+    output: typeof j.output === "string" ? j.output : "",
+  };
+}
+
+/** Multipart: `action`, `file`, plus `databaseBackupConfig` JSON string or `volumeSource`. */
+export async function importServiceBackupApi(
+  id: string,
+  formData: FormData,
+): Promise<{ ok: boolean; output: string }> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/backup/import`, {
+    method: "POST",
+    body: formData,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { ok?: boolean; output?: string };
+  return { ok: j.ok === true, output: typeof j.output === "string" ? j.output : "" };
+}
+
+export async function importServiceBackupFromS3Api(
+  id: string,
+  body: {
+    action: "import_database" | "import_volume";
+    backupS3ProfileName: string;
+    s3Key: string;
+    databaseBackupConfig?: string;
+    volumeSource?: string;
+  },
+): Promise<{ ok: boolean; output: string }> {
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/backup/import-from-s3`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { ok?: boolean; output?: string };
+  return { ok: j.ok === true, output: typeof j.output === "string" ? j.output : "" };
 }
 
 export async function fetchServiceRuntime(id: string): Promise<{ running: boolean }> {

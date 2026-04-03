@@ -35,7 +35,9 @@ import {
 } from './executor-swarm';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
 import { runStructuredDatabaseBackup } from './executor-structured-db-backup';
+import { runStructuredDatabaseImport } from './executor-structured-db-import';
 import { runDockerVolumeBackup } from './executor-volume-backup';
+import { runDockerVolumeImport } from './executor-volume-import';
 import {
   assertSafeComposeService,
   type DatabaseBackupConfig,
@@ -487,6 +489,49 @@ export class ExecutorService {
     destDir: string,
   ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
     return runDockerVolumeBackup(volumeName, destDir);
+  }
+
+  /** Restore DB from an uploaded archive (sql / custom / mongodump, etc.). */
+  async importDatabaseStructured(
+    serviceId: number,
+    config: DatabaseBackupConfig,
+    hostArchivePath: string,
+  ): Promise<{ success: boolean; output: string }> {
+    const service = await this.servicesService.findOne(serviceId);
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    await fs.mkdir(deployDir, { recursive: true });
+    const composeFile = path.join(deployDir, 'docker-compose.yml');
+    const finalConfig = (service.dockerConfig || '').replace(
+      /\$\{APP_NAME\}/g,
+      service.appName,
+    );
+    await fs.writeFile(composeFile, finalConfig, 'utf8');
+
+    const resolved = await this.getExecContainerId(
+      serviceId,
+      config.composeService,
+    );
+    if ('error' in resolved) {
+      return { success: false, output: resolved.error };
+    }
+    const envVars = parseEnv(service.env || '');
+    return runStructuredDatabaseImport(
+      config,
+      hostArchivePath,
+      { ...process.env, ...envVars },
+      resolved.id,
+    );
+  }
+
+  /** Restore a named volume from a .tar.gz produced by volume backup. */
+  async importDockerVolume(
+    volumeName: string,
+    hostArchivePath: string,
+  ): Promise<{ success: boolean; output: string }> {
+    return runDockerVolumeImport(volumeName, hostArchivePath);
   }
 
   /**
