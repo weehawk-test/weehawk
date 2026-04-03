@@ -3,9 +3,19 @@ import type { WebhookDetail, WebhookListItem } from "./webhooks-api";
 import type { CronJobDetail, CronJobListItem } from "./cron-jobs-api";
 import type { Project, Service } from "./schema";
 import type { NotificationChannel } from "./notifications-api";
-import type { S3ProfilePublic } from "./s3-api";
-import { mapApiServiceToService } from "./services-api";
-import { mapApiProjectToProject } from "./projects-api";
+import type { S3ProfilePublic, S3BucketListResponse, S3PrefixSummaryResponse } from "./s3-api";
+import {
+  mapApiServiceToService,
+  parseServicesPageResponse,
+  SERVICES_PAGE_SIZE,
+  type ServicesPageResponse,
+} from "./services-api";
+import {
+  mapApiProjectToProject,
+  parseProjectsPageResponse,
+  PROJECTS_PAGE_SIZE,
+  type ProjectsPageResponse,
+} from "./projects-api";
 import { getServerApiBase } from "./server-api";
 
 async function cookieHeaders(): Promise<HeadersInit> {
@@ -82,22 +92,29 @@ export async function fetchProjectSSR(id: string): Promise<Project | null> {
   return mapApiProjectToProject(await res.json());
 }
 
-export async function fetchProjectsSSR(): Promise<Project[]> {
-  const res = await fetch(`${apiBase()}/projects`, {
+export async function fetchProjectsSSR(
+  page = 1,
+  q = "",
+): Promise<ProjectsPageResponse> {
+  const params = new URLSearchParams();
+  params.set("page", String(Math.max(1, page)));
+  params.set("limit", String(PROJECTS_PAGE_SIZE));
+  const trim = q.trim();
+  if (trim) params.set("q", trim);
+  const res = await fetch(`${apiBase()}/projects?${params.toString()}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
-  if (!res.ok) return [];
-  const data = (await res.json()) as unknown;
-  if (!Array.isArray(data)) return [];
-  return data
-    .map((row) => mapApiProjectToProject(row))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(text.trim() || res.statusText || `HTTP ${res.status}`);
+  }
+  return parseProjectsPageResponse(text);
 }
 
-export async function fetchServicesSSR(projectId?: string): Promise<Service[]> {
-  const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-  const res = await fetch(`${apiBase()}/services${q}`, {
+/** All services (no project filter). Used by webhook/cron create & edit pickers. */
+export async function fetchServicesSSR(): Promise<Service[]> {
+  const res = await fetch(`${apiBase()}/services`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -105,6 +122,28 @@ export async function fetchServicesSSR(projectId?: string): Promise<Service[]> {
   const raw = (await res.json()) as unknown;
   if (!Array.isArray(raw)) return [];
   return raw.map((row) => mapApiServiceToService(row));
+}
+
+export async function fetchServicesPageSSR(
+  projectId: string,
+  page = 1,
+  q = "",
+): Promise<ServicesPageResponse> {
+  const params = new URLSearchParams();
+  params.set("projectId", projectId);
+  params.set("page", String(Math.max(1, page)));
+  params.set("limit", String(SERVICES_PAGE_SIZE));
+  const trim = q.trim();
+  if (trim) params.set("q", trim);
+  const res = await fetch(`${apiBase()}/services?${params.toString()}`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(text.trim() || res.statusText || `HTTP ${res.status}`);
+  }
+  return parseServicesPageResponse(text);
 }
 
 export async function fetchNotificationChannelsSSR(): Promise<NotificationChannel[]> {
@@ -125,5 +164,35 @@ export async function fetchS3ProfilesSSR(): Promise<S3ProfilePublic[]> {
   const data = (await res.json()) as unknown;
   if (!Array.isArray(data)) return [];
   return data as S3ProfilePublic[];
+}
+
+/** Server-only: bucket listing at root prefix (no client Network tab on first paint). */
+export async function fetchS3BucketObjectsSSR(
+  profileName: string,
+  prefix = "",
+): Promise<S3BucketListResponse | null> {
+  const q = new URLSearchParams();
+  if (prefix) q.set("prefix", prefix);
+  const qs = q.toString();
+  const res = await fetch(
+    `${apiBase()}/s3/profiles/${encodeURIComponent(profileName)}/objects${qs ? `?${qs}` : ""}`,
+    { headers: await cookieHeaders(), cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  return (await res.json()) as S3BucketListResponse;
+}
+
+/** Server-only: recursive prefix stats for folder rows. */
+export async function fetchS3PrefixSummarySSR(
+  profileName: string,
+  folderPrefix: string,
+): Promise<S3PrefixSummaryResponse | null> {
+  const q = new URLSearchParams({ prefix: folderPrefix });
+  const res = await fetch(
+    `${apiBase()}/s3/profiles/${encodeURIComponent(profileName)}/prefix-summary?${q.toString()}`,
+    { headers: await cookieHeaders(), cache: "no-store" },
+  );
+  if (!res.ok) return null;
+  return (await res.json()) as S3PrefixSummaryResponse;
 }
 

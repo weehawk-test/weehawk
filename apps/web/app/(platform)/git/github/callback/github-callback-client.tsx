@@ -1,0 +1,83 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft, CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
+import { useToast } from "@/hooks/use-toast";
+import { exchangeGithubManifest } from "@/lib/git-api";
+
+type Status = "idle" | "working" | "ok" | "error";
+
+export function GithubCallbackClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { accessToken } = useAuth();
+  const { toast } = useToast();
+  const [status, setStatus] = useState<Status>("idle");
+  const [message, setMessage] = useState<string | null>(null);
+  const ran = useRef(false);
+
+  useEffect(() => {
+    if (ran.current) return;
+    const code = searchParams.get("code");
+    if (!code?.trim()) {
+      ran.current = true;
+      setStatus("error");
+      setMessage("Missing ?code= from GitHub. Close this tab and try creating the app again.");
+      return;
+    }
+    if (!accessToken) return;
+
+    ran.current = true;
+    setStatus("working");
+
+    void (async () => {
+      try {
+        await exchangeGithubManifest(accessToken, code.trim());
+        setStatus("ok");
+        toast({ title: "GitHub App connected", description: "Credentials were saved to Weehawk." });
+        router.replace("/git/github");
+      } catch (e) {
+        setStatus("error");
+        const msg = e instanceof Error ? e.message : String(e);
+        setMessage(msg);
+        toast({
+          title: "Could not complete GitHub App setup",
+          description: msg,
+          variant: "destructive",
+        });
+      }
+    })();
+  }, [accessToken, searchParams, router, toast]);
+
+  return (
+    <div className="max-w-md mx-auto py-16 px-4 text-center space-y-6">
+      {status === "working" || status === "idle" ? (
+        <>
+          <Loader2 className="w-10 h-10 animate-spin text-primary mx-auto" />
+          <p className="text-sm text-muted-foreground">Finishing GitHub App registration…</p>
+        </>
+      ) : null}
+      {status === "ok" ? (
+        <>
+          <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto" />
+          <p className="text-sm text-muted-foreground">Redirecting to GitHub settings…</p>
+        </>
+      ) : null}
+      {status === "error" ? (
+        <>
+          <XCircle className="w-12 h-12 text-destructive/80 mx-auto" />
+          <p className="text-sm text-destructive/90">{message ?? "Something went wrong."}</p>
+          <Link
+            href="/git/github"
+            className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back to GitHub settings
+          </Link>
+        </>
+      ) : null}
+    </div>
+  );
+}

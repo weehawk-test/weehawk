@@ -1,0 +1,35 @@
+import { IsOptional, IsString, MaxLength } from 'class-validator';
+
+/** Partial update: omit a field to leave unchanged; send empty string to clear a secret or optional value. */
+export class UpdateGitSettingsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  githubAppId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  githubClientId?: string;
+
+  @IsOptional()
+  @IsString()
+  githubClientSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  githubPrivateKey?: string;
+
+  @IsOptional()
+  @IsString()
+  githubWebhookSecret?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  gitlabBaseUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  gitlabGroupAccessToken?: string;
+}

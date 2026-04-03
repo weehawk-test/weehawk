@@ -62,6 +62,42 @@ function composeTypeFromApi(raw: string): ServiceType {
   return "docker-compose";
 }
 
+export const SERVICES_PAGE_SIZE = 8;
+
+export type ServicesPageResponse = {
+  data: Service[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export function parseServicesPageResponse(text: string): ServicesPageResponse {
+  const json = JSON.parse(text) as {
+    data?: unknown[];
+    total?: number;
+    page?: number;
+    limit?: number;
+  };
+  if (!Array.isArray(json.data)) {
+    return { data: [], total: 0, page: 1, limit: SERVICES_PAGE_SIZE };
+  }
+  return {
+    data: json.data.map(mapApiServiceToService),
+    total:
+      typeof json.total === "number" && Number.isFinite(json.total)
+        ? Math.max(0, json.total)
+        : 0,
+    page:
+      typeof json.page === "number" && Number.isFinite(json.page)
+        ? Math.max(1, json.page)
+        : 1,
+    limit:
+      typeof json.limit === "number" && Number.isFinite(json.limit)
+        ? Math.max(1, json.limit)
+        : SERVICES_PAGE_SIZE,
+  };
+}
+
 export function mapApiServiceToService(row: unknown): Service {
   const s = row as Record<string, unknown>;
   const project = s.project as { id?: number } | undefined;
@@ -93,8 +129,14 @@ export function mapApiServiceToService(row: unknown): Service {
   };
 }
 
+/** Full list when `projectId` is omitted (e.g. webhook/cron pickers), or all services in a project when `projectId` is set (`all=1`). */
 export async function fetchServices(projectId?: string): Promise<Service[]> {
-  const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  const params = new URLSearchParams();
+  if (projectId) {
+    params.set("projectId", projectId);
+    params.set("all", "1");
+  }
+  const q = params.toString() ? `?${params.toString()}` : "";
   const res = await apiFetch(`/services${q}`);
   const text = await res.text();
   if (!res.ok) {
@@ -103,6 +145,25 @@ export async function fetchServices(projectId?: string): Promise<Service[]> {
   const data = JSON.parse(text) as unknown;
   if (!Array.isArray(data)) return [];
   return data.map(mapApiServiceToService);
+}
+
+export async function fetchServicesPage(
+  projectId: string,
+  page = 1,
+  q = "",
+): Promise<ServicesPageResponse> {
+  const params = new URLSearchParams();
+  params.set("projectId", projectId);
+  params.set("page", String(Math.max(1, page)));
+  params.set("limit", String(SERVICES_PAGE_SIZE));
+  const trimmed = q.trim();
+  if (trimmed) params.set("q", trimmed);
+  const res = await apiFetch(`/services?${params.toString()}`);
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return parseServicesPageResponse(text);
 }
 
 export async function fetchService(id: string): Promise<Service> {
@@ -483,6 +544,123 @@ export async function uploadApplicationArchiveApi(
   }
   const json = JSON.parse(text) as { service?: unknown };
   if (!json.service) throw new Error("Upload succeeded but no service payload was returned.");
+  return mapApiServiceToService(json.service);
+}
+
+/** Stage: clone Git repo into app source only (no stack). Then call `generateApplicationFromSourceApi`. */
+export async function applicationGitCloneStageApi(
+  id: string,
+  options: {
+    gitlabProjectId?: number;
+    httpUrlToRepo?: string;
+    branch?: string;
+  },
+): Promise<Service> {
+  const body: Record<string, unknown> = {};
+  if (options.gitlabProjectId != null) body.gitlabProjectId = options.gitlabProjectId;
+  if (options.httpUrlToRepo?.trim()) body.httpUrlToRepo = options.httpUrlToRepo.trim();
+  if (options.branch?.trim()) body.branch = options.branch.trim();
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/git-clone-stage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const json = JSON.parse(text) as { service?: unknown };
+  if (!json.service) throw new Error("Request succeeded but no service payload was returned.");
+  return mapApiServiceToService(json.service);
+}
+
+/** Generate stack from existing app-source (after git-clone-stage or re-apply options). */
+export async function generateApplicationFromSourceApi(
+  id: string,
+  options: {
+    buildPath?: string;
+    dockerfilePath?: string;
+    containerPort?: number;
+    publishPort?: number;
+    replicas?: number;
+    variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    networks?: { external: string[]; stack: string[] };
+  },
+): Promise<Service> {
+  const body: Record<string, unknown> = {
+    buildPath: options.buildPath,
+    dockerfilePath: options.dockerfilePath,
+    containerPort: options.containerPort,
+    publishPort: options.publishPort,
+    replicas: options.replicas,
+  };
+  if (options.variables !== undefined) {
+    body.variablesJson = JSON.stringify(options.variables);
+  }
+  if (options.networks) {
+    const { external, stack } = options.networks;
+    body.externalNetworks = external.join("|");
+    body.stackNetworks = stack.join("|");
+    body.networksJson = JSON.stringify(options.networks);
+  }
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/generate-from-source`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const json = JSON.parse(text) as { service?: unknown };
+  if (!json.service) throw new Error("Request succeeded but no service payload was returned.");
+  return mapApiServiceToService(json.service);
+}
+
+/** @deprecated One-shot clone + stack; prefer `applicationGitCloneStageApi` + `generateApplicationFromSourceApi`. */
+export async function uploadApplicationGitCloneApi(
+  id: string,
+  options: {
+    gitlabProjectId?: number;
+    httpUrlToRepo?: string;
+    branch?: string;
+    buildPath?: string;
+    containerPort?: number;
+    publishPort?: number;
+    replicas?: number;
+    variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    networks?: { external: string[]; stack: string[] };
+  },
+): Promise<Service> {
+  const body: Record<string, unknown> = {
+    buildPath: options.buildPath,
+    containerPort: options.containerPort,
+    publishPort: options.publishPort,
+    replicas: options.replicas,
+  };
+  if (options.gitlabProjectId != null) body.gitlabProjectId = options.gitlabProjectId;
+  if (options.httpUrlToRepo?.trim()) body.httpUrlToRepo = options.httpUrlToRepo.trim();
+  if (options.branch?.trim()) body.branch = options.branch.trim();
+  if (options.variables !== undefined) {
+    body.variablesJson = JSON.stringify(options.variables);
+  }
+  if (options.networks) {
+    const { external, stack } = options.networks;
+    body.externalNetworks = external.join("|");
+    body.stackNetworks = stack.join("|");
+    body.networksJson = JSON.stringify(options.networks);
+  }
+  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/git-clone`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const json = JSON.parse(text) as { service?: unknown };
+  if (!json.service) throw new Error("Request succeeded but no service payload was returned.");
   return mapApiServiceToService(json.service);
 }
 

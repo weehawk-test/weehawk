@@ -1,20 +1,25 @@
 import ProjectsIdClient from "./ProjectsIdClient";
-import { fetchProjectSSR, fetchServicesSSR } from "@/lib/server-fetch";
-import type { Project, Service } from "@/lib/schema";
+import { fetchProjectSSR, fetchServicesPageSSR } from "@/lib/server-fetch";
+import type { Project } from "@/lib/schema";
+import type { ServicesPageResponse } from "@/lib/services-api";
 
 export default async function ProjectDetailsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ page?: string; q?: string }>;
 }) {
   const { id: rawId } = await params;
+  const sp = await searchParams;
+  const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
+  const q = typeof sp.q === "string" ? sp.q : "";
+
   const parsedId = Number(rawId);
-  // Backend controller uses `+id` and expects a valid integer.
-  // If `rawId` is not numeric for any reason, avoid calling the API with NaN.
   const safeProjectId = Number.isNaN(parsedId) ? null : String(parsedId);
 
   let initialProject: Project | null = null;
-  let initialServices: Service[] = [];
+  let initialServicesPage: ServicesPageResponse | undefined;
   let initialProjectError: string | null = null;
 
   if (safeProjectId) {
@@ -29,9 +34,9 @@ export default async function ProjectDetailsPage({
     }
 
     try {
-      initialServices = await fetchServicesSSR(safeProjectId);
+      initialServicesPage = await fetchServicesPageSSR(safeProjectId, page, q);
     } catch {
-      initialServices = [];
+      initialServicesPage = undefined;
     }
   }
 
@@ -39,8 +44,10 @@ export default async function ProjectDetailsPage({
     <ProjectsIdClient
       projectId={safeProjectId ?? rawId}
       initialProject={initialProject}
-      initialServices={initialServices}
+      initialServicesPage={initialServicesPage}
       initialProjectError={initialProjectError}
+      urlPage={page}
+      urlQ={q}
     />
   );
 }

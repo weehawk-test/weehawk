@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ChevronRight,
   Folder,
@@ -15,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeS3PrefixParam } from "@/lib/s3-prefix-param";
 import {
   listS3BucketObjectsApi,
   listS3ProfilesApi,
@@ -33,18 +36,48 @@ function joinPrefix(parts: string[]): string {
   return `${parts.join("/")}/`;
 }
 
+function buildServiceImportPickerUrl(
+  pathname: string,
+  currentSearch: URLSearchParams,
+  mode: "db" | "vol",
+  profile: string,
+  prefix: string,
+): string {
+  const q = new URLSearchParams(currentSearch.toString());
+  q.set("s3Import", mode);
+  q.set("s3Profile", profile);
+  if (prefix) q.set("s3Prefix", prefix);
+  else q.delete("s3Prefix");
+  return `${pathname}?${q.toString()}`;
+}
+
 export type S3ImportPickResult = { profileName: string; key: string };
+
+export type S3ImportObjectPickerSsr = {
+  profileName: string;
+  prefix: string;
+  initialList: S3BucketListResponse | null;
+};
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Default profile when opening */
+  /** Default profile when opening (client mode) or fallback label */
   defaultProfileName: string;
   /** If set, only keys ending with .tar.gz can be picked */
   requireTarGz?: boolean;
   title: string;
   description?: string;
   onPick: (result: S3ImportPickResult) => void;
+  /**
+   * When set with service page URL (`?s3Import=db|vol&s3Profile=&s3Prefix=`), listing is
+   * server-rendered and folder navigation updates the URL (no client list API for navigation).
+   */
+  importPickerMode?: "db" | "vol";
+  /** Server-fetched bucket listing for the current URL; ignored when importPickerMode is unset */
+  ssr?: S3ImportObjectPickerSsr | null;
+  /** From SSR — avoids client GET /s3/profiles when opening the dialog */
+  initialProfiles?: S3ProfilePublic[];
 };
 
 export function S3ImportObjectPicker({
@@ -55,18 +88,46 @@ export function S3ImportObjectPicker({
   title,
   description,
   onPick,
+  importPickerMode,
+  ssr,
+  initialProfiles,
 }: Props) {
   const { toast } = useToast();
-  const [profiles, setProfiles] = useState<S3ProfilePublic[]>([]);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const urlMode = importPickerMode !== undefined;
+
+  const [profiles, setProfiles] = useState<S3ProfilePublic[]>(() => initialProfiles ?? []);
   const [profileName, setProfileName] = useState(defaultProfileName);
-  const [prefix, setPrefix] = useState("");
+  const [internalPrefix, setInternalPrefix] = useState("");
   const [folders, setFolders] = useState<S3BucketListResponse["folders"]>([]);
   const [objects, setObjects] = useState<S3BucketListResponse["objects"]>([]);
   const [nextToken, setNextToken] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const prefix = urlMode
+    ? normalizeS3PrefixParam(searchParams.get("s3Prefix"))
+    : internalPrefix;
+
+  const profileNameEffective = urlMode
+    ? (searchParams.get("s3Profile") ?? "").trim()
+    : profileName;
+
+  useEffect(() => {
+    if (initialProfiles !== undefined) {
+      setProfiles(initialProfiles);
+    }
+  }, [initialProfiles]);
 
   useEffect(() => {
     if (!open) return;
+    if (initialProfiles !== undefined) {
+      setProfiles(initialProfiles);
+      return;
+    }
     let cancelled = false;
     listS3ProfilesApi()
       .then((list) => {
@@ -84,10 +145,10 @@ export function S3ImportObjectPicker({
     return () => {
       cancelled = true;
     };
-  }, [open, toast]);
+  }, [open, initialProfiles, toast]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || urlMode) return;
     setProfileName((prev) => {
       if (prev && profiles.some((p) => p.name === prev)) return prev;
       if (defaultProfileName && profiles.some((p) => p.name === defaultProfileName)) {
@@ -95,14 +156,28 @@ export function S3ImportObjectPicker({
       }
       return profiles[0]?.name ?? "";
     });
-  }, [open, profiles, defaultProfileName]);
+  }, [open, profiles, defaultProfileName, urlMode]);
+
+  useEffect(() => {
+    if (!urlMode) return;
+    if (!ssr) return;
+    if (!ssr.initialList) {
+      setFolders([]);
+      setObjects([]);
+      setNextToken(undefined);
+      return;
+    }
+    setFolders(ssr.initialList.folders);
+    setObjects(ssr.initialList.objects);
+    setNextToken(ssr.initialList.isTruncated ? ssr.initialList.continuationToken : undefined);
+  }, [urlMode, ssr]);
 
   const loadFirst = useCallback(async () => {
     if (!profileName.trim()) return;
     setLoading(true);
     setNextToken(undefined);
     try {
-      const r = await listS3BucketObjectsApi(profileName, { prefix });
+      const r = await listS3BucketObjectsApi(profileName, { prefix: internalPrefix });
       setFolders(r.folders);
       setObjects(r.objects);
       setNextToken(r.isTruncated ? r.continuationToken : undefined);
@@ -114,22 +189,37 @@ export function S3ImportObjectPicker({
     } finally {
       setLoading(false);
     }
-  }, [profileName, prefix, toast]);
+  }, [profileName, internalPrefix, toast]);
 
   useEffect(() => {
-    if (!open || !profileName.trim()) return;
+    if (urlMode || !open || !profileName.trim()) return;
     void loadFirst();
-  }, [open, profileName, prefix, loadFirst]);
+  }, [open, profileName, internalPrefix, loadFirst, urlMode]);
 
   useEffect(() => {
-    if (open) setPrefix("");
-  }, [open, profileName]);
+    if (urlMode || !open) return;
+    setInternalPrefix("");
+  }, [open, profileName, urlMode]);
+
+  const onRefresh = async () => {
+    if (urlMode) {
+      setRefreshing(true);
+      try {
+        await router.refresh();
+      } finally {
+        setRefreshing(false);
+      }
+      return;
+    }
+    await loadFirst();
+  };
 
   const loadMore = async () => {
-    if (!nextToken || !profileName.trim()) return;
+    const pn = profileNameEffective;
+    if (!nextToken || !pn) return;
     setLoading(true);
     try {
-      const r = await listS3BucketObjectsApi(profileName, {
+      const r = await listS3BucketObjectsApi(pn, {
         prefix,
         continuationToken: nextToken,
       });
@@ -143,7 +233,7 @@ export function S3ImportObjectPicker({
     }
   };
 
-  const crumbs = (() => {
+  const crumbs = useMemo(() => {
     const segs = prefixSegments(prefix);
     const items: { label: string; prefix: string }[] = [{ label: "Root", prefix: "" }];
     for (let i = 0; i < segs.length; i++) {
@@ -153,7 +243,7 @@ export function S3ImportObjectPicker({
       });
     }
     return items;
-  })();
+  }, [prefix]);
 
   const pickFile = (key: string) => {
     if (requireTarGz && !key.toLowerCase().endsWith(".tar.gz")) {
@@ -164,9 +254,16 @@ export function S3ImportObjectPicker({
       });
       return;
     }
-    onPick({ profileName, key });
+    const pn = profileNameEffective;
+    if (!pn) return;
+    onPick({ profileName: pn, key });
     onOpenChange(false);
   };
+
+  const listBusy = urlMode ? refreshing : loading;
+
+  const showLegacySpinner =
+    !urlMode && loading && folders.length === 0 && objects.length === 0 && profileName.trim();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -187,9 +284,19 @@ export function S3ImportObjectPicker({
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">S3 destination</label>
             <select
               className="input-field w-full"
-              value={profileName}
-              onChange={(e) => setProfileName(e.target.value)}
-              disabled={loading}
+              value={urlMode ? profileNameEffective : profileName}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (urlMode && importPickerMode) {
+                  router.replace(
+                    buildServiceImportPickerUrl(pathname, searchParams, importPickerMode, v, ""),
+                    { scroll: false },
+                  );
+                } else {
+                  setProfileName(v);
+                }
+              }}
+              disabled={listBusy}
             >
               {profiles.length === 0 ? (
                 <option value="">No profiles</option>
@@ -208,15 +315,33 @@ export function S3ImportObjectPicker({
               {crumbs.map((c, i) => (
                 <span key={`${c.prefix}-${i}`} className="flex items-center gap-1 min-w-0">
                   {i > 0 ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : null}
-                  <button
-                    type="button"
-                    onClick={() => setPrefix(c.prefix)}
-                    className={`truncate max-w-[180px] rounded px-1 py-0.5 text-left ${
-                      c.prefix === prefix ? "bg-primary/15 font-medium" : "text-primary hover:underline"
-                    }`}
-                  >
-                    {c.label}
-                  </button>
+                  {urlMode && importPickerMode && profileNameEffective ? (
+                    <Link
+                      href={buildServiceImportPickerUrl(
+                        pathname,
+                        searchParams,
+                        importPickerMode,
+                        profileNameEffective,
+                        c.prefix,
+                      )}
+                      scroll={false}
+                      className={`truncate max-w-[180px] rounded px-1 py-0.5 text-left ${
+                        c.prefix === prefix ? "bg-primary/15 font-medium" : "text-primary hover:underline"
+                      }`}
+                    >
+                      {c.label}
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setInternalPrefix(c.prefix)}
+                      className={`truncate max-w-[180px] rounded px-1 py-0.5 text-left ${
+                        c.prefix === internalPrefix ? "bg-primary/15 font-medium" : "text-primary hover:underline"
+                      }`}
+                    >
+                      {c.label}
+                    </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -225,19 +350,27 @@ export function S3ImportObjectPicker({
             <button
               type="button"
               className="btn-secondary text-xs inline-flex items-center gap-1.5"
-              onClick={() => void loadFirst()}
-              disabled={loading || !profileName.trim()}
+              onClick={() => void onRefresh()}
+              disabled={listBusy || !(urlMode ? profileNameEffective : profileName.trim())}
             >
-              {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              {listBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               Refresh
             </button>
           </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto border-t border-border/60 px-6 py-3">
-          {!profileName.trim() ? (
+          {urlMode && ssr && ssr.initialList === null && profileNameEffective ? (
+            <div className="space-y-3 py-6 text-center">
+              <p className="text-sm text-muted-foreground">Could not load this path.</p>
+              <button type="button" className="btn-secondary text-xs inline-flex items-center gap-1.5" onClick={() => void onRefresh()}>
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry
+              </button>
+            </div>
+          ) : !(urlMode ? profileNameEffective : profileName.trim()) ? (
             <p className="text-sm text-muted-foreground">Add an S3 profile under S3 first.</p>
-          ) : loading && folders.length === 0 && objects.length === 0 ? (
+          ) : showLegacySpinner ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
               <Loader2 className="w-5 h-5 animate-spin" /> Loading…
             </div>
@@ -245,19 +378,35 @@ export function S3ImportObjectPicker({
             <ul className="space-y-1">
               {folders.map((f) => (
                 <li key={f.prefix}>
-                  <button
-                    type="button"
-                    onClick={() => setPrefix(f.prefix)}
-                    className="w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/30"
-                  >
-                    <Folder className="w-4 h-4 text-amber-500/90 shrink-0" />
-                    <span className="font-mono text-sm truncate">{f.name}</span>
-                  </button>
+                  {urlMode && importPickerMode && profileNameEffective ? (
+                    <Link
+                      href={buildServiceImportPickerUrl(
+                        pathname,
+                        searchParams,
+                        importPickerMode,
+                        profileNameEffective,
+                        f.prefix,
+                      )}
+                      scroll={false}
+                      className="w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/30"
+                    >
+                      <Folder className="w-4 h-4 text-amber-500/90 shrink-0" />
+                      <span className="font-mono text-sm truncate">{f.name}</span>
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setInternalPrefix(f.prefix)}
+                      className="w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/30"
+                    >
+                      <Folder className="w-4 h-4 text-amber-500/90 shrink-0" />
+                      <span className="font-mono text-sm truncate">{f.name}</span>
+                    </button>
+                  )}
                 </li>
               ))}
               {objects.map((o) => {
-                const blocked =
-                  requireTarGz && !o.key.toLowerCase().endsWith(".tar.gz");
+                const blocked = requireTarGz && !o.key.toLowerCase().endsWith(".tar.gz");
                 return (
                   <li key={o.key}>
                     <button
@@ -265,9 +414,7 @@ export function S3ImportObjectPicker({
                       disabled={blocked}
                       onClick={() => pickFile(o.key)}
                       className={`w-full text-left rounded-lg px-3 py-2 font-mono text-xs sm:text-sm break-all ${
-                        blocked
-                          ? "opacity-40 cursor-not-allowed"
-                          : "hover:bg-primary/10 text-foreground"
+                        blocked ? "opacity-40 cursor-not-allowed" : "hover:bg-primary/10 text-foreground"
                       }`}
                     >
                       {o.name}
@@ -282,7 +429,7 @@ export function S3ImportObjectPicker({
               })}
             </ul>
           )}
-          {folders.length === 0 && objects.length === 0 && !loading && profileName.trim() ? (
+          {folders.length === 0 && objects.length === 0 && !listBusy && (urlMode ? profileNameEffective : profileName.trim()) ? (
             <p className="text-sm text-muted-foreground py-6 text-center">Empty at this path.</p>
           ) : null}
           {nextToken ? (

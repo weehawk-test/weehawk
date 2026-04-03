@@ -7,12 +7,15 @@ import {
   fetchServiceRuntime,
   fetchServiceVolumesApi,
   fetchServices,
+  fetchServicesPage,
   shutdownServiceApi,
   startServiceApi,
   updateServiceApi,
   patchApplicationNetworksApi,
+  type ServicesPageResponse,
 } from "@/lib/services-api";
 
+/** All services in project (`all=1`); use when the full list is required. */
 export function useServices(
   projectId?: string,
   options?: { initialData?: Service[] },
@@ -25,6 +28,34 @@ export function useServices(
     initialData: options?.initialData,
     staleTime: hasInitial ? Infinity : 10_000,
     refetchOnMount: hasInitial ? false : undefined,
+  });
+}
+
+export function useServicesPage(
+  projectId: string,
+  page: number,
+  q: string,
+  ssrPage: number,
+  ssrQ: string,
+  initialPageData?: ServicesPageResponse,
+) {
+  const trimmed = q.trim();
+  const ssrTrim = ssrQ.trim();
+  const hasSsrInitial =
+    initialPageData !== undefined &&
+    page === ssrPage &&
+    trimmed === ssrTrim;
+
+  return useQuery({
+    queryKey: ["services", "list", projectId, page, trimmed],
+    queryFn: () => fetchServicesPage(projectId, page, trimmed),
+    /** When SSR supplied this page/search, skip client GET /services (no duplicate in Network). */
+    enabled: projectId !== undefined && projectId !== "" && !hasSsrInitial,
+    initialData: hasSsrInitial ? initialPageData : undefined,
+    initialDataUpdatedAt: hasSsrInitial ? Date.now() : undefined,
+    staleTime: hasSsrInitial ? Infinity : 10_000,
+    refetchOnMount: hasSsrInitial ? false : true,
+    refetchOnWindowFocus: false,
   });
 }
 

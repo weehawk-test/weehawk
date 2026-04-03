@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChevronRight,
   Download,
@@ -30,6 +31,12 @@ import {
 
 const BATCH_MAX = 1000;
 
+function s3BucketBrowseHref(profileName: string, prefix: string): string {
+  const q = new URLSearchParams({ name: profileName });
+  if (prefix) q.set("prefix", prefix);
+  return `/s3/bucket?${q.toString()}`;
+}
+
 function formatBytes(n: number): string {
   if (n === 0) return "0 B";
   const k = 1024;
@@ -53,15 +60,22 @@ function joinPrefix(parts: string[]): string {
 function FolderStatsCells({
   profileName,
   folderPrefix,
+  initialSummary,
 }: {
   profileName: string;
   folderPrefix: string;
+  /** From SSR — avoids a client fetch for this row on first paint. */
+  initialSummary?: S3PrefixSummaryResponse | null;
 }) {
   const [state, setState] = useState<
     "loading" | "error" | { data: S3PrefixSummaryResponse }
-  >("loading");
+  >(() => (initialSummary ? { data: initialSummary } : "loading"));
 
   useEffect(() => {
+    if (initialSummary) {
+      setState({ data: initialSummary });
+      return;
+    }
     let cancelled = false;
     setState("loading");
     getPrefixSummaryApi(profileName, folderPrefix)
@@ -74,7 +88,7 @@ function FolderStatsCells({
     return () => {
       cancelled = true;
     };
-  }, [profileName, folderPrefix]);
+  }, [profileName, folderPrefix, initialSummary]);
 
   if (state === "loading") {
     return (
@@ -115,15 +129,29 @@ function FolderStatsCells({
   );
 }
 
-export function S3BucketBrowser({ profileName }: { profileName: string }) {
+export function S3BucketBrowser({
+  profileName,
+  initialPrefix = "",
+  initialList = null,
+  initialFolderSummaries,
+}: {
+  profileName: string;
+  /** Current path from URL — folder navigation uses server render (no client list fetch). */
+  initialPrefix: string;
+  /** From SSR for this prefix — list + folder summaries fetched on the server. */
+  initialList?: S3BucketListResponse | null;
+  initialFolderSummaries?: Record<string, S3PrefixSummaryResponse>;
+}) {
+  const router = useRouter();
+  const prefix = initialPrefix;
   const { toast } = useToast();
   const confirm = useConfirm();
-  const [prefix, setPrefix] = useState("");
-  const [bucket, setBucket] = useState<string>("");
-  const [folders, setFolders] = useState<S3BucketListResponse["folders"]>([]);
-  const [objects, setObjects] = useState<S3BucketListResponse["objects"]>([]);
-  const [nextToken, setNextToken] = useState<string | undefined>();
-  const [loading, setLoading] = useState(true);
+  const [bucket, setBucket] = useState<string>(() => initialList?.bucket ?? "");
+  const [folders, setFolders] = useState<S3BucketListResponse["folders"]>(() => initialList?.folders ?? []);
+  const [objects, setObjects] = useState<S3BucketListResponse["objects"]>(() => initialList?.objects ?? []);
+  const [nextToken, setNextToken] = useState<string | undefined>(() =>
+    initialList?.isTruncated ? initialList.continuationToken : undefined,
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
@@ -140,33 +168,18 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
     setSelectedFolderPrefixes(new Set());
   }, [prefix]);
 
-  const loadFirst = useCallback(async () => {
-    setLoading(true);
-    setNextToken(undefined);
-    try {
-      const r = await listS3BucketObjectsApi(profileName, { prefix });
-      setBucket(r.bucket);
-      setFolders(r.folders);
-      setObjects(r.objects);
-      setNextToken(r.isTruncated ? r.continuationToken : undefined);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setFolders([]);
-      setObjects([]);
-      toast({ title: "Could not list bucket", description: msg, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  }, [profileName, prefix, toast]);
-
   useEffect(() => {
-    void loadFirst();
-  }, [loadFirst]);
+    if (!initialList) return;
+    setBucket(initialList.bucket);
+    setFolders(initialList.folders);
+    setObjects(initialList.objects);
+    setNextToken(initialList.isTruncated ? initialList.continuationToken : undefined);
+  }, [initialList]);
 
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await loadFirst();
+      await router.refresh();
     } finally {
       setRefreshing(false);
     }
@@ -262,7 +275,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
     try {
       await uploadS3ObjectApi(profileName, key, file);
       toast({ title: "Uploaded", description: key });
-      await loadFirst();
+      await router.refresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Upload failed", description: msg, variant: "destructive" });
@@ -306,7 +319,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
         next.delete(key);
         return next;
       });
-      await loadFirst();
+      await router.refresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Delete failed", description: msg, variant: "destructive" });
@@ -351,7 +364,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
         }
         return next;
       });
-      await loadFirst();
+      await router.refresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Delete folder failed", description: msg, variant: "destructive" });
@@ -404,7 +417,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
       }
       setSelectedKeys(new Set());
       setSelectedFolderPrefixes(new Set());
-      await loadFirst();
+      await router.refresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Batch delete failed", description: msg, variant: "destructive" });
@@ -414,6 +427,43 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
   };
 
   const selectedCount = selectedKeys.size + selectedFolderPrefixes.size;
+
+  if (!initialList) {
+    return (
+      <div className="max-w-5xl mx-auto">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2 min-w-0">
+              <Link href="/s3">
+                <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors shrink-0">
+                  <FolderKanban className="w-3.5 h-3.5" /> S3 destinations
+                </span>
+              </Link>
+              <span className="text-white/20 shrink-0">/</span>
+              <span className="text-foreground font-medium truncate min-w-0" title={profileName}>
+                {profileName}
+              </span>
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+              <HardDrive className="w-7 h-7 text-primary shrink-0" />
+              <span className="truncate">{profileName}</span>
+            </h1>
+          </div>
+        </div>
+        <div className="glass-panel rounded-xl border border-border/60 p-10 text-center">
+          <p className="text-muted-foreground mb-4">Could not load this bucket path. Check the destination and try again.</p>
+          <button
+            type="button"
+            className="btn-secondary text-sm inline-flex items-center gap-2"
+            onClick={() => void router.refresh()}
+          >
+            <RefreshCw className="w-4 h-4" />
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -447,7 +497,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
             <input
               type="file"
               className="sr-only"
-              disabled={uploading || loading || batchDeleting}
+              disabled={uploading || refreshing || batchDeleting}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 e.target.value = "";
@@ -459,7 +509,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
             type="button"
             className="btn-secondary text-sm inline-flex items-center gap-2"
             onClick={() => void onRefresh()}
-            disabled={loading || refreshing || batchDeleting}
+            disabled={refreshing || batchDeleting}
           >
             {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Refresh
@@ -473,9 +523,9 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
           {crumbs.map((c, i) => (
             <span key={`${c.prefix}-${i}`} className="flex items-center gap-1 min-w-0">
               {i > 0 ? <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" /> : null}
-              <button
-                type="button"
-                onClick={() => setPrefix(c.prefix)}
+              <Link
+                href={s3BucketBrowseHref(profileName, c.prefix)}
+                scroll={false}
                 className={`truncate max-w-[200px] rounded px-1.5 py-0.5 transition-colors ${
                   c.prefix === prefix
                     ? "bg-primary/15 text-foreground font-medium"
@@ -484,7 +534,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
                 title={c.prefix || "Root"}
               >
                 {c.label}
-              </button>
+              </Link>
             </span>
           ))}
         </div>
@@ -532,13 +582,7 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
       ) : null}
 
       <div className="glass-panel rounded-xl border border-border/60 overflow-hidden">
-        {loading && objects.length === 0 && folders.length === 0 ? (
-          <div className="flex items-center gap-2 p-8 text-muted-foreground">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            Loading objects…
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
+        <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -570,19 +614,24 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
                       />
                     </td>
                     <td className="px-2 py-3 align-middle">
-                      <button
-                        type="button"
-                        onClick={() => setPrefix(f.prefix)}
+                      <Link
+                        href={s3BucketBrowseHref(profileName, f.prefix)}
+                        scroll={false}
                         className="inline-flex items-center gap-2 text-primary font-medium hover:underline text-left"
                       >
                         <Folder className="w-4 h-4 shrink-0 text-amber-500/90" />
                         <span className="font-mono truncate">{f.name}</span>
-                      </button>
+                      </Link>
                       <p className="text-[11px] text-muted-foreground mt-1 font-mono truncate sm:hidden">
                         Folder · open to browse
                       </p>
                     </td>
-                    <FolderStatsCells profileName={profileName} folderPrefix={f.prefix} />
+                    <FolderStatsCells
+                      key={f.prefix}
+                      profileName={profileName}
+                      folderPrefix={f.prefix}
+                      initialSummary={initialFolderSummaries?.[f.prefix]}
+                    />
                     <td className="px-4 py-3 text-right align-middle whitespace-nowrap">
                       <button
                         type="button"
@@ -654,10 +703,9 @@ export function S3BucketBrowser({ profileName }: { profileName: string }) {
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
+        </div>
 
-        {folders.length === 0 && objects.length === 0 && !loading ? (
+        {folders.length === 0 && objects.length === 0 ? (
           <p className="p-8 text-center text-muted-foreground text-sm">This folder is empty.</p>
         ) : null}
 

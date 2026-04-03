@@ -1,18 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
-import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban } from "lucide-react";
+import { Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search } from "lucide-react";
+import { useBulkSelection } from "@/components/docker/useBulkSelection";
+import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
+import { useDockerListUrl } from "@/hooks/use-docker-list-url";
 import { useProject } from "@/hooks/use-projects";
-import { useServices, useCreateService, useDeleteService, useServiceRuntime } from "@/hooks/use-services";
+import { useServicesPage, useCreateService, useDeleteService, useServiceRuntime } from "@/hooks/use-services";
+import { ListPagination } from "@/components/docker/ListPagination";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { createServiceSchema, type CreateServiceInput, type Project, type Service } from "@/lib/schema";
-import { applyDatabaseApi } from "@/lib/services-api";
+import { createServiceSchema, type CreateServiceInput, type Project } from "@/lib/schema";
+import { applyDatabaseApi, SERVICES_PAGE_SIZE, type ServicesPageResponse } from "@/lib/services-api";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { DatabaseEnginePicker } from "@/components/database-engine-picker";
@@ -105,9 +109,11 @@ function ServiceRuntimeStatus({ serviceId }: { serviceId: string }) {
 function CreateServiceModal({
   projectId,
   onClose,
+  onCreated,
 }: {
   projectId: string;
   onClose: () => void;
+  onCreated?: () => void;
 }) {
   const qc = useQueryClient();
   const create = useCreateService();
@@ -224,6 +230,7 @@ function CreateServiceModal({
             ? "Database stack and credentials are saved. Deploy from the service page when ready."
             : "Your new service is ready.",
       });
+      onCreated?.();
       onClose();
     } catch (e: unknown) {
       toast({
@@ -250,12 +257,7 @@ function CreateServiceModal({
           }
         }}
       />
-      <motion.div
-        initial={false}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        className="glass-panel rounded-2xl p-8 w-full max-w-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto"
-      >
+      <div className="glass-panel rounded-2xl p-8 w-full max-w-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto">
         <div className="absolute top-0 right-0 w-48 h-48 bg-primary/10 blur-[60px] pointer-events-none" />
         <h2 className="text-2xl font-bold mb-1">New Service</h2>
         <p className="text-muted-foreground text-sm mb-6">Add a service to this project.</p>
@@ -536,7 +538,7 @@ function CreateServiceModal({
             </button>
           </div>
         </form>
-      </motion.div>
+      </div>
     </div>
   );
 }
@@ -544,33 +546,68 @@ function CreateServiceModal({
 export default function ProjectsIdClient({
   projectId,
   initialProject,
-  initialServices,
+  initialServicesPage,
   initialProjectError,
+  urlPage,
+  urlQ,
 }: {
   projectId: string;
   initialProject?: Project | null;
-  initialServices?: Service[];
+  initialServicesPage?: ServicesPageResponse;
   initialProjectError?: string | null;
+  urlPage: number;
+  urlQ: string;
 }) {
+  const router = useRouter();
+  const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
 
   const { data: project, isLoading: projectLoading } = useProject(projectId, {
     initialData: initialProject ?? undefined,
+    skipClientFetch: Boolean(initialProject),
   });
 
+  useEffect(() => {
+    if (initialProject) {
+      qc.setQueryData(["projects", projectId], initialProject);
+    }
+  }, [initialProject, projectId, qc]);
+
+  useEffect(() => {
+    if (initialServicesPage === undefined) return;
+    const trimmed = urlQ.trim();
+    qc.setQueryData(["services", "list", projectId, urlPage, trimmed], initialServicesPage);
+  }, [initialServicesPage, projectId, urlPage, urlQ, qc]);
+
   const {
-    data: services,
+    data: servicesPageData,
     isLoading: servicesLoading,
     isError: servicesError,
     error: servicesErr,
     refetch: refetchServices,
-  } = useServices(projectId, {
-    initialData: initialServices,
-  });
+  } = useServicesPage(projectId, page, q, urlPage, urlQ, initialServicesPage);
+
+  const items = servicesPageData?.data ?? [];
+  const total = servicesPageData?.total ?? 0;
+  const limit = servicesPageData?.limit ?? SERVICES_PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const from = total > 0 ? (page - 1) * limit + 1 : 0;
+  const to = Math.min(page * limit, total);
 
   const deleteService = useDeleteService();
   const { toast } = useToast();
   const confirm = useConfirm();
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
+  const serviceKeys = useMemo(() => items.map((s) => s.id), [items]);
+  const servicesBulk = useBulkSelection(serviceKeys);
+
+  useEffect(() => {
+    if (total > 0 && items.length === 0 && page > 1) {
+      setPage(1);
+    }
+  }, [total, items.length, page, setPage]);
 
   const handleDeleteService = async (serviceId: string, name: string) => {
     const ok = await confirm({
@@ -582,10 +619,49 @@ export default function ProjectsIdClient({
     if (!ok) return;
 
     deleteService.mutate(serviceId, {
-      onSuccess: () => toast({ title: "Service Deleted", description: `"${name}" removed.` }),
+      onSuccess: () => {
+        toast({ title: "Service Deleted", description: `"${name}" removed.` });
+        router.refresh();
+      },
       onError: (e: Error) =>
         toast({ title: "Could not delete service", description: e.message, variant: "destructive" }),
     });
+  };
+
+  const handleBulkDeleteServices = async () => {
+    const ids = servicesBulk.selectedInFiltered;
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: "Delete selected services?",
+      description: `Delete ${ids.length} service(s)? Related workloads on the server may be stopped.`,
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
+    if (!ok) return;
+
+    setIsBulkDeleting(true);
+    try {
+      const results = await Promise.allSettled(ids.map((id) => deleteService.mutateAsync(id)));
+      const removed = results.filter((r) => r.status === "fulfilled").length;
+      const fail = results.length - removed;
+      servicesBulk.clear();
+      if (removed > 0) router.refresh();
+      toast({
+        title: fail ? "Some services could not be deleted" : "Services deleted",
+        description: fail
+          ? `${removed} removed, ${fail} failed.`
+          : `${removed} service(s) removed.`,
+        variant: fail ? "destructive" : "default",
+      });
+    } catch (e) {
+      toast({
+        title: "Could not delete selected services",
+        description: e instanceof Error ? e.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBulkDeleting(false);
+    }
   };
 
   if (projectLoading) {
@@ -615,9 +691,13 @@ export default function ProjectsIdClient({
 
   return (
     <>
-      <AnimatePresence>
-        {showCreate && <CreateServiceModal projectId={projectId} onClose={() => setShowCreate(false)} />}
-      </AnimatePresence>
+      {showCreate ? (
+        <CreateServiceModal
+          projectId={projectId}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => router.refresh()}
+        />
+      ) : null}
 
       <div className="flex items-center gap-2 text-sm text-muted-foreground mb-8">
         <Link href="/projects">
@@ -657,14 +737,61 @@ export default function ProjectsIdClient({
       {/* Services */}
       <div>
         <h2 className="text-xl font-semibold mb-4">
-          Services <span className="text-muted-foreground font-normal text-base ml-1">({services?.length ?? 0})</span>
+          Services <span className="text-muted-foreground font-normal text-base ml-1">({total})</span>
         </h2>
+
+        <div className="mb-8">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search services..."
+              value={localQ}
+              onChange={(e) => setLocalQ(e.target.value)}
+              className="input-field !pl-10 w-full bg-card/50"
+            />
+          </div>
+          {items.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <DockerBulkCheckbox
+                  checked={
+                    servicesBulk.allSelected ? true : servicesBulk.someSelected ? "indeterminate" : false
+                  }
+                  onCheckedChange={() => servicesBulk.toggleAllFiltered()}
+                  aria-label="Select all services on this page"
+                />
+                <span className="text-sm text-muted-foreground">
+                  Select all on this page ({items.length})
+                </span>
+              </div>
+              {servicesBulk.selectedInFiltered.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleBulkDeleteServices}
+                  disabled={isBulkDeleting || deleteService.isPending}
+                  className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2 text-sm"
+                >
+                  {isBulkDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Delete ({servicesBulk.selectedInFiltered.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         {servicesError && (
           <div className="glass-panel rounded-xl p-4 mb-4 border border-destructive/30 text-sm">
             <p className="font-medium text-destructive">Could not load services</p>
             <p className="text-muted-foreground mt-1">{servicesErr instanceof Error ? servicesErr.message : "Unknown error"}</p>
-            <button type="button" onClick={() => refetchServices()} className="btn-secondary mt-3 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                void refetchServices();
+                router.refresh();
+              }}
+              className="btn-secondary mt-3 text-xs"
+            >
               Retry
             </button>
           </div>
@@ -674,27 +801,27 @@ export default function ProjectsIdClient({
           <div className="flex items-center justify-center h-32">
             <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : !services || services.length === 0 ? (
-          <motion.div
-            initial={false}
-            animate={{ opacity: 1 }}
-            className="glass-panel p-10 rounded-2xl flex flex-col items-center justify-center text-center"
-          >
+        ) : items.length === 0 ? (
+          <div className="glass-panel p-10 rounded-2xl flex flex-col items-center justify-center text-center">
             <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
               <Container className="w-8 h-8 text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-bold mb-2">No services yet</h3>
+            <h3 className="text-lg font-bold mb-2">{q.trim() ? "No matching services" : "No services yet"}</h3>
             <p className="text-muted-foreground mb-6 text-sm max-w-sm">
-              Add your first service (Docker Compose, Stack, Application, or Databases) to this project.
+              {q.trim()
+                ? "Try a different search."
+                : "Add your first service (Docker Compose, Stack, Application, or Databases) to this project."}
             </p>
-            <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
-              <Plus className="w-4 h-4" /> Add Service
-            </button>
-          </motion.div>
+            {!q.trim() && (
+              <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
+                <Plus className="w-4 h-4" /> Add Service
+              </button>
+            )}
+          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-4">
-            <AnimatePresence>
-              {services.map((service, idx) => {
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-4">
+              {items.map((service) => {
                 const typeConf = SERVICE_TYPE_CONFIG[service.type as keyof typeof SERVICE_TYPE_CONFIG] ??
                   SERVICE_TYPE_CONFIG["docker-compose"];
                 const Icon = typeConf.icon;
@@ -703,14 +830,9 @@ export default function ProjectsIdClient({
                 const dbLogo = dbEngineId ? getDatabaseEngineById(dbEngineId)?.logoSrc : undefined;
 
                 return (
-                  <motion.div
+                  <div
                     key={service.id}
-                    layout
-                    initial={false}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.96 }}
-                    transition={{ delay: idx * 0.04 }}
-                    className="group relative flex flex-col rounded-xl border border-white/5 bg-gradient-to-b from-white/[0.06] to-transparent p-3 shadow-sm transition-all duration-300 hover:border-primary/20 hover:shadow-[0_6px_28px_-10px_rgba(0,0,0,0.35)] md:aspect-square max-md:min-h-[180px]"
+                    className="group relative flex flex-col rounded-xl border border-white/5 bg-gradient-to-b from-white/[0.06] to-transparent p-3 shadow-sm hover:border-primary/20 hover:shadow-[0_6px_28px_-10px_rgba(0,0,0,0.35)] md:aspect-square max-md:min-h-[180px]"
                   >
                     <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-br from-primary/[0.04] via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
 
@@ -770,14 +892,29 @@ export default function ProjectsIdClient({
                           <button
                             type="button"
                             onClick={() => handleDeleteService(service.id, service.name)}
-                            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+                            disabled={isBulkDeleting || deleteService.isPending}
+                            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:opacity-40"
                             title="Delete service"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
+                          <div
+                            className={`transition-opacity ${
+                              servicesBulk.selected.has(service.id)
+                                ? "opacity-100"
+                                : "opacity-0 group-hover:opacity-100"
+                            }`}
+                          >
+                            <DockerBulkCheckbox
+                              checked={servicesBulk.selected.has(service.id)}
+                              onCheckedChange={() => servicesBulk.toggle(service.id)}
+                              aria-label={`Select service ${service.name}`}
+                            />
+                          </div>
 
                           <Link
                             href={`/projects/${projectId}/services/${service.id}`}
+                            prefetch
                             className="ml-auto inline-flex items-center gap-0.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
                           >
                             Open
@@ -786,11 +923,20 @@ export default function ProjectsIdClient({
                         </div>
                       </div>
                     </div>
-                  </motion.div>
+                  </div>
                 );
               })}
-            </AnimatePresence>
-          </div>
+            </div>
+            <ListPagination
+              page={page}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              from={from}
+              to={to}
+              total={total}
+              className="mt-6"
+            />
+          </>
         )}
       </div>
     </>

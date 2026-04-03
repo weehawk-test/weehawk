@@ -26,12 +26,15 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { UploadApplicationZipDto } from './dto/upload-application-zip.dto';
+import { ApplicationGitCloneDto } from './dto/application-git-clone.dto';
+import { ApplicationGitCloneStageDto } from './dto/application-git-clone-stage.dto';
+import { ApplicationGenerateFromSourceDto } from './dto/application-generate-from-source.dto';
 import { PatchApplicationNetworksDto } from './dto/patch-application-networks.dto';
 import { PatchApplicationImageDeployDto } from './dto/patch-application-image.dto';
 import { RunServiceBackupDto } from './dto/run-service-backup.dto';
 import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s3.dto';
 import type { DatabaseEngine } from './database-generator.service';
-import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { Observable, map } from 'rxjs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -261,6 +264,63 @@ export class ServicesController {
     });
   }
 
+  @Post(':id/application/git-clone')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Clone a GitLab repository into app source (requires `git` on the API host; GitLab personal/group token in Git settings)',
+  })
+  uploadApplicationGitClone(
+    @Param('id') id: string,
+    @Body() dto: ApplicationGitCloneDto,
+  ) {
+    return this.servicesService.uploadApplicationFromGitClone(+id, dto);
+  }
+
+  @Post(':id/application/git-clone-stage')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Clone Git repository into app source only (no stack yet). Then POST generate-from-source with port/env.',
+  })
+  stageApplicationGitClone(
+    @Param('id') id: string,
+    @Body() dto: ApplicationGitCloneStageDto,
+  ) {
+    return this.servicesService.stageApplicationGitClone(+id, dto);
+  }
+
+  @Post(':id/application/generate-from-source')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Generate application stack from existing app-source (after git-clone-stage or to re-apply options)',
+  })
+  generateApplicationFromSource(
+    @Param('id') id: string,
+    @Body() dto: ApplicationGenerateFromSourceDto,
+  ) {
+    return this.servicesService.generateApplicationFromSource(+id, dto);
+  }
+
   @Patch(':id/application/networks')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
@@ -296,14 +356,51 @@ export class ServicesController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List all services, or filter by projectId' })
-  findAll(@Query('projectId') projectId?: string) {
+  @ApiOperation({
+    summary:
+      'List all services, or paginated list for a project (default 8 per page)',
+  })
+  @ApiQuery({ name: 'projectId', required: false })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, example: 8 })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Filter by name or description (when projectId is set)',
+  })
+  @ApiQuery({
+    name: 'all',
+    required: false,
+    description:
+      'If true with projectId, return full array (no pagination). Omit for paged list.',
+  })
+  findAll(
+    @Query('projectId') projectId?: string,
+    @Query('page') pageStr?: string,
+    @Query('limit') limitStr?: string,
+    @Query('q') q?: string,
+    @Query('all') allStr?: string,
+  ) {
     if (projectId !== undefined && projectId !== '') {
       const n = Number(projectId);
       if (!Number.isFinite(n)) {
         throw new BadRequestException('Invalid projectId');
       }
-      return this.servicesService.findByProjectId(n);
+      const all =
+        allStr === '1' ||
+        allStr === 'true' ||
+        String(allStr).toLowerCase() === 'yes';
+      if (all) {
+        return this.servicesService.findByProjectId(n);
+      }
+      const page = parseInt(pageStr ?? '1', 10);
+      const limit = parseInt(limitStr ?? '8', 10);
+      return this.servicesService.findByProjectIdPaginated(
+        n,
+        page,
+        limit,
+        q ?? '',
+      );
     }
     return this.servicesService.findAll();
   }

@@ -1,14 +1,20 @@
-"use client";
-
-import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FolderKanban } from "lucide-react";
 import { S3BucketBrowser } from "@/components/s3/S3BucketBrowser";
+import {
+  fetchS3BucketObjectsSSR,
+  fetchS3PrefixSummarySSR,
+} from "@/lib/server-fetch";
+import type { S3PrefixSummaryResponse } from "@/lib/s3-api";
+import { normalizeS3PrefixParam } from "@/lib/s3-prefix-param";
 
-function BucketPageInner() {
-  const sp = useSearchParams();
-  const name = sp.get("name")?.trim() ?? "";
+export default async function S3BucketPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ name?: string; prefix?: string }>;
+}) {
+  const sp = await searchParams;
+  const name = typeof sp.name === "string" ? sp.name.trim() : "";
   if (!name) {
     return (
       <div className="glass-panel rounded-xl p-10 max-w-lg mx-auto text-center border border-border/60">
@@ -26,13 +32,29 @@ function BucketPageInner() {
       </div>
     );
   }
-  return <S3BucketBrowser profileName={name} />;
-}
 
-export default function S3BucketPage() {
+  const prefixParam = normalizeS3PrefixParam(sp.prefix);
+  const initialList = await fetchS3BucketObjectsSSR(name, prefixParam);
+  const initialFolderSummaries: Record<string, S3PrefixSummaryResponse> = {};
+  if (initialList?.folders?.length) {
+    const results = await Promise.all(
+      initialList.folders.map(async (f) => {
+        const s = await fetchS3PrefixSummarySSR(name, f.prefix);
+        return [f.prefix, s] as const;
+      }),
+    );
+    for (const [pfx, s] of results) {
+      if (s) initialFolderSummaries[pfx] = s;
+    }
+  }
+
   return (
-    <Suspense fallback={<div className="p-8 text-muted-foreground flex items-center gap-2">Loading…</div>}>
-      <BucketPageInner />
-    </Suspense>
+    <S3BucketBrowser
+      key={`${name}:${prefixParam}`}
+      profileName={name}
+      initialPrefix={prefixParam}
+      initialList={initialList}
+      initialFolderSummaries={initialFolderSummaries}
+    />
   );
 }

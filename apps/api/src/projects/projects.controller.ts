@@ -6,11 +6,12 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 
 @ApiTags('Projects')
 @Controller('projects')
@@ -24,9 +25,22 @@ export class ProjectsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List all projects with their nested services' })
-  findAll() {
-    return this.projectsService.findAll();
+  @ApiOperation({ summary: 'List projects (paginated, optional search)' })
+  @ApiQuery({ name: 'page', required: false, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, example: 9 })
+  @ApiQuery({
+    name: 'q',
+    required: false,
+    description: 'Filter by name or description',
+  })
+  findAll(
+    @Query('page') pageStr?: string,
+    @Query('limit') limitStr?: string,
+    @Query('q') q?: string,
+  ) {
+    const page = parseInt(pageStr ?? '1', 10);
+    const limit = parseInt(limitStr ?? '9', 10);
+    return this.projectsService.findAllPaginated(page, limit, q ?? '');
   }
 
   @Get(':id')

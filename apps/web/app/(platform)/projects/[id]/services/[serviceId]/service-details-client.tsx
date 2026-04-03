@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -11,11 +11,12 @@ import {
   Info, Hash, FolderKanban, CheckCircle, XCircle,
   Download, Edit3, Save, X, Calendar, Tag, Plus,
   Terminal, Rocket, RefreshCw, Square, Play, RotateCw, Activity, Loader2,
-  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive, ChevronDown,
+  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive, ChevronDown, ChevronRight,
   Database, Eye, EyeOff, Lock, HardDrive, AlertCircle, Upload, Cloud,
   LockOpen,
   PackageOpen,
   ArrowDownToLine,
+  Search,
 } from "lucide-react";
 import {
   useService,
@@ -42,12 +43,21 @@ import {
 } from "@/lib/database-engines";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/auth-context";
+import {
+  fetchGitSettings,
+  fetchGitlabProjects,
+  type GitlabProjectListItem,
+  type GitlabProjectsListResponse,
+} from "@/lib/git-api";
 import {
   applyDatabaseApi,
   streamServiceLogs,
   updateDatabaseStackApi,
   patchApplicationImageDeployApi,
   uploadApplicationArchiveApi,
+  applicationGitCloneStageApi,
+  generateApplicationFromSourceApi,
   runServiceBackupNowApi,
   importServiceBackupFromS3Api,
 } from "@/lib/services-api";
@@ -77,7 +87,7 @@ import {
   type DatabaseBackupFormValues,
 } from "@/lib/database-backup-preview";
 import { buildDatabaseInternalConnectionUrl, DB_URL_PASSWORD_PLACEHOLDER } from "@/lib/database-internal-url";
-import { listS3ProfilesApi } from "@/lib/s3-api";
+import { listS3ProfilesApi, type S3BucketListResponse, type S3ProfilePublic } from "@/lib/s3-api";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
 
 /** Deterministic on server + client (avoids hydration mismatch from `format()` using local TZ). */
@@ -238,11 +248,21 @@ function countEnvEntries(text: string) {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+export type ServiceS3ImportSsr = {
+  mode: "db" | "vol";
+  profileName: string;
+  prefix: string;
+  initialList: S3BucketListResponse | null;
+};
+
 type ServiceDetailsProps = {
   initialService?: Service | null;
   initialProject?: Project | null;
   initialRuntime?: { running: boolean } | null;
   initialSecretsPaged?: PaginatedSecretsResponse | null;
+  s3ImportSsr?: ServiceS3ImportSsr | null;
+  /** S3 destinations from server (no client fetch on first paint). */
+  initialS3Profiles?: S3ProfilePublic[];
 };
 
 export default function ServiceDetails({
@@ -250,9 +270,12 @@ export default function ServiceDetails({
   initialProject,
   initialRuntime,
   initialSecretsPaged,
+  s3ImportSsr,
+  initialS3Profiles,
 }: ServiceDetailsProps) {
   const { id: projectId, serviceId } = useParams<{ id: string; serviceId: string }>();
   const router = useRouter();
+  const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [editingConfig, setEditingConfig] = useState(false);
   const [configDraft, setConfigDraft] = useState("");
@@ -270,7 +293,15 @@ export default function ServiceDetails({
   });
   const { data: project } = useProject(projectId!, {
     initialData: initialProject ?? undefined,
+    skipClientFetch: Boolean(initialProject),
   });
+
+  useEffect(() => {
+    if (initialProject && projectId) {
+      qc.setQueryData(["projects", projectId], initialProject);
+    }
+  }, [initialProject, projectId, qc]);
+
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(1, "", {
     initialData: initialSecretsPaged ?? undefined,
     enabled: (service ?? initialService)?.type !== "application",
@@ -933,6 +964,8 @@ export default function ServiceDetails({
                 serviceId={serviceId}
                 service={service ?? null}
                 isDatabaseService={isDatabaseService}
+                s3ImportSsr={s3ImportSsr}
+                initialS3Profiles={initialS3Profiles}
               />
             </motion.div>
           )}
@@ -1125,12 +1158,19 @@ function ServiceBackupPanel({
   serviceId,
   service,
   isDatabaseService,
+  s3ImportSsr,
+  initialS3Profiles,
 }: {
   serviceId: string;
   service: Service | null;
   isDatabaseService: boolean;
+  s3ImportSsr?: ServiceS3ImportSsr | null;
+  initialS3Profiles?: S3ProfilePublic[];
 }) {
   const { toast } = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const volumesEnabled = Boolean(service?.config) && !isDatabaseService;
   const volumesQuery = useServiceVolumes(serviceId, volumesEnabled);
@@ -1164,6 +1204,9 @@ function ServiceBackupPanel({
   const s3ProfilesQuery = useQuery({
     queryKey: ["s3-profiles"],
     queryFn: listS3ProfilesApi,
+    ...(initialS3Profiles !== undefined
+      ? { initialData: initialS3Profiles, refetchOnMount: false }
+      : {}),
     staleTime: 60_000,
   });
 
@@ -1196,8 +1239,35 @@ function ServiceBackupPanel({
   const [output, setOutput] = useState("");
   const [importDbS3, setImportDbS3] = useState<{ profileName: string; key: string } | null>(null);
   const [importVolS3, setImportVolS3] = useState<{ profileName: string; key: string } | null>(null);
-  const [importDbPickerOpen, setImportDbPickerOpen] = useState(false);
-  const [importVolPickerOpen, setImportVolPickerOpen] = useState(false);
+
+  const importDbPickerOpen = searchParams.get("s3Import") === "db";
+  const importVolPickerOpen = searchParams.get("s3Import") === "vol";
+
+  const clearS3ImportQuery = () => {
+    const q = new URLSearchParams(searchParams.toString());
+    q.delete("s3Import");
+    q.delete("s3Profile");
+    q.delete("s3Prefix");
+    const qs = q.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+
+  const openS3ImportPicker = (mode: "db" | "vol") => {
+    const profile = backupS3ProfileName.trim();
+    if (!profile) {
+      toast({
+        title: "S3 destination required",
+        description: "Choose a saved S3 profile first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const q = new URLSearchParams(searchParams.toString());
+    q.set("s3Import", mode);
+    q.set("s3Profile", profile);
+    q.delete("s3Prefix");
+    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
+  };
   const [importDbSaving, setImportDbSaving] = useState(false);
   const [importVolSaving, setImportVolSaving] = useState(false);
   const [importOutDb, setImportOutDb] = useState("");
@@ -1393,30 +1463,65 @@ function ServiceBackupPanel({
   const s3Block = (
     <div>
       <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Backup destination (S3)</label>
-      {s3ProfilesQuery.isPending ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" /> Loading S3 profiles…
-        </div>
-      ) : s3Profiles.length === 0 ? (
-        <p className="text-xs text-amber-400/90">
-          No S3 profiles found. Create one under <code className="text-[11px] bg-muted px-1 rounded">S3</code> first.
-        </p>
-      ) : (
-        <select
-          className="input-field w-full"
-          value={backupS3ProfileName}
-          onChange={(e) => setBackupS3ProfileName(e.target.value)}
-          disabled={saving || importDbSaving || importVolSaving}
-        >
-          {s3Profiles.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name} ({p.bucket})
-            </option>
-          ))}
-        </select>
-      )}
+      <select
+        className="input-field w-full"
+        value={backupS3ProfileName}
+        onChange={(e) => setBackupS3ProfileName(e.target.value)}
+        disabled={saving || importDbSaving || importVolSaving}
+      >
+        {s3Profiles.map((p) => (
+          <option key={p.name} value={p.name}>
+            {p.name} ({p.bucket})
+          </option>
+        ))}
+      </select>
     </div>
   );
+
+  if (s3ProfilesQuery.isPending) {
+    return (
+      <div className="glass-panel rounded-2xl border border-white/10 max-w-lg mx-auto px-8 py-10 flex flex-col items-center justify-center gap-4 min-h-[200px]">
+        <div className="relative">
+          <div className="absolute inset-0 rounded-full bg-primary/20 blur-xl scale-150" aria-hidden />
+          <Loader2 className="relative w-8 h-8 animate-spin text-primary" aria-label="Loading S3 profiles" />
+        </div>
+        <p className="text-sm text-muted-foreground">Loading S3 destinations…</p>
+      </div>
+    );
+  }
+
+  if (s3Profiles.length === 0) {
+    return (
+      <div className="relative max-w-lg mx-auto">
+        <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden p-8 md:p-10 text-center shadow-[0_24px_48px_-28px_rgba(0,0,0,0.45)]">
+          <div
+            className="pointer-events-none absolute -top-24 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-amber-500/15 blur-[72px]"
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute -bottom-16 right-0 h-32 w-32 rounded-full bg-sky-500/10 blur-[56px]"
+            aria-hidden
+          />
+          <div className="relative">
+            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500/20 via-amber-500/5 to-sky-500/15 border border-amber-500/25 shadow-inner">
+              <Cloud className="h-8 w-8 text-amber-300/90 drop-shadow-sm" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-lg font-semibold tracking-tight text-foreground mb-2">S3 destination required</h3>
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto mb-7">
+              You must create an S3 destination first before you can run backups or restore from S3.
+            </p>
+            <Link
+              href="/s3"
+              className="btn-primary inline-flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-sm font-medium shadow-lg shadow-primary/15"
+            >
+              Open S3 destinations
+              <ChevronRight className="w-4 h-4 opacity-90" />
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isDatabaseService) {
     return (
@@ -1530,7 +1635,7 @@ function ServiceBackupPanel({
                   type="button"
                   className="btn-secondary text-sm inline-flex items-center gap-2"
                   disabled={saving || importDbSaving || s3Profiles.length === 0}
-                  onClick={() => setImportDbPickerOpen(true)}
+                  onClick={() => openS3ImportPicker("db")}
                 >
                   <Cloud className="w-4 h-4" />
                   Choose from S3…
@@ -1555,8 +1660,21 @@ function ServiceBackupPanel({
 
           <S3ImportObjectPicker
             open={importDbPickerOpen}
-            onOpenChange={setImportDbPickerOpen}
+            onOpenChange={(next) => {
+              if (!next) clearS3ImportQuery();
+            }}
             defaultProfileName={backupS3ProfileName}
+            initialProfiles={initialS3Profiles}
+            importPickerMode="db"
+            ssr={
+              s3ImportSsr?.mode === "db"
+                ? {
+                    profileName: s3ImportSsr.profileName,
+                    prefix: s3ImportSsr.prefix,
+                    initialList: s3ImportSsr.initialList,
+                  }
+                : null
+            }
             title="Choose database dump"
             description="Browse your bucket and select one file compatible with this database service."
             onPick={(p) => setImportDbS3(p)}
@@ -1726,7 +1844,7 @@ function ServiceBackupPanel({
                 type="button"
                 className="btn-secondary text-sm inline-flex items-center gap-2"
                 disabled={saving || importVolSaving || !volumeBackupName || s3Profiles.length === 0}
-                onClick={() => setImportVolPickerOpen(true)}
+                onClick={() => openS3ImportPicker("vol")}
               >
                 <Cloud className="w-4 h-4" />
                 Choose from S3…
@@ -1758,8 +1876,21 @@ function ServiceBackupPanel({
 
         <S3ImportObjectPicker
           open={importVolPickerOpen}
-          onOpenChange={setImportVolPickerOpen}
+          onOpenChange={(next) => {
+            if (!next) clearS3ImportQuery();
+          }}
           defaultProfileName={backupS3ProfileName}
+          initialProfiles={initialS3Profiles}
+          importPickerMode="vol"
+          ssr={
+            s3ImportSsr?.mode === "vol"
+              ? {
+                  profileName: s3ImportSsr.profileName,
+                  prefix: s3ImportSsr.prefix,
+                  initialList: s3ImportSsr.initialList,
+                }
+              : null
+          }
           requireTarGz
           title="Choose volume archive"
           description="Only .tar.gz objects can be selected (Weehawk volume backup format)."
@@ -2589,14 +2720,32 @@ function ApplicationArchivePanel({
   service: Service;
 }) {
   const queryClient = useQueryClient();
+  const { accessToken } = useAuth();
   const { toast } = useToast();
   const { data: serviceRow } = useService(serviceId);
+  const { data: gitSettings, isLoading: gitSettingsLoading } = useQuery({
+    queryKey: ["git-settings"],
+    queryFn: () => fetchGitSettings(accessToken!),
+    enabled: Boolean(accessToken),
+  });
+  const githubIntegrationReady = useMemo(() => {
+    const g = gitSettings?.github;
+    if (!g) return false;
+    return (
+      Boolean(g.appId?.trim()) ||
+      Boolean(g.clientId?.trim()) ||
+      Boolean(g.clientSecretSet || g.privateKeySet)
+    );
+  }, [gitSettings]);
+  const gitlabAccessTokenConfigured = Boolean(gitSettings?.gitlab.groupAccessTokenSet);
   const [file, setFile] = useState<File | null>(null);
   const [buildPath, setBuildPath] = useState(".");
   const [containerPort, setContainerPort] = useState("3000");
   const [publishPort, setPublishPort] = useState("");
   const [replicas, setReplicas] = useState("1");
   const [uploading, setUploading] = useState(false);
+  /** Generate stack from staged git source (POST generate-from-source). */
+  const [stackGenerating, setStackGenerating] = useState(false);
   const [variablesText, setVariablesText] = useState("");
   type AppEnvVarRow = {
     key: string;
@@ -2615,8 +2764,60 @@ function ApplicationArchivePanel({
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "env" | null>(null);
   const [deployTarget, setDeployTarget] = useState<"source" | "image">("source");
+  /** GitLab card expands clone + integration hints inline (no navigation on card click). */
+  const [showGitlabPanel, setShowGitlabPanel] = useState(false);
   const [imageRef, setImageRef] = useState("");
   const [savingImage, setSavingImage] = useState(false);
+  const [gitlabBranchOverride, setGitlabBranchOverride] = useState("");
+  const [gitlabManualUrl, setGitlabManualUrl] = useState("");
+  /** Manual URL fetch in progress (git-clone-stage). */
+  const [gitlabUrlStaging, setGitlabUrlStaging] = useState(false);
+  const [gitlabProjectSearchInput, setGitlabProjectSearchInput] = useState("");
+  const [gitlabProjectSearchApplied, setGitlabProjectSearchApplied] = useState("");
+  const [gitlabProjectsPage, setGitlabProjectsPage] = useState(1);
+  const [stagingProjectId, setStagingProjectId] = useState<number | null>(null);
+  /** Server has app-source from a completed git-clone-stage; user should configure options then Generate. */
+  const [gitSourceStaged, setGitSourceStaged] = useState(false);
+  /** Row ids that finished fetch (shows Ready). */
+  const [gitlabStagedProjectIds, setGitlabStagedProjectIds] = useState<Set<number>>(() => new Set());
+  /** Manual URL was fetched (shows Ready on Fetch button). */
+  const [gitlabManualUrlStaged, setGitlabManualUrlStaged] = useState(false);
+
+  const { data: gitlabProjectsData, isLoading: gitlabProjectsLoading, error: gitlabProjectsError } =
+    useQuery<GitlabProjectsListResponse>({
+      queryKey: [
+        "gitlab-projects",
+        accessToken,
+        showGitlabPanel,
+        Boolean(gitSettings?.gitlab.groupAccessTokenSet),
+        gitlabProjectsPage,
+        gitlabProjectSearchApplied,
+      ],
+      queryFn: () =>
+        fetchGitlabProjects(accessToken!, {
+          page: gitlabProjectsPage,
+          perPage: 20,
+          search: gitlabProjectSearchApplied.trim() || undefined,
+        }),
+      enabled: Boolean(
+        accessToken && showGitlabPanel && gitSettings?.gitlab.groupAccessTokenSet,
+      ),
+    });
+  const gitlabProjectsList: GitlabProjectListItem[] =
+    gitlabProjectsData?.projects ?? [];
+
+  useEffect(() => {
+    if (!showGitlabPanel) return;
+    setGitlabProjectsPage(1);
+    setGitlabProjectSearchApplied("");
+    setGitlabProjectSearchInput("");
+  }, [showGitlabPanel]);
+
+  useEffect(() => {
+    setGitlabStagedProjectIds(new Set());
+    setGitlabManualUrlStaged(false);
+    setGitSourceStaged(false);
+  }, [serviceId]);
 
   const filledEnvVarCount = useMemo(
     () => variables.filter((v) => v.key.trim()).length,
@@ -2755,40 +2956,41 @@ function ApplicationArchivePanel({
       return;
     }
     setFile(f);
+    setGitSourceStaged(false);
+    setGitlabStagedProjectIds(new Set());
+    setGitlabManualUrlStaged(false);
   };
 
-  const onUpload = async () => {
-    if (!file) {
-      toast({ title: "Choose a ZIP file", description: "Upload your project ZIP first.", variant: "destructive" });
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith(".zip")) {
-      toast({ title: "Invalid file", description: "Only .zip archives are supported.", variant: "destructive" });
-      return;
-    }
-    const cp = parseInt(containerPort || "3000", 10);
-    const rp = publishPort.trim() ? parseInt(publishPort.trim(), 10) : undefined;
-    const rep = parseInt(replicas || "1", 10);
+  const validateApplicationDeployForm = (): {
+    cp: number;
+    rp: number | undefined;
+    rep: number;
+    cleanVars: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    stk: string[];
+  } | null => {
     const cleanVars = variables
       .map((v) => ({ key: v.key.trim(), value: v.value, store: v.store }))
       .filter((v) => v.key.length > 0);
     for (const v of cleanVars) {
       if (!/^[A-Z_][A-Z0-9_]*$/i.test(v.key)) {
         toast({ title: "Invalid variable key", description: `Key "${v.key}" is invalid.`, variant: "destructive" });
-        return;
+        return null;
       }
     }
+    const cp = parseInt(containerPort || "3000", 10);
+    const rp = publishPort.trim() ? parseInt(publishPort.trim(), 10) : undefined;
+    const rep = parseInt(replicas || "1", 10);
     if (!Number.isInteger(cp) || cp < 1 || cp > 65535) {
       toast({ title: "Invalid container port", description: "Use 1-65535.", variant: "destructive" });
-      return;
+      return null;
     }
     if (rp != null && (!Number.isInteger(rp) || rp < 1 || rp > 65535)) {
       toast({ title: "Invalid host port", description: "Use 1-65535 or leave empty.", variant: "destructive" });
-      return;
+      return null;
     }
     if (!Number.isInteger(rep) || rep < 1 || rep > 10) {
       toast({ title: "Invalid replicas", description: "Use a value between 1 and 10.", variant: "destructive" });
-      return;
+      return null;
     }
 
     const stk = connectionStackKeys.map((k) => k.trim()).filter(Boolean);
@@ -2800,7 +3002,7 @@ function ApplicationArchivePanel({
           description: "Use letters and numbers; start with a letter.",
           variant: "destructive",
         });
-        return;
+        return null;
       }
       const low = k.toLowerCase();
       if (seen.has(low)) {
@@ -2809,10 +3011,154 @@ function ApplicationArchivePanel({
           description: "Each extra path needs a unique name.",
           variant: "destructive",
         });
-        return;
+        return null;
       }
       seen.add(low);
     }
+    return { cp, rp, rep, cleanVars, stk };
+  };
+
+  /** Git clone stage only — same idea as picking a ZIP: fetch source, then user sets port/env and clicks Generate. */
+  const stageGitlabSource = async (opts: { gitlabProjectId?: number; httpUrlToRepo?: string }) => {
+    const byProject = opts.gitlabProjectId != null && opts.gitlabProjectId > 0;
+    if (!byProject) {
+      const u = opts.httpUrlToRepo?.trim() ?? "";
+      if (!u) {
+        toast({
+          title: "URL required",
+          description: "Paste the HTTPS clone URL from GitLab (e.g. https://gitlab.com/group/repo.git).",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!u.startsWith("http://") && !u.startsWith("https://")) {
+        toast({
+          title: "Invalid URL",
+          description: "Use an http(s) Git clone URL.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    if (byProject) setStagingProjectId(opts.gitlabProjectId!);
+    else setGitlabUrlStaging(true);
+    try {
+      await applicationGitCloneStageApi(serviceId, {
+        gitlabProjectId: byProject ? opts.gitlabProjectId : undefined,
+        httpUrlToRepo: byProject ? undefined : opts.httpUrlToRepo!.trim(),
+        branch: gitlabBranchOverride.trim() || undefined,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      setGitSourceStaged(true);
+      if (byProject) {
+        setGitlabStagedProjectIds(new Set([opts.gitlabProjectId!]));
+        setGitlabManualUrlStaged(false);
+      } else {
+        setGitlabStagedProjectIds(new Set());
+        setGitlabManualUrlStaged(true);
+      }
+      toast({
+        title: "Repository fetched",
+        description:
+          "Source is on the server. Set container port, env, and networks below, then click Generate stack from source.",
+      });
+    } catch (e) {
+      toast({
+        title: "Fetch failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      if (byProject) setStagingProjectId(null);
+      else setGitlabUrlStaging(false);
+    }
+  };
+
+  const onGitlabFetchManualUrl = async () => {
+    await stageGitlabSource({ httpUrlToRepo: gitlabManualUrl });
+  };
+
+  const onGitlabQuickFetch = (projectId: number) => {
+    void stageGitlabSource({ gitlabProjectId: projectId });
+  };
+
+  const generateStackFromGitSource = async () => {
+    const common = validateApplicationDeployForm();
+    if (!common) return;
+    const { cp, rp, rep, cleanVars, stk } = common;
+    setStackGenerating(true);
+    try {
+      await generateApplicationFromSourceApi(serviceId, {
+        buildPath: buildPath.trim() || ".",
+        containerPort: cp,
+        publishPort: rp,
+        replicas: rep,
+        variables: cleanVars,
+        networks: { external: connectionExternal, stack: stk },
+      });
+      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      toast({
+        title: "Stack generated",
+        description: "Deploy from the header to build the image and run the stack.",
+      });
+    } catch (e) {
+      toast({
+        title: "Generate failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setStackGenerating(false);
+    }
+  };
+
+  /** Primary action: ZIP upload+generate, or generate from staged git source (after Fetch). */
+  const onGenerateStackFromSource = async () => {
+    if (file) {
+      await onUpload();
+      return;
+    }
+    if (gitSourceStaged) {
+      await generateStackFromGitSource();
+      return;
+    }
+    if (gitlabManualUrl.trim() && !gitlabManualUrlStaged) {
+      toast({
+        title: "Fetch repository first",
+        description:
+          "Click “Fetch repo” to download the source to the server, then set port and options and click Generate stack from source.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (showGitlabPanel && gitSettings?.gitlab.groupAccessTokenSet) {
+      toast({
+        title: "Fetch source or upload ZIP",
+        description:
+          "Use Fetch on a project row (or Fetch repo for a manual URL), then configure options and click Generate. Or upload a .zip file.",
+        variant: "destructive",
+      });
+      return;
+    }
+    toast({
+      title: "Choose a source",
+      description: "Upload a .zip file, or open the GitLab card and fetch a repository or paste an HTTPS URL.",
+      variant: "destructive",
+    });
+  };
+
+  const onUpload = async () => {
+    if (!file) {
+      toast({ title: "Choose a ZIP file", description: "Upload your project ZIP first.", variant: "destructive" });
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith(".zip")) {
+      toast({ title: "Invalid file", description: "Only .zip archives are supported.", variant: "destructive" });
+      return;
+    }
+    const common = validateApplicationDeployForm();
+    if (!common) return;
+    const { cp, rp, rep, cleanVars, stk } = common;
 
     setUploading(true);
     try {
@@ -2831,6 +3177,9 @@ function ApplicationArchivePanel({
         description: "Stack config is generated. Deploy to build image and run the stack.",
       });
       setFile(null);
+      setGitSourceStaged(false);
+      setGitlabStagedProjectIds(new Set());
+      setGitlabManualUrlStaged(false);
     } catch (e) {
       toast({
         title: "Upload failed",
@@ -2973,15 +3322,19 @@ function ApplicationArchivePanel({
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1.5">Source</label>
             <p className="text-[11px] text-muted-foreground/90 mb-2 max-w-xl">
-              Connect a repository later. For now, upload a project ZIP from your machine.
+              Configure{" "}
+              <Link href="/git/github" className="text-primary hover:underline">
+                GitHub
+              </Link>{" "}
+              from the GitHub card, or click the{" "}
+              <span className="text-foreground/90">GitLab</span> card to open GitLab clone settings here. Use the sidebar entry Registry & Git for the full integrations list.
             </p>
           </div>
           <div className="grid gap-2 sm:grid-cols-3 sm:items-stretch">
-            <button
-              type="button"
-              disabled
-              title="Coming soon"
-              className="flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border border-white/10 bg-black/25 px-2 py-2 text-center opacity-60 cursor-not-allowed"
+            <Link
+              href="/git/github"
+              scroll={false}
+              className="flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border border-white/10 bg-black/25 px-2 py-2 text-center transition-colors hover:border-primary/30 hover:bg-white/[0.04]"
             >
               <Image
                 src="/deployment-sources/github.png"
@@ -2991,13 +3344,24 @@ function ApplicationArchivePanel({
                 className="h-8 w-8 object-contain"
               />
               <span className="text-xs font-medium text-foreground">GitHub</span>
-              <span className="text-[10px] leading-tight text-muted-foreground">Soon</span>
-            </button>
+              <span
+                className={`text-[10px] leading-tight ${
+                  githubIntegrationReady ? "text-emerald-400/90" : "text-muted-foreground"
+                }`}
+              >
+                {gitSettingsLoading ? "…" : githubIntegrationReady ? "Configured" : "Configure"}
+              </span>
+            </Link>
             <button
               type="button"
-              disabled
-              title="Coming soon"
-              className="flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border border-white/10 bg-black/25 px-2 py-2 text-center opacity-60 cursor-not-allowed"
+              aria-expanded={showGitlabPanel}
+              aria-controls="gitlab-deploy-panel"
+              onClick={() => setShowGitlabPanel((v) => !v)}
+              className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
+                showGitlabPanel
+                  ? "border-orange-500/50 bg-orange-500/10 hover:bg-orange-500/15"
+                  : "border-white/10 bg-black/25 hover:border-orange-500/35 hover:bg-white/[0.04]"
+              }`}
             >
               <Image
                 src="/deployment-sources/gitlab.png"
@@ -3007,7 +3371,16 @@ function ApplicationArchivePanel({
                 className="h-8 w-8 object-contain"
               />
               <span className="text-xs font-medium text-foreground">GitLab</span>
-              <span className="text-[10px] leading-tight text-muted-foreground">Soon</span>
+              <span
+                className={`text-[10px] leading-tight ${
+                  gitlabAccessTokenConfigured ? "text-emerald-400/90" : "text-muted-foreground"
+                }`}
+              >
+                {gitSettingsLoading ? "…" : gitlabAccessTokenConfigured ? "Configured" : "Configure"}
+              </span>
+              <span className="text-[9px] text-muted-foreground/80">
+                {showGitlabPanel ? "Hide" : "Open"} settings
+              </span>
             </button>
             <div className="relative min-h-0 sm:min-h-0">
               <input
@@ -3093,6 +3466,216 @@ function ApplicationArchivePanel({
               </div>
             </div>
           </div>
+
+          {showGitlabPanel ? (
+          <div
+            id="gitlab-deploy-panel"
+            className="rounded-xl border border-orange-500/25 bg-gradient-to-br from-orange-500/[0.07] via-transparent to-transparent p-4 space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+              <p className="text-xs font-medium text-foreground">GitLab — deploy from repository</p>
+              <Link
+                href="/git/gitlab"
+                scroll={false}
+                className="inline-flex items-center gap-1 text-[11px] text-orange-300/90 hover:text-orange-200 hover:underline"
+              >
+                Full integration page
+                <ExternalLink className="h-3 w-3 opacity-80" />
+              </Link>
+            </div>
+
+            {gitSettings?.gitlab.groupAccessTokenSet ? (
+              <div className="space-y-2">
+                <div>
+                  <p className="text-[11px] font-medium text-foreground">Projects you can fetch</p>
+                  <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
+                    Fetch downloads source to the server (like choosing a ZIP). Then set port and env and click Generate stack from source. Use Search to filter by name or path.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 items-center max-w-xl">
+                  <input
+                    className="input-field font-mono text-xs flex-1 min-w-[10rem]"
+                    value={gitlabProjectSearchInput}
+                    onChange={(e) => setGitlabProjectSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        setGitlabProjectSearchApplied(gitlabProjectSearchInput);
+                        setGitlabProjectsPage(1);
+                      }
+                    }}
+                    placeholder="Filter by name or path…"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    disabled={gitlabProjectsLoading}
+                    onClick={() => {
+                      setGitlabProjectSearchApplied(gitlabProjectSearchInput);
+                      setGitlabProjectsPage(1);
+                    }}
+                    className="btn-secondary inline-flex items-center gap-1.5 text-xs !py-2"
+                  >
+                    {gitlabProjectsLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5 opacity-80" />
+                    )}
+                    Search
+                  </button>
+                </div>
+                {gitlabProjectsError ? (
+                  <p className="text-[11px] text-destructive">
+                    {gitlabProjectsError instanceof Error
+                      ? gitlabProjectsError.message
+                      : String(gitlabProjectsError)}
+                  </p>
+                ) : null}
+                <ul className="max-h-56 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/[0.06] bg-black/20">
+                  {gitlabProjectsLoading && gitlabProjectsList.length === 0 ? (
+                    <li className="px-3 py-6 flex justify-center text-muted-foreground">
+                      <Loader2 className="h-6 w-6 animate-spin opacity-70" />
+                    </li>
+                  ) : null}
+                  {gitlabProjectsList.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex items-center gap-2 px-2.5 py-2 text-[11px]"
+                    >
+                      <span className="min-w-0 flex-1 font-mono truncate text-foreground/95" title={p.path_with_namespace}>
+                        {p.path_with_namespace}
+                      </span>
+                      {p.default_branch ? (
+                        <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
+                          {p.default_branch}
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={gitlabUrlStaging || stagingProjectId !== null}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onGitlabQuickFetch(p.id);
+                        }}
+                        className={`inline-flex items-center justify-center gap-1 text-[10px] !py-1 !px-2.5 shrink-0 rounded-md font-medium transition-colors ${
+                          gitlabStagedProjectIds.has(p.id) && stagingProjectId !== p.id
+                            ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                            : "btn-secondary"
+                        }`}
+                      >
+                        {stagingProjectId === p.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : gitlabStagedProjectIds.has(p.id) ? (
+                          <>
+                            <CheckCircle className="h-3 w-3 opacity-90" aria-hidden />
+                            Ready
+                          </>
+                        ) : (
+                          "Fetch"
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {!gitlabProjectsLoading && gitlabProjectsList.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">No projects found. Try another search or check GitLab.</p>
+                ) : null}
+                {gitlabProjectsData && gitlabProjectsData.totalPages > 1 ? (
+                  <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                    <span>
+                      Page {gitlabProjectsData.page} / {gitlabProjectsData.totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline disabled:opacity-40"
+                      disabled={gitlabProjectsPage <= 1 || gitlabProjectsLoading}
+                      onClick={() => setGitlabProjectsPage((n) => Math.max(1, n - 1))}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline disabled:opacity-40"
+                      disabled={
+                        gitlabProjectsPage >= gitlabProjectsData.totalPages || gitlabProjectsLoading
+                      }
+                      onClick={() => setGitlabProjectsPage((n) => n + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+                Save a <strong className="text-foreground/90">personal or group access token</strong> on{" "}
+                <Link href="/git/gitlab" className="text-orange-300/90 hover:underline">
+                  Git → GitLab
+                </Link>{" "}
+                to load your projects here. Until then, use the manual HTTPS URL below (works for public repos without a token).
+              </p>
+            )}
+
+            <div className="flex items-start gap-2">
+              <Image
+                src="/deployment-sources/gitlab.png"
+                alt=""
+                width={28}
+                height={28}
+                className="h-7 w-7 shrink-0 object-contain mt-0.5"
+              />
+              <div className="min-w-0 space-y-1">
+                <p className="text-xs font-medium text-foreground">Or paste URL manually</p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  If a project does not appear in the list, or your repo is public, paste its HTTPS clone URL here.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 max-w-xl">
+              <label className="text-[10px] font-medium text-muted-foreground block">HTTPS clone URL (manual)</label>
+              <input
+                className="input-field font-mono text-xs w-full"
+                value={gitlabManualUrl}
+                onChange={(e) => {
+                  setGitlabManualUrl(e.target.value);
+                  setGitlabManualUrlStaged(false);
+                  setGitSourceStaged(false);
+                }}
+                placeholder="https://gitlab.com/group/project.git"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <div>
+                <label className="text-[10px] font-medium text-muted-foreground block mb-1">Branch (optional)</label>
+                <input
+                  className="input-field font-mono text-xs w-full"
+                  value={gitlabBranchOverride}
+                  onChange={(e) => setGitlabBranchOverride(e.target.value)}
+                  placeholder="Repository default if empty"
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={gitlabUrlStaging || stagingProjectId !== null || !gitlabManualUrl.trim()}
+                onClick={() => void onGitlabFetchManualUrl()}
+                className={`inline-flex items-center gap-2 text-xs !py-2 rounded-md font-medium transition-colors ${
+                  gitlabManualUrlStaged && !gitlabUrlStaging
+                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 px-3"
+                    : "btn-primary"
+                }`}
+              >
+                {gitlabUrlStaging ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : gitlabManualUrlStaged ? (
+                  <CheckCircle className="h-3.5 w-3.5 opacity-90" aria-hidden />
+                ) : null}
+                {gitlabManualUrlStaged && !gitlabUrlStaging ? "Ready" : "Fetch repo"}
+              </button>
+            </div>
+          </div>
+          ) : null}
         </div>
         )}
         {deployTarget === "image" && (
@@ -3306,12 +3889,31 @@ function ApplicationArchivePanel({
           {deployTarget === "source" ? (
             <button
               type="button"
-              onClick={() => void onUpload()}
-              disabled={uploading}
+              onClick={() => void onGenerateStackFromSource()}
+              disabled={
+                uploading ||
+                stackGenerating ||
+                gitlabUrlStaging ||
+                stagingProjectId !== null
+              }
               className="btn-primary text-sm inline-flex items-center gap-2"
             >
-              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackageOpen className="w-4 h-4" />}
-              {uploading ? "Uploading..." : "Upload and generate stack"}
+              {uploading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : stackGenerating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : gitlabUrlStaging || stagingProjectId !== null ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <PackageOpen className="w-4 h-4" />
+              )}
+              {uploading
+                ? "Uploading…"
+                : stackGenerating
+                  ? "Generating…"
+                  : gitlabUrlStaging || stagingProjectId !== null
+                    ? "Fetching…"
+                    : "Generate stack from source"}
             </button>
           ) : (
             <button

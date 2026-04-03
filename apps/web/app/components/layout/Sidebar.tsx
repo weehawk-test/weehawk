@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, LayoutDashboard, FolderKanban, KeyRound, UserCircle, ChevronUp,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
+  GitBranch,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useState } from "react";
@@ -26,7 +27,13 @@ const navSections = [
       { href: "/cron-jobs",    label: "Cron Jobs",     icon: Clock3 },
       { href: "/notifications/channels", label: "Notifications", icon: Bell },
       { href: "/s3",              label: "S3 Destinations",    icon: HardDrive },
-      { href: "/registry",     label: "Registry",      icon: ShieldCheck },
+    ],
+  },
+  {
+    label: "Registry & Git",
+    items: [
+      { href: "/registry", label: "Registry", icon: ShieldCheck },
+      { href: "/git",      label: "Git",      icon: GitBranch },
     ],
   },
   {
@@ -59,6 +66,12 @@ export function Sidebar() {
   const isActive = (href: string) => {
     if (href === "/") return location === "/";
     if (href === "/notifications/channels") return location.startsWith("/notifications");
+    if (href === "/registry") {
+      return location === "/registry" || location.startsWith("/registry/saved");
+    }
+    if (href === "/git") {
+      return location === "/git" || location.startsWith("/git/");
+    }
     return location.startsWith(href);
   };
 

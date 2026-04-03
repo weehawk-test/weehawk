@@ -2,6 +2,15 @@ import { API_BASE } from "./api";
 import type { CreateProjectInput, Project } from "./schema";
 import { getServerApiBase } from "./server-api";
 
+export const PROJECTS_PAGE_SIZE = 9;
+
+export type ProjectsPageResponse = {
+  data: Project[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
 function nestErrorMessage(text: string, fallback: string): string {
   try {
     const j = JSON.parse(text) as { message?: string | string[] };
@@ -46,17 +55,43 @@ export function mapApiProjectToProject(raw: unknown): Project {
   };
 }
 
-export async function fetchProjects(): Promise<Project[]> {
-  const res = await apiFetch("/projects");
+export function parseProjectsPageResponse(text: string): ProjectsPageResponse {
+  const json = JSON.parse(text) as {
+    data?: unknown[];
+    total?: number;
+    page?: number;
+    limit?: number;
+  };
+  if (!Array.isArray(json.data)) {
+    return { data: [], total: 0, page: 1, limit: PROJECTS_PAGE_SIZE };
+  }
+  return {
+    data: json.data.map(mapApiProjectToProject),
+    total: typeof json.total === "number" && Number.isFinite(json.total) ? Math.max(0, json.total) : 0,
+    page: typeof json.page === "number" && Number.isFinite(json.page) ? Math.max(1, json.page) : 1,
+    limit:
+      typeof json.limit === "number" && Number.isFinite(json.limit)
+        ? Math.max(1, json.limit)
+        : PROJECTS_PAGE_SIZE,
+  };
+}
+
+export async function fetchProjectsPage(
+  page = 1,
+  limit = PROJECTS_PAGE_SIZE,
+  q = "",
+): Promise<ProjectsPageResponse> {
+  const params = new URLSearchParams();
+  params.set("page", String(Math.max(1, page)));
+  params.set("limit", String(limit));
+  const trimmed = q.trim();
+  if (trimmed) params.set("q", trimmed);
+  const res = await apiFetch(`/projects?${params.toString()}`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
-  const data = JSON.parse(text) as unknown;
-  if (!Array.isArray(data)) return [];
-  return data
-    .map(mapApiProjectToProject)
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return parseProjectsPageResponse(text);
 }
 
 export async function fetchProject(id: string): Promise<Project> {

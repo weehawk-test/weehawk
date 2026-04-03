@@ -15,7 +15,8 @@ import { Project } from 'src/projects/entities/project.entity';
 import { randomBytes } from 'crypto';
 import * as os from 'os';
 import { ExecutorService } from '../executor/executor.service';
-import { spawn, type ChildProcess } from 'child_process';
+import { execFile, spawn, type ChildProcess } from 'child_process';
+import { promisify } from 'util';
 import { Observable } from 'rxjs';
 import { composeType } from './entities/composeType.enum';
 import * as path from 'path';
@@ -38,6 +39,9 @@ import { RunServiceBackupDto } from './dto/run-service-backup.dto';
 import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s3.dto';
 import { S3Service } from '../s3/s3.service';
 import { getErrorMessage } from '../utils/error-message';
+import { GitService } from '../git/git.service';
+
+const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class ServicesService {
@@ -53,6 +57,7 @@ export class ServicesService {
     private readonly dockerfileGenerator: DockerfileGeneratorService,
     private readonly dockerSecrets: DockerSecretsService,
     private readonly s3Service: S3Service,
+    private readonly gitService: GitService,
   ) {}
 
   async create(createServiceDto: CreateServiceDto) {
@@ -580,32 +585,25 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     return await this.serviceRepository.save(service);
   }
 
-  async uploadApplicationArchive(
-    id: number,
-    file: Express.Multer.File,
-    options?: {
-      buildPath?: string;
-      dockerfilePath?: string;
-      buildMode?: 'dockerfile' | 'buildpacks' | 'nixpacks';
-      containerPort?: number;
-      publishPort?: number;
-      replicas?: number;
-      variablesJson?: string;
-      /** JSON `{ "external": string[], "stack": string[] }` — overrides networks from previous config when set. */
-      networksJson?: string;
-      /** Pipe-separated external network names (multipart-friendly). */
-      externalNetworks?: string;
-      /** Pipe-separated stack overlay keys (multipart-friendly). */
-      stackNetworks?: string;
-    },
-  ) {
-    if (!file || !file.buffer?.length) {
-      throw new BadRequestException('ZIP file is required.');
-    }
-    const service = await this.findOne(id);
-    if (service.composeType !== composeType.APPLICATION) {
-      throw new BadRequestException('This service is not an application-type service.');
-    }
+  private async applyApplicationSourceFromDirectory(
+    service: Service,
+    sourceDir: string,
+    options:
+      | {
+          buildPath?: string;
+          dockerfilePath?: string;
+          buildMode?: 'dockerfile' | 'buildpacks' | 'nixpacks';
+          containerPort?: number;
+          publishPort?: number;
+          replicas?: number;
+          variablesJson?: string;
+          networksJson?: string;
+          externalNetworks?: string;
+          stackNetworks?: string;
+        }
+      | undefined,
+    sourceKind: 'archive' | 'repository',
+  ): Promise<Service> {
     let buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
     let dockerfilePath = this.normalizeArchivePath(options?.dockerfilePath || '', '');
     /** Dockerfile-first only; buildpacks/nixpacks are deprecated and mapped to this flow. */
@@ -619,23 +617,17 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     const envValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'env');
     const secretValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'secret');
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
-    );
-    const sourceDir = path.join(deployDir, 'app-source');
-    const zipPath = path.join(deployDir, 'upload.zip');
-    await fs.mkdir(deployDir, { recursive: true });
-    await fs.rm(sourceDir, { recursive: true, force: true });
-    await fs.writeFile(zipPath, file.buffer);
     let dockerfileGenerated: boolean | undefined;
     try {
-      await this.extractZipSafely(zipPath, sourceDir);
       const contextDir = path.join(sourceDir, buildPath);
       try {
         await fs.access(contextDir);
       } catch {
-        throw new BadRequestException(`Build path not found in archive: "${buildPath}".`);
+        throw new BadRequestException(
+          sourceKind === 'archive'
+            ? `Build path not found in archive: "${buildPath}".`
+            : `Build path not found in repository: "${buildPath}".`,
+        );
       }
 
       const gen = await this.dockerfileGenerator.ensureDockerfileForContext(contextDir, {
@@ -658,9 +650,11 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       }
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
-      throw new BadRequestException('Could not read archive build context.');
-    } finally {
-      await fs.rm(zipPath, { force: true });
+      throw new BadRequestException(
+        sourceKind === 'archive'
+          ? 'Could not read archive build context.'
+          : 'Could not read repository build context.',
+      );
     }
 
     const previousConfig = service.dockerConfig || '';
@@ -694,10 +688,264 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       secretRefs,
       network,
     });
-    const saved = await this.serviceRepository.save(service);
+    return await this.serviceRepository.save(service);
+  }
+
+  private async cloneGitRepository(
+    cloneUrl: string,
+    dest: string,
+    branch?: string | null,
+  ): Promise<void> {
+    await fs.rm(dest, { recursive: true, force: true });
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    const args = ['clone', '--depth', '1'];
+    if (branch?.trim()) {
+      args.push('--branch', branch.trim());
+    }
+    args.push(cloneUrl, dest);
+    try {
+      await execFileAsync('git', args, {
+        maxBuffer: 50 * 1024 * 1024,
+        timeout: 600_000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      });
+    } catch (e) {
+      const msg = getErrorMessage(e);
+      throw new BadRequestException(`git clone failed: ${msg}`);
+    }
+  }
+
+  async uploadApplicationArchive(
+    id: number,
+    file: Express.Multer.File,
+    options?: {
+      buildPath?: string;
+      dockerfilePath?: string;
+      buildMode?: 'dockerfile' | 'buildpacks' | 'nixpacks';
+      containerPort?: number;
+      publishPort?: number;
+      replicas?: number;
+      variablesJson?: string;
+      /** JSON `{ "external": string[], "stack": string[] }` — overrides networks from previous config when set. */
+      networksJson?: string;
+      /** Pipe-separated external network names (multipart-friendly). */
+      externalNetworks?: string;
+      /** Pipe-separated stack overlay keys (multipart-friendly). */
+      stackNetworks?: string;
+    },
+  ) {
+    if (!file || !file.buffer?.length) {
+      throw new BadRequestException('ZIP file is required.');
+    }
+    const service = await this.findOne(id);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException('This service is not an application-type service.');
+    }
+
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    const sourceDir = path.join(deployDir, 'app-source');
+    const zipPath = path.join(deployDir, 'upload.zip');
+    await fs.mkdir(deployDir, { recursive: true });
+    await fs.rm(sourceDir, { recursive: true, force: true });
+    await fs.writeFile(zipPath, file.buffer);
+    try {
+      await this.extractZipSafely(zipPath, sourceDir);
+    } finally {
+      await fs.rm(zipPath, { force: true });
+    }
+
+    const saved = await this.applyApplicationSourceFromDirectory(
+      service,
+      sourceDir,
+      options,
+      'archive',
+    );
     return {
       success: true,
       message: 'Archive uploaded and application stack generated.',
+      service: saved,
+    };
+  }
+
+  async uploadApplicationFromGitClone(
+    id: number,
+    options: {
+      gitlabProjectId?: number;
+      httpUrlToRepo?: string;
+      branch?: string;
+      buildPath?: string;
+      dockerfilePath?: string;
+      containerPort?: number;
+      publishPort?: number;
+      replicas?: number;
+      variablesJson?: string;
+      networksJson?: string;
+      externalNetworks?: string;
+      stackNetworks?: string;
+    },
+  ) {
+    const hasId = options.gitlabProjectId != null && options.gitlabProjectId > 0;
+    const hasUrl = Boolean(options.httpUrlToRepo?.trim());
+    if (hasId === hasUrl) {
+      throw new BadRequestException(
+        'Send exactly one of gitlabProjectId or httpUrlToRepo.',
+      );
+    }
+
+    const service = await this.findOne(id);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException('This service is not an application-type service.');
+    }
+
+    let cloneUrl: string;
+    let branch: string | null | undefined = options.branch?.trim() || null;
+
+    if (hasId) {
+      const info = await this.gitService.gitlabCloneInfoForProject(
+        options.gitlabProjectId!,
+      );
+      cloneUrl = info.cloneUrl;
+      if (!branch) {
+        branch = info.defaultBranch;
+      }
+    } else {
+      cloneUrl = await this.gitService.resolveGitlabHttpCloneUrl(
+        options.httpUrlToRepo!.trim(),
+      );
+    }
+
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    const sourceDir = path.join(deployDir, 'app-source');
+    await fs.mkdir(deployDir, { recursive: true });
+
+    await this.cloneGitRepository(cloneUrl, sourceDir, branch);
+
+    const saved = await this.applyApplicationSourceFromDirectory(
+      service,
+      sourceDir,
+      options,
+      'repository',
+    );
+    return {
+      success: true,
+      message: 'Repository cloned and application stack generated.',
+      service: saved,
+    };
+  }
+
+  /**
+   * Clone Git repository into `app-source` only (no stack YAML). User configures port/env then calls {@link generateApplicationFromSource}.
+   */
+  async stageApplicationGitClone(
+    id: number,
+    options: {
+      gitlabProjectId?: number;
+      httpUrlToRepo?: string;
+      branch?: string;
+    },
+  ) {
+    const hasId = options.gitlabProjectId != null && options.gitlabProjectId > 0;
+    const hasUrl = Boolean(options.httpUrlToRepo?.trim());
+    if (hasId === hasUrl) {
+      throw new BadRequestException(
+        'Send exactly one of gitlabProjectId or httpUrlToRepo.',
+      );
+    }
+
+    const service = await this.findOne(id);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException('This service is not an application-type service.');
+    }
+
+    let cloneUrl: string;
+    let branch: string | null | undefined = options.branch?.trim() || null;
+
+    if (hasId) {
+      const info = await this.gitService.gitlabCloneInfoForProject(
+        options.gitlabProjectId!,
+      );
+      cloneUrl = info.cloneUrl;
+      if (!branch) {
+        branch = info.defaultBranch;
+      }
+    } else {
+      cloneUrl = await this.gitService.resolveGitlabHttpCloneUrl(
+        options.httpUrlToRepo!.trim(),
+      );
+    }
+
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    const sourceDir = path.join(deployDir, 'app-source');
+    await fs.mkdir(deployDir, { recursive: true });
+
+    await this.cloneGitRepository(cloneUrl, sourceDir, branch);
+
+    const fresh = await this.findOne(id);
+    return {
+      success: true,
+      message:
+        'Repository fetched into app source. Configure port and options, then generate the stack.',
+      service: fresh,
+    };
+  }
+
+  /**
+   * Build stack YAML from existing `app-source` (after git stage or same as re-apply after changing options).
+   */
+  async generateApplicationFromSource(
+    id: number,
+    options: {
+      buildPath?: string;
+      dockerfilePath?: string;
+      containerPort?: number;
+      publishPort?: number;
+      replicas?: number;
+      variablesJson?: string;
+      networksJson?: string;
+      externalNetworks?: string;
+      stackNetworks?: string;
+    },
+  ) {
+    const service = await this.findOne(id);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException('This service is not an application-type service.');
+    }
+
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    const sourceDir = path.join(deployDir, 'app-source');
+    try {
+      await fs.access(sourceDir);
+    } catch {
+      throw new BadRequestException(
+        'No application source on disk. Fetch a Git repository (GitLab Clone) or upload a ZIP archive first.',
+      );
+    }
+    const entries = await fs.readdir(sourceDir);
+    if (entries.length === 0) {
+      throw new BadRequestException('Application source directory is empty.');
+    }
+
+    const saved = await this.applyApplicationSourceFromDirectory(
+      service,
+      sourceDir,
+      options,
+      'repository',
+    );
+    return {
+      success: true,
+      message: 'Application stack generated from source.',
       service: saved,
     };
   }
@@ -1262,6 +1510,55 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       relations: ['project'],
       order: { createdAt: 'DESC' },
     });
+  }
+
+  async findByProjectIdPaginated(
+    projectId: number,
+    page: number,
+    limit: number,
+    q?: string,
+  ) {
+    const safePage = Math.max(1, Math.floor(page) || 1);
+    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 8));
+    const trimmed = (q ?? '').trim().toLowerCase();
+
+    const countQb = this.serviceRepository
+      .createQueryBuilder('service')
+      .innerJoin('service.project', 'project')
+      .where('project.id = :projectId', { projectId });
+
+    if (trimmed) {
+      countQb.andWhere(
+        '(LOWER(service.name) LIKE :q OR LOWER(COALESCE(service.description, \'\')) LIKE :q)',
+        { q: `%${trimmed}%` },
+      );
+    }
+    const total = await countQb.getCount();
+
+    const dataQb = this.serviceRepository
+      .createQueryBuilder('service')
+      .leftJoinAndSelect('service.project', 'project')
+      .where('project.id = :projectId', { projectId });
+
+    if (trimmed) {
+      dataQb.andWhere(
+        '(LOWER(service.name) LIKE :q OR LOWER(COALESCE(service.description, \'\')) LIKE :q)',
+        { q: `%${trimmed}%` },
+      );
+    }
+
+    const data = await dataQb
+      .orderBy('service.createdAt', 'DESC')
+      .skip((safePage - 1) * safeLimit)
+      .take(safeLimit)
+      .getMany();
+
+    return {
+      data,
+      total,
+      page: safePage,
+      limit: safeLimit,
+    };
   }
 
   async findOne(id: number) {

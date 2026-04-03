@@ -10,6 +10,7 @@ import { DockersecretsModule } from 'src/dockersecrets/dockersecrets.module';
 import { ExecutorModule } from '../executor/executor.module';
 import { DockerfileGeneratorModule } from '../dockerfile-generator/dockerfile-generator.module';
 import { S3Module } from '../s3/s3.module';
+import { GitModule } from '../git/git.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { S3Module } from '../s3/s3.module';
     DockerfileGeneratorModule,
     forwardRef(() => ExecutorModule),
     S3Module,
+    GitModule,
   ],
   controllers: [ServicesController],
   providers: [ServicesService, ServiceTerminalGateway, DatabaseGeneratorService],

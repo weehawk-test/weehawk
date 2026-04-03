@@ -41,12 +41,43 @@ export class ProjectsService {
     return await this.projectRepository.save(project);
   }
 
-  async findAll() {
-    return await this.projectRepository
+  async findAllPaginated(page: number, limit: number, q?: string) {
+    const safePage = Math.max(1, Math.floor(page) || 1);
+    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 9));
+    const trimmed = (q ?? '').trim().toLowerCase();
+
+    const countQb = this.projectRepository.createQueryBuilder('project');
+    if (trimmed) {
+      countQb.andWhere(
+        '(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, \'\')) LIKE :q)',
+        { q: `%${trimmed}%` },
+      );
+    }
+    const total = await countQb.getCount();
+
+    const dataQb = this.projectRepository
       .createQueryBuilder('project')
-      .loadRelationCountAndMap('project.serviceCount', 'project.services')
+      .loadRelationCountAndMap('project.serviceCount', 'project.services');
+
+    if (trimmed) {
+      dataQb.andWhere(
+        '(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, \'\')) LIKE :q)',
+        { q: `%${trimmed}%` },
+      );
+    }
+
+    const data = await dataQb
       .orderBy('project.createdAt', 'DESC')
+      .skip((safePage - 1) * safeLimit)
+      .take(safeLimit)
       .getMany();
+
+    return {
+      data,
+      total,
+      page: safePage,
+      limit: safeLimit,
+    };
   }
 
   async findOne(id: number) {
