@@ -71,6 +71,35 @@ export async function fetchGitlabProjects(
   return res.json() as Promise<GitlabProjectsListResponse>;
 }
 
+export type GithubRepoListItem = {
+  id: number;
+  full_name: string;
+  clone_url: string;
+  default_branch: string | null;
+  private: boolean;
+  installation_id: number;
+};
+
+export type GithubRepositoriesListResponse = {
+  repositories: GithubRepoListItem[];
+  totalPages: number;
+  page: number;
+};
+
+/** Repositories visible to the configured GitHub App (all installations). */
+export async function fetchGithubRepositories(
+  accessToken: string,
+  params?: { page?: number; perPage?: number; search?: string },
+): Promise<GithubRepositoriesListResponse> {
+  const u = new URL(`${API_BASE}/api/git/github/repositories`);
+  if (params?.page != null) u.searchParams.set("page", String(params.page));
+  if (params?.perPage != null) u.searchParams.set("perPage", String(params.perPage));
+  if (params?.search?.trim()) u.searchParams.set("search", params.search.trim());
+  const res = await authFetch(accessToken, u.toString(), { method: "GET" });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json() as Promise<GithubRepositoriesListResponse>;
+}
+
 export async function updateGitSettings(
   accessToken: string,
   payload: UpdateGitSettingsPayload,

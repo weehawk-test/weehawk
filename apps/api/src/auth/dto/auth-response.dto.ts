@@ -7,4 +7,8 @@ export class AuthResponseDto {
   lastName!: string;
   email!: string;
   imageUrl!: string | null;
+  /** Included for OAuth callback redirects; defaults to USER when unset. */
+  role?: string;
+  /** LOCAL or GOOGLE */
+  provider?: string;
 }

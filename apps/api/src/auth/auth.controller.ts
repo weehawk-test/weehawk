@@ -6,6 +6,7 @@ import { LoginDto } from './dto/login.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import type { Response, Request } from 'express';
+import { setAuthCookies } from './auth-cookies.util';
 
 @ApiTags('Auth')
 @Controller('/api/auth')
@@ -26,24 +27,6 @@ export class AuthController {
     return undefined;
   }
 
-  private setAuthCookies(res: Response, payload: AuthResponseDto): void {
-    const secure = process.env.NODE_ENV === 'production';
-    res.cookie('weehawk_at', payload.accessToken, {
-      httpOnly: true,
-      secure,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-    res.cookie('weehawk_rt', payload.refreshToken, {
-      httpOnly: true,
-      secure,
-      sameSite: 'lax',
-      path: '/api/auth',
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-    });
-  }
-
   private clearAuthCookies(res: Response): void {
     const secure = process.env.NODE_ENV === 'production';
     const base = { httpOnly: true, secure, sameSite: 'lax' as const };
@@ -52,7 +35,11 @@ export class AuthController {
   }
 
   @Get('/setup-status')
-  async setupStatus(): Promise<{ needsSetup: boolean }> {
+  async setupStatus(): Promise<{
+    edition: 'cloud' | 'selfhosted';
+    needsSetup: boolean;
+    hasUsers: boolean;
+  }> {
     return this.authService.getSetupStatus();
   }
 
@@ -63,7 +50,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponseDto> {
     const out = await this.authService.register(dto);
-    this.setAuthCookies(res, out);
+    setAuthCookies(res, out);
     return out;
   }
 
@@ -74,7 +61,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponseDto> {
     const out = await this.authService.login(dto);
-    this.setAuthCookies(res, out);
+    setAuthCookies(res, out);
     return out;
   }
 
@@ -87,7 +74,7 @@ export class AuthController {
   ): Promise<AuthResponseDto> {
     const refreshToken = dto.refreshToken ?? this.readCookie(req, 'weehawk_rt');
     const out = await this.authService.refresh(refreshToken ?? '');
-    this.setAuthCookies(res, out);
+    setAuthCookies(res, out);
     return out;
   }
 

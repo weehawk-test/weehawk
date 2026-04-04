@@ -32,7 +32,7 @@ import { useDockerSecretsPagedWithInitialData } from "@/hooks/use-docker-secrets
 import { useDeploy } from "@/hooks/use-deploy-logs";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
-import type { Project, Service } from "@/lib/schema";
+import type { Project, Service, TraefikRouteRule } from "@/lib/schema";
 import {
   databaseLogoBlendClass,
   parseDatabaseEngineFromConfig,
@@ -46,7 +46,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   fetchGitSettings,
+  fetchGithubRepositories,
   fetchGitlabProjects,
+  type GithubRepoListItem,
+  type GithubRepositoriesListResponse,
   type GitlabProjectListItem,
   type GitlabProjectsListResponse,
 } from "@/lib/git-api";
@@ -246,6 +249,55 @@ function countEnvEntries(text: string) {
   }).length;
 }
 
+function countTraefikRoutesOrDomains(service: Service | null | undefined): number | undefined {
+  if (!service) return undefined;
+  const tr = service.traefikRoutes;
+  if (tr && tr.length > 0) return tr.length;
+  const d = service.domains?.length ?? 0;
+  return d > 0 ? d : undefined;
+}
+
+function defaultTraefikRouterName(appName?: string): string {
+  let s = (appName ?? "app")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/--+/g, "-");
+  if (!s) s = "app";
+  if (!/^[a-z]/.test(s)) s = `a${s}`;
+  return s.slice(0, 63);
+}
+
+function parseHostInput(raw: string): string[] {
+  return raw
+    .split(/[\n,]+/)
+    .map((x) => x.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, ""))
+    .filter(Boolean);
+}
+
+function buildInitialTraefikRoutes(service: Service): TraefikRouteRule[] {
+  const tr = service.traefikRoutes;
+  if (tr && tr.length > 0) return tr.map((r) => ({ ...r }));
+  if (service.domains?.length) {
+    return [
+      {
+        router: defaultTraefikRouterName(service.appName),
+        hosts: [...service.domains],
+        pathPrefix: null,
+        port: null,
+      },
+    ];
+  }
+  return [
+    {
+      router: defaultTraefikRouterName(service.appName),
+      hosts: [],
+      pathPrefix: null,
+      port: null,
+    },
+  ];
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export type ServiceS3ImportSsr = {
@@ -336,7 +388,12 @@ export default function ServiceDetails({
     const tail: TabDef[] = [
       { id: "env", label: "Environment", icon: Variable, count: envEntryCount || undefined },
       { id: "backup", label: "Backup", icon: Archive },
-      { id: "domain", label: "Domains", icon: Globe, count: service?.domains?.length },
+      {
+        id: "domain",
+        label: "Domains",
+        icon: Globe,
+        count: countTraefikRoutesOrDomains(service),
+      },
       { id: "secrets", label: "Secrets", icon: Shield, count: secretsPaged?.totalAll },
       { id: "logs", label: "Logs", icon: ScrollText },
       { id: "terminal", label: "Terminal", icon: Terminal },
@@ -363,6 +420,7 @@ export default function ServiceDetails({
     hasDatabaseCompose,
     envEntryCount,
     service?.domains?.length,
+    service?.traefikRoutes,
     secretsPaged?.totalAll,
     service?.type,
     service?.config,
@@ -2738,6 +2796,10 @@ function ApplicationArchivePanel({
     );
   }, [gitSettings]);
   const gitlabAccessTokenConfigured = Boolean(gitSettings?.gitlab.groupAccessTokenSet);
+  /** List + clone private repos via GitHub App installation token (needs App ID + private key). */
+  const githubAppListReady = Boolean(
+    gitSettings?.github.appId?.trim() && gitSettings?.github.privateKeySet,
+  );
   const [file, setFile] = useState<File | null>(null);
   const [buildPath, setBuildPath] = useState(".");
   const [containerPort, setContainerPort] = useState("3000");
@@ -2764,6 +2826,8 @@ function ApplicationArchivePanel({
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "env" | null>(null);
   const [deployTarget, setDeployTarget] = useState<"source" | "image">("source");
+  /** GitHub card expands clone from App installations (same flow as GitLab). */
+  const [showGithubPanel, setShowGithubPanel] = useState(false);
   /** GitLab card expands clone + integration hints inline (no navigation on card click). */
   const [showGitlabPanel, setShowGitlabPanel] = useState(false);
   const [imageRef, setImageRef] = useState("");
@@ -2782,6 +2846,17 @@ function ApplicationArchivePanel({
   const [gitlabStagedProjectIds, setGitlabStagedProjectIds] = useState<Set<number>>(() => new Set());
   /** Manual URL was fetched (shows Ready on Fetch button). */
   const [gitlabManualUrlStaged, setGitlabManualUrlStaged] = useState(false);
+
+  const [githubBranchOverride, setGithubBranchOverride] = useState("");
+  const [githubManualUrl, setGithubManualUrl] = useState("");
+  const [githubUrlStaging, setGithubUrlStaging] = useState(false);
+  const [githubProjectSearchInput, setGithubProjectSearchInput] = useState("");
+  const [githubProjectSearchApplied, setGithubProjectSearchApplied] = useState("");
+  const [githubProjectsPage, setGithubProjectsPage] = useState(1);
+  /** Non-null while a GitHub repo row is fetching. */
+  const [stagingGithubRepoKey, setStagingGithubRepoKey] = useState<string | null>(null);
+  const [githubStagedRepoKeys, setGithubStagedRepoKeys] = useState<Set<string>>(() => new Set());
+  const [githubManualUrlStaged, setGithubManualUrlStaged] = useState(false);
 
   const { data: gitlabProjectsData, isLoading: gitlabProjectsLoading, error: gitlabProjectsError } =
     useQuery<GitlabProjectsListResponse>({
@@ -2806,6 +2881,28 @@ function ApplicationArchivePanel({
   const gitlabProjectsList: GitlabProjectListItem[] =
     gitlabProjectsData?.projects ?? [];
 
+  const { data: githubReposData, isLoading: githubReposLoading, error: githubReposError } =
+    useQuery<GithubRepositoriesListResponse>({
+      queryKey: [
+        "github-repositories",
+        accessToken,
+        showGithubPanel,
+        githubAppListReady,
+        githubProjectsPage,
+        githubProjectSearchApplied,
+      ],
+      queryFn: () =>
+        fetchGithubRepositories(accessToken!, {
+          page: githubProjectsPage,
+          perPage: 20,
+          search: githubProjectSearchApplied.trim() || undefined,
+        }),
+      enabled: Boolean(accessToken && showGithubPanel && githubAppListReady),
+    });
+  const githubReposList: GithubRepoListItem[] = githubReposData?.repositories ?? [];
+
+  const githubRepoRowKey = (r: GithubRepoListItem) => `${r.installation_id}\0${r.full_name}`;
+
   useEffect(() => {
     if (!showGitlabPanel) return;
     setGitlabProjectsPage(1);
@@ -2814,8 +2911,17 @@ function ApplicationArchivePanel({
   }, [showGitlabPanel]);
 
   useEffect(() => {
+    if (!showGithubPanel) return;
+    setGithubProjectsPage(1);
+    setGithubProjectSearchApplied("");
+    setGithubProjectSearchInput("");
+  }, [showGithubPanel]);
+
+  useEffect(() => {
     setGitlabStagedProjectIds(new Set());
     setGitlabManualUrlStaged(false);
+    setGithubStagedRepoKeys(new Set());
+    setGithubManualUrlStaged(false);
     setGitSourceStaged(false);
   }, [serviceId]);
 
@@ -2959,6 +3065,8 @@ function ApplicationArchivePanel({
     setGitSourceStaged(false);
     setGitlabStagedProjectIds(new Set());
     setGitlabManualUrlStaged(false);
+    setGithubStagedRepoKeys(new Set());
+    setGithubManualUrlStaged(false);
   };
 
   const validateApplicationDeployForm = (): {
@@ -3050,6 +3158,8 @@ function ApplicationArchivePanel({
       });
       await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
       setGitSourceStaged(true);
+      setGithubStagedRepoKeys(new Set());
+      setGithubManualUrlStaged(false);
       if (byProject) {
         setGitlabStagedProjectIds(new Set([opts.gitlabProjectId!]));
         setGitlabManualUrlStaged(false);
@@ -3080,6 +3190,84 @@ function ApplicationArchivePanel({
 
   const onGitlabQuickFetch = (projectId: number) => {
     void stageGitlabSource({ gitlabProjectId: projectId });
+  };
+
+  const stageGithubSource = async (opts: {
+    installationId?: number;
+    fullName?: string;
+    httpUrlToRepo?: string;
+  }) => {
+    const byPick =
+      opts.installationId != null &&
+      opts.installationId > 0 &&
+      Boolean(opts.fullName?.trim());
+    if (!byPick) {
+      const u = opts.httpUrlToRepo?.trim() ?? "";
+      if (!u) {
+        toast({
+          title: "URL required",
+          description:
+            "Paste an HTTPS clone URL from GitHub (e.g. https://github.com/org/repo.git). Public repos only unless you pick from the list below.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!u.startsWith("http://") && !u.startsWith("https://")) {
+        toast({
+          title: "Invalid URL",
+          description: "Use an http(s) Git clone URL.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+    const rowKey =
+      byPick && opts.fullName
+        ? `${opts.installationId}\0${opts.fullName.trim()}`
+        : null;
+    if (rowKey) setStagingGithubRepoKey(rowKey);
+    else setGithubUrlStaging(true);
+    try {
+      await applicationGitCloneStageApi(serviceId, {
+        githubInstallationId: byPick ? opts.installationId : undefined,
+        githubRepoFullName: byPick ? opts.fullName!.trim() : undefined,
+        httpUrlToRepo: byPick ? undefined : opts.httpUrlToRepo!.trim(),
+        branch: githubBranchOverride.trim() || undefined,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      setGitSourceStaged(true);
+      setGitlabStagedProjectIds(new Set());
+      setGitlabManualUrlStaged(false);
+      if (byPick && rowKey) {
+        setGithubStagedRepoKeys(new Set([rowKey]));
+        setGithubManualUrlStaged(false);
+      } else {
+        setGithubStagedRepoKeys(new Set());
+        setGithubManualUrlStaged(true);
+      }
+      toast({
+        title: "Repository fetched",
+        description:
+          "Source is on the server. Set container port, env, and networks below, then click Generate stack from source.",
+      });
+    } catch (e) {
+      toast({
+        title: "Fetch failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      if (rowKey) setStagingGithubRepoKey(null);
+      else setGithubUrlStaging(false);
+    }
+  };
+
+  const onGithubFetchManualUrl = async () => {
+    await stageGithubSource({ httpUrlToRepo: githubManualUrl });
+  };
+
+  const onGithubQuickFetch = (installationId: number, fullName: string) => {
+    void stageGithubSource({ installationId, fullName });
   };
 
   const generateStackFromGitSource = async () => {
@@ -3131,6 +3319,15 @@ function ApplicationArchivePanel({
       });
       return;
     }
+    if (githubManualUrl.trim() && !githubManualUrlStaged) {
+      toast({
+        title: "Fetch repository first",
+        description:
+          "Click “Fetch repo” to download the GitHub source to the server (or pick a repo from the list), then click Generate stack from source.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (showGitlabPanel && gitSettings?.gitlab.groupAccessTokenSet) {
       toast({
         title: "Fetch source or upload ZIP",
@@ -3140,9 +3337,19 @@ function ApplicationArchivePanel({
       });
       return;
     }
+    if (showGithubPanel && githubAppListReady) {
+      toast({
+        title: "Fetch source or upload ZIP",
+        description:
+          "Use Fetch on a repository row (or Fetch repo for a public GitHub HTTPS URL), then configure options and click Generate. Or upload a .zip file.",
+        variant: "destructive",
+      });
+      return;
+    }
     toast({
       title: "Choose a source",
-      description: "Upload a .zip file, or open the GitLab card and fetch a repository or paste an HTTPS URL.",
+      description:
+        "Upload a .zip file, or open the GitHub / GitLab card and fetch a repository, or paste an HTTPS URL.",
       variant: "destructive",
     });
   };
@@ -3296,7 +3503,7 @@ function ApplicationArchivePanel({
                   : "border-white/10 bg-black/25 text-muted-foreground hover:text-foreground"
               }`}
             >
-              Source code (ZIP)
+              Source code
             </button>
             <button
               type="button"
@@ -3322,19 +3529,25 @@ function ApplicationArchivePanel({
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1.5">Source</label>
             <p className="text-[11px] text-muted-foreground/90 mb-2 max-w-xl">
-              Configure{" "}
+              Register the{" "}
               <Link href="/git/github" className="text-primary hover:underline">
-                GitHub
+                GitHub App
               </Link>{" "}
-              from the GitHub card, or click the{" "}
-              <span className="text-foreground/90">GitLab</span> card to open GitLab clone settings here. Use the sidebar entry Registry & Git for the full integrations list.
+              under Git → GitHub, then open the GitHub card here to list repos your app can access (installations). Same workflow as GitLab: Fetch → set port/env → Generate. Use{" "}
+              <span className="text-foreground/90">Registry &amp; Git</span> in the sidebar for the full integrations list.
             </p>
           </div>
           <div className="grid gap-2 sm:grid-cols-3 sm:items-stretch">
-            <Link
-              href="/git/github"
-              scroll={false}
-              className="flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border border-white/10 bg-black/25 px-2 py-2 text-center transition-colors hover:border-primary/30 hover:bg-white/[0.04]"
+            <button
+              type="button"
+              aria-expanded={showGithubPanel}
+              aria-controls="github-deploy-panel"
+              onClick={() => setShowGithubPanel((v) => !v)}
+              className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
+                showGithubPanel
+                  ? "border-sky-500/50 bg-sky-500/10 hover:bg-sky-500/15"
+                  : "border-white/10 bg-black/25 hover:border-sky-500/35 hover:bg-white/[0.04]"
+              }`}
             >
               <Image
                 src="/deployment-sources/github.png"
@@ -3351,7 +3564,10 @@ function ApplicationArchivePanel({
               >
                 {gitSettingsLoading ? "…" : githubIntegrationReady ? "Configured" : "Configure"}
               </span>
-            </Link>
+              <span className="text-[9px] text-muted-foreground/80">
+                {showGithubPanel ? "Hide" : "Open"} settings
+              </span>
+            </button>
             <button
               type="button"
               aria-expanded={showGitlabPanel}
@@ -3467,6 +3683,232 @@ function ApplicationArchivePanel({
             </div>
           </div>
 
+          {showGithubPanel ? (
+          <div
+            id="github-deploy-panel"
+            className="rounded-xl border border-sky-500/25 bg-gradient-to-br from-sky-500/[0.07] via-transparent to-transparent p-4 space-y-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+              <p className="text-xs font-medium text-foreground">GitHub — deploy from repository</p>
+              <Link
+                href="/git/github"
+                scroll={false}
+                className="inline-flex items-center gap-1 text-[11px] text-sky-300/90 hover:text-sky-200 hover:underline"
+              >
+                Full integration page
+                <ExternalLink className="h-3 w-3 opacity-80" />
+              </Link>
+            </div>
+
+            {githubAppListReady ? (
+              <div className="space-y-2">
+                <div>
+                  <p className="text-[11px] font-medium text-foreground">Repositories your GitHub App can access</p>
+                  <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
+                    Install the app on your org or user account, then refresh. Fetch downloads source to the server (like a ZIP). Then set port and env and click Generate stack from source. Search filters the merged list by full name.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 items-center max-w-xl">
+                  <input
+                    className="input-field font-mono text-xs flex-1 min-w-[10rem]"
+                    value={githubProjectSearchInput}
+                    onChange={(e) => setGithubProjectSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        setGithubProjectSearchApplied(githubProjectSearchInput);
+                        setGithubProjectsPage(1);
+                      }
+                    }}
+                    placeholder="Filter by owner/repo…"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    disabled={githubReposLoading}
+                    onClick={() => {
+                      setGithubProjectSearchApplied(githubProjectSearchInput);
+                      setGithubProjectsPage(1);
+                    }}
+                    className="btn-secondary inline-flex items-center gap-1.5 text-xs !py-2"
+                  >
+                    {githubReposLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Search className="h-3.5 w-3.5 opacity-80" />
+                    )}
+                    Search
+                  </button>
+                </div>
+                {githubReposError ? (
+                  <p className="text-[11px] text-destructive">
+                    {githubReposError instanceof Error
+                      ? githubReposError.message
+                      : String(githubReposError)}
+                  </p>
+                ) : null}
+                <ul className="max-h-56 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/[0.06] bg-black/20">
+                  {githubReposLoading && githubReposList.length === 0 ? (
+                    <li className="px-3 py-6 flex justify-center text-muted-foreground">
+                      <Loader2 className="h-6 w-6 animate-spin opacity-70" />
+                    </li>
+                  ) : null}
+                  {githubReposList.map((r) => {
+                    const rk = githubRepoRowKey(r);
+                    return (
+                      <li
+                        key={`${r.installation_id}-${r.id}`}
+                        className="flex items-center gap-2 px-2.5 py-2 text-[11px]"
+                      >
+                        <span className="min-w-0 flex-1 font-mono truncate text-foreground/95" title={r.full_name}>
+                          {r.full_name}
+                        </span>
+                        {r.default_branch ? (
+                          <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
+                            {r.default_branch}
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={
+                            githubUrlStaging ||
+                            stagingGithubRepoKey !== null ||
+                            stagingProjectId !== null ||
+                            gitlabUrlStaging
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onGithubQuickFetch(r.installation_id, r.full_name);
+                          }}
+                          className={`inline-flex items-center justify-center gap-1 text-[10px] !py-1 !px-2.5 shrink-0 rounded-md font-medium transition-colors ${
+                            githubStagedRepoKeys.has(rk) && stagingGithubRepoKey !== rk
+                              ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                              : "btn-secondary"
+                          }`}
+                        >
+                          {stagingGithubRepoKey === rk ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : githubStagedRepoKeys.has(rk) ? (
+                            <>
+                              <CheckCircle className="h-3 w-3 opacity-90" aria-hidden />
+                              Ready
+                            </>
+                          ) : (
+                            "Fetch"
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {!githubReposLoading && githubReposList.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    No repositories found. Install the GitHub App on an account with repos, or try another search.
+                  </p>
+                ) : null}
+                {githubReposData && githubReposData.totalPages > 1 ? (
+                  <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+                    <span>
+                      Page {githubReposData.page} / {githubReposData.totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline disabled:opacity-40"
+                      disabled={githubProjectsPage <= 1 || githubReposLoading}
+                      onClick={() => setGithubProjectsPage((n) => Math.max(1, n - 1))}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline disabled:opacity-40"
+                      disabled={
+                        githubProjectsPage >= githubReposData.totalPages || githubReposLoading
+                      }
+                      onClick={() => setGithubProjectsPage((n) => n + 1)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+                Complete{" "}
+                <Link href="/git/github" className="text-sky-300/90 hover:underline">
+                  Git → GitHub
+                </Link>{" "}
+                (register the app via manifest) so the API has the App ID and private key. Until then, use a public repo HTTPS URL below (no auth).
+              </p>
+            )}
+
+            <div className="flex items-start gap-2">
+              <Image
+                src="/deployment-sources/github.png"
+                alt=""
+                width={28}
+                height={28}
+                className="h-7 w-7 shrink-0 object-contain mt-0.5"
+              />
+              <div className="min-w-0 space-y-1">
+                <p className="text-xs font-medium text-foreground">Or paste GitHub HTTPS URL</p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Public repositories only from here. Private repos must be fetched from the list above after the app is installed.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2 max-w-xl">
+              <label className="text-[10px] font-medium text-muted-foreground block">HTTPS clone URL (manual)</label>
+              <input
+                className="input-field font-mono text-xs w-full"
+                value={githubManualUrl}
+                onChange={(e) => {
+                  setGithubManualUrl(e.target.value);
+                  setGithubManualUrlStaged(false);
+                  setGitSourceStaged(false);
+                }}
+                placeholder="https://github.com/org/repo.git"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <div>
+                <label className="text-[10px] font-medium text-muted-foreground block mb-1">Branch (optional)</label>
+                <input
+                  className="input-field font-mono text-xs w-full"
+                  value={githubBranchOverride}
+                  onChange={(e) => setGithubBranchOverride(e.target.value)}
+                  placeholder="Repository default if empty"
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={
+                  githubUrlStaging ||
+                  stagingGithubRepoKey !== null ||
+                  stagingProjectId !== null ||
+                  gitlabUrlStaging ||
+                  !githubManualUrl.trim()
+                }
+                onClick={() => void onGithubFetchManualUrl()}
+                className={`inline-flex items-center gap-2 text-xs !py-2 rounded-md font-medium transition-colors ${
+                  githubManualUrlStaged && !githubUrlStaging
+                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 px-3"
+                    : "btn-primary"
+                }`}
+              >
+                {githubUrlStaging ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : githubManualUrlStaged ? (
+                  <CheckCircle className="h-3.5 w-3.5 opacity-90" aria-hidden />
+                ) : null}
+                {githubManualUrlStaged && !githubUrlStaging ? "Ready" : "Fetch repo"}
+              </button>
+            </div>
+          </div>
+          ) : null}
+
           {showGitlabPanel ? (
           <div
             id="gitlab-deploy-panel"
@@ -3552,7 +3994,12 @@ function ApplicationArchivePanel({
                       ) : null}
                       <button
                         type="button"
-                        disabled={gitlabUrlStaging || stagingProjectId !== null}
+                        disabled={
+                          gitlabUrlStaging ||
+                          stagingProjectId !== null ||
+                          githubUrlStaging ||
+                          stagingGithubRepoKey !== null
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
                           onGitlabQuickFetch(p.id);
@@ -3658,7 +4105,13 @@ function ApplicationArchivePanel({
               </div>
               <button
                 type="button"
-                disabled={gitlabUrlStaging || stagingProjectId !== null || !gitlabManualUrl.trim()}
+                disabled={
+                  gitlabUrlStaging ||
+                  stagingProjectId !== null ||
+                  githubUrlStaging ||
+                  stagingGithubRepoKey !== null ||
+                  !gitlabManualUrl.trim()
+                }
                 onClick={() => void onGitlabFetchManualUrl()}
                 className={`inline-flex items-center gap-2 text-xs !py-2 rounded-md font-medium transition-colors ${
                   gitlabManualUrlStaged && !gitlabUrlStaging
@@ -3894,7 +4347,9 @@ function ApplicationArchivePanel({
                 uploading ||
                 stackGenerating ||
                 gitlabUrlStaging ||
-                stagingProjectId !== null
+                stagingProjectId !== null ||
+                githubUrlStaging ||
+                stagingGithubRepoKey !== null
               }
               className="btn-primary text-sm inline-flex items-center gap-2"
             >
@@ -3902,7 +4357,10 @@ function ApplicationArchivePanel({
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : stackGenerating ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
-              ) : gitlabUrlStaging || stagingProjectId !== null ? (
+              ) : gitlabUrlStaging ||
+                stagingProjectId !== null ||
+                githubUrlStaging ||
+                stagingGithubRepoKey !== null ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <PackageOpen className="w-4 h-4" />
@@ -3911,7 +4369,10 @@ function ApplicationArchivePanel({
                 ? "Uploading…"
                 : stackGenerating
                   ? "Generating…"
-                  : gitlabUrlStaging || stagingProjectId !== null
+                  : gitlabUrlStaging ||
+                      stagingProjectId !== null ||
+                      githubUrlStaging ||
+                      stagingGithubRepoKey !== null
                     ? "Fetching…"
                     : "Generate stack from source"}
             </button>
@@ -4078,135 +4539,191 @@ function EnvFilePanel({ service }: { service: Service }) {
 
 // ─── DomainsPanel ─────────────────────────────────────────────────────────────
 
-function DomainsPanel({ service }: { service: import("@/lib/schema").Service }) {
-  const [newDomain, setNewDomain] = useState("");
-  const [adding, setAdding] = useState(false);
+function DomainsPanel({ service }: { service: Service }) {
   const { toast } = useToast();
-  const updateService = useUpdateService();
+  const saveRoutesMutation = useUpdateService();
 
-  const saveDomains = (domains: string[]) => {
-    updateService.mutate(
-      { id: service.id, patch: { domains } },
+  const seedKey = `${service.id}:${JSON.stringify(service.traefikRoutes)}:${JSON.stringify(service.domains)}`;
+  const [routes, setRoutes] = useState<TraefikRouteRule[]>(() => buildInitialTraefikRoutes(service));
+
+  useEffect(() => {
+    setRoutes(buildInitialTraefikRoutes(service));
+  }, [seedKey, service]);
+
+  const saveRoutes = (next: TraefikRouteRule[]) => {
+    const sanitized: TraefikRouteRule[] = [];
+    for (const r of next) {
+      const router = r.router.trim().toLowerCase();
+      const hosts = (r.hosts ?? []).map((h) => h.trim()).filter(Boolean);
+      if (!router || !/^[a-z][a-z0-9_-]*$/.test(router)) continue;
+      if (!hosts.length) continue;
+      let port: number | null | undefined = r.port ?? null;
+      if (port !== null && port !== undefined) {
+        const n = Math.floor(Number(port));
+        if (!Number.isFinite(n) || n < 1 || n > 65535) port = null;
+        else port = n;
+      }
+      let pathPrefix = r.pathPrefix?.trim() ?? null;
+      if (pathPrefix === "") pathPrefix = null;
+      if (pathPrefix && !pathPrefix.startsWith("/")) pathPrefix = `/${pathPrefix}`;
+      sanitized.push({ router, hosts, pathPrefix, port: port ?? null });
+    }
+
+    saveRoutesMutation.mutate(
       {
+        id: service.id,
+        patch: {
+          traefikRoutes: sanitized,
+          domains: [],
+        },
+      },
+      {
+        onSuccess: () => toast({ title: "Routes saved", description: "Redeploy the stack to apply Traefik labels." }),
         onError: (e: Error) =>
           toast({ title: "Error", description: e.message, variant: "destructive" }),
       },
     );
   };
 
-  const handleAdd = () => {
-    const raw = newDomain.trim().replace(/^https?:\/\//, "").replace(/\/$/, "");
-    if (!raw) return;
-    if ((service.domains ?? []).includes(raw)) {
-      toast({ title: "Already added", description: raw }); return;
-    }
-    const updated = [...(service.domains ?? []), raw];
-    saveDomains(updated);
-    setNewDomain("");
-    setAdding(false);
-    toast({ title: "Domain Added", description: raw });
+  const addRoute = () => {
+    setRoutes((prev) => [
+      ...prev,
+      {
+        router: `r${prev.length + 1}`,
+        hosts: [],
+        pathPrefix: null,
+        port: null,
+      },
+    ]);
   };
 
-  const handleRemove = (domain: string) => {
-    const updated = (service.domains ?? []).filter((d) => d !== domain);
-    saveDomains(updated);
-    toast({ title: "Domain Removed" });
+  const removeRoute = (index: number) => {
+    setRoutes((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const domains = service.domains ?? [];
+  const updateRoute = (index: number, patch: Partial<TraefikRouteRule>) => {
+    setRoutes((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  };
+
+  const hostsText = (hosts: string[]) => hosts.join("\n");
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {domains.length} domain{domains.length !== 1 ? "s" : ""} linked to this service
-        </p>
-        <button onClick={() => setAdding(!adding)}
-          className="flex items-center gap-1.5 text-sm text-primary hover:underline">
-          <Plus className="w-3.5 h-3.5" />Add Domain
-        </button>
-      </div>
-
-      {/* Add form */}
-      <AnimatePresence>
-        {adding && (
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-            className="glass-panel rounded-xl p-5 border border-primary/20">
-            <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <Globe className="w-4 h-4 text-primary" />Add Domain
-            </h4>
-            <div className="flex gap-2">
-              <div className="flex-1 relative">
-                <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <input
-                  className="input-field pl-9 w-full font-mono text-sm"
-                  placeholder="example.com or api.example.com"
-                  value={newDomain}
-                  onChange={(e) => setNewDomain(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                />
-              </div>
-              <button onClick={() => { setAdding(false); setNewDomain(""); }} className="btn-secondary text-sm">Cancel</button>
-              <button onClick={handleAdd} disabled={!newDomain.trim()} className="btn-primary text-sm disabled:opacity-50 flex items-center gap-1.5">
-                <Plus className="w-3.5 h-3.5" />Add
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Enter the domain without <span className="font-mono">https://</span> — it will be added automatically.
-            </p>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {domains.length === 0 && !adding ? (
-        <div className="glass-panel rounded-2xl p-12 flex flex-col items-center text-center">
-          <div className="w-14 h-14 bg-white/5 rounded-full flex items-center justify-center mb-4">
-            <Globe className="w-7 h-7 text-muted-foreground" />
-          </div>
-          <h3 className="font-semibold mb-1">No domains linked</h3>
-          <p className="text-muted-foreground text-sm mb-5 max-w-sm">
-            Add custom domains to route traffic to this service.
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-sm text-muted-foreground">
+            Traefik routes
           </p>
-          <button onClick={() => setAdding(true)} className="btn-primary text-sm flex items-center gap-2">
-            <Plus className="w-4 h-4" />Add Domain
+          <p className="text-xs text-muted-foreground/80 mt-1 max-w-2xl">
+            Define router name, hostnames, optional <span className="font-mono">PathPrefix</span> (e.g.{" "}
+            <span className="font-mono">/api</span>), and optional port if it differs from the app container port.
+            Uses <span className="font-mono">websecure</span> and your Let&apos;s Encrypt resolver from{" "}
+            <Link href="/traefik" className="text-primary hover:underline">
+              More → Traefik
+            </Link>
+            . Attaches the <span className="font-mono">weehawk</span> overlay.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button type="button" onClick={addRoute} className="btn-secondary text-sm flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5" />
+            Add route
+          </button>
+          <button
+            type="button"
+            disabled={saveRoutesMutation.isPending}
+            className="btn-primary text-sm"
+            onClick={() => saveRoutes(routes)}
+          >
+            {saveRoutesMutation.isPending ? "Saving…" : "Save routes"}
           </button>
         </div>
-      ) : domains.length > 0 && (
-        <div className="space-y-2">
-          {domains.map((domain, i) => (
-            <motion.div key={domain} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.04 }}
-              className="glass-panel rounded-xl px-5 py-4 flex items-center justify-between group">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
-                  <Globe className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <p className="font-mono text-sm font-medium">{domain}</p>
-                  <div className="flex items-center gap-3 mt-0.5">
-                    <a href={`https://${domain}`} target="_blank" rel="noopener noreferrer"
-                      className="text-xs text-primary hover:underline flex items-center gap-1">
-                      https://{domain} <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => { navigator.clipboard.writeText(`https://${domain}`); toast({ title: "Copied" }); }}
-                  className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
-                  title="Copy URL"
-                ><Copy className="w-3.5 h-3.5" /></button>
-                <button
-                  onClick={() => handleRemove(domain)}
-                  className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-                  title="Remove"
-                ><Trash2 className="w-3.5 h-3.5" /></button>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      )}
+      </div>
+
+      <div className="space-y-4">
+        {routes.length === 0 && (
+          <div className="glass-panel rounded-xl p-8 text-center text-sm text-muted-foreground">
+            No routes. Click &quot;Add route&quot; to define Traefik labels.
+          </div>
+        )}
+        {routes.map((route, index) => (
+          <motion.div
+            key={`${index}-${route.router}`}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-panel rounded-xl p-5 border border-white/10 space-y-4"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold flex items-center gap-2">
+                <Globe className="w-4 h-4 text-primary" />
+                Router{" "}
+                <span className="font-mono text-xs text-muted-foreground">{route.router || `…`}</span>
+              </h4>
+              <button
+                type="button"
+                onClick={() => removeRoute(index)}
+                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+              >
+                Remove
+              </button>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block space-y-1.5">
+                <span className="text-[11px] text-muted-foreground">Router name</span>
+                <input
+                  className="input-field w-full font-mono text-sm"
+                  placeholder="backend"
+                  value={route.router}
+                  onChange={(e) =>
+                    updateRoute(index, { router: e.target.value.trim().toLowerCase() })
+                  }
+                />
+              </label>
+              <label className="block space-y-1.5">
+                <span className="text-[11px] text-muted-foreground">Path prefix (optional)</span>
+                <input
+                  className="input-field w-full font-mono text-sm"
+                  placeholder="/api"
+                  value={route.pathPrefix ?? ""}
+                  onChange={(e) => updateRoute(index, { pathPrefix: e.target.value || null })}
+                />
+              </label>
+            </div>
+
+            <label className="block space-y-1.5">
+              <span className="text-[11px] text-muted-foreground">Hostnames (one per line or comma-separated)</span>
+              <textarea
+                className="input-field w-full min-h-[72px] font-mono text-xs leading-relaxed"
+                placeholder={"app.example.com\nwww.example.com"}
+                value={hostsText(route.hosts)}
+                onChange={(e) =>
+                  updateRoute(index, { hosts: parseHostInput(e.target.value) })
+                }
+              />
+            </label>
+
+            <label className="block space-y-1.5 max-w-xs">
+              <span className="text-[11px] text-muted-foreground">Container port (optional override)</span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                className="input-field w-full font-mono text-sm"
+                placeholder="Default from stack"
+                value={route.port ?? ""}
+                onChange={(e) => {
+                  const t = e.target.value.trim();
+                  updateRoute(index, {
+                    port: t === "" ? null : Math.floor(Number(t)),
+                  });
+                }}
+              />
+            </label>
+          </motion.div>
+        ))}
+      </div>
+
     </div>
   );
 }

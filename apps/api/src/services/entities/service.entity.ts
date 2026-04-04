@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { composeType } from './composeType.enum';
 import { Project } from 'src/projects/entities/project.entity';
+import type { ServiceTraefikRoute } from './service-traefik-route.types';
 
 @Entity('services')
 export class Service {
@@ -34,6 +35,10 @@ export class Service {
 
   @Column({ type: 'simple-json', nullable: true })
   domains?: string[];
+
+  /** Traefik Swarm labels: routers with Host / PathPrefix / port. When set, takes precedence over `domains`. */
+  @Column({ type: 'simple-json', nullable: true })
+  traefikRoutes?: ServiceTraefikRoute[];
 
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;

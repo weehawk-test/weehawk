@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { createSign } from 'crypto';
 import { Repository } from 'typeorm';
 import { GitIntegrationSettings } from './entities/git-integration.entity';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
@@ -47,6 +48,16 @@ export type GithubAppManifestJson = {
   public: boolean;
   default_permissions: Record<string, string>;
   default_events: string[];
+};
+
+/** Row for GET /api/git/github/repositories (merged across installations). */
+export type GithubRepoListItem = {
+  id: number;
+  full_name: string;
+  clone_url: string;
+  default_branch: string | null;
+  private: boolean;
+  installation_id: number;
 };
 
 @Injectable()
@@ -451,5 +462,313 @@ export class GitService implements OnModuleInit {
 
     await this.repo.save(row);
     return this.toPublic(row);
+  }
+
+  // ─── GitHub App (installation token + repo list + clone) ─────────────────
+
+  private async githubAppCredentialsRow(): Promise<GitIntegrationSettings> {
+    const row = await this.gitlabSettingsRow();
+    const appId = row.githubAppId?.trim();
+    const pem = row.githubPrivateKey?.trim();
+    if (!appId || !pem) {
+      throw new BadRequestException(
+        'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
+      );
+    }
+    return row;
+  }
+
+  private static base64UrlJson(obj: unknown): string {
+    return Buffer.from(JSON.stringify(obj), 'utf8')
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  }
+
+  /** Short-lived JWT to call GitHub as the App (RS256). */
+  private createGithubAppJwt(appId: string, privateKeyPem: string): string {
+    const header = GitService.base64UrlJson({ alg: 'RS256', typ: 'JWT' });
+    const now = Math.floor(Date.now() / 1000);
+    const payload = GitService.base64UrlJson({
+      iat: now - 60,
+      exp: now + 300,
+      iss: appId,
+    });
+    const data = `${header}.${payload}`;
+    const sign = createSign('RSA-SHA256');
+    sign.update(data);
+    sign.end();
+    const sig = sign.sign(privateKeyPem);
+    const signature = sig
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+    return `${data}.${signature}`;
+  }
+
+  private static parseGithubNextUrl(linkHeader: string | null): string | null {
+    if (!linkHeader) return null;
+    const parts = linkHeader.split(',');
+    for (const p of parts) {
+      const m = p.match(/<([^>]+)>;\s*rel="next"/);
+      if (m?.[1]) return m[1].trim();
+    }
+    return null;
+  }
+
+  private async githubFetchJson(
+    url: string,
+    bearer: string,
+  ): Promise<{ status: number; text: string }> {
+    const res = await fetch(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        Authorization: `Bearer ${bearer}`,
+        'User-Agent': 'weehawk-api',
+      },
+    });
+    const text = await res.text();
+    return { status: res.status, text };
+  }
+
+  private async githubInstallationAccessToken(
+    installationId: number,
+    appJwt: string,
+  ): Promise<string> {
+    const url = `https://api.github.com/app/installations/${encodeURIComponent(String(installationId))}/access_tokens`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        Authorization: `Bearer ${appJwt}`,
+        'User-Agent': 'weehawk-api',
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new BadRequestException(
+        text.trim().slice(0, 800) || `GitHub token error (${res.status})`,
+      );
+    }
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestException('Invalid JSON from GitHub (installation token)');
+    }
+    const tok = data.token;
+    if (typeof tok !== 'string' || !tok.trim()) {
+      throw new BadRequestException('GitHub did not return an installation token');
+    }
+    return tok.trim();
+  }
+
+  /** Plain HTTPS GitHub URL (public repos only). */
+  async resolveGithubHttpCloneUrl(httpUrlToRepo: string): Promise<string> {
+    const trimmed = httpUrlToRepo.trim();
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      throw new BadRequestException('Only http(s) Git clone URLs are supported');
+    }
+    let host: string;
+    try {
+      host = new URL(trimmed).hostname.toLowerCase();
+    } catch {
+      throw new BadRequestException('Invalid clone URL');
+    }
+    if (host !== 'github.com') {
+      throw new BadRequestException(
+        'Manual HTTPS URL here must be a github.com repository (or pick a repo from the GitHub list for private access).',
+      );
+    }
+    return trimmed;
+  }
+
+  static injectGithubInstallationTokenIntoGitHttpUrl(
+    httpUrl: string,
+    token: string,
+  ): string {
+    const u = new URL(httpUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      throw new BadRequestException('Only http(s) Git clone URLs are supported');
+    }
+    u.username = 'x-access-token';
+    u.password = token;
+    return u.toString();
+  }
+
+  /**
+   * Clone URL with installation token (private repos). Resolves default branch from the API when needed.
+   */
+  async githubCloneInfoForInstallationRepo(
+    installationId: number,
+    fullName: string,
+  ): Promise<{ cloneUrl: string; defaultBranch: string | null }> {
+    const row = await this.githubAppCredentialsRow();
+    const appJwt = this.createGithubAppJwt(
+      row.githubAppId!.trim(),
+      row.githubPrivateKey!.trim(),
+    );
+    const instTok = await this.githubInstallationAccessToken(
+      installationId,
+      appJwt,
+    );
+    const fn = fullName.trim();
+    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(fn)) {
+      throw new BadRequestException(
+        'githubRepoFullName must look like owner/repo (letters, numbers, ._-).',
+      );
+    }
+    const apiUrl = `https://api.github.com/repos/${encodeURIComponent(fn)}`;
+    const { status, text } = await this.githubFetchJson(apiUrl, instTok);
+    if (!status.toString().startsWith('2')) {
+      throw new BadRequestException(
+        text.trim().slice(0, 800) || `GitHub repo error (${status})`,
+      );
+    }
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestException('Invalid JSON from GitHub (repository)');
+    }
+    const cloneUrlRaw = (data.clone_url as string)?.trim();
+    if (!cloneUrlRaw) {
+      throw new BadRequestException('GitHub repository has no clone_url');
+    }
+    const defaultBranch =
+      typeof data.default_branch === 'string' ? data.default_branch : null;
+    const cloneUrl = GitService.injectGithubInstallationTokenIntoGitHttpUrl(
+      cloneUrlRaw,
+      instTok,
+    );
+    return { cloneUrl, defaultBranch };
+  }
+
+  /**
+   * Repositories across all installations of this GitHub App (paginated after merge + optional search).
+   */
+  async listGithubRepositories(params: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+  }): Promise<{
+    repositories: GithubRepoListItem[];
+    totalPages: number;
+    page: number;
+  }> {
+    const row = await this.githubAppCredentialsRow();
+    const appJwt = this.createGithubAppJwt(
+      row.githubAppId!.trim(),
+      row.githubPrivateKey!.trim(),
+    );
+
+    const merged = new Map<number, GithubRepoListItem>();
+
+    let instUrl: string | null =
+      'https://api.github.com/app/installations?per_page=100';
+    const installationIds: number[] = [];
+    while (instUrl) {
+      const res = await fetch(instUrl, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          Authorization: `Bearer ${appJwt}`,
+          'User-Agent': 'weehawk-api',
+        },
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) ||
+            `GitHub installations error (${res.status})`,
+        );
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        throw new BadRequestException('Invalid JSON from GitHub (installations)');
+      }
+      if (!Array.isArray(raw)) {
+        throw new BadRequestException('Unexpected GitHub installations response');
+      }
+      for (const item of raw) {
+        const o = item as Record<string, unknown>;
+        const id = Number(o.id);
+        if (id > 0) installationIds.push(id);
+      }
+      instUrl = GitService.parseGithubNextUrl(res.headers.get('link'));
+    }
+
+    for (const iid of installationIds) {
+      let instTok: string;
+      try {
+        instTok = await this.githubInstallationAccessToken(iid, appJwt);
+      } catch {
+        continue;
+      }
+      let repoUrl: string | null =
+        'https://api.github.com/installation/repositories?per_page=100';
+      while (repoUrl) {
+        const res = await fetch(repoUrl, {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            Authorization: `Bearer ${instTok}`,
+            'User-Agent': 'weehawk-api',
+          },
+        });
+        const text = await res.text();
+        if (!res.ok) {
+          break;
+        }
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          break;
+        }
+        const repos = data.repositories;
+        if (!Array.isArray(repos)) break;
+        for (const r of repos) {
+          const o = r as Record<string, unknown>;
+          const id = Number(o.id);
+          const full_name = String(o.full_name ?? '').trim();
+          const clone_url = String(o.clone_url ?? '').trim();
+          if (id <= 0 || !full_name || !clone_url) continue;
+          merged.set(id, {
+            id,
+            full_name,
+            clone_url,
+            default_branch:
+              typeof o.default_branch === 'string' ? o.default_branch : null,
+            private: o.private === true,
+            installation_id: iid,
+          });
+        }
+        repoUrl = GitService.parseGithubNextUrl(res.headers.get('link'));
+      }
+    }
+
+    let list = [...merged.values()].sort((a, b) =>
+      a.full_name.localeCompare(b.full_name, 'en'),
+    );
+    const q = params.search?.trim().toLowerCase();
+    if (q) {
+      list = list.filter((r) => r.full_name.toLowerCase().includes(q));
+    }
+
+    const perPage = Math.min(100, Math.max(1, Math.floor(params.perPage ?? 20)));
+    const page = Math.max(1, Math.floor(params.page ?? 1));
+    const totalPages = Math.max(1, Math.ceil(list.length / perPage));
+    const slice = list.slice((page - 1) * perPage, page * perPage);
+
+    return { repositories: slice, totalPages, page };
   }
 }

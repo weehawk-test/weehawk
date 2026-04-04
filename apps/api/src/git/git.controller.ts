@@ -69,6 +69,25 @@ export class GitController {
     });
   }
 
+  @Get('github/repositories')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'List GitHub repositories accessible to the configured GitHub App (across all installations)',
+  })
+  async listGithubRepositories(
+    @Query('page') page?: string,
+    @Query('perPage') perPage?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.gitService.listGithubRepositories({
+      page: page ? parseInt(page, 10) : undefined,
+      perPage: perPage ? parseInt(perPage, 10) : undefined,
+      search,
+    });
+  }
+
   @Put('settings')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({

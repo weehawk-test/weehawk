@@ -13,12 +13,15 @@ import { RegistryModule } from './registry/registry.module';
 import { S3Module } from './s3/s3.module';
 import { CronJobsModule } from './cron-jobs/cron-jobs.module';
 import { GitModule } from './git/git.module';
+import { TraefikModule } from './traefik/traefik.module';
+import googleOAuthConfig from './config/google-oauth.config';
 
 @Module({
   imports: [
     ServicesModule,
     ConfigModule.forRoot({
       isGlobal: true,
+      load: [googleOAuthConfig],
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -45,6 +48,7 @@ import { GitModule } from './git/git.module';
     RegistryModule,
     S3Module,
     GitModule,
+    TraefikModule,
   ],
   controllers: [],
   providers: [],

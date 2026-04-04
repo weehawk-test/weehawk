@@ -5,8 +5,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { Oauth2Controller } from './oauth2.controller';
 import { User } from './entities/user.entity';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { GoogleStrategy } from './strategies/google.strategy';
+import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { TokenModule } from '../token/token.module';
 
 @Module({
@@ -29,8 +32,8 @@ import { TokenModule } from '../token/token.module';
     }),
     TokenModule,
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  controllers: [AuthController, Oauth2Controller],
+  providers: [AuthService, JwtStrategy, GoogleStrategy, GoogleAuthGuard],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}

@@ -1,6 +1,8 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsArray, IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, MinLength, Matches } from "class-validator";
+import { Type } from "class-transformer";
+import { IsArray, IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, MinLength, Matches, ValidateNested } from "class-validator";
 import { composeType } from "../entities/composeType.enum";
+import { ServiceTraefikRouteDto } from "./service-traefik-route.dto";
 
 export class CreateServiceDto {
     
@@ -47,6 +49,13 @@ export class CreateServiceDto {
     @IsArray()
     @IsString({ each: true })
     domains?: string[];
+
+    @ApiProperty({ type: [ServiceTraefikRouteDto], required: false })
+    @IsOptional()
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => ServiceTraefikRouteDto)
+    traefikRoutes?: ServiceTraefikRouteDto[];
 
     @ApiProperty({ example: 1, description: 'ID of the parent project' })
     @IsNumber()

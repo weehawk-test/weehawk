@@ -1,5 +1,5 @@
 import { API_BASE } from "./api";
-import type { CreateServiceInput, Service, ServiceType } from "./schema";
+import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
 import type { DatabaseEngineId } from "./database-engines";
 import type { DatabaseBackupConfig } from "./database-backup-preview";
 import { getServerApiBase } from "./server-api";
@@ -45,6 +45,36 @@ export function deriveAppNameFromServiceName(name: string): string {
   if (!/[a-z]$/.test(s)) s = `${s}a`;
   if (s.length > 100) s = s.slice(0, 100);
   return s.replace(/--+/g, "-");
+}
+
+function parseTraefikRoutes(raw: unknown): TraefikRouteRule[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TraefikRouteRule[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const router = typeof o.router === "string" ? o.router : "";
+    const hosts = Array.isArray(o.hosts)
+      ? (o.hosts as unknown[]).filter((h): h is string => typeof h === "string")
+      : [];
+    if (!router.trim() || hosts.length === 0) continue;
+    const pathPrefix =
+      o.pathPrefix === null || o.pathPrefix === undefined
+        ? null
+        : typeof o.pathPrefix === "string"
+          ? o.pathPrefix
+          : null;
+    let port: number | null | undefined;
+    if (o.port === null || o.port === undefined) port = null;
+    else if (typeof o.port === "number" && Number.isFinite(o.port)) port = o.port;
+    out.push({
+      router: router.trim().toLowerCase(),
+      hosts,
+      pathPrefix,
+      port: port ?? null,
+    });
+  }
+  return out;
 }
 
 function composeTypeToApi(t: ServiceType): "COMPOSE" | "STACK" | "APPLICATION" | "DATABASES" {
@@ -122,6 +152,7 @@ export function mapApiServiceToService(row: unknown): Service {
     env: typeof s.env === "string" ? s.env : "",
     description: typeof s.description === "string" ? s.description : "",
     domains: Array.isArray(s.domains) ? (s.domains as string[]).filter((x) => typeof x === "string") : [],
+    traefikRoutes: parseTraefikRoutes(s.traefikRoutes),
     createdAt,
     isActive: s.isActive !== false,
     lastDeployedAt,
@@ -308,7 +339,9 @@ export async function updateDatabaseStackApi(
 
 export async function updateServiceApi(
   id: string,
-  patch: Partial<Pick<Service, "config" | "env" | "isActive" | "description" | "domains">>,
+  patch: Partial<
+    Pick<Service, "config" | "env" | "isActive" | "description" | "domains" | "traefikRoutes">
+  >,
 ): Promise<Service> {
   const body: Record<string, unknown> = {};
   if (patch.config !== undefined) body.dockerConfig = patch.config;
@@ -316,6 +349,7 @@ export async function updateServiceApi(
   if (patch.isActive !== undefined) body.isActive = patch.isActive;
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.domains !== undefined) body.domains = patch.domains;
+  if (patch.traefikRoutes !== undefined) body.traefikRoutes = patch.traefikRoutes;
 
   const res = await apiFetch(`/services/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -552,12 +586,16 @@ export async function applicationGitCloneStageApi(
   id: string,
   options: {
     gitlabProjectId?: number;
+    githubInstallationId?: number;
+    githubRepoFullName?: string;
     httpUrlToRepo?: string;
     branch?: string;
   },
 ): Promise<Service> {
   const body: Record<string, unknown> = {};
   if (options.gitlabProjectId != null) body.gitlabProjectId = options.gitlabProjectId;
+  if (options.githubInstallationId != null) body.githubInstallationId = options.githubInstallationId;
+  if (options.githubRepoFullName?.trim()) body.githubRepoFullName = options.githubRepoFullName.trim();
   if (options.httpUrlToRepo?.trim()) body.httpUrlToRepo = options.httpUrlToRepo.trim();
   if (options.branch?.trim()) body.branch = options.branch.trim();
   const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/git-clone-stage`, {

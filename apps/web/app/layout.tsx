@@ -17,7 +17,7 @@ const fontMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "weehawk Platform",
+  title: "Weehawk Platform",
   description: "Webhook and deployment management",
 };
 

@@ -85,13 +85,14 @@ export function AuthProvider({
 
   const logout = useCallback(async () => {
     const email = user?.email;
-    setAccessToken(null);
-    setUser(null);
-    window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
     try {
       await logoutApi(email);
     } catch {
       /* ignore */
+    } finally {
+      setAccessToken(null);
+      setUser(null);
+      window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
     }
   }, [user?.email]);
 
@@ -117,10 +118,10 @@ export function useAuth(): AuthContextValue {
 }
 
 /**
- * Redirects to `/auth` when there is no session.
+ * Redirects to `/` when there is no session (sign-in UI is at `/`).
  * After a full reload, `useSyncExternalStore` can briefly expose an empty session during
  * hydration while localStorage already has tokens — redirecting immediately would send the user
- * to `/auth`, then the auth page would see the token and send them to `/`. We defer one tick and
+ * to `/` or `/register`, then that page would see the token and send them to `/`. We defer one tick and
  * re-read storage before redirecting.
  */
 export function useRequireAuth() {
@@ -129,9 +130,9 @@ export function useRequireAuth() {
   const pathname = usePathname();
 
   useEffect(() => {
-    if (pathname === "/auth") return;
+    if (pathname === "/" || pathname === "/register") return;
     if (!isReady) return;
-    if (!accessToken) router.replace("/auth");
+    if (!accessToken) router.replace("/");
   }, [accessToken, isReady, pathname, router]);
 
   return { accessToken, isReady, allowed: Boolean(accessToken) };

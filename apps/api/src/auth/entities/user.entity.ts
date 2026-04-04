@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { AuthProvider } from '../auth-provider.enum';
 
 @Entity({ name: 'users' })
 export class User {
@@ -29,6 +30,26 @@ export class User {
     nullable: true,
   })
   passwordHash: string | null = null;
+
+  @Column({
+    type: 'enum',
+    enum: AuthProvider,
+    name: 'auth_provider',
+    default: AuthProvider.LOCAL,
+  })
+  authProvider!: AuthProvider;
+
+  @Column({
+    type: 'varchar',
+    name: 'google_id',
+    length: 64,
+    nullable: true,
+    unique: true,
+  })
+  googleId: string | null = null;
+
+  @Column({ name: 'image_url', type: 'varchar', length: 512, nullable: true })
+  imageUrl: string | null = null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

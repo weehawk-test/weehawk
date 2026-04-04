@@ -119,7 +119,9 @@ export function useUpdateService() {
       patch,
     }: {
       id: string;
-      patch: Partial<Pick<Service, "config" | "env" | "isActive" | "description" | "domains">>;
+      patch: Partial<
+        Pick<Service, "config" | "env" | "isActive" | "description" | "domains" | "traefikRoutes">
+      >;
     }) => updateServiceApi(id, patch),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["services", data.projectId] });

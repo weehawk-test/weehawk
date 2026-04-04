@@ -24,6 +24,14 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export const serviceTypeSchema = z.enum(["docker-compose", "stack", "application", "databases"]);
 export type ServiceType = z.infer<typeof serviceTypeSchema>;
 
+export const traefikRouteRuleSchema = z.object({
+  router: z.string().min(1).max(63),
+  hosts: z.array(z.string()).min(1),
+  pathPrefix: z.string().max(256).nullable().optional(),
+  port: z.number().int().min(1).max(65535).nullable().optional(),
+});
+export type TraefikRouteRule = z.infer<typeof traefikRouteRuleSchema>;
+
 export const serviceSchema = z.object({
   id: z.string().min(1),
   projectId: z.string().min(1),
@@ -34,6 +42,8 @@ export const serviceSchema = z.object({
   env: z.string().default(""),
   description: z.string().optional().default(""),
   domains: z.array(z.string()).default([]),
+  /** Traefik Swarm labels (Host / PathPrefix / routers). When set, overrides simple `domains` in generated compose. */
+  traefikRoutes: z.array(traefikRouteRuleSchema).optional().default([]),
   createdAt: z.string(),
   isActive: z.boolean().default(true),
   /** ISO timestamp from server after a successful Docker deploy (`POST .../execute`). */

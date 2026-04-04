@@ -16,6 +16,25 @@ export class ApplicationGitCloneDto {
 
   @ApiPropertyOptional({
     description:
+      'GitHub App installation id from GET /api/git/github/repositories (with githubRepoFullName)',
+    example: 12345678,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  githubInstallationId?: number;
+
+  @ApiPropertyOptional({
+    description: 'Repository full name, e.g. org/repo',
+    example: 'octocat/Hello-World',
+  })
+  @IsOptional()
+  @IsString()
+  githubRepoFullName?: string;
+
+  @ApiPropertyOptional({
+    description:
       'HTTPS clone URL (e.g. from GitLab project page). Use when not picking by project id.',
     example: 'https://gitlab.com/group/project.git',
   })

@@ -40,6 +40,8 @@ import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s
 import { S3Service } from '../s3/s3.service';
 import { getErrorMessage } from '../utils/error-message';
 import { GitService } from '../git/git.service';
+import { TraefikService } from '../traefik/traefik.service';
+import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 
 const execFileAsync = promisify(execFile);
 
@@ -58,6 +60,7 @@ export class ServicesService {
     private readonly dockerSecrets: DockerSecretsService,
     private readonly s3Service: S3Service,
     private readonly gitService: GitService,
+    private readonly traefikService: TraefikService,
   ) {}
 
   async create(createServiceDto: CreateServiceDto) {
@@ -356,6 +359,199 @@ export class ServicesService {
     };
   }
 
+  private sanitizeDomainForTraefikRule(raw: string): string | null {
+    const host =
+      raw
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .split('/')[0]
+        ?.trim() ?? '';
+    if (!host || host.length > 253) return null;
+    if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host)) return null;
+    return host;
+  }
+
+  private sanitizeTraefikRouterBase(service: Service): string {
+    const slug = service.appName
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/--+/g, '-');
+    const base = `wh${service.id}_${slug || 'app'}`;
+    return base.slice(0, 60);
+  }
+
+  private collectServiceTraefikHosts(service: Service): string[] {
+    const out = new Set<string>();
+    if (service.traefikRoutes?.length) {
+      for (const r of service.traefikRoutes) {
+        for (const h of r.hosts ?? []) {
+          const s = this.sanitizeDomainForTraefikRule(h);
+          if (s) out.add(s);
+        }
+      }
+      return [...out];
+    }
+    for (const d of service.domains ?? []) {
+      const s = this.sanitizeDomainForTraefikRule(d);
+      if (s) out.add(s);
+    }
+    return [...out];
+  }
+
+  private ensureTraefikExternalNetwork(
+    network: { external: string[]; stack: string[] },
+    service: Service,
+  ): { external: string[]; stack: string[] } {
+    const proxy = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK;
+    const hasHosts = this.collectServiceTraefikHosts(service).length > 0;
+    if (!hasHosts) return network;
+    const ext = [...network.external];
+    if (!ext.some((n) => n === proxy)) ext.push(proxy);
+    return { external: ext, stack: [...network.stack] };
+  }
+
+  private sanitizePathPrefixForRule(raw: string | null | undefined): string | null {
+    if (raw == null) return null;
+    const t = raw.trim();
+    if (!t) return null;
+    if (!t.startsWith('/')) return null;
+    if (!/^\/[A-Za-z0-9/._~-]*$/.test(t)) return null;
+    return t;
+  }
+
+  private buildTraefikHostPathRule(
+    hosts: string[],
+    pathPrefix: string | null | undefined,
+  ): string {
+    const cleaned = hosts
+      .map((h) => this.sanitizeDomainForTraefikRule(h))
+      .filter((x): x is string => Boolean(x));
+    if (!cleaned.length) return '';
+    const hostExpr =
+      cleaned.length === 1
+        ? `Host(\`${cleaned[0]}\`)`
+        : `(${cleaned.map((h) => `Host(\`${h}\`)`).join(' || ')})`;
+    const pp = this.sanitizePathPrefixForRule(pathPrefix ?? null);
+    if (!pp) return hostExpr;
+    return `(${hostExpr}) && PathPrefix(\`${pp}\`)`;
+  }
+
+  private escapeTraefikComposeLabelValue(value: string): string {
+    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  }
+
+  private buildTraefikLabelSection(
+    traefik?: {
+      certResolver: string;
+      entrypoint: string;
+      routes: Array<{ router: string; rule: string; port: number }>;
+    },
+  ): string {
+    if (!traefik?.routes?.length) return '';
+    const lines: string[] = ['      labels:', '        - "traefik.enable=true"'];
+    for (const r of traefik.routes) {
+      const ruleEsc = this.escapeTraefikComposeLabelValue(r.rule);
+      lines.push(`        - "traefik.http.routers.${r.router}.rule=${ruleEsc}"`);
+      lines.push(
+        `        - "traefik.http.routers.${r.router}.entrypoints=${traefik.entrypoint}"`,
+      );
+      lines.push(
+        `        - "traefik.http.routers.${r.router}.tls.certresolver=${traefik.certResolver}"`,
+      );
+      lines.push(
+        `        - "traefik.http.services.${r.router}.loadbalancer.server.port=${r.port}"`,
+      );
+    }
+    return `${lines.join('\n')}\n`;
+  }
+
+  private async buildTraefikIngressForCompose(
+    service: Service,
+    containerPort: number,
+  ): Promise<
+    | {
+        certResolver: string;
+        entrypoint: string;
+        routes: Array<{ router: string; rule: string; port: number }>;
+      }
+    | undefined
+  > {
+    const settings = await this.traefikService.getSettings();
+    const certResolver = (settings.certResolverName || 'letsencrypt').trim();
+    const entrypoint = (settings.httpsEntrypoint || 'websecure').trim();
+    const routes: Array<{ router: string; rule: string; port: number }> = [];
+
+    if (service.traefikRoutes && service.traefikRoutes.length > 0) {
+      for (const r of service.traefikRoutes) {
+        const router = (r.router || '').trim().toLowerCase();
+        if (!router) continue;
+        const hosts = (r.hosts ?? [])
+          .map((h) => this.sanitizeDomainForTraefikRule(h))
+          .filter((x): x is string => Boolean(x));
+        if (!hosts.length) continue;
+        const rule = this.buildTraefikHostPathRule(hosts, r.pathPrefix);
+        if (!rule) continue;
+        const port =
+          r.port != null && Number.isFinite(Number(r.port))
+            ? Math.min(65535, Math.max(1, Math.floor(Number(r.port))))
+            : containerPort;
+        routes.push({ router, rule, port });
+      }
+    } else {
+      const ruleDomains = (service.domains ?? [])
+        .map((d) => this.sanitizeDomainForTraefikRule(d))
+        .filter((x): x is string => Boolean(x));
+      if (!ruleDomains.length) return undefined;
+      const rule = this.buildTraefikHostPathRule(ruleDomains, null);
+      routes.push({
+        router: this.sanitizeTraefikRouterBase(service),
+        rule,
+        port: containerPort,
+      });
+    }
+
+    if (!routes.length) return undefined;
+    return { certResolver, entrypoint, routes };
+  }
+
+  private async composeApplicationDockerConfigForService(
+    service: Service,
+    networkOverride?: { external: string[]; stack: string[] },
+  ): Promise<string> {
+    const args = this.extractApplicationComposeRegenerationArgs(service);
+    let network =
+      networkOverride ??
+      this.parseApplicationNetworksFromConfig(service.dockerConfig || '');
+    network = this.ensureTraefikExternalNetwork(network, service);
+    const imageName =
+      args.deployMode === 'image' && args.imageRef?.trim()
+        ? args.imageRef.trim()
+        : `${service.appName}:latest`;
+    const traefik = await this.buildTraefikIngressForCompose(
+      service,
+      args.containerPort,
+    );
+    return this.composeApplicationDockerConfig({
+      sourceDir: args.sourceDir,
+      buildPath: args.buildPath,
+      dockerfilePath: args.dockerfilePath,
+      buildMode: args.buildMode,
+      dockerfileGenerated: args.dockerfileGenerated,
+      deployMode: args.deployMode,
+      imageRef: args.deployMode === 'image' ? args.imageRef : undefined,
+      imageName,
+      containerPort: args.containerPort,
+      publishPort: args.publishPort,
+      replicas: args.replicas,
+      envKeys: args.envKeys,
+      secretRefs: args.secretRefs,
+      network,
+      traefik,
+    });
+  }
+
   private composeApplicationDockerConfig(args: {
     sourceDir: string;
     buildPath: string;
@@ -374,6 +570,11 @@ export class ServicesService {
     envKeys: string[];
     secretRefs: Record<string, string>;
     network: { external: string[]; stack: string[] };
+    traefik?: {
+      certResolver: string;
+      entrypoint: string;
+      routes: Array<{ router: string; rule: string; port: number }>;
+    };
   }): string {
     const ports =
       args.publishPort != null
@@ -439,13 +640,18 @@ export class ServicesService {
       args.deployMode === 'image' && args.imageRef
         ? `# imageRef: ${args.imageRef}\n`
         : '';
+    const traefikHeader =
+      args.traefik?.routes?.length && args.traefik
+        ? `# traefik.routers: ${args.traefik.routes.map((r) => r.router).join('|')}\n`
+        : '';
+    const traefikLabelsSection = this.buildTraefikLabelSection(args.traefik);
     return `# weehawk application service
 # sourceDir: ${args.sourceDir}
 # buildPath: ${args.buildPath}
 # dockerfilePath: ${args.dockerfilePath}
 # buildMode: ${args.buildMode}
 # deployMode: ${args.deployMode}
-${imageRefLine}${dockerfileGenLine}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
+${imageRefLine}${dockerfileGenLine}${traefikHeader}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
 
 services:
   app:
@@ -457,7 +663,7 @@ ${ports}    deploy:
       placement:
         constraints:
           - node.role == manager
-${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${rootNetworkSection}`;
+${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${rootNetworkSection}`;
   }
 
   private async extractZipSafely(zipPath: string, targetDir: string): Promise<void> {
@@ -561,26 +767,9 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     }
     const { external: ext, stack: stk } = this.normalizeApplicationNetworkPayload(dto);
 
-    const args = this.extractApplicationComposeRegenerationArgs(service);
-    const imageName =
-      args.deployMode === 'image' && args.imageRef?.trim()
-        ? args.imageRef.trim()
-        : `${service.appName}:latest`;
-    service.dockerConfig = this.composeApplicationDockerConfig({
-      sourceDir: args.sourceDir,
-      buildPath: args.buildPath,
-      dockerfilePath: args.dockerfilePath,
-      buildMode: args.buildMode,
-      dockerfileGenerated: args.dockerfileGenerated,
-      deployMode: args.deployMode,
-      imageRef: args.deployMode === 'image' ? args.imageRef : undefined,
-      imageName,
-      containerPort: args.containerPort,
-      publishPort: args.publishPort,
-      replicas: args.replicas,
-      envKeys: args.envKeys,
-      secretRefs: args.secretRefs,
-      network: { external: ext, stack: stk },
+    service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
+      external: ext,
+      stack: stk,
     });
     return await this.serviceRepository.save(service);
   }
@@ -671,6 +860,8 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, envValues);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
+    const networkMerged = this.ensureTraefikExternalNetwork(network, service);
+    const traefik = await this.buildTraefikIngressForCompose(service, containerPort);
 
     service.dockerConfig = this.composeApplicationDockerConfig({
       sourceDir: 'app-source',
@@ -686,7 +877,8 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       replicas,
       envKeys: Object.keys(envValues),
       secretRefs,
-      network,
+      network: networkMerged,
+      traefik,
     });
     return await this.serviceRepository.save(service);
   }
@@ -713,6 +905,66 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       const msg = getErrorMessage(e);
       throw new BadRequestException(`git clone failed: ${msg}`);
     }
+  }
+
+  private async resolveApplicationGitCloneSource(options: {
+    gitlabProjectId?: number;
+    httpUrlToRepo?: string;
+    githubInstallationId?: number;
+    githubRepoFullName?: string;
+    branch?: string;
+  }): Promise<{ cloneUrl: string; branch: string | null | undefined }> {
+    const hasGitlabId =
+      options.gitlabProjectId != null && options.gitlabProjectId > 0;
+    const hasUrl = Boolean(options.httpUrlToRepo?.trim());
+    const ghInst =
+      options.githubInstallationId != null && options.githubInstallationId > 0;
+    const ghName = Boolean(options.githubRepoFullName?.trim());
+    if (ghInst !== ghName) {
+      throw new BadRequestException(
+        'githubInstallationId and githubRepoFullName must be sent together.',
+      );
+    }
+    const hasGithub = ghInst && ghName;
+    const modes = [hasGitlabId, hasUrl, hasGithub].filter(Boolean).length;
+    if (modes !== 1) {
+      throw new BadRequestException(
+        'Send exactly one source: gitlabProjectId, httpUrlToRepo, or githubInstallationId + githubRepoFullName.',
+      );
+    }
+
+    let cloneUrl: string;
+    let branch: string | null | undefined = options.branch?.trim() || null;
+
+    if (hasGitlabId) {
+      const info = await this.gitService.gitlabCloneInfoForProject(
+        options.gitlabProjectId!,
+      );
+      cloneUrl = info.cloneUrl;
+      if (!branch) branch = info.defaultBranch;
+    } else if (hasGithub) {
+      const info = await this.gitService.githubCloneInfoForInstallationRepo(
+        options.githubInstallationId!,
+        options.githubRepoFullName!.trim(),
+      );
+      cloneUrl = info.cloneUrl;
+      if (!branch) branch = info.defaultBranch;
+    } else {
+      const trimmed = options.httpUrlToRepo!.trim();
+      let host: string;
+      try {
+        host = new URL(trimmed).hostname.toLowerCase();
+      } catch {
+        throw new BadRequestException('Invalid clone URL');
+      }
+      if (host === 'github.com') {
+        cloneUrl = await this.gitService.resolveGithubHttpCloneUrl(trimmed);
+      } else {
+        cloneUrl = await this.gitService.resolveGitlabHttpCloneUrl(trimmed);
+      }
+    }
+
+    return { cloneUrl, branch };
   }
 
   async uploadApplicationArchive(
@@ -774,6 +1026,8 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     id: number,
     options: {
       gitlabProjectId?: number;
+      githubInstallationId?: number;
+      githubRepoFullName?: string;
       httpUrlToRepo?: string;
       branch?: string;
       buildPath?: string;
@@ -787,35 +1041,13 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       stackNetworks?: string;
     },
   ) {
-    const hasId = options.gitlabProjectId != null && options.gitlabProjectId > 0;
-    const hasUrl = Boolean(options.httpUrlToRepo?.trim());
-    if (hasId === hasUrl) {
-      throw new BadRequestException(
-        'Send exactly one of gitlabProjectId or httpUrlToRepo.',
-      );
-    }
-
     const service = await this.findOne(id);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    let cloneUrl: string;
-    let branch: string | null | undefined = options.branch?.trim() || null;
-
-    if (hasId) {
-      const info = await this.gitService.gitlabCloneInfoForProject(
-        options.gitlabProjectId!,
-      );
-      cloneUrl = info.cloneUrl;
-      if (!branch) {
-        branch = info.defaultBranch;
-      }
-    } else {
-      cloneUrl = await this.gitService.resolveGitlabHttpCloneUrl(
-        options.httpUrlToRepo!.trim(),
-      );
-    }
+    const { cloneUrl, branch } =
+      await this.resolveApplicationGitCloneSource(options);
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
@@ -846,39 +1078,19 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     id: number,
     options: {
       gitlabProjectId?: number;
+      githubInstallationId?: number;
+      githubRepoFullName?: string;
       httpUrlToRepo?: string;
       branch?: string;
     },
   ) {
-    const hasId = options.gitlabProjectId != null && options.gitlabProjectId > 0;
-    const hasUrl = Boolean(options.httpUrlToRepo?.trim());
-    if (hasId === hasUrl) {
-      throw new BadRequestException(
-        'Send exactly one of gitlabProjectId or httpUrlToRepo.',
-      );
-    }
-
     const service = await this.findOne(id);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    let cloneUrl: string;
-    let branch: string | null | undefined = options.branch?.trim() || null;
-
-    if (hasId) {
-      const info = await this.gitService.gitlabCloneInfoForProject(
-        options.gitlabProjectId!,
-      );
-      cloneUrl = info.cloneUrl;
-      if (!branch) {
-        branch = info.defaultBranch;
-      }
-    } else {
-      cloneUrl = await this.gitService.resolveGitlabHttpCloneUrl(
-        options.httpUrlToRepo!.trim(),
-      );
-    }
+    const { cloneUrl, branch } =
+      await this.resolveApplicationGitCloneSource(options);
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
@@ -929,7 +1141,7 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       await fs.access(sourceDir);
     } catch {
       throw new BadRequestException(
-        'No application source on disk. Fetch a Git repository (GitLab Clone) or upload a ZIP archive first.',
+        'No application source on disk. Fetch a Git repository or upload a ZIP archive first.',
       );
     }
     const entries = await fs.readdir(sourceDir);
@@ -994,6 +1206,8 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, envValues);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
+    const networkMerged = this.ensureTraefikExternalNetwork(network, service);
+    const traefik = await this.buildTraefikIngressForCompose(service, containerPort);
 
     service.dockerConfig = this.composeApplicationDockerConfig({
       sourceDir: 'app-source',
@@ -1009,7 +1223,8 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
       replicas,
       envKeys: Object.keys(envValues),
       secretRefs,
-      network,
+      network: networkMerged,
+      traefik,
     });
     const saved = await this.serviceRepository.save(service);
     return {
@@ -1581,6 +1796,14 @@ ${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${
   async update(id: number, updateServiceDto: UpdateServiceDto) {
     const service = await this.findOne(id);
     const updated = this.serviceRepository.merge(service, updateServiceDto);
+    const shouldRefreshAppCompose =
+      updated.composeType === composeType.APPLICATION &&
+      (updateServiceDto.domains !== undefined ||
+        updateServiceDto.traefikRoutes !== undefined) &&
+      (updated.dockerConfig || '').trim().length > 0;
+    if (shouldRefreshAppCompose) {
+      updated.dockerConfig = await this.composeApplicationDockerConfigForService(updated);
+    }
     return await this.serviceRepository.save(updated);
   }
 

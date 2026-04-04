@@ -23,7 +23,13 @@ export type AuthResponse = {
   imageUrl: string | null;
 };
 
-export async function fetchSetupStatus(): Promise<{ needsSetup: boolean }> {
+export type SetupStatus = {
+  edition: "cloud" | "selfhosted";
+  needsSetup: boolean;
+  hasUsers: boolean;
+};
+
+export async function fetchSetupStatus(): Promise<SetupStatus> {
   const res = await fetch(`${API_BASE}/api/auth/setup-status`, {
     method: "GET",
     headers: { Accept: "application/json" },

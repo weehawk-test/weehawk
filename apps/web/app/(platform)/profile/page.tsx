@@ -4,6 +4,6 @@ import { ProfileClient } from "./profile-client";
 
 export default async function ProfilePage() {
   const initialProfile = await fetchUserProfileSSR();
-  if (!initialProfile) redirect("/auth");
+  if (!initialProfile) redirect("/");
   return <ProfileClient initialProfile={initialProfile} />;
 }

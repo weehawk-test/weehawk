@@ -6,54 +6,68 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, LayoutDashboard, FolderKanban, KeyRound, UserCircle, ChevronUp,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch,
+  GitBranch, ArrowRight, ArrowLeft, RadioTower,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
+import { fetchSetupStatus } from "@/lib/auth-api";
+import type { LucideIcon } from "lucide-react";
 
-const navSections = [
+const dockerNavItems: { href: string; label: string; icon: LucideIcon }[] = [
+  { href: "/docker/images", label: "Images", icon: ImageIcon },
+  { href: "/docker/containers", label: "Containers", icon: Box },
+  { href: "/docker/services", label: "Services", icon: Boxes },
+  { href: "/docker/networks", label: "Networks", icon: Network },
+  { href: "/secrets", label: "Secrets", icon: KeyRound },
+  { href: "/docker/volumes", label: "Volumes", icon: Database },
+];
+
+const mainNavSections: { label: string; items: { href: string; label: string; icon: LucideIcon }[] }[] = [
   {
     label: "General",
     items: [
-      { href: "/",  label: "Overview",  icon: LayoutDashboard },
-      { href: "/projects",  label: "Projects",  icon: FolderKanban },
+      { href: "/", label: "Overview", icon: LayoutDashboard },
+      { href: "/projects", label: "Projects", icon: FolderKanban },
     ],
   },
   {
     label: "Integrations",
     items: [
-      { href: "/webhooks",     label: "Webhooks",      icon: Webhook },
-      { href: "/cron-jobs",    label: "Cron Jobs",     icon: Clock3 },
+      { href: "/webhooks", label: "Webhooks", icon: Webhook },
+      { href: "/cron-jobs", label: "Cron Jobs", icon: Clock3 },
       { href: "/notifications/channels", label: "Notifications", icon: Bell },
-      { href: "/s3",              label: "S3 Destinations",    icon: HardDrive },
+      { href: "/s3", label: "S3 Destinations", icon: HardDrive },
     ],
   },
   {
     label: "Registry & Git",
     items: [
       { href: "/registry", label: "Registry", icon: ShieldCheck },
-      { href: "/git",      label: "Git",      icon: GitBranch },
+      { href: "/git", label: "Git", icon: GitBranch },
     ],
   },
   {
-    label: "Docker Manager",
-    items: [
-      { href: "/docker/images",     label: "Images",     icon: ImageIcon },
-      { href: "/docker/containers", label: "Containers", icon: Box },
-      { href: "/docker/services",   label: "Services",   icon: Boxes },
-      { href: "/docker/networks",   label: "Networks",   icon: Network },
-      { href: "/secrets",           label: "Secrets",    icon: KeyRound },
-      { href: "/docker/volumes",    label: "Volumes",    icon: Database },
-    ],
+    label: "More",
+    items: [{ href: "/traefik", label: "Traefik", icon: RadioTower }],
   },
 ];
 
-export function Sidebar() {
+export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
   const location = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
+  const setupQuery = useQuery({
+    queryKey: ["auth", "setup-status"],
+    queryFn: fetchSetupStatus,
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const editionTag = setupQuery.data?.edition ?? "selfhosted";
+  const layoutGroupId = variant === "docker" ? "sidebar-nav-docker" : "sidebar-nav-main";
+  const activeLayoutId = variant === "docker" ? "active-nav-docker" : "active-nav-main";
 
   const displayName = user
     ? `${user.firstName} ${user.lastName}`.trim() || user.email
@@ -72,39 +86,76 @@ export function Sidebar() {
     if (href === "/git") {
       return location === "/git" || location.startsWith("/git/");
     }
+    if (href === "/traefik") {
+      return location === "/traefik" || location.startsWith("/traefik/");
+    }
     return location.startsWith(href);
   };
 
   return (
     <aside className="w-64 border-r border-border bg-card/30 backdrop-blur-xl fixed top-0 left-0 h-screen flex flex-col z-40">
-      {/* Logo */}
-      <Link href="/" scroll={false} className="flex-shrink-0 px-6 pt-8 pb-6 flex items-center gap-3 hover:opacity-95 transition-opacity">
-        <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-[0_0_15px_rgba(255,255,255,0.08)] flex-shrink-0 ring-1 ring-white/5">
-          <Image
-            src="/weehawk-logo.png"
-            alt="weehawk"
-            width={40}
-            height={40}
-            className="object-cover size-10"
-            priority
-          />
-        </div>
-        <div>
-          <h1 className="font-bold text-lg text-foreground tracking-tight leading-none">weehawk</h1>
-          <p className="text-[10px] text-primary tracking-widest uppercase font-mono mt-1">Platform</p>
-        </div>
-      </Link>
+      {/* Logo + compact mode switch */}
+      <div className="flex-shrink-0 px-6 pt-8 pb-2">
+        <Link
+          href="/"
+          scroll={false}
+          className="flex items-start gap-3 rounded-xl -mx-1 px-1 py-0.5 hover:bg-white/[0.04] transition-colors"
+        >
+          <div
+            className={`relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-[0_0_15px_rgba(255,255,255,0.08)] flex-shrink-0 ring-1 ring-white/5 ${
+              variant === "docker" ? "bg-black" : ""
+            }`}
+          >
+            <Image
+              src={variant === "docker" ? "/weedocker-logo.png" : "/weehawk-logo.png"}
+              alt={variant === "docker" ? "Weedocker" : "Weehawk"}
+              width={40}
+              height={40}
+              className={variant === "docker" ? "object-contain size-10" : "object-cover size-10"}
+              priority
+            />
+          </div>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <h1 className="font-bold text-lg text-foreground tracking-tight leading-none">
+              {variant === "docker" ? "Weedocker" : "Weehawk"}
+            </h1>
+            <p className="text-[10px] text-primary tracking-widest uppercase font-mono mt-1">
+              {editionTag}
+            </p>
+          </div>
+        </Link>
+
+        {variant === "main" ? (
+          <Link
+            href="/docker"
+            scroll={false}
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-black py-1.5 pl-2 pr-2.5 text-[10px] font-medium leading-snug text-white transition-colors hover:border-white/45 hover:bg-zinc-950"
+          >
+            <ArrowRight className="size-3 shrink-0 opacity-90" strokeWidth={2.5} aria-hidden />
+            <span>Switch to Weedocker</span>
+          </Link>
+        ) : (
+          <Link
+            href="/"
+            scroll={false}
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-white/12 bg-white/[0.04] py-1.5 pl-2 pr-2.5 text-[10px] font-medium leading-snug text-muted-foreground transition-colors hover:border-white/22 hover:bg-white/[0.07] hover:text-foreground"
+          >
+            <ArrowLeft className="size-3 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
+            <span>Switch to Weehawk</span>
+          </Link>
+        )}
+      </div>
 
       {/* Scrollable nav */}
       <nav className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-        <LayoutGroup id="sidebar-nav">
-          {navSections.map((section) => (
-            <div key={section.label} className="mb-2">
-              <p className="text-[10px] text-muted-foreground/40 tracking-widest uppercase font-mono px-4 mb-1 mt-4">
-                {section.label}
+        <LayoutGroup id={layoutGroupId}>
+          {variant === "docker" ? (
+            <div className="mb-2">
+              <p className="text-[10px] text-muted-foreground/40 tracking-widest uppercase font-mono px-4 mb-1 mt-0.5">
+                Docker Manager
               </p>
               <div className="space-y-0.5">
-                {section.items.map((item) => {
+                {dockerNavItems.map((item) => {
                   const active = isActive(item.href);
                   return (
                     <Link
@@ -117,7 +168,7 @@ export function Sidebar() {
                     >
                       {active && (
                         <motion.div
-                          layoutId="active-nav"
+                          layoutId={activeLayoutId}
                           className="absolute inset-0 bg-primary/10 rounded-xl border border-primary/20"
                           initial={false}
                           transition={{ type: "spring", stiffness: 320, damping: 30 }}
@@ -130,7 +181,47 @@ export function Sidebar() {
                 })}
               </div>
             </div>
-          ))}
+          ) : (
+            <>
+              {mainNavSections.map((section, sectionIndex) => (
+                <div key={section.label} className="mb-2">
+                  <p
+                    className={`text-[10px] text-muted-foreground/40 tracking-widest uppercase font-mono px-4 mb-1 ${
+                      sectionIndex === 0 ? "mt-0.5" : "mt-4"
+                    }`}
+                  >
+                    {section.label}
+                  </p>
+                  <div className="space-y-0.5">
+                    {section.items.map((item) => {
+                      const active = isActive(item.href);
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          scroll={false}
+                          className={`relative flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors duration-200 group ${
+                            active ? "text-primary" : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                          }`}
+                        >
+                          {active && (
+                            <motion.div
+                              layoutId={activeLayoutId}
+                              className="absolute inset-0 bg-primary/10 rounded-xl border border-primary/20"
+                              initial={false}
+                              transition={{ type: "spring", stiffness: 320, damping: 30 }}
+                            />
+                          )}
+                          <item.icon className={`w-4 h-4 relative z-10 flex-shrink-0 ${active ? "text-primary" : "group-hover:text-foreground"}`} />
+                          <span className="font-medium relative z-10 text-sm">{item.label}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </LayoutGroup>
       </nav>
 
@@ -163,7 +254,7 @@ export function Sidebar() {
                 onClick={async () => {
                   setProfileOpen(false);
                   await logout();
-                  router.replace("/auth");
+                  router.replace("/");
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-red-400/80 hover:text-red-400 hover:bg-red-500/5 transition-colors"
               >
