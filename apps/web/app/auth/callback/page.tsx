@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { markOauthCloudOnboardingPending } from "@/lib/pending-onboarding-auth";
 import { getProfile } from "@/lib/user-api";
 
 /**
@@ -29,7 +30,16 @@ export default function AuthOAuthCallbackPage() {
           email: profile.email,
           imageUrl: profile.imageUrl,
         });
-        router.replace("/");
+        const onboarding =
+          typeof window !== "undefined" &&
+          new URLSearchParams(window.location.search).get("onboarding") === "1";
+        if (onboarding) {
+          markOauthCloudOnboardingPending();
+          window.history.replaceState({}, "", "/auth/callback");
+          router.replace("/onboarding/server");
+        } else {
+          router.replace("/");
+        }
       } catch {
         if (!cancelled) {
           router.replace("/?oauth_error=Could%20not%20complete%20sign-in.%20Try%20again.");

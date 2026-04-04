@@ -440,7 +440,7 @@ export function HomePageClient() {
               <AlertTriangle className="w-4 h-4" />
               Containers With Issues
             </h2>
-            <Link href="/docker/containers">
+            <Link href="/console/local/containers">
               <span className="text-xs text-primary hover:underline cursor-pointer">Manage →</span>
             </Link>
           </div>
@@ -468,7 +468,7 @@ export function HomePageClient() {
           <div className="glass-panel rounded-2xl py-16 text-center">
             <Box className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
             <p className="font-medium text-muted-foreground mb-1">No running containers</p>
-            <Link href="/docker/containers">
+            <Link href="/console/local/containers">
               <span className="text-xs text-primary hover:underline cursor-pointer">Open containers →</span>
             </Link>
           </div>

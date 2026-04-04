@@ -81,9 +81,12 @@ export class Oauth2Controller {
         );
       }
 
-      const auth = await this.authService.loginWithGoogle(profile);
+      const { auth, isNewUser } = await this.authService.loginWithGoogle(
+        profile,
+      );
       setAuthCookies(res, auth);
-      return res.redirect(`${frontendBase}/auth/callback`);
+      const suffix = isNewUser ? '?onboarding=1' : '';
+      return res.redirect(`${frontendBase}/auth/callback${suffix}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'OAuth failed';
       return res.redirect(

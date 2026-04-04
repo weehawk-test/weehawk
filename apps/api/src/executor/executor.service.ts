@@ -42,10 +42,24 @@ import {
   assertSafeComposeService,
   type DatabaseBackupConfig,
 } from '../backup/database-backup.types';
+import { RemoteServersService } from '../remote-servers/remote-servers.service';
 
 export type { ExecuteDeployOptions } from './executor-types';
 
 const execAsync = promisify(exec);
+
+function pickDockerSshEnv(
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv | undefined {
+  if (!env.DOCKER_HOST) {
+    return undefined;
+  }
+  const o: NodeJS.ProcessEnv = { DOCKER_HOST: env.DOCKER_HOST };
+  if (env.DOCKER_SSH_OPTS) {
+    o.DOCKER_SSH_OPTS = env.DOCKER_SSH_OPTS;
+  }
+  return o;
+}
 
 @Injectable()
 export class ExecutorService {
@@ -53,7 +67,16 @@ export class ExecutorService {
     @Inject(forwardRef(() => ServicesService))
     private readonly servicesService: ServicesService,
     private readonly configService: ConfigService,
+    private readonly remoteServersService: RemoteServersService,
   ) {}
+
+  private async getProcessEnvForService(
+    service: Service,
+  ): Promise<NodeJS.ProcessEnv> {
+    const envVars = parseEnv(service.env || '');
+    const base: NodeJS.ProcessEnv = { ...process.env, ...envVars };
+    return this.remoteServersService.mergeDockerHostEnv(service, base);
+  }
 
   /**
    * @param mode `deploy` = build then up (compose) or stack deploy; `reload` = compose up --no-build or stack deploy;
@@ -89,10 +112,9 @@ export class ExecutorService {
     );
     await fs.writeFile(composeFile, finalConfig);
 
-    const envVars = parseEnv(service.env || '');
     const execOpts = {
       cwd: deployDir,
-      env: { ...process.env, ...envVars },
+      env: await this.getProcessEnvForService(service),
     };
     const deployLogEmitter = options?.deployLogEmitter;
     const buildImages = getApplicationBuildRuntimeImages(this.configService);
@@ -130,19 +152,40 @@ export class ExecutorService {
                 `Dockerfile not found for build: "${dockerfileRel}" under build context.`,
               );
             });
-            const buildResult = await runIsolatedApplicationBuild(buildImages, {
-              serviceId: service.id,
-              fullContextHostPath: fullContext,
-              dockerfilePathFromConfig: dockerfilePath,
-              imageName,
-              execEnv: execOpts.env,
-              deployLogEmitter,
-            });
-            buildLogPrefix = [buildResult.stdout, buildResult.stderr]
-              .filter((s) => s && String(s).trim())
-              .join('\n');
-            if (buildLogPrefix) {
-              buildLogPrefix += '\n';
+            const rid =
+              service.remoteServerId ?? service.remoteServer?.id ?? null;
+            if (rid != null) {
+              const fArg =
+                dockerfileRel === 'Dockerfile'
+                  ? ''
+                  : ` -f "${dockerfileRel.replace(/"/g, '\\"')}"`;
+              const buildCmd = `docker build${fArg} -t ${imageName} .`;
+              const { stdout: bOut, stderr: bErr } = await execAsync(buildCmd, {
+                cwd: fullContext,
+                env: execOpts.env,
+                maxBuffer: 50 * 1024 * 1024,
+              });
+              buildLogPrefix = [bOut, bErr]
+                .filter((s) => s && String(s).trim())
+                .join('\n');
+              if (buildLogPrefix) {
+                buildLogPrefix += '\n';
+              }
+            } else {
+              const buildResult = await runIsolatedApplicationBuild(buildImages, {
+                serviceId: service.id,
+                fullContextHostPath: fullContext,
+                dockerfilePathFromConfig: dockerfilePath,
+                imageName,
+                execEnv: execOpts.env,
+                deployLogEmitter,
+              });
+              buildLogPrefix = [buildResult.stdout, buildResult.stderr]
+                .filter((s) => s && String(s).trim())
+                .join('\n');
+              if (buildLogPrefix) {
+                buildLogPrefix += '\n';
+              }
             }
           }
           /* If source was removed after a previous deploy, skip build and rely on existing local image + stack deploy. */
@@ -153,7 +196,10 @@ export class ExecutorService {
         let err = stderr ?? '';
 
         if (mode === 'redeploy') {
-          const forced = await forceRollingRestartStackServices(service.appName);
+          const forced = await forceRollingRestartStackServices(
+            service.appName,
+            pickDockerSshEnv(execOpts.env),
+          );
           out = [out, forced.output].filter(Boolean).join('\n');
           err += forced.stderr;
         }
@@ -215,7 +261,7 @@ export class ExecutorService {
       service.appName,
     );
     await fs.writeFile(composeFile, finalConfig);
-    const envVars = parseEnv(service.env || '');
+    const procEnv = await this.getProcessEnvForService(service);
 
     if (isSwarmStackService(service)) {
       return await this.execute(id, 'reload');
@@ -225,7 +271,7 @@ export class ExecutorService {
     try {
       const { stdout, stderr } = await execAsync(`${base} start`, {
         cwd: deployDir,
-        env: { ...process.env, ...envVars },
+        env: procEnv,
       });
       const outStart = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
       return { success: true, output: outStart };
@@ -233,7 +279,7 @@ export class ExecutorService {
       try {
         const { stdout, stderr } = await execAsync(`${base} up -d --no-build`, {
           cwd: deployDir,
-          env: { ...process.env, ...envVars },
+          env: procEnv,
         });
         const outUp = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
         return { success: true, output: outUp };
@@ -247,6 +293,7 @@ export class ExecutorService {
 
   async getRuntimeStatus(id: number): Promise<{ running: boolean }> {
     const service = await this.servicesService.findOne(id);
+    const procEnv = await this.getProcessEnvForService(service);
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -257,6 +304,7 @@ export class ExecutorService {
       if (isSwarmStackService(service)) {
         const { stdout } = await execAsync(
           `docker stack services ${service.appName} --format "{{.Replicas}}"`,
+          { env: procEnv },
         );
         const running = stdout.split(/\r?\n/).some((line) => {
           const m = line.trim().match(/^(\d+)\//);
@@ -273,7 +321,7 @@ export class ExecutorService {
 
       const { stdout } = await execAsync(
         `docker compose -f "${composeFile}" -p ${service.appName} ps --status running -q`,
-        { cwd: deployDir },
+        { cwd: deployDir, env: procEnv },
       );
       return { running: stdout.trim().length > 0 };
     } catch {
@@ -305,6 +353,7 @@ export class ExecutorService {
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
+    const procEnv = await this.getProcessEnvForService(service);
     let key: string;
     if (composeServiceKey !== undefined && composeServiceKey.trim() !== '') {
       try {
@@ -320,6 +369,7 @@ export class ExecutorService {
       if (isSwarmStackService(service)) {
         const { stdout } = await execAsync(
           `docker ps -q -f "name=${service.appName}_${key}" -f "status=running"`,
+          { env: procEnv },
         );
         const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
         if (!cid) {
@@ -344,7 +394,7 @@ export class ExecutorService {
 
       const { stdout } = await execAsync(
         `docker compose -f "${composeFile}" -p ${service.appName} ps -q --status running ${key}`,
-        { cwd: deployDir },
+        { cwd: deployDir, env: procEnv },
       );
       const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
       if (!cid) {
@@ -362,6 +412,7 @@ export class ExecutorService {
 
   async stopAndRemove(id: number) {
     const service = await this.servicesService.findOne(id);
+    const procEnv = await this.getProcessEnvForService(service);
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -370,7 +421,7 @@ export class ExecutorService {
 
     try {
       if (isSwarmStackService(service)) {
-        await execAsync(`docker stack rm ${service.appName}`);
+        await execAsync(`docker stack rm ${service.appName}`, { env: procEnv });
         console.log(`Stack ${service.appName} removed from Swarm.`);
       } else {
         const fileExists = await fs
@@ -383,6 +434,7 @@ export class ExecutorService {
             {
               cwd: deployDir,
               timeout: 30000,
+              env: procEnv,
             },
           );
           console.log(
@@ -394,7 +446,9 @@ export class ExecutorService {
       console.error(
         `Clean stop failed, attempting force removal: ${error.message}`,
       );
-      await execAsync(`docker rm -f ${service.appName}`).catch(() => {});
+      await execAsync(`docker rm -f ${service.appName}`, {
+        env: procEnv,
+      }).catch(() => {});
     } finally {
       await removeDeploymentFolder(deployDir);
     }
@@ -421,14 +475,14 @@ export class ExecutorService {
       service.appName,
     );
     await fs.writeFile(composeFile, finalConfig, 'utf8');
-    const envVars = parseEnv(service.env || '');
+    const procEnv = await this.getProcessEnvForService(service);
 
     try {
       const { stdout } = await execAsync(
         `docker compose -f "${composeFile}" -p ${service.appName} config --format json`,
         {
           cwd: deployDir,
-          env: { ...process.env, ...envVars },
+          env: procEnv,
           maxBuffer: 20 * 1024 * 1024,
         },
       );
@@ -473,13 +527,13 @@ export class ExecutorService {
       return { success: false, output: resolved.error };
     }
 
-    const envVars = parseEnv(service.env || '');
+    const procEnv = await this.getProcessEnvForService(service);
     return runStructuredDatabaseBackup(
       deployDir,
       config,
       destDir,
       service.appName,
-      { ...process.env, ...envVars },
+      procEnv,
       resolved.id,
     );
   }
@@ -517,11 +571,11 @@ export class ExecutorService {
     if ('error' in resolved) {
       return { success: false, output: resolved.error };
     }
-    const envVars = parseEnv(service.env || '');
+    const procEnv = await this.getProcessEnvForService(service);
     return runStructuredDatabaseImport(
       config,
       hostArchivePath,
-      { ...process.env, ...envVars },
+      procEnv,
       resolved.id,
     );
   }
@@ -570,11 +624,11 @@ export class ExecutorService {
           'Forbidden characters: use one docker command without ; | & ` $ or newlines.',
       };
     }
-    const envVars = parseEnv(service.env || '');
+    const procEnv = await this.getProcessEnvForService(service);
     try {
       const { stdout, stderr } = await execAsync(cmd, {
         cwd: deployDir,
-        env: { ...process.env, ...envVars },
+        env: procEnv,
         maxBuffer: 512 * 1024 * 1024,
         timeout: 600_000,
       });
@@ -645,11 +699,11 @@ export class ExecutorService {
           'Forbidden characters: use one docker command without ; | & ` $ or newlines.',
       };
     }
-    const envVars = parseEnv(service.env || '');
+    const procEnv = await this.getProcessEnvForService(service);
     try {
       const { stdout, stderr } = await execAsync(cmd, {
         cwd: deployDir,
-        env: { ...process.env, ...envVars },
+        env: procEnv,
         maxBuffer: 10 * 1024 * 1024,
         timeout: 180_000,
       });
@@ -667,6 +721,7 @@ export class ExecutorService {
 
   async shutdown(id: number) {
     const service = await this.servicesService.findOne(id);
+    const procEnv = await this.getProcessEnvForService(service);
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -674,12 +729,16 @@ export class ExecutorService {
 
     try {
       if (isSwarmStackService(service)) {
-        await scaleAllStackServicesToZero(service.appName);
+        await scaleAllStackServicesToZero(
+          service.appName,
+          pickDockerSshEnv(procEnv),
+        );
         return { success: true, message: 'Stack services scaled to 0 (Stopped)' };
       } else {
         const composeFile = path.join(deployDir, 'docker-compose.yml');
         await execAsync(
           `docker compose -f "${composeFile}" -p ${service.appName} stop`,
+          { env: procEnv },
         );
         return { success: true, message: 'Containers stopped' };
       }

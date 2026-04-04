@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Service } from './entities/service.entity';
+import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { Project } from 'src/projects/entities/project.entity';
@@ -52,6 +53,8 @@ export class ServicesService {
     private readonly serviceRepository: Repository<Service>,
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
+    @InjectRepository(RemoteServer)
+    private readonly remoteServerRepository: Repository<RemoteServer>,
     @Inject(forwardRef(() => ExecutorService))
     private readonly executorService: ExecutorService,
     private readonly configService: ConfigService,
@@ -67,6 +70,15 @@ export class ServicesService {
     const { projectId, appName, ...serviceData } = createServiceDto;
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) throw new NotFoundException('Project not found');
+
+    if (createServiceDto.remoteServerId != null) {
+      const rs = await this.remoteServerRepository.findOneBy({
+        id: createServiceDto.remoteServerId,
+      });
+      if (!rs) {
+        throw new BadRequestException('Remote server not found');
+      }
+    }
 
     const uniqueAppName = `${appName}-${randomBytes(2).toString('hex')}`;
     const service = this.serviceRepository.create({
@@ -1779,7 +1791,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
   async findOne(id: number) {
     const service = await this.serviceRepository.findOne({ 
       where: { id }, 
-      relations: ['project'] 
+      relations: ['project', 'remoteServer'] 
     });
     if (!service) throw new NotFoundException(`Service #${id} not found`);
     return service;
@@ -1795,6 +1807,16 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
 
   async update(id: number, updateServiceDto: UpdateServiceDto) {
     const service = await this.findOne(id);
+    if (updateServiceDto.remoteServerId !== undefined) {
+      if (updateServiceDto.remoteServerId !== null) {
+        const rs = await this.remoteServerRepository.findOneBy({
+          id: updateServiceDto.remoteServerId,
+        });
+        if (!rs) {
+          throw new BadRequestException('Remote server not found');
+        }
+      }
+    }
     const updated = this.serviceRepository.merge(service, updateServiceDto);
     const shouldRefreshAppCompose =
       updated.composeType === composeType.APPLICATION &&

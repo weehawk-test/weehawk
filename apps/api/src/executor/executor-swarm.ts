@@ -17,12 +17,24 @@ export function isSwarmStackService(service: Service): boolean {
 /**
  * Rolling restart every Swarm service in a stack (same compose file, tasks recreated).
  */
-export async function forceRollingRestartStackServices(stackName: string): Promise<{
+function execEnv(
+  extra?: NodeJS.ProcessEnv,
+): { env: NodeJS.ProcessEnv } | Record<string, never> {
+  if (!extra) return {};
+  return { env: { ...process.env, ...extra } };
+}
+
+export async function forceRollingRestartStackServices(
+  stackName: string,
+  dockerEnv?: NodeJS.ProcessEnv,
+): Promise<{
   output: string;
   stderr: string;
 }> {
+  const envOpts = execEnv(dockerEnv);
   const { stdout } = await execAsync(
     `docker stack services ${stackName} --format "{{.Name}}"`,
+    envOpts,
   );
   const names = stdout
     .split(/\r?\n/)
@@ -33,7 +45,7 @@ export async function forceRollingRestartStackServices(stackName: string): Promi
   for (const name of names) {
     const { stdout: uo, stderr: ue } = await execAsync(
       `docker service update --force ${name}`,
-      { maxBuffer: 10 * 1024 * 1024 },
+      { maxBuffer: 10 * 1024 * 1024, ...envOpts },
     );
     chunks.push([uo, ue].filter((s) => s && String(s).trim()).join('\n'));
     combinedStderr += ue ?? '';
@@ -45,12 +57,16 @@ export async function forceRollingRestartStackServices(stackName: string): Promi
  * Swarm service names are `stackname_servicekey`, not the stack name alone.
  * Lists `docker stack services` and scales each to 0.
  */
-export async function scaleAllStackServicesToZero(stackName: string): Promise<void> {
+export async function scaleAllStackServicesToZero(
+  stackName: string,
+  dockerEnv?: NodeJS.ProcessEnv,
+): Promise<void> {
+  const envOpts = execEnv(dockerEnv);
   let stdout: string;
   try {
     const r = await execAsync(
       `docker stack services ${stackName} --format "{{.Name}}"`,
-      { maxBuffer: 10 * 1024 * 1024 },
+      { maxBuffer: 10 * 1024 * 1024, ...envOpts },
     );
     stdout = r.stdout;
   } catch {
@@ -63,6 +79,7 @@ export async function scaleAllStackServicesToZero(stackName: string): Promise<vo
   for (const name of names) {
     await execAsync(`docker service scale ${name}=0`, {
       maxBuffer: 10 * 1024 * 1024,
+      ...envOpts,
     });
   }
 }

@@ -78,6 +78,7 @@ import {
 } from "@/lib/env-utils";
 import { ApplicationConnectionsPanel } from "./application-connections-panel";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
+import { ServiceRemoteHostPanel } from "./service-remote-host-panel";
 import { ServiceSecretsTab } from "./service-secrets-tab";
 import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
@@ -1011,6 +1012,7 @@ export default function ServiceDetails({
           {activeTab === "env" && (
             <motion.div key="env" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="space-y-4">
+              <ServiceRemoteHostPanel service={service} />
               <EnvFilePanel service={service} />
             </motion.div>
           )}

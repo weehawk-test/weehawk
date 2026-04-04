@@ -19,13 +19,10 @@ import {
   fetchSetupStatus,
   loginUser,
   registerUser,
-  type AuthResponse,
   type SetupStatus,
 } from "@/lib/auth-api";
 import { toast } from "@/hooks/use-toast";
-import { ServerDeployChoiceSection } from "@/components/auth/server-deploy-choice-section";
-import type { ServerDeployTarget } from "@/lib/server-deploy-preference";
-import { writeServerDeployChoice } from "@/lib/server-deploy-preference";
+import { savePendingOnboardingAuth } from "@/lib/pending-onboarding-auth";
 
 /** Sign-in / first-user setup at `/` (no sidebar). */
 export function SignInPage() {
@@ -45,9 +42,6 @@ export function SignInPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [awaitingDeployChoice, setAwaitingDeployChoice] = useState(false);
-  const [pendingRegisterAuth, setPendingRegisterAuth] = useState<AuthResponse | null>(null);
-  const [deployTarget, setDeployTarget] = useState<ServerDeployTarget>("localhost");
 
   useEffect(() => {
     if (accessToken) router.replace("/");
@@ -71,30 +65,6 @@ export function SignInPage() {
   const needsSetup = setupQuery.data?.needsSetup === true;
   const isRegisterForm = needsSetup;
 
-  useEffect(() => {
-    if (!awaitingDeployChoice) return;
-    if (isCloud) {
-      setDeployTarget("remote");
-      writeServerDeployChoice("remote");
-    } else {
-      setDeployTarget("localhost");
-      writeServerDeployChoice("localhost");
-    }
-  }, [awaitingDeployChoice, isCloud]);
-
-  function finishRegisterAndEnterApp() {
-    if (!pendingRegisterAuth) return;
-    setSession(pendingRegisterAuth);
-    setPendingRegisterAuth(null);
-    setAwaitingDeployChoice(false);
-    router.replace("/");
-  }
-
-  function skipDeploySetupAndEnterApp() {
-    writeServerDeployChoice("later");
-    finishRegisterAndEnterApp();
-  }
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (isRegisterForm && password !== confirmPassword) {
@@ -114,8 +84,8 @@ export function SignInPage() {
           email: email.trim(),
           password,
         });
-        setPendingRegisterAuth(res);
-        setAwaitingDeployChoice(true);
+        savePendingOnboardingAuth(res);
+        router.push("/onboarding/server");
         queryClient.setQueryData(
           ["auth", "setup-status"],
           (prev: SetupStatus | undefined) => ({
@@ -149,22 +119,6 @@ export function SignInPage() {
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
-    );
-  }
-
-  if (awaitingDeployChoice && pendingRegisterAuth) {
-    return (
-      <AuthPageShell wide subtitle="Choose where your resources will run.">
-        <ServerDeployChoiceSection
-          variant={isCloud ? "cloud" : "selfhosted"}
-          value={deployTarget}
-          onChange={setDeployTarget}
-          onSetupLater={skipDeploySetupAndEnterApp}
-        />
-        <Button type="button" className="w-full mt-4 gap-2" onClick={finishRegisterAndEnterApp}>
-          Continue to Weehawk
-        </Button>
-      </AuthPageShell>
     );
   }
 

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, LayoutDashboard, FolderKanban, KeyRound, UserCircle, ChevronUp,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, ArrowRight, ArrowLeft, RadioTower,
+  GitBranch, RadioTower, Server, Terminal,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useState } from "react";
@@ -15,14 +15,19 @@ import { useAuth } from "@/contexts/auth-context";
 import { fetchSetupStatus } from "@/lib/auth-api";
 import type { LucideIcon } from "lucide-react";
 
-const dockerNavItems: { href: string; label: string; icon: LucideIcon }[] = [
-  { href: "/docker/images", label: "Images", icon: ImageIcon },
-  { href: "/docker/containers", label: "Containers", icon: Box },
-  { href: "/docker/services", label: "Services", icon: Boxes },
-  { href: "/docker/networks", label: "Networks", icon: Network },
-  { href: "/secrets", label: "Secrets", icon: KeyRound },
-  { href: "/docker/volumes", label: "Volumes", icon: Database },
-];
+function buildDockerNavItems(
+  base: string,
+  includeSecrets: boolean,
+): { href: string; label: string; icon: LucideIcon }[] {
+  return [
+    { href: `${base}/images`, label: "Images", icon: ImageIcon },
+    { href: `${base}/containers`, label: "Containers", icon: Box },
+    { href: `${base}/services`, label: "Services", icon: Boxes },
+    { href: `${base}/networks`, label: "Networks", icon: Network },
+    ...(includeSecrets ? [{ href: "/secrets", label: "Secrets", icon: KeyRound }] : []),
+    { href: `${base}/volumes`, label: "Volumes", icon: Database },
+  ];
+}
 
 const mainNavSections: { label: string; items: { href: string; label: string; icon: LucideIcon }[] }[] = [
   {
@@ -50,7 +55,11 @@ const mainNavSections: { label: string; items: { href: string; label: string; ic
   },
   {
     label: "More",
-    items: [{ href: "/traefik", label: "Traefik", icon: RadioTower }],
+    items: [
+      { href: "/traefik", label: "Traefik", icon: RadioTower },
+      { href: "/console/local", label: "Host console", icon: Terminal },
+      { href: "/remote-server", label: "Remote servers", icon: Server },
+    ],
   },
 ];
 
@@ -77,8 +86,19 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
       ? `${user.firstName?.[0] ?? ""}${user.lastName?.[0] ?? ""}`.toUpperCase()
       : user?.email?.[0]?.toUpperCase() ?? "U";
 
+  const consoleMatch = /^\/console\/([^/]+)/.exec(location);
+  const onSecretsShell = location === "/secrets" || location.startsWith("/secrets/");
+  const consoleNavBase = consoleMatch
+    ? `/console/${consoleMatch[1]}`
+    : onSecretsShell
+      ? "/console/local"
+      : "/console/local";
+  const dockerNavIncludeSecrets = consoleMatch?.[1] === "local" || onSecretsShell;
+  const dockerNavDynamic = buildDockerNavItems(consoleNavBase, dockerNavIncludeSecrets);
+
   const isActive = (href: string) => {
     if (href === "/") return location === "/";
+    if (href === "/console/local") return location.startsWith("/console/local");
     if (href === "/notifications/channels") return location.startsWith("/notifications");
     if (href === "/registry") {
       return location === "/registry" || location.startsWith("/registry/saved");
@@ -89,6 +109,9 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
     if (href === "/traefik") {
       return location === "/traefik" || location.startsWith("/traefik/");
     }
+    if (href === "/remote-server") {
+      return location === "/remote-server" || location.startsWith("/remote-server/");
+    }
     return location.startsWith(href);
   };
 
@@ -97,7 +120,7 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
       {/* Logo + compact mode switch */}
       <div className="flex-shrink-0 px-6 pt-8 pb-2">
         <Link
-          href="/"
+          href={variant === "docker" ? `${consoleNavBase}/containers` : "/"}
           scroll={false}
           className="flex items-start gap-3 rounded-xl -mx-1 px-1 py-0.5 hover:bg-white/[0.04] transition-colors"
         >
@@ -124,26 +147,6 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
             </p>
           </div>
         </Link>
-
-        {variant === "main" ? (
-          <Link
-            href="/docker"
-            scroll={false}
-            className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-white/25 bg-black py-1.5 pl-2 pr-2.5 text-[10px] font-medium leading-snug text-white transition-colors hover:border-white/45 hover:bg-zinc-950"
-          >
-            <ArrowRight className="size-3 shrink-0 opacity-90" strokeWidth={2.5} aria-hidden />
-            <span>Switch to Weedocker</span>
-          </Link>
-        ) : (
-          <Link
-            href="/"
-            scroll={false}
-            className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-white/12 bg-white/[0.04] py-1.5 pl-2 pr-2.5 text-[10px] font-medium leading-snug text-muted-foreground transition-colors hover:border-white/22 hover:bg-white/[0.07] hover:text-foreground"
-          >
-            <ArrowLeft className="size-3 shrink-0 opacity-70" strokeWidth={2} aria-hidden />
-            <span>Switch to Weehawk</span>
-          </Link>
-        )}
       </div>
 
       {/* Scrollable nav */}
@@ -155,7 +158,7 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
                 Docker Manager
               </p>
               <div className="space-y-0.5">
-                {dockerNavItems.map((item) => {
+                {dockerNavDynamic.map((item) => {
                   const active = isActive(item.href);
                   return (
                     <Link

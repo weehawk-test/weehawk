@@ -32,7 +32,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   }
 
   const dockerShell =
-    pathname.startsWith("/docker") ||
+    /^\/console\/[^/]+/.test(pathname) ||
     pathname === "/secrets" ||
     pathname.startsWith("/secrets/");
 

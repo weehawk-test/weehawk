@@ -120,7 +120,16 @@ export function useUpdateService() {
     }: {
       id: string;
       patch: Partial<
-        Pick<Service, "config" | "env" | "isActive" | "description" | "domains" | "traefikRoutes">
+        Pick<
+          Service,
+          | "config"
+          | "env"
+          | "isActive"
+          | "description"
+          | "domains"
+          | "traefikRoutes"
+          | "remoteServerId"
+        >
       >;
     }) => updateServiceApi(id, patch),
     onSuccess: (data) => {

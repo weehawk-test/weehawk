@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
   type ServerDeployTarget,
@@ -14,9 +14,23 @@ type Props = {
   onChange: (v: ServerDeployTarget) => void;
   /** Skip saving a target now; stores `later` and lets the parent continue. */
   onSetupLater?: () => void;
+  /** Cloud: navigate to a separate SSH step instead of an inline panel. */
+  onRemoteSshSetup?: () => void;
+  /** Shown after the user clicks “Remote server” (cloud only), when not using `onRemoteSshSetup`. */
+  remoteSshSetupPanel?: ReactNode;
 };
 
-export function ServerDeployChoiceSection({ variant, value, onChange, onSetupLater }: Props) {
+export function ServerDeployChoiceSection({
+  variant,
+  value,
+  onChange,
+  onSetupLater,
+  onRemoteSshSetup,
+  remoteSshSetupPanel,
+}: Props) {
+  const [remoteSshRevealed, setRemoteSshRevealed] = useState(false);
+  const sshSeparatePage = Boolean(onRemoteSshSetup);
+
   useEffect(() => {
     writeServerDeployChoice(value);
   }, [value]);
@@ -33,7 +47,9 @@ export function ServerDeployChoiceSection({ variant, value, onChange, onSetupLat
         </h2>
         <p className="text-sm leading-relaxed text-muted-foreground">
           {isCloud
-            ? "Weehawk Cloud uses servers you connect over SSH (VPS, cloud VM, or homelab). SSH setup will be available in a future update."
+            ? sshSeparatePage
+              ? "Step 1 of 2: Weehawk Cloud runs Docker on servers you reach over SSH. Click Remote server to open the SSH connection page, or set up later."
+              : "Weehawk Cloud runs Docker on machines you reach over SSH (VPS, cloud VM, or homelab). Click Remote server to open the SSH setup form, or skip and configure later."
             : "Pick how CPU and RAM will be used for your apps and services. You can adjust this later when SSH and more targets are supported."}
         </p>
       </header>
@@ -43,7 +59,10 @@ export function ServerDeployChoiceSection({ variant, value, onChange, onSetupLat
           <OptionRow
             disabled={false}
             selected={value === "localhost"}
-            onSelect={() => onChange("localhost")}
+            onSelect={() => {
+              setRemoteSshRevealed(false);
+              onChange("localhost");
+            }}
             icon={<Monitor className="size-4" aria-hidden />}
             title="Localhost"
             badge={null}
@@ -54,10 +73,23 @@ export function ServerDeployChoiceSection({ variant, value, onChange, onSetupLat
 
         <OptionRow
           disabled={remoteDisabled}
-          selected={value === "remote" && !remoteDisabled}
-          onSelect={() => !remoteDisabled && onChange("remote")}
+          selected={
+            remoteDisabled
+              ? false
+              : isCloud && !sshSeparatePage
+                ? value === "remote" && remoteSshRevealed
+                : value === "remote"
+          }
+          onSelect={() => {
+            if (remoteDisabled) return;
+            onChange("remote");
+            if (isCloud) {
+              if (sshSeparatePage) onRemoteSshSetup?.();
+              else setRemoteSshRevealed(true);
+            }
+          }}
           icon={<Server className="size-4" aria-hidden />}
-          title="Remote server"
+          title="Remote servers"
           badge={
             remoteDisabled ? (
               <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-100/95">
@@ -67,12 +99,28 @@ export function ServerDeployChoiceSection({ variant, value, onChange, onSetupLat
           }
           body={
             isCloud
-              ? "Use a VPS, cloud VM, or home server you reach over SSH. Weehawk Cloud is built around this model—SSH setup is on the roadmap."
+              ? sshSeparatePage
+                ? "Use a VPS, cloud VM, or home server over SSH. Click to go to step 2: generate keys, save the host in the database, and test Docker over SSH."
+                : "Use a VPS, cloud VM, or home server you reach over SSH. Click this card to open the SSH connection form—generate keys, save the host, and test Docker over SSH."
               : "Any server you can SSH into: VPS, cloud instance, or lab hardware. We’ll add the connection flow in a future release."
           }
-          footnote={!remoteDisabled ? "Default for Weehawk Cloud" : null}
+          footnote={
+            remoteDisabled
+              ? null
+              : isCloud
+                ? sshSeparatePage
+                  ? "Open step 2 — SSH connection"
+                  : remoteSshRevealed
+                    ? "Default for Weehawk Cloud"
+                    : "Click to open SSH setup"
+                : "Default for Weehawk Cloud"
+          }
         />
       </div>
+
+      {isCloud && !sshSeparatePage && remoteSshRevealed && value === "remote" && remoteSshSetupPanel ? (
+        <div className="pt-1">{remoteSshSetupPanel}</div>
+      ) : null}
 
       {onSetupLater ? (
         <div className="flex flex-col items-center gap-1 border-t border-white/10 pt-4">

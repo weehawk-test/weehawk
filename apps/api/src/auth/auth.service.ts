@@ -101,7 +101,10 @@ export class AuthService {
     return this.buildAuthResponse(user, accessToken, refreshToken.token);
   }
 
-  async loginWithGoogle(profile: Profile): Promise<AuthResponseDto> {
+  async loginWithGoogle(profile: Profile): Promise<{
+    auth: AuthResponseDto;
+    isNewUser: boolean;
+  }> {
     if (!this.isCloudEdition()) {
       throw new ForbiddenException(
         'Google sign-in is only available in cloud edition.',
@@ -121,9 +124,11 @@ export class AuthService {
     const lastName = profile.name?.familyName?.trim() ?? '';
     const imageUrl = profile.photos?.[0]?.value?.trim() ?? null;
 
-    let user =
+    const existing =
       (await this.userRepo.findOne({ where: { googleId } })) ??
       (await this.userRepo.findOne({ where: { email } }));
+    const isNewUser = !existing;
+    let user = existing;
 
     const now = new Date();
     if (user) {
@@ -152,7 +157,10 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
     const refreshToken =
       await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, refreshToken.token);
+    return {
+      auth: this.buildAuthResponse(user, accessToken, refreshToken.token),
+      isNewUser,
+    };
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {

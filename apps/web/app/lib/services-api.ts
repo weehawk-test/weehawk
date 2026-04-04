@@ -143,6 +143,17 @@ export function mapApiServiceToService(row: unknown): Service {
   if (ld instanceof Date) lastDeployedAt = ld.toISOString();
   else if (typeof ld === "string" && ld.length) lastDeployedAt = ld;
 
+  const rs = s.remoteServer as { id?: unknown; name?: unknown } | null | undefined;
+  const remoteServerIdRaw = s.remoteServerId;
+  let remoteServerId: number | null | undefined;
+  if (remoteServerIdRaw === null) {
+    remoteServerId = null;
+  } else if (typeof remoteServerIdRaw === "number" && Number.isFinite(remoteServerIdRaw)) {
+    remoteServerId = remoteServerIdRaw;
+  } else if (rs && typeof rs.id === "number") {
+    remoteServerId = rs.id;
+  }
+
   return {
     id: String(s.id ?? ""),
     projectId: pid != null ? String(pid) : "",
@@ -157,6 +168,11 @@ export function mapApiServiceToService(row: unknown): Service {
     isActive: s.isActive !== false,
     lastDeployedAt,
     appName: typeof s.appName === "string" ? s.appName : undefined,
+    remoteServerId,
+    remoteServer:
+      rs && typeof rs.id === "number" && typeof rs.name === "string"
+        ? { id: rs.id, name: rs.name }
+        : undefined,
   };
 }
 
@@ -340,7 +356,16 @@ export async function updateDatabaseStackApi(
 export async function updateServiceApi(
   id: string,
   patch: Partial<
-    Pick<Service, "config" | "env" | "isActive" | "description" | "domains" | "traefikRoutes">
+    Pick<
+      Service,
+      | "config"
+      | "env"
+      | "isActive"
+      | "description"
+      | "domains"
+      | "traefikRoutes"
+      | "remoteServerId"
+    >
   >,
 ): Promise<Service> {
   const body: Record<string, unknown> = {};
@@ -350,6 +375,7 @@ export async function updateServiceApi(
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.domains !== undefined) body.domains = patch.domains;
   if (patch.traefikRoutes !== undefined) body.traefikRoutes = patch.traefikRoutes;
+  if (patch.remoteServerId !== undefined) body.remoteServerId = patch.remoteServerId;
 
   const res = await apiFetch(`/services/${encodeURIComponent(id)}`, {
     method: "PATCH",

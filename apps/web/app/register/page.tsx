@@ -15,21 +15,14 @@ import {
 } from "@/components/auth/google-oauth-button";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { useAuth } from "@/contexts/auth-context";
-import {
-  fetchSetupStatus,
-  registerUser,
-  type AuthResponse,
-  type SetupStatus,
-} from "@/lib/auth-api";
+import { fetchSetupStatus, registerUser, type SetupStatus } from "@/lib/auth-api";
 import { toast } from "@/hooks/use-toast";
-import { ServerDeployChoiceSection } from "@/components/auth/server-deploy-choice-section";
-import type { ServerDeployTarget } from "@/lib/server-deploy-preference";
-import { writeServerDeployChoice } from "@/lib/server-deploy-preference";
+import { savePendingOnboardingAuth } from "@/lib/pending-onboarding-auth";
 
 export default function RegisterPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { accessToken, isReady, setSession } = useAuth();
+  const { accessToken, isReady } = useAuth();
   const setupQuery = useQuery({
     queryKey: ["auth", "setup-status"],
     queryFn: fetchSetupStatus,
@@ -43,13 +36,10 @@ export default function RegisterPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [awaitingDeployChoice, setAwaitingDeployChoice] = useState(false);
-  const [pendingAuth, setPendingAuth] = useState<AuthResponse | null>(null);
-  const [deployTarget, setDeployTarget] = useState<ServerDeployTarget>("remote");
 
   useEffect(() => {
-    if (accessToken && !awaitingDeployChoice) router.replace("/");
-  }, [accessToken, awaitingDeployChoice, router]);
+    if (accessToken) router.replace("/");
+  }, [accessToken, router]);
 
   const edition = setupQuery.data?.edition;
 
@@ -57,19 +47,6 @@ export default function RegisterPage() {
     if (setupQuery.isPending || setupQuery.isError) return;
     if (edition !== "cloud") router.replace("/");
   }, [edition, setupQuery.isPending, setupQuery.isError, router]);
-
-  function finishRegisterAndEnterApp() {
-    if (!pendingAuth) return;
-    setSession(pendingAuth);
-    setPendingAuth(null);
-    setAwaitingDeployChoice(false);
-    router.replace("/");
-  }
-
-  function skipDeploySetupAndEnterApp() {
-    writeServerDeployChoice("later");
-    finishRegisterAndEnterApp();
-  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -89,8 +66,8 @@ export default function RegisterPage() {
         email: email.trim(),
         password,
       });
-      setPendingAuth(res);
-      setAwaitingDeployChoice(true);
+      savePendingOnboardingAuth(res);
+      router.push("/onboarding/server");
       queryClient.setQueryData(
         ["auth", "setup-status"],
         (prev: SetupStatus | undefined) => ({
@@ -115,22 +92,6 @@ export default function RegisterPage() {
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
-    );
-  }
-
-  if (awaitingDeployChoice && pendingAuth) {
-    return (
-      <AuthPageShell wide subtitle="Choose where your resources will run.">
-        <ServerDeployChoiceSection
-          variant="cloud"
-          value={deployTarget}
-          onChange={setDeployTarget}
-          onSetupLater={skipDeploySetupAndEnterApp}
-        />
-        <Button type="button" className="w-full mt-4 gap-2" onClick={finishRegisterAndEnterApp}>
-          Continue to Weehawk
-        </Button>
-      </AuthPageShell>
     );
   }
 

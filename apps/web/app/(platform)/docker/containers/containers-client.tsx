@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Box, Search, Clock, Activity, RefreshCw, Loader2, AlertCircle, Trash2, ScrollText, OctagonAlert } from "lucide-react";
-import { useDeleteDockerContainer } from "@/hooks/use-docker";
+import { useAuth } from "@/contexts/auth-context";
 import {
   DOCKER_API_HELP,
   deleteDockerContainer,
@@ -12,6 +12,13 @@ import {
   fetchDockerContainerLogs,
   type ContainerStatus,
 } from "@/lib/docker-api";
+import { fetchDockerContainersPagedBrowser } from "@/lib/docker-paged-browser";
+import {
+  deleteRemoteConsoleContainer,
+  fetchRemoteConsoleContainerLogs,
+  fetchRemoteConsoleContainersPaged,
+} from "@/lib/remote-console-api";
+import type { DockerConsoleTarget } from "@/lib/console-target";
 import { DOCKER_LIST_PAGE_SIZE, type PaginatedContainersResponse } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -52,16 +59,15 @@ function formatCreated(value: string) {
 }
 
 type Props = {
-  data: PaginatedContainersResponse | null;
-  error: string | null;
+  consoleTarget: DockerConsoleTarget;
   urlPage: number;
   urlQ: string;
 };
 
-export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
-  const router = useRouter();
+export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) {
+  const { accessToken } = useAuth();
+  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
-  const del = useDeleteDockerContainer();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
@@ -73,15 +79,34 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
   const [logText, setLogText] = useState("");
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
-  const [liveData, setLiveData] = useState<PaginatedContainersResponse | null>(data);
-  const [liveError, setLiveError] = useState<string | null>(error);
+
+  const listQuery = useQuery({
+    queryKey: ["console", "containers", consoleTarget, page, q],
+    queryFn: async () => {
+      if (consoleTarget === "local") {
+        return fetchDockerContainersPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q);
+      }
+      if (!accessToken) throw new Error("Sign in required");
+      return fetchRemoteConsoleContainersPaged(
+        accessToken,
+        consoleTarget,
+        page,
+        DOCKER_LIST_PAGE_SIZE,
+        q,
+      );
+    },
+    enabled: consoleTarget === "local" || Boolean(accessToken),
+  });
+
+  const liveData = listQuery.data ?? null;
+  const liveError = listQuery.error
+    ? listQuery.error instanceof Error
+      ? listQuery.error.message
+      : String(listQuery.error)
+    : null;
 
   useEffect(() => {
-    setLiveData(data);
-    setLiveError(error);
-  }, [data, error, urlPage, urlQ]);
-
-  useEffect(() => {
+    if (consoleTarget !== "local") return;
     let disposed = false;
     let ws: WebSocket | null = null;
     const connect = () => {
@@ -99,10 +124,10 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
         try {
           const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
           if (msg.type === "containers.paged" && msg.data) {
-            setLiveData(msg.data as PaginatedContainersResponse);
-            setLiveError(null);
-          } else if (msg.type === "error") {
-            setLiveError(msg.message ?? "WebSocket error");
+            qc.setQueryData(
+              ["console", "containers", "local", page, q],
+              msg.data as PaginatedContainersResponse,
+            );
           }
         } catch {
           /* ignore malformed message */
@@ -124,14 +149,22 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
         /* ignore */
       }
     };
-  }, [page, q]);
+  }, [consoleTarget, page, q, qc]);
 
   const loadLogs = useCallback(async () => {
     if (!logTarget) return;
     setLogLoading(true);
     setLogError(null);
     try {
-      const t = await fetchDockerContainerLogs(logTarget.id, logTail);
+      const t =
+        consoleTarget === "local"
+          ? await fetchDockerContainerLogs(logTarget.id, logTail)
+          : await fetchRemoteConsoleContainerLogs(
+              accessToken ?? "",
+              consoleTarget as number,
+              logTarget.id,
+              logTail,
+            );
       setLogText(t.trim() ? t : "(no log output in this range)");
     } catch (e) {
       setLogText("");
@@ -139,7 +172,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
     } finally {
       setLogLoading(false);
     }
-  }, [logTarget, logTail]);
+  }, [logTarget, logTail, consoleTarget, accessToken]);
 
   useEffect(() => {
     if (logTarget) void loadLogs();
@@ -164,12 +197,18 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
     });
     if (!confirmed) return;
     setBulkPending(true);
-    const results = await Promise.allSettled(targets.map((c) => deleteDockerContainer(c.id, true)));
+    const results = await Promise.allSettled(
+      targets.map((c) =>
+        consoleTarget === "local"
+          ? deleteDockerContainer(c.id, true)
+          : deleteRemoteConsoleContainer(accessToken ?? "", consoleTarget as number, c.id, true),
+      ),
+    );
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - removed;
     bulk.clear();
-    router.refresh();
+    void listQuery.refetch();
     toast({
       title: "Bulk remove finished",
       description: `${removed} removed${fail ? `, ${fail} failed` : ""}.`,
@@ -188,23 +227,42 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
       variant: "destructive",
     });
     if (!ok) return;
-    del.mutate(id, {
-      onSuccess: () => {
+    (async () => {
+      try {
+        if (consoleTarget === "local") {
+          await deleteDockerContainer(id, false);
+        } else {
+          await deleteRemoteConsoleContainer(accessToken ?? "", consoleTarget as number, id, false);
+        }
         toast({ title: "Container removed", description: name });
-        router.refresh();
-      },
-      onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
-    });
+        void listQuery.refetch();
+      } catch (e) {
+        toast({
+          title: "Failed",
+          description: e instanceof Error ? e.message : String(e),
+          variant: "destructive",
+        });
+      }
+    })();
   };
 
   const runForceDelete = async () => {
     if (!forceDialog) return;
     setForcePending(forceDialog.id);
     try {
-      await deleteDockerContainer(forceDialog.id, true);
+      if (consoleTarget === "local") {
+        await deleteDockerContainer(forceDialog.id, true);
+      } else {
+        await deleteRemoteConsoleContainer(
+          accessToken ?? "",
+          consoleTarget as number,
+          forceDialog.id,
+          true,
+        );
+      }
       toast({ title: "Container removed (force)", description: forceDialog.name });
       setForceDialog(null);
-      router.refresh();
+      void listQuery.refetch();
     } catch (e) {
       toast({
         title: "Failed",
@@ -239,7 +297,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
             <button
               type="button"
               onClick={handleBulkDelete}
-              disabled={bulkPending || del.isPending}
+              disabled={bulkPending || listQuery.isFetching}
               className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2 text-sm"
             >
               {bulkPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -361,7 +419,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
                   <button
                     type="button"
                     onClick={() => setForceDialog({ id: c.id, name: c.name })}
-                    disabled={del.isPending || forcePending === c.id}
+                    disabled={forcePending === c.id}
                     className="p-2 rounded-lg hover:bg-amber-500/10 text-muted-foreground hover:text-amber-500 transition-colors"
                     title="Force remove container"
                   >
@@ -374,7 +432,7 @@ export function DockerContainersClient({ data, error, urlPage, urlQ }: Props) {
                   <button
                     type="button"
                     onClick={() => handleDelete(c.id, c.name, c.status)}
-                    disabled={del.isPending || forcePending === c.id}
+                    disabled={forcePending === c.id}
                     className="p-2 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                     title="Remove container"
                   >

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ServicesService } from './services.service';
 import { ServicesController } from './services.controller';
 import { Service } from './entities/service.entity';
+import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
 import { ProjectsModule } from 'src/projects/projects.module';
 import { ServiceTerminalGateway } from './service-terminal.gateway';
 import { DatabaseGeneratorService } from './database-generator.service';
@@ -15,7 +16,7 @@ import { TraefikModule } from '../traefik/traefik.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Service]),
+    TypeOrmModule.forFeature([Service, RemoteServer]),
     ProjectsModule,
     DockersecretsModule,
     DockerfileGeneratorModule,

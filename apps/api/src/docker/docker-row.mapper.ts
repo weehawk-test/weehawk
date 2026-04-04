@@ -90,6 +90,52 @@ export function mapDockerPsRow(
   };
 }
 
+/** Map Dockerode `listContainers` row to the same DTO shape as local `docker ps` JSON. */
+export function mapDockerodeContainerToDto(
+  c: {
+    Id: string;
+    Names: string[];
+    Image: string;
+    Status: string;
+    State: string;
+    Created: number;
+    Ports: Array<{
+      IP?: string;
+      PrivatePort: number;
+      PublicPort?: number;
+      Type?: string;
+    }>;
+  },
+  index: number,
+): DockerContainerDto {
+  const portsStr =
+    c.Ports?.length > 0
+      ? c.Ports.map((p) => {
+          const t = p.Type || 'tcp';
+          if (p.PublicPort != null && p.PublicPort > 0) {
+            const ip = p.IP && p.IP !== '0.0.0.0' ? p.IP : '';
+            const host = ip ? `${ip}:` : '';
+            return `${host}${p.PublicPort}->${p.PrivatePort}/${t}`;
+          }
+          return `${p.PrivatePort}/${t}`;
+        }).join(', ')
+      : '—';
+  const namesJoined = (c.Names ?? []).join(',');
+  return mapDockerPsRow(
+    {
+      Id: c.Id,
+      ID: c.Id,
+      Names: namesJoined,
+      Image: c.Image,
+      Status: c.Status,
+      State: c.State,
+      CreatedAt: new Date(c.Created * 1000).toISOString(),
+      Ports: portsStr,
+    },
+    index,
+  );
+}
+
 function normalizeImageIdFull(raw: string): string {
   const t = raw.trim();
   if (!t) return '';

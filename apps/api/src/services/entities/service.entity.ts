@@ -3,11 +3,14 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   ManyToOne,
+  JoinColumn,
+  RelationId,
   CreateDateColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { composeType } from './composeType.enum';
 import { Project } from 'src/projects/entities/project.entity';
+import { RemoteServer } from 'src/remote-servers/entities/remote-server.entity';
 import type { ServiceTraefikRoute } from './service-traefik-route.types';
 
 @Entity('services')
@@ -51,6 +54,17 @@ export class Service {
     onDelete: 'CASCADE',
   })
   project!: Project;
+
+  /** When set, Docker CLI uses DOCKER_HOST=ssh://… so deploy/compose/stack run on this host. */
+  @ManyToOne(() => RemoteServer, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'remoteServerId' })
+  remoteServer?: RemoteServer | null;
+
+  @RelationId((s: Service) => s.remoteServer)
+  remoteServerId?: number | null;
 
   @CreateDateColumn()
   createdAt!: Date;

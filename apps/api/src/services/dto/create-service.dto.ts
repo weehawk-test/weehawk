@@ -1,6 +1,6 @@
 import { ApiProperty } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsArray, IsBoolean, IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, MinLength, Matches, ValidateNested } from "class-validator";
+import { IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength, MinLength, Matches, ValidateNested, ValidateIf } from "class-validator";
 import { composeType } from "../entities/composeType.enum";
 import { ServiceTraefikRouteDto } from "./service-traefik-route.dto";
 
@@ -66,4 +66,14 @@ export class CreateServiceDto {
     @IsOptional()
     @IsBoolean()
     isActive?: boolean;
+
+    @ApiProperty({
+        required: false,
+        nullable: true,
+        description: 'When set, Docker commands for this service run on that host via SSH (DOCKER_HOST=ssh://…).',
+    })
+    @IsOptional()
+    @ValidateIf((_, v) => v !== null && v !== undefined)
+    @IsInt()
+    remoteServerId?: number | null;
 }

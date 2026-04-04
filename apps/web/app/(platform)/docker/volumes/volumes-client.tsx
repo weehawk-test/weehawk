@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { format } from "date-fns";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Database, Search, HardDrive, Clock, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
-import { useDeleteDockerVolume } from "@/hooks/use-docker";
+import { useAuth } from "@/contexts/auth-context";
 import { DOCKER_API_HELP, deleteDockerVolume, dockerPagedWsUrl } from "@/lib/docker-api";
+import { fetchDockerVolumesPagedBrowser } from "@/lib/docker-paged-browser";
+import type { DockerConsoleTarget } from "@/lib/console-target";
+import {
+  deleteRemoteConsoleVolume,
+  fetchRemoteConsoleVolumesPaged,
+} from "@/lib/remote-console-api";
 import { DOCKER_LIST_PAGE_SIZE, type PaginatedVolumesResponse } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -33,30 +39,48 @@ function formatCreatedAt(value: string) {
 }
 
 type Props = {
-  data: PaginatedVolumesResponse | null;
-  error: string | null;
+  consoleTarget: DockerConsoleTarget;
   urlPage: number;
   urlQ: string;
 };
 
-export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
-  const router = useRouter();
+export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
+  const { accessToken } = useAuth();
+  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
-  const del = useDeleteDockerVolume();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
   const [forcePending, setForcePending] = useState<string | null>(null);
   const [forceDialog, setForceDialog] = useState<string | null>(null);
-  const [liveData, setLiveData] = useState<PaginatedVolumesResponse | null>(data);
-  const [liveError, setLiveError] = useState<string | null>(error);
+
+  const listQuery = useQuery({
+    queryKey: ["console", "volumes", consoleTarget, page, q],
+    queryFn: async () => {
+      if (consoleTarget === "local") {
+        return fetchDockerVolumesPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q, true);
+      }
+      if (!accessToken) throw new Error("Sign in required");
+      return fetchRemoteConsoleVolumesPaged(
+        accessToken,
+        consoleTarget,
+        page,
+        DOCKER_LIST_PAGE_SIZE,
+        q,
+      );
+    },
+    enabled: consoleTarget === "local" || Boolean(accessToken),
+  });
+
+  const liveData = listQuery.data ?? null;
+  const liveError = listQuery.error
+    ? listQuery.error instanceof Error
+      ? listQuery.error.message
+      : String(listQuery.error)
+    : null;
 
   useEffect(() => {
-    setLiveData(data);
-    setLiveError(error);
-  }, [data, error, urlPage, urlQ]);
-
-  useEffect(() => {
+    if (consoleTarget !== "local") return;
     let disposed = false;
     let ws: WebSocket | null = null;
     const connect = () => {
@@ -75,10 +99,10 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
         try {
           const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
           if (msg.type === "volumes.paged" && msg.data) {
-            setLiveData(msg.data as PaginatedVolumesResponse);
-            setLiveError(null);
-          } else if (msg.type === "error") {
-            setLiveError(msg.message ?? "WebSocket error");
+            qc.setQueryData(
+              ["console", "volumes", "local", page, q],
+              msg.data as PaginatedVolumesResponse,
+            );
           }
         } catch {}
       };
@@ -96,7 +120,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
         ws?.close();
       } catch {}
     };
-  }, [page, q]);
+  }, [consoleTarget, page, q, qc]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -119,12 +143,18 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
     });
     if (!confirmed) return;
     setBulkPending(true);
-    const results = await Promise.allSettled(names.map((n) => deleteDockerVolume(n)));
+    const results = await Promise.allSettled(
+      names.map((n) =>
+        consoleTarget === "local"
+          ? deleteDockerVolume(n)
+          : deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as number, n, false),
+      ),
+    );
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - removed;
     bulk.clear();
-    router.refresh();
+    void listQuery.refetch();
     toast({
       title: "Bulk delete finished",
       description: `${removed} removed${fail ? `, ${fail} failed` : ""}.`,
@@ -140,23 +170,37 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
       variant: "destructive",
     });
     if (!ok) return;
-    del.mutate(name, {
-      onSuccess: () => {
+    void (async () => {
+      try {
+        if (consoleTarget === "local") {
+          await deleteDockerVolume(name);
+        } else {
+          await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as number, name, false);
+        }
         toast({ title: "Volume removed", description: name });
-        router.refresh();
-      },
-      onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
-    });
+        void listQuery.refetch();
+      } catch (e) {
+        toast({
+          title: "Failed",
+          description: e instanceof Error ? e.message : String(e),
+          variant: "destructive",
+        });
+      }
+    })();
   };
 
   const runForceDelete = async () => {
     if (!forceDialog) return;
     setForcePending(forceDialog);
     try {
-      await deleteDockerVolume(forceDialog, true);
+      if (consoleTarget === "local") {
+        await deleteDockerVolume(forceDialog, true);
+      } else {
+        await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as number, forceDialog, true);
+      }
       toast({ title: "Volume removed (force)", description: forceDialog });
       setForceDialog(null);
-      router.refresh();
+      void listQuery.refetch();
     } catch (e) {
       toast({
         title: "Failed",
@@ -184,7 +228,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
             <button
               type="button"
               onClick={handleBulkDelete}
-              disabled={bulkPending || del.isPending}
+              disabled={bulkPending || listQuery.isFetching}
               className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2"
             >
               {bulkPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -297,7 +341,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
                       <button
                         type="button"
                         onClick={() => setForceDialog(v.name)}
-                        disabled={del.isPending || forcePending === v.name}
+                        disabled={listQuery.isFetching || forcePending === v.name}
                         className="p-1.5 rounded-md hover:bg-amber-500/15 text-muted-foreground hover:text-amber-500"
                         title="Force delete volume"
                       >
@@ -310,7 +354,7 @@ export function DockerVolumesClient({ data, error, urlPage, urlQ }: Props) {
                       <button
                         type="button"
                         onClick={() => handleDelete(v.name)}
-                        disabled={del.isPending || forcePending === v.name}
+                        disabled={listQuery.isFetching || forcePending === v.name}
                         className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
                         title="Delete volume"
                       >

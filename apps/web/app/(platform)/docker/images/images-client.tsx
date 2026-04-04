@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { format } from "date-fns";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImageIcon, Search, HardDrive, Tag, Clock, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
-import { useDeleteDockerImage } from "@/hooks/use-docker";
+import { useAuth } from "@/contexts/auth-context";
 import {
   DOCKER_API_HELP,
   deleteDockerImage,
@@ -13,7 +13,13 @@ import {
   dockerImageForceDeleteRef,
   type DockerImage,
 } from "@/lib/docker-api";
+import { fetchDockerImagesPagedBrowser } from "@/lib/docker-paged-browser";
+import {
+  deleteRemoteConsoleImage,
+  fetchRemoteConsoleImagesPaged,
+} from "@/lib/remote-console-api";
 import { DOCKER_LIST_PAGE_SIZE, type PaginatedImagesResponse } from "@/lib/docker-paged-fetch";
+import type { DockerConsoleTarget } from "@/lib/console-target";
 import { useToast } from "@/hooks/use-toast";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
@@ -39,29 +45,47 @@ function formatCreated(value: string) {
 }
 
 type Props = {
-  data: PaginatedImagesResponse | null;
-  error: string | null;
+  consoleTarget: DockerConsoleTarget;
   urlPage: number;
   urlQ: string;
 };
 
-export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
-  const router = useRouter();
+export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
+  const { accessToken } = useAuth();
+  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
-  const del = useDeleteDockerImage();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
   const [forceDialog, setForceDialog] = useState<DockerImage | null>(null);
-  const [liveData, setLiveData] = useState<PaginatedImagesResponse | null>(data);
-  const [liveError, setLiveError] = useState<string | null>(error);
+
+  const listQuery = useQuery({
+    queryKey: ["console", "images", consoleTarget, page, q],
+    queryFn: async () => {
+      if (consoleTarget === "local") {
+        return fetchDockerImagesPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q);
+      }
+      if (!accessToken) throw new Error("Sign in required");
+      return fetchRemoteConsoleImagesPaged(
+        accessToken,
+        consoleTarget,
+        page,
+        DOCKER_LIST_PAGE_SIZE,
+        q,
+      );
+    },
+    enabled: consoleTarget === "local" || Boolean(accessToken),
+  });
+
+  const liveData = listQuery.data ?? null;
+  const liveError = listQuery.error
+    ? listQuery.error instanceof Error
+      ? listQuery.error.message
+      : String(listQuery.error)
+    : null;
 
   useEffect(() => {
-    setLiveData(data);
-    setLiveError(error);
-  }, [data, error, urlPage, urlQ]);
-
-  useEffect(() => {
+    if (consoleTarget !== "local") return;
     let disposed = false;
     let ws: WebSocket | null = null;
     const connect = () => {
@@ -79,10 +103,10 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
         try {
           const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
           if (msg.type === "images.paged" && msg.data) {
-            setLiveData(msg.data as PaginatedImagesResponse);
-            setLiveError(null);
-          } else if (msg.type === "error") {
-            setLiveError(msg.message ?? "WebSocket error");
+            qc.setQueryData(
+              ["console", "images", "local", page, q],
+              msg.data as PaginatedImagesResponse,
+            );
           }
         } catch {}
       };
@@ -100,7 +124,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
         ws?.close();
       } catch {}
     };
-  }, [page, q]);
+  }, [consoleTarget, page, q, qc]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -123,7 +147,12 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
     if (!confirmed) return;
     setBulkPending(true);
     const results = await Promise.allSettled(
-      targets.map((img) => deleteDockerImage(dockerImageDeleteRef(img))),
+      targets.map((img) => {
+        const ref = dockerImageDeleteRef(img);
+        return consoleTarget === "local"
+          ? deleteDockerImage(ref)
+          : deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as number, ref);
+      }),
     );
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
@@ -136,7 +165,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
           ? String(firstReject.reason)
           : "";
     bulk.clear();
-    router.refresh();
+    void listQuery.refetch();
     toast({
       title: fail === results.length ? "Could not remove images" : "Bulk remove finished",
       description:
@@ -156,18 +185,23 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
       variant: "destructive",
     });
     if (!ok) return;
-    del.mutate(ref, {
-      onSuccess: () => {
+    (async () => {
+      try {
+        if (consoleTarget === "local") {
+          await deleteDockerImage(ref);
+        } else {
+          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as number, ref);
+        }
         toast({ title: "Image removed", description: ref });
-        router.refresh();
-      },
-      onError: (e: Error) =>
+        void listQuery.refetch();
+      } catch (e) {
         toast({
           title: "Could not remove image",
-          description: e.message || "Unknown error from the API.",
+          description: e instanceof Error ? e.message : "Unknown error from the API.",
           variant: "destructive",
-        }),
-    });
+        });
+      }
+    })();
   };
 
   const forceDeleteRef = forceDialog ? dockerImageForceDeleteRef(forceDialog) : "";
@@ -176,21 +210,25 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
   const runForceDelete = () => {
     if (!forceDialog) return;
     const ref = dockerImageForceDeleteRef(forceDialog);
-    del.mutate(ref, {
-      onSuccess: () => {
+    void (async () => {
+      try {
+        if (consoleTarget === "local") {
+          await deleteDockerImage(ref);
+        } else {
+          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as number, ref);
+        }
         toast({ title: "Image removed (force)", description: ref });
         setForceDialog(null);
-        router.refresh();
-      },
-      onError: (e: Error) => {
+        void listQuery.refetch();
+      } catch (e) {
         toast({
           title: "Could not remove image",
-          description: e.message || "Unknown error from the API.",
+          description: e instanceof Error ? e.message : "Unknown error from the API.",
           variant: "destructive",
         });
         setForceDialog(null);
-      },
-    });
+      }
+    })();
   };
 
   const listError = liveError;
@@ -208,7 +246,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
             <button
               type="button"
               onClick={handleBulkDelete}
-              disabled={bulkPending || del.isPending}
+              disabled={bulkPending || listQuery.isFetching}
               className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2"
             >
               {bulkPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -324,7 +362,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
                       <button
                         type="button"
                         onClick={() => setForceDialog(img)}
-                        disabled={del.isPending}
+                        disabled={listQuery.isFetching}
                         className="p-1.5 rounded-md hover:bg-amber-500/15 text-muted-foreground hover:text-amber-500"
                         title="Force delete by image ID (dangerous)"
                       >
@@ -333,7 +371,7 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
                       <button
                         type="button"
                         onClick={() => handleDelete(img)}
-                        disabled={del.isPending}
+                        disabled={listQuery.isFetching}
                         className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
                         title="Remove image (repo:tag)"
                       >
@@ -386,14 +424,14 @@ export function DockerImagesClient({ data, error, urlPage, urlQ }: Props) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={del.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={listQuery.isFetching}>Cancel</AlertDialogCancel>
             <button
               type="button"
-              disabled={del.isPending}
+              disabled={listQuery.isFetching}
               className={cn(buttonVariants({ variant: "destructive" }), "gap-2")}
               onClick={runForceDelete}
             >
-              {del.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              {listQuery.isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               Confirm force delete
             </button>
           </AlertDialogFooter>

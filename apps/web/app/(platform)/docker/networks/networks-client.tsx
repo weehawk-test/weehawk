@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { format } from "date-fns";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Network, Search, Clock, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
-import { useDeleteDockerNetwork } from "@/hooks/use-docker";
+import { useAuth } from "@/contexts/auth-context";
 import { DOCKER_API_HELP, deleteDockerNetwork, dockerPagedWsUrl } from "@/lib/docker-api";
+import { fetchDockerNetworksPagedBrowser } from "@/lib/docker-paged-browser";
+import type { DockerConsoleTarget } from "@/lib/console-target";
+import {
+  deleteRemoteConsoleNetwork,
+  fetchRemoteConsoleNetworksPaged,
+} from "@/lib/remote-console-api";
 import { DOCKER_LIST_PAGE_SIZE, type PaginatedNetworksResponse } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -33,30 +39,48 @@ function formatCreatedAt(value: string) {
 }
 
 type Props = {
-  data: PaginatedNetworksResponse | null;
-  error: string | null;
+  consoleTarget: DockerConsoleTarget;
   urlPage: number;
   urlQ: string;
 };
 
-export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
-  const router = useRouter();
+export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
+  const { accessToken } = useAuth();
+  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
-  const del = useDeleteDockerNetwork();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
   const [forcePending, setForcePending] = useState<string | null>(null);
   const [forceDialog, setForceDialog] = useState<string | null>(null);
-  const [liveData, setLiveData] = useState<PaginatedNetworksResponse | null>(data);
-  const [liveError, setLiveError] = useState<string | null>(error);
+
+  const listQuery = useQuery({
+    queryKey: ["console", "networks", consoleTarget, page, q],
+    queryFn: async () => {
+      if (consoleTarget === "local") {
+        return fetchDockerNetworksPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q);
+      }
+      if (!accessToken) throw new Error("Sign in required");
+      return fetchRemoteConsoleNetworksPaged(
+        accessToken,
+        consoleTarget,
+        page,
+        DOCKER_LIST_PAGE_SIZE,
+        q,
+      );
+    },
+    enabled: consoleTarget === "local" || Boolean(accessToken),
+  });
+
+  const liveData = listQuery.data ?? null;
+  const liveError = listQuery.error
+    ? listQuery.error instanceof Error
+      ? listQuery.error.message
+      : String(listQuery.error)
+    : null;
 
   useEffect(() => {
-    setLiveData(data);
-    setLiveError(error);
-  }, [data, error, urlPage, urlQ]);
-
-  useEffect(() => {
+    if (consoleTarget !== "local") return;
     let disposed = false;
     let ws: WebSocket | null = null;
     const connect = () => {
@@ -74,10 +98,10 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
         try {
           const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
           if (msg.type === "networks.paged" && msg.data) {
-            setLiveData(msg.data as PaginatedNetworksResponse);
-            setLiveError(null);
-          } else if (msg.type === "error") {
-            setLiveError(msg.message ?? "WebSocket error");
+            qc.setQueryData(
+              ["console", "networks", "local", page, q],
+              msg.data as PaginatedNetworksResponse,
+            );
           }
         } catch {}
       };
@@ -95,7 +119,7 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
         ws?.close();
       } catch {}
     };
-  }, [page, q]);
+  }, [consoleTarget, page, q, qc]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -118,12 +142,18 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
     });
     if (!confirmed) return;
     setBulkPending(true);
-    const results = await Promise.allSettled(names.map((n) => deleteDockerNetwork(n)));
+    const results = await Promise.allSettled(
+      names.map((n) =>
+        consoleTarget === "local"
+          ? deleteDockerNetwork(n)
+          : deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as number, n),
+      ),
+    );
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - removed;
     bulk.clear();
-    router.refresh();
+    void listQuery.refetch();
     toast({
       title: "Bulk remove finished",
       description: `${removed} removed${fail ? `, ${fail} failed` : ""}.`,
@@ -139,23 +169,37 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
       variant: "destructive",
     });
     if (!ok) return;
-    del.mutate(name, {
-      onSuccess: () => {
+    void (async () => {
+      try {
+        if (consoleTarget === "local") {
+          await deleteDockerNetwork(name);
+        } else {
+          await deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as number, name);
+        }
         toast({ title: "Network removed", description: name });
-        router.refresh();
-      },
-      onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
-    });
+        void listQuery.refetch();
+      } catch (e) {
+        toast({
+          title: "Failed",
+          description: e instanceof Error ? e.message : String(e),
+          variant: "destructive",
+        });
+      }
+    })();
   };
 
   const runForceDelete = async () => {
     if (!forceDialog) return;
     setForcePending(forceDialog);
     try {
-      await deleteDockerNetwork(forceDialog, true);
+      if (consoleTarget === "local") {
+        await deleteDockerNetwork(forceDialog, true);
+      } else {
+        await deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as number, forceDialog);
+      }
       toast({ title: "Network removed (force)", description: forceDialog });
       setForceDialog(null);
-      router.refresh();
+      void listQuery.refetch();
     } catch (e) {
       toast({
         title: "Failed",
@@ -185,7 +229,7 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
             <button
               type="button"
               onClick={handleBulkDelete}
-              disabled={bulkPending || del.isPending}
+              disabled={bulkPending || listQuery.isFetching}
               className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2"
             >
               {bulkPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
@@ -304,7 +348,7 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
                       <button
                         type="button"
                         onClick={() => setForceDialog(n.name)}
-                        disabled={del.isPending || forcePending === n.name}
+                        disabled={listQuery.isFetching || forcePending === n.name}
                         className="p-1.5 rounded-md hover:bg-amber-500/15 text-muted-foreground hover:text-amber-500"
                         title="Force remove network"
                       >
@@ -317,7 +361,7 @@ export function DockerNetworksClient({ data, error, urlPage, urlQ }: Props) {
                       <button
                         type="button"
                         onClick={() => handleDelete(n.name)}
-                        disabled={del.isPending || forcePending === n.name}
+                        disabled={listQuery.isFetching || forcePending === n.name}
                         className="p-1.5 rounded-md hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
                         title="Remove network"
                       >

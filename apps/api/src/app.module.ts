@@ -14,6 +14,7 @@ import { S3Module } from './s3/s3.module';
 import { CronJobsModule } from './cron-jobs/cron-jobs.module';
 import { GitModule } from './git/git.module';
 import { TraefikModule } from './traefik/traefik.module';
+import { RemoteServersModule } from './remote-servers/remote-servers.module';
 import googleOAuthConfig from './config/google-oauth.config';
 
 @Module({
@@ -49,6 +50,7 @@ import googleOAuthConfig from './config/google-oauth.config';
     S3Module,
     GitModule,
     TraefikModule,
+    RemoteServersModule,
   ],
   controllers: [],
   providers: [],

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Box,
   Search,
@@ -14,7 +14,7 @@ import {
   OctagonAlert,
   Network,
 } from "lucide-react";
-import { useDeleteDockerService } from "@/hooks/use-docker";
+import { useAuth } from "@/contexts/auth-context";
 import {
   DOCKER_API_HELP,
   deleteDockerService,
@@ -22,6 +22,13 @@ import {
   fetchDockerServiceLogs,
   type ServiceStatus,
 } from "@/lib/docker-api";
+import { fetchDockerServicesPagedBrowser } from "@/lib/docker-paged-browser";
+import type { DockerConsoleTarget } from "@/lib/console-target";
+import {
+  deleteRemoteConsoleService,
+  fetchRemoteConsoleServiceLogs,
+  fetchRemoteConsoleServicesPaged,
+} from "@/lib/remote-console-api";
 import { DOCKER_LIST_PAGE_SIZE, type PaginatedServicesResponse } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -56,16 +63,15 @@ const STATUS_STYLE: Record<ServiceStatus, string> = {
 };
 
 type Props = {
-  data: PaginatedServicesResponse | null;
-  error: string | null;
+  consoleTarget: DockerConsoleTarget;
   urlPage: number;
   urlQ: string;
 };
 
-export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
-  const router = useRouter();
+export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
+  const { accessToken } = useAuth();
+  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
-  const del = useDeleteDockerService();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [bulkPending, setBulkPending] = useState(false);
@@ -77,15 +83,34 @@ export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
   const [logText, setLogText] = useState("");
   const [logLoading, setLogLoading] = useState(false);
   const [logError, setLogError] = useState<string | null>(null);
-  const [liveData, setLiveData] = useState<PaginatedServicesResponse | null>(data);
-  const [liveError, setLiveError] = useState<string | null>(error);
+
+  const listQuery = useQuery({
+    queryKey: ["console", "services", consoleTarget, page, q],
+    queryFn: async () => {
+      if (consoleTarget === "local") {
+        return fetchDockerServicesPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q);
+      }
+      if (!accessToken) throw new Error("Sign in required");
+      return fetchRemoteConsoleServicesPaged(
+        accessToken,
+        consoleTarget,
+        page,
+        DOCKER_LIST_PAGE_SIZE,
+        q,
+      );
+    },
+    enabled: consoleTarget === "local" || Boolean(accessToken),
+  });
+
+  const liveData = listQuery.data ?? null;
+  const liveError = listQuery.error
+    ? listQuery.error instanceof Error
+      ? listQuery.error.message
+      : String(listQuery.error)
+    : null;
 
   useEffect(() => {
-    setLiveData(data);
-    setLiveError(error);
-  }, [data, error, urlPage, urlQ]);
-
-  useEffect(() => {
+    if (consoleTarget !== "local") return;
     let disposed = false;
     let ws: WebSocket | null = null;
     const connect = () => {
@@ -103,10 +128,10 @@ export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
         try {
           const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
           if (msg.type === "services.paged" && msg.data) {
-            setLiveData(msg.data as PaginatedServicesResponse);
-            setLiveError(null);
-          } else if (msg.type === "error") {
-            setLiveError(msg.message ?? "WebSocket error");
+            qc.setQueryData(
+              ["console", "services", "local", page, q],
+              msg.data as PaginatedServicesResponse,
+            );
           }
         } catch {
           /* ignore malformed message */
@@ -128,14 +153,22 @@ export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
         /* ignore */
       }
     };
-  }, [page, q]);
+  }, [consoleTarget, page, q, qc]);
 
   const loadLogs = useCallback(async () => {
     if (!logTarget) return;
     setLogLoading(true);
     setLogError(null);
     try {
-      const t = await fetchDockerServiceLogs(logTarget.id, logTail);
+      const t =
+        consoleTarget === "local"
+          ? await fetchDockerServiceLogs(logTarget.id, logTail)
+          : await fetchRemoteConsoleServiceLogs(
+              accessToken ?? "",
+              consoleTarget as number,
+              logTarget.id,
+              logTail,
+            );
       setLogText(t.trim() ? t : "(no log output in this range)");
     } catch (e) {
       setLogText("");
@@ -143,7 +176,7 @@ export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
     } finally {
       setLogLoading(false);
     }
-  }, [logTarget, logTail]);
+  }, [logTarget, logTail, consoleTarget, accessToken]);
 
   useEffect(() => {
     if (logTarget) void loadLogs();
@@ -165,12 +198,18 @@ export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
     });
     if (!confirmed) return;
     setBulkPending(true);
-    const results = await Promise.allSettled(targets.map((c) => deleteDockerService(c.id, true)));
+    const results = await Promise.allSettled(
+      targets.map((c) =>
+        consoleTarget === "local"
+          ? deleteDockerService(c.id, true)
+          : deleteRemoteConsoleService(accessToken ?? "", consoleTarget as number, c.id, true),
+      ),
+    );
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - removed;
     bulk.clear();
-    router.refresh();
+    void listQuery.refetch();
     toast({
       title: "Bulk remove finished",
       description: `${removed} removed${fail ? `, ${fail} failed` : ""}.`,
@@ -186,26 +225,42 @@ export function DockerServicesClient({ data, error, urlPage, urlQ }: Props) {
       variant: "destructive",
     });
     if (!ok) return;
-    del.mutate(
-      { idOrName: id, force: false },
-      {
-        onSuccess: () => {
-          toast({ title: "Service removed", description: name });
-          router.refresh();
-        },
-        onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
-      },
-    );
+    void (async () => {
+      try {
+        if (consoleTarget === "local") {
+          await deleteDockerService(id, false);
+        } else {
+          await deleteRemoteConsoleService(accessToken ?? "", consoleTarget as number, id, false);
+        }
+        toast({ title: "Service removed", description: name });
+        void listQuery.refetch();
+      } catch (e) {
+        toast({
+          title: "Failed",
+          description: e instanceof Error ? e.message : String(e),
+          variant: "destructive",
+        });
+      }
+    })();
   };
 
   const runForceDelete = async () => {
     if (!forceDialog) return;
     setForcePending(forceDialog.id);
     try {
-      await deleteDockerService(forceDialog.id, true);
+      if (consoleTarget === "local") {
+        await deleteDockerService(forceDialog.id, true);
+      } else {
+        await deleteRemoteConsoleService(
+          accessToken ?? "",
+          consoleTarget as number,
+          forceDialog.id,
+          true,
+        );
+      }
       toast({ title: "Service removed (force)", description: forceDialog.name });
       setForceDialog(null);
-      router.refresh();
+      void listQuery.refetch();
     } catch (e) {
       toast({
         title: "Failed",

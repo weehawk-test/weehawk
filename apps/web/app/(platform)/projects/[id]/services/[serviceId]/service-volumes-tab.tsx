@@ -61,7 +61,7 @@ export function ServiceVolumesTab({ serviceId, enabled }: Props) {
             {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Refresh
           </button>
-          <Link href="/docker/volumes" prefetch={false}>
+          <Link href="/console/local/volumes" prefetch={false}>
             <button type="button" className="btn-primary flex items-center gap-2 text-sm">
               <HardDrive className="w-4 h-4" />
               Docker volumes

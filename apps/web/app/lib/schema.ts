@@ -50,6 +50,15 @@ export const serviceSchema = z.object({
   lastDeployedAt: z.string().nullable().optional(),
   /** Docker project/stack name on the host (suffix may be added server-side). */
   appName: z.string().optional(),
+  /** When set, Docker runs on this SSH host (see Remote servers settings). */
+  remoteServerId: z.number().nullable().optional(),
+  remoteServer: z
+    .object({
+      id: z.number(),
+      name: z.string(),
+    })
+    .nullable()
+    .optional(),
 });
 export type Service = z.infer<typeof serviceSchema>;
 const POSTGRES_IMAGE_REF = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,127}$/;
