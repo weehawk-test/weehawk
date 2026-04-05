@@ -28,8 +28,9 @@ export function useDeployLogs(serviceId?: string) {
     queryKey: ["deploy-logs", serviceId],
     queryFn: async () => {
       await delay(150);
+      if (!serviceId?.trim()) return [];
       const all = getStored();
-      const filtered = serviceId ? all.filter((l) => l.serviceId === serviceId) : all;
+      const filtered = all.filter((l) => l.serviceId === serviceId);
       return filtered.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
     },
   });

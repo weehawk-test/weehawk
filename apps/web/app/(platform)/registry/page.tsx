@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck,
@@ -17,10 +18,13 @@ import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
+import { useAuth } from "@/contexts/auth-context";
 import {
-  registryLoginApi,
   registryLogoutApi,
   registryVerifyApi,
+  fetchRegistryAccounts,
+  createRegistryAccountApi,
+  deleteRegistryAccountApi,
   type RegistryLoginPayload,
 } from "@/lib/registry-api";
 
@@ -58,39 +62,20 @@ const PRESETS: ProviderPreset[] = [
   },
 ];
 
-type SavedRegistry = {
-  id: string;
-  name: string;
-  providerUrl: string;
-  username: string;
-  lastVerifiedAt?: string;
-};
-
-const SAVED_KEY = "registry_saved_providers";
-
-function loadSaved(): SavedRegistry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(SAVED_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as SavedRegistry[];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveSaved(items: SavedRegistry[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(SAVED_KEY, JSON.stringify(items));
-}
-
 export default function RegistryPage() {
   const { toast } = useToast();
   const confirm = useConfirm();
+  const { accessToken } = useAuth();
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [saved, setSaved] = useState<SavedRegistry[]>(loadSaved);
+
+  const accountsQ = useQuery({
+    queryKey: ["registry-accounts"],
+    queryFn: () => fetchRegistryAccounts(accessToken ?? ""),
+    enabled: Boolean(accessToken),
+  });
+  const saved = accountsQ.data ?? [];
   const [presetId, setPresetId] = useState<string>("dockerhub");
   const [providerUrl, setProviderUrl] = useState<string>("docker.io");
   const [username, setUsername] = useState<string>("");
@@ -110,7 +95,7 @@ export default function RegistryPage() {
         s.username.toLowerCase().includes(q),
     );
   }, [saved, search]);
-  const savedKeys = useMemo(() => filtered.map((s) => s.id), [filtered]);
+  const savedKeys = useMemo(() => filtered.map((s) => String(s.id)), [filtered]);
   const savedBulk = useBulkSelection(savedKeys);
 
   const applyPreset = (preset: ProviderPreset) => {
@@ -149,6 +134,10 @@ export default function RegistryPage() {
   };
 
   const login = async () => {
+    if (!accessToken) {
+      toast({ title: "Sign in required", description: "Log in to save registry credentials.", variant: "destructive" });
+      return;
+    }
     if (!canAuth) {
       toast({
         title: "Missing fields",
@@ -159,27 +148,22 @@ export default function RegistryPage() {
     }
     setIsLoggingIn(true);
     try {
-      await registryLoginApi(buildPayload());
       const provider = providerUrl.trim();
-      const user = username.trim();
-      const autoName = provider;
-      const prev = loadSaved();
-      const next: SavedRegistry = {
-        id: crypto.randomUUID(),
-        name: autoName,
+      const preset = PRESETS.find((p) => p.id === presetId);
+      const name =
+        presetId === "custom"
+          ? provider || "Custom registry"
+          : (preset?.name ?? provider);
+      await createRegistryAccountApi(accessToken, {
+        name,
         providerUrl: provider,
-        username: user,
-        lastVerifiedAt: new Date().toISOString(),
-      };
-      const updated = [next, ...prev.filter((s) => s.providerUrl !== provider)].slice(
-        0,
-        10,
-      );
-      saveSaved(updated);
-      setSaved(updated);
+        username: username.trim(),
+        password,
+      });
+      await qc.invalidateQueries({ queryKey: ["registry-accounts"] });
       toast({
-        title: "Registry login successful",
-        description: `Authenticated against ${providerUrl} and saved automatically.`,
+        title: "Registry saved",
+        description: `Verified and stored on the server (encrypted). Used automatically for image push.`,
       });
       setShowAdd(false);
       setPresetId("dockerhub");
@@ -188,7 +172,7 @@ export default function RegistryPage() {
       setPassword("");
     } catch (e) {
       toast({
-        title: "Login failed",
+        title: "Save failed",
         description: e instanceof Error ? e.message : String(e),
         variant: "destructive",
       });
@@ -216,36 +200,52 @@ export default function RegistryPage() {
     }
   };
 
-  const removeSaved = async (id: string, name: string) => {
+  const removeSaved = async (id: number, name: string) => {
+    if (!accessToken) return;
     const ok = await confirm({
       title: "Remove saved registry?",
-      description: `This removes "${name}" from saved profiles.`,
+      description: `This removes "${name}" from the server.`,
       confirmLabel: "Remove",
       variant: "destructive",
     });
     if (!ok) return;
-    const updated = saved.filter((s) => s.id !== id);
-    setSaved(updated);
-    saveSaved(updated);
-    toast({ title: "Removed", description: name });
+    try {
+      await deleteRegistryAccountApi(accessToken, id);
+      await qc.invalidateQueries({ queryKey: ["registry-accounts"] });
+      toast({ title: "Removed", description: name });
+    } catch (e) {
+      toast({
+        title: "Remove failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    }
   };
   const removeSelected = async () => {
+    if (!accessToken) return;
     const ids = savedBulk.selectedInFiltered;
     if (ids.length === 0) return;
     const ok = await confirm({
       title: "Remove selected registries?",
-      description: `Remove ${ids.length} saved profile(s)?`,
+      description: `Remove ${ids.length} saved profile(s) from the server?`,
       confirmLabel: "Remove",
       variant: "destructive",
     });
     if (!ok) return;
     setIsBulkRemoving(true);
     try {
-      const updated = saved.filter((s) => !ids.includes(s.id));
-      setSaved(updated);
-      saveSaved(updated);
+      for (const sid of ids) {
+        await deleteRegistryAccountApi(accessToken, Number(sid));
+      }
+      await qc.invalidateQueries({ queryKey: ["registry-accounts"] });
       savedBulk.clear();
       toast({ title: "Removed", description: `${ids.length} profile(s) removed.` });
+    } catch (e) {
+      toast({
+        title: "Remove failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
     } finally {
       setIsBulkRemoving(false);
     }
@@ -265,59 +265,82 @@ export default function RegistryPage() {
             </p>
             <h1 className="text-3xl font-bold tracking-tight">Registry</h1>
             <p className="text-sm text-muted-foreground mt-2 max-w-lg leading-relaxed">
-              Connect Docker Hub, GHCR, GitLab Registry, or a custom host. Verify credentials, log in,
-              and reuse saved profiles for image pulls and deploys.
+              Credentials are verified then stored encrypted on the server (same idea as Dokploy). Deploy uses them for{" "}
+              <code className="text-xs bg-muted/50 px-1 rounded">docker push</code> without relying only on this machine’s
+              default Docker login file.
             </p>
           </div>
         </div>
         <button
           type="button"
-          onClick={() => setShowAdd(true)}
+          onClick={() => {
+            if (!accessToken) {
+              toast({
+                title: "Sign in required",
+                description: "Log in to save registry credentials on the server.",
+                variant: "destructive",
+              });
+              return;
+            }
+            setShowAdd(true);
+          }}
           className="btn-primary inline-flex items-center justify-center gap-2 shrink-0 self-start sm:self-auto"
         >
           <Plus className="w-5 h-5" /> Add registry
         </button>
       </div>
 
-      <div className="space-y-4">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
-          <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search registries..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="input-field !pl-10 w-full bg-card/50"
-          />
-        </div>
-        {filtered.length > 0 && (
-          <div className="mt-3 flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <DockerBulkCheckbox
-                checked={savedBulk.allSelected ? true : savedBulk.someSelected ? "indeterminate" : false}
-                onCheckedChange={() => savedBulk.toggleAllFiltered()}
-                aria-label="Select all registries on this page"
-              />
-              <span className="text-sm text-muted-foreground">
-                Select all on this page ({filtered.length})
-              </span>
-            </div>
-            {savedBulk.selectedInFiltered.length > 0 && (
-              <button
-                type="button"
-                onClick={removeSelected}
-                disabled={isBulkRemoving}
-                className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2 text-sm"
-              >
-                {isBulkRemoving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                Delete ({savedBulk.selectedInFiltered.length})
-              </button>
-            )}
+      {accessToken ? (
+        <div className="space-y-4">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search registries..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="input-field !pl-10 w-full bg-card/50"
+            />
           </div>
-        )}
-      </div>
+          {filtered.length > 0 && (
+            <div className="mt-3 flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <DockerBulkCheckbox
+                  checked={savedBulk.allSelected ? true : savedBulk.someSelected ? "indeterminate" : false}
+                  onCheckedChange={() => savedBulk.toggleAllFiltered()}
+                  aria-label="Select all registries on this page"
+                />
+                <span className="text-sm text-muted-foreground">
+                  Select all on this page ({filtered.length})
+                </span>
+              </div>
+              {savedBulk.selectedInFiltered.length > 0 && (
+                <button
+                  type="button"
+                  onClick={removeSelected}
+                  disabled={isBulkRemoving}
+                  className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2 text-sm"
+                >
+                  {isBulkRemoving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Delete ({savedBulk.selectedInFiltered.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
 
-      {filtered.length === 0 ? (
+      {!accessToken ? (
+        <div className="rounded-2xl border border-white/10 bg-card/30 px-6 py-10 text-center text-sm text-muted-foreground">
+          Sign in to view and add registry accounts stored on the server.
+        </div>
+      ) : accountsQ.isLoading ? (
+        <div className="flex justify-center py-20">
+          <Loader2 className="w-9 h-9 animate-spin text-muted-foreground" />
+        </div>
+      ) : accountsQ.isError ? (
+        <p className="text-sm text-red-400">{(accountsQ.error as Error).message}</p>
+      ) : filtered.length === 0 ? (
         <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/80 via-card/40 to-card/20 p-12 flex flex-col items-center justify-center text-center">
           <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-primary/10 blur-3xl pointer-events-none" />
           <div className="relative w-20 h-20 rounded-2xl border border-white/10 bg-black/30 flex items-center justify-center mb-6">
@@ -325,7 +348,7 @@ export default function RegistryPage() {
           </div>
           <h3 className="text-xl font-bold mb-2 relative">No connected registries yet</h3>
           <p className="text-muted-foreground mb-8 max-w-md text-sm leading-relaxed relative">
-            {search ? "No registries match your search." : "Add a registry to authenticate and save it for reuse."}
+            {search ? "No registries match your search." : "Add a registry to verify and save credentials on the server."}
           </p>
           {!search && (
             <button type="button" onClick={() => setShowAdd(true)} className="btn-primary relative inline-flex items-center gap-2">
@@ -359,12 +382,12 @@ export default function RegistryPage() {
                   </button>
                   <div
                     className={`transition-opacity ${
-                      savedBulk.selected.has(item.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                      savedBulk.selected.has(String(item.id)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                     }`}
                   >
                     <DockerBulkCheckbox
-                      checked={savedBulk.selected.has(item.id)}
-                      onCheckedChange={() => savedBulk.toggle(item.id)}
+                      checked={savedBulk.selected.has(String(item.id))}
+                      onCheckedChange={() => savedBulk.toggle(String(item.id))}
                       aria-label={`Select registry ${item.name}`}
                     />
                   </div>
@@ -406,7 +429,7 @@ export default function RegistryPage() {
               <div className="flex items-start justify-between gap-4 mb-5">
                 <div>
                   <h3 className="text-base font-semibold">Add Registry</h3>
-                  <p className="text-xs text-muted-foreground mt-1">Choose provider, verify credentials, then login.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Verify credentials, then save to the server (encrypted).</p>
                 </div>
                 <button type="button" onClick={() => setShowAdd(false)} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors">
                   <X className="w-4 h-4" />
@@ -466,7 +489,7 @@ export default function RegistryPage() {
                     className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50"
                   >
                     {isLoggingIn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogIn className="w-3.5 h-3.5" />}
-                    Login
+                    Save
                   </button>
                 </div>
               </div>

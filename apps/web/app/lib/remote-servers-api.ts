@@ -3,12 +3,15 @@ import { authFetch } from "./auth-fetch";
 
 export type RemoteServerAuthMode = "stored" | "file" | "none";
 
+export type RemoteServerRole = "deploy" | "build";
+
 export type RemoteServerRow = {
   id: number;
   name: string;
   host: string;
   port: number;
   sshUser: string;
+  serverRole: RemoteServerRole;
   authMode: RemoteServerAuthMode;
   hasPrivateKey: boolean;
   /** Only when authMode is `file`. */
@@ -47,12 +50,15 @@ function mapRemoteServer(row: unknown): RemoteServerRow {
   const am = r.authMode;
   const authMode: RemoteServerAuthMode =
     am === "stored" || am === "file" || am === "none" ? am : "none";
+  const sr = r.serverRole;
+  const serverRole: RemoteServerRole = sr === "build" ? "build" : "deploy";
   return {
     id: typeof r.id === "number" ? r.id : Number(r.id),
     name: String(r.name ?? ""),
     host: String(r.host ?? ""),
     port: typeof r.port === "number" ? r.port : 22,
     sshUser: String(r.sshUser ?? ""),
+    serverRole,
     authMode,
     hasPrivateKey: r.hasPrivateKey === true,
     privateKeyPath:
@@ -96,6 +102,7 @@ export async function createRemoteServerApi(
     sshUser: string;
     privateKey: string;
     extraSshOptions?: string;
+    serverRole?: RemoteServerRole;
   },
 ): Promise<RemoteServerRow> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers`, {
@@ -120,6 +127,7 @@ export async function updateRemoteServerApi(
     sshUser: string;
     privateKey: string;
     extraSshOptions: string | null;
+    serverRole: RemoteServerRole;
   }>,
 ): Promise<RemoteServerRow> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}`, {

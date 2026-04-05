@@ -9,6 +9,7 @@ import {
   generateRemoteSshKeypairApi,
   testRemoteServerApi,
   type RemoteServerRow,
+  type RemoteServerRole,
 } from "@/lib/remote-servers-api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -25,6 +26,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
   const [port, setPort] = useState("22");
   const [sshUser, setSshUser] = useState("");
   const [privateKey, setPrivateKey] = useState("");
+  const [serverRole, setServerRole] = useState<RemoteServerRole>("deploy");
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [savedRow, setSavedRow] = useState<RemoteServerRow | null>(null);
 
@@ -51,6 +53,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
         port: port.trim() ? Number(port) : 22,
         sshUser: sshUser.trim(),
         privateKey: privateKey.trim(),
+        serverRole,
       }),
     onSuccess: (row) => {
       void qc.invalidateQueries({ queryKey: ["remote-servers"] });
@@ -104,6 +107,32 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
       </div>
 
       {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
+
+      <div className="space-y-2">
+        <span className="text-xs text-muted-foreground">Server role</span>
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              { value: "deploy" as const, title: "Deploy", hint: "Run containers here" },
+              { value: "build" as const, title: "Build", hint: "Image builds only" },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setServerRole(opt.value)}
+              className={`flex-1 min-w-[120px] text-left rounded-lg border px-3 py-2 transition-colors ${
+                serverRole === opt.value
+                  ? "border-primary/40 bg-primary/10 text-foreground"
+                  : "border-white/10 bg-black/20 text-muted-foreground hover:border-white/20"
+              }`}
+            >
+              <span className="text-xs font-medium block">{opt.title}</span>
+              <span className="text-[10px] text-muted-foreground block mt-0.5">{opt.hint}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="space-y-1 block">

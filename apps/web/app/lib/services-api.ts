@@ -77,6 +77,12 @@ function parseTraefikRoutes(raw: unknown): TraefikRouteRule[] {
   return out;
 }
 
+function parseRegistryPushImageFromConfig(config: string): string | null {
+  const m = config.match(/^\s*#\s*registry\.pushImage:\s*(.+)$/m);
+  const t = m?.[1]?.trim();
+  return t && t.length > 0 ? t : null;
+}
+
 function composeTypeToApi(t: ServiceType): "COMPOSE" | "STACK" | "APPLICATION" | "DATABASES" {
   if (t === "stack") return "STACK";
   if (t === "application") return "APPLICATION";
@@ -154,12 +160,28 @@ export function mapApiServiceToService(row: unknown): Service {
     remoteServerId = rs.id;
   }
 
+  const cfg = typeof s.dockerConfig === "string" ? s.dockerConfig : "";
+
+  const brs = s.buildRemoteServer as { id?: unknown; name?: unknown } | null | undefined;
+  const buildRemoteServerIdRaw = s.buildRemoteServerId;
+  let buildRemoteServerId: number | null | undefined;
+  if (buildRemoteServerIdRaw === null) {
+    buildRemoteServerId = null;
+  } else if (
+    typeof buildRemoteServerIdRaw === "number" &&
+    Number.isFinite(buildRemoteServerIdRaw)
+  ) {
+    buildRemoteServerId = buildRemoteServerIdRaw;
+  } else if (brs && typeof brs.id === "number") {
+    buildRemoteServerId = brs.id;
+  }
+
   return {
     id: String(s.id ?? ""),
     projectId: pid != null ? String(pid) : "",
     name: String(s.name ?? ""),
     type: composeTypeFromApi(String(s.composeType ?? "COMPOSE")),
-    config: typeof s.dockerConfig === "string" ? s.dockerConfig : "",
+    config: cfg,
     env: typeof s.env === "string" ? s.env : "",
     description: typeof s.description === "string" ? s.description : "",
     domains: Array.isArray(s.domains) ? (s.domains as string[]).filter((x) => typeof x === "string") : [],
@@ -173,6 +195,12 @@ export function mapApiServiceToService(row: unknown): Service {
       rs && typeof rs.id === "number" && typeof rs.name === "string"
         ? { id: rs.id, name: rs.name }
         : undefined,
+    buildRemoteServerId,
+    buildRemoteServer:
+      brs && typeof brs.id === "number" && typeof brs.name === "string"
+        ? { id: brs.id, name: brs.name }
+        : undefined,
+    registryPushImage: parseRegistryPushImageFromConfig(cfg),
   };
 }
 
@@ -365,6 +393,8 @@ export async function updateServiceApi(
       | "domains"
       | "traefikRoutes"
       | "remoteServerId"
+      | "buildRemoteServerId"
+      | "registryPushImage"
     >
   >,
 ): Promise<Service> {
@@ -376,6 +406,9 @@ export async function updateServiceApi(
   if (patch.domains !== undefined) body.domains = patch.domains;
   if (patch.traefikRoutes !== undefined) body.traefikRoutes = patch.traefikRoutes;
   if (patch.remoteServerId !== undefined) body.remoteServerId = patch.remoteServerId;
+  if (patch.buildRemoteServerId !== undefined)
+    body.buildRemoteServerId = patch.buildRemoteServerId;
+  if (patch.registryPushImage !== undefined) body.registryPushImage = patch.registryPushImage;
 
   const res = await apiFetch(`/services/${encodeURIComponent(id)}`, {
     method: "PATCH",

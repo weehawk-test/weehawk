@@ -11,7 +11,7 @@ import {
   Info, Hash, FolderKanban, CheckCircle, XCircle,
   Download, Edit3, Save, X, Calendar, Tag, Plus,
   Terminal, Rocket, RefreshCw, Square, Play, RotateCw, Activity, Loader2,
-  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive, ChevronDown, ChevronRight,
+  Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive, Server, ChevronDown, ChevronRight,
   Database, Eye, EyeOff, Lock, HardDrive, AlertCircle, Upload, Cloud,
   LockOpen,
   PackageOpen,
@@ -29,7 +29,7 @@ import {
 } from "@/hooks/use-services";
 import { useProject } from "@/hooks/use-projects";
 import { useDockerSecretsPagedWithInitialData } from "@/hooks/use-docker-secrets";
-import { useDeploy } from "@/hooks/use-deploy-logs";
+import { getDeployLogText, useDeploy, useDeployLogs } from "@/hooks/use-deploy-logs";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import type { Project, Service, TraefikRouteRule } from "@/lib/schema";
@@ -200,6 +200,7 @@ type Tab =
   | "config"
   | "appconf"
   | "env"
+  | "remote"
   | "backup"
   | "domain"
   | "secrets"
@@ -207,7 +208,7 @@ type Tab =
   | "terminal";
 
 /** Hidden for database services until stack YAML exists (Postgres form saved). */
-const DATABASE_PRECOMPOSE_HIDDEN: Tab[] = ["config", "backup", "terminal"];
+const DATABASE_PRECOMPOSE_HIDDEN: Tab[] = ["config", "remote", "backup", "terminal"];
 
 // ─── YAML colorizer ───────────────────────────────────────────────────────────
 
@@ -355,6 +356,12 @@ export default function ServiceDetails({
     }
   }, [initialProject, projectId, qc]);
 
+  useEffect(() => {
+    if (initialService && serviceId) {
+      qc.setQueryData(["service", serviceId], initialService);
+    }
+  }, [initialService, serviceId, qc]);
+
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(1, "", {
     initialData: initialSecretsPaged ?? undefined,
     enabled: (service ?? initialService)?.type !== "application",
@@ -364,6 +371,7 @@ export default function ServiceDetails({
   const startService = useStartService();
   const updateService = useUpdateService();
   const deploy = useDeploy();
+  const deployLogQuery = useDeployLogs(serviceId);
   const { toast } = useToast();
   const confirm = useConfirm();
 
@@ -388,6 +396,7 @@ export default function ServiceDetails({
     const appConf: TabDef = { id: "appconf", label: "Build & deployment", icon: PackageOpen };
     const tail: TabDef[] = [
       { id: "env", label: "Environment", icon: Variable, count: envEntryCount || undefined },
+      { id: "remote", label: "Remote", icon: Server },
       { id: "backup", label: "Backup", icon: Archive },
       {
         id: "domain",
@@ -511,17 +520,34 @@ export default function ServiceDetails({
       { serviceId: service.id, serviceName: service.name, serviceType: service.type, mode },
       {
         onSuccess: (log) => {
-          if (log.status !== "success") return;
           const isDb = service.type === "databases";
+          if (log.status === "success") {
+            toast({
+              title: mode === "redeploy" ? "Redeploy finished" : "Deploy successful",
+              description: isDb
+                ? mode === "redeploy"
+                  ? `${service.name}: stack updated (docker stack deploy + rolling service updates where applicable).`
+                  : `${service.name}: stack deployed on Swarm (docker stack deploy).`
+                : mode === "redeploy"
+                  ? `${service.name} was restarted with a fresh build (Compose) or rolling restart (Stack).`
+                  : `${service.name} deployed.`,
+            });
+            return;
+          }
+          const detail = getDeployLogText(log).trim() || "No output was returned. Check API logs or network.";
+          const max = 900;
           toast({
-            title: mode === "redeploy" ? "Redeploy finished" : "Deploy successful",
-            description: isDb
-              ? mode === "redeploy"
-                ? `${service.name}: stack updated (docker stack deploy + rolling service updates where applicable).`
-                : `${service.name}: stack deployed on Swarm (docker stack deploy).`
-              : mode === "redeploy"
-                ? `${service.name} was restarted with a fresh build (Compose) or rolling restart (Stack).`
-                : `${service.name} deployed.`,
+            title: mode === "redeploy" ? "Redeploy failed" : "Deploy failed",
+            description:
+              detail.length > max ? `${detail.slice(0, max)}…` : detail,
+            variant: "destructive",
+          });
+        },
+        onError: (e: Error) => {
+          toast({
+            title: mode === "redeploy" ? "Redeploy failed" : "Deploy failed",
+            description: e.message,
+            variant: "destructive",
           });
         },
       },
@@ -905,7 +931,7 @@ export default function ServiceDetails({
             </motion.div>
           )}
 
-          {/* ── Build & deployment (ZIP upload + build + connections + env for deploy) ── */}
+          {/* ── Build & deployment (ZIP / Git / deploy flow); remote hosts → Remote tab ── */}
           {activeTab === "appconf" && isApplicationService && projectId && (
             <motion.div
               key="appconf"
@@ -916,6 +942,19 @@ export default function ServiceDetails({
               className="space-y-4"
             >
               <ApplicationArchivePanel serviceId={service.id} projectId={projectId} service={service} />
+            </motion.div>
+          )}
+
+          {activeTab === "remote" && (
+            <motion.div
+              key="remote"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-4"
+            >
+              <ServiceRemoteHostPanel service={service} />
             </motion.div>
           )}
 
@@ -1008,11 +1047,10 @@ export default function ServiceDetails({
             </motion.div>
           )}
 
-          {/* ── ENVIRONMENT VARIABLES ── */}
+          {/* ── ENVIRONMENT VARIABLES (.env); remote hosts → Remote tab ── */}
           {activeTab === "env" && (
             <motion.div key="env" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="space-y-4">
-              <ServiceRemoteHostPanel service={service} />
               <EnvFilePanel service={service} />
             </motion.div>
           )}
@@ -1091,6 +1129,51 @@ export default function ServiceDetails({
                   </div>
                 </div>
 
+                {deploy.isPending ? (
+                  <div className="px-5 py-2.5 border-b border-amber-500/25 bg-amber-500/10 shrink-0 flex items-start gap-2 text-xs text-amber-100/95 leading-snug">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0 mt-0.5" />
+                    <span>
+                      Deployment running (build, registry push, stack deploy). This can take several minutes. Output
+                      appears in <span className="font-medium">Last deployment</span> when the run finishes.
+                    </span>
+                  </div>
+                ) : null}
+
+                {deployLogQuery.data?.[0] ? (
+                  <div className="px-5 py-3 border-b border-border/40 bg-muted/25 shrink-0 space-y-2">
+                    <div className="flex flex-wrap items-baseline gap-2 justify-between gap-y-1">
+                      <span className="text-xs font-semibold text-foreground">Last deployment</span>
+                      <span
+                        className={
+                          deployLogQuery.data[0].status === "success"
+                            ? "text-xs text-emerald-600 dark:text-emerald-400"
+                            : deployLogQuery.data[0].status === "failed"
+                              ? "text-xs text-destructive"
+                              : "text-xs text-muted-foreground"
+                        }
+                      >
+                        {deployLogQuery.data[0].status === "success"
+                          ? "Success"
+                          : deployLogQuery.data[0].status === "failed"
+                            ? "Failed"
+                            : deployLogQuery.data[0].status}
+                        {deployLogQuery.data[0].finishedAt ? (
+                          <span className="text-muted-foreground font-normal">
+                            {" "}
+                            ·{" "}
+                            {formatDistanceToNow(new Date(deployLogQuery.data[0].finishedAt), {
+                              addSuffix: true,
+                            })}
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                    <pre className="text-[11px] font-mono text-zinc-200 whitespace-pre-wrap break-all max-h-[min(40vh,360px)] overflow-auto rounded-md bg-zinc-950/90 p-3 border border-border/50">
+                      {getDeployLogText(deployLogQuery.data[0]).trim() || "—"}
+                    </pre>
+                  </div>
+                ) : null}
+
                 <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 bg-muted/20 shrink-0 flex-wrap">
                   <button
                     type="button"
@@ -1122,10 +1205,24 @@ export default function ServiceDetails({
                     </p>
                   ) : liveLogError ? (
                     <div className="text-sm text-destructive whitespace-pre-wrap">{liveLogError}</div>
-                  ) : liveLogAwaitingFirstChunk && !liveLogText ? (
-                    <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground">
+                  ) : deploy.isPending ? (
+                    <div className="flex flex-col items-center justify-center gap-3 py-14 text-muted-foreground px-4 text-center">
                       <Loader2 className="w-8 h-8 animate-spin" />
-                      <p className="text-sm">Waiting for log lines…</p>
+                      <p className="text-sm">Waiting for the server to finish deployment…</p>
+                      <p className="text-xs max-w-md text-muted-foreground/90">
+                        Registry push and stack deploy run on the host. If this stays empty, check{" "}
+                        <span className="text-foreground font-medium">Last deployment</span> above after the run
+                        completes.
+                      </p>
+                    </div>
+                  ) : liveLogAwaitingFirstChunk && !liveLogText ? (
+                    <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground px-4 text-center">
+                      <Loader2 className="w-8 h-8 animate-spin" />
+                      <p className="text-sm">Waiting for container log lines…</p>
+                      <p className="text-xs max-w-md">
+                        If nothing appears, the service may not be running yet or logging may be disabled. Deploy output
+                        (build / push errors) is shown under Last deployment.
+                      </p>
                     </div>
                   ) : (
                     <pre className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">

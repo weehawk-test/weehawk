@@ -1,9 +1,30 @@
 export function parseConfigHeaderValue(config: string, key: string): string | null {
-  const m = config.match(new RegExp(`^\\s*#\\s*${key}:\\s*(.+)$`, 'm'));
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = config.match(new RegExp(`^\\s*#\\s*${escaped}:\\s*(.+)$`, 'm'));
   return m?.[1]?.trim() || null;
 }
 
 /** First `services:` key in compose YAML (which service to exec into). */
+/** First `image:` under a service block (indented) — for registry auth on `docker stack deploy --with-registry-auth`. */
+export function firstImageRefFromComposeYaml(yaml: string): string | null {
+  for (const line of yaml.split(/\r?\n/)) {
+    const t = line.trim();
+    if (t.startsWith('#')) continue;
+    const m = line.match(/^\s+image:\s*(.+)$/);
+    if (!m) continue;
+    let ref = m[1].trim();
+    if (
+      (ref.startsWith('"') && ref.endsWith('"')) ||
+      (ref.startsWith("'") && ref.endsWith("'"))
+    ) {
+      ref = ref.slice(1, -1);
+    }
+    const word = ref.split(/\s+/)[0];
+    return word || null;
+  }
+  return null;
+}
+
 export function firstComposeServiceName(config: string): string {
   const lines = config.split(/\r?\n/);
   let inServices = false;

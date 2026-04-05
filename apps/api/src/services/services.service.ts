@@ -67,17 +67,22 @@ export class ServicesService {
   ) {}
 
   async create(createServiceDto: CreateServiceDto) {
-    const { projectId, appName, ...serviceData } = createServiceDto;
+    const {
+      projectId,
+      appName,
+      remoteServerId,
+      buildRemoteServerId,
+      registryPushImage: registryPushInCreate,
+      ...serviceData
+    } = createServiceDto;
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) throw new NotFoundException('Project not found');
 
-    if (createServiceDto.remoteServerId != null) {
-      const rs = await this.remoteServerRepository.findOneBy({
-        id: createServiceDto.remoteServerId,
-      });
-      if (!rs) {
-        throw new BadRequestException('Remote server not found');
-      }
+    if (remoteServerId != null) {
+      await this.assertDeployRemoteServer(remoteServerId);
+    }
+    if (buildRemoteServerId != null) {
+      await this.assertBuildRemoteServer(buildRemoteServerId);
     }
 
     const uniqueAppName = `${appName}-${randomBytes(2).toString('hex')}`;
@@ -87,12 +92,71 @@ export class ServicesService {
       project: project,
     });
 
-    return await this.serviceRepository.save(service);
+    if (remoteServerId != null) {
+      service.remoteServer = await this.remoteServerRepository.findOneByOrFail({
+        id: remoteServerId,
+      });
+    }
+    if (buildRemoteServerId != null) {
+      service.buildRemoteServer = await this.remoteServerRepository.findOneByOrFail({
+        id: buildRemoteServerId,
+      });
+    }
+
+    if (registryPushInCreate !== undefined && registryPushInCreate !== null) {
+      const t = String(registryPushInCreate).trim();
+      if (t.length > 0 && serviceData.composeType !== composeType.APPLICATION) {
+        throw new BadRequestException(
+          'registryPushImage applies only to application (Swarm) services.',
+        );
+      }
+      if (t.length > 0) {
+        this.validateDockerImageRef(t);
+      }
+    }
+
+    let saved = await this.serviceRepository.save(service);
+
+    if (
+      registryPushInCreate !== undefined &&
+      saved.composeType === composeType.APPLICATION &&
+      (saved.dockerConfig || '').trim().length > 0
+    ) {
+      saved.dockerConfig = this.mergeRegistryPushHeader(saved.dockerConfig, registryPushInCreate);
+      saved.dockerConfig = await this.composeApplicationDockerConfigForService(saved);
+      saved = await this.serviceRepository.save(saved);
+    }
+
+    return saved;
   }
 
   private parseConfigHeaderValue(config: string, key: string): string | null {
-    const m = (config || '').match(new RegExp(`^\\s*#\\s*${key}:\\s*(.+)$`, 'm'));
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = (config || '').match(
+      new RegExp(`^\\s*#\\s*${escaped}:\\s*(.+)$`, 'm'),
+    );
     return m?.[1]?.trim() || null;
+  }
+
+  /** Dokploy-style: build tags this ref, push, stack deploy pulls on deploy host (after `docker login` on API host). */
+  private mergeRegistryPushHeader(
+    config: string,
+    ref: string | null | undefined,
+  ): string {
+    const lines = (config || '').split(/\r?\n/);
+    const without = lines.filter((l) => !/^\s*#\s*registry\.pushImage:/i.test(l));
+    if (ref == null || String(ref).trim() === '') {
+      return without.join('\n');
+    }
+    const trimmed = this.validateDockerImageRef(String(ref));
+    const insert = `# registry.pushImage: ${trimmed}`;
+    const idx = without.findIndex((l) => /#\s*weehawk application/i.test(l));
+    if (idx >= 0) {
+      const next = [...without];
+      next.splice(idx + 1, 0, insert);
+      return next.join('\n');
+    }
+    return `${insert}\n${without.join('\n')}`;
   }
 
   private normalizeArchivePath(raw: string, fallback: string): string {
@@ -329,6 +393,7 @@ export class ServicesService {
       dg === 'true' ? true : dg === 'false' ? false : undefined;
 
     const builtTag = `${service.appName}:latest`;
+    const registryPushHeader = this.parseConfigHeaderValue(raw, 'registry.pushImage')?.trim();
     const deployModeHeader = this.parseConfigHeaderValue(raw, 'deployMode')?.toLowerCase();
     const imageRefHeader = this.parseConfigHeaderValue(raw, 'imageRef')?.trim();
     const imageLineMatch = raw.match(/^\s*image:\s*(.+)$/m);
@@ -343,7 +408,10 @@ export class ServicesService {
     let deployMode: 'source' | 'image';
     let imageRef: string | undefined;
 
-    if (deployModeHeader === 'image' || imageRefHeader) {
+    if (registryPushHeader) {
+      deployMode = 'source';
+      imageRef = undefined;
+    } else if (deployModeHeader === 'image' || imageRefHeader) {
       deployMode = 'image';
       imageRef = imageRefHeader || normalizedImage || undefined;
     } else if (deployModeHeader === 'source') {
@@ -537,10 +605,16 @@ export class ServicesService {
       networkOverride ??
       this.parseApplicationNetworksFromConfig(service.dockerConfig || '');
     network = this.ensureTraefikExternalNetwork(network, service);
+    const registryPush = this.parseConfigHeaderValue(
+      service.dockerConfig || '',
+      'registry.pushImage',
+    )?.trim();
     const imageName =
-      args.deployMode === 'image' && args.imageRef?.trim()
-        ? args.imageRef.trim()
-        : `${service.appName}:latest`;
+      registryPush?.length
+        ? registryPush
+        : args.deployMode === 'image' && args.imageRef?.trim()
+          ? args.imageRef.trim()
+          : `${service.appName}:latest`;
     const traefik = await this.buildTraefikIngressForCompose(
       service,
       args.containerPort,
@@ -554,6 +628,7 @@ export class ServicesService {
       deployMode: args.deployMode,
       imageRef: args.deployMode === 'image' ? args.imageRef : undefined,
       imageName,
+      registryPushImage: registryPush?.length ? registryPush : undefined,
       containerPort: args.containerPort,
       publishPort: args.publishPort,
       replicas: args.replicas,
@@ -576,6 +651,8 @@ export class ServicesService {
     /** Echoed in header when deployMode is image. */
     imageRef?: string;
     imageName: string;
+    /** Persisted in YAML so rebuilds keep registry-based deploy. */
+    registryPushImage?: string | null;
     containerPort: number;
     publishPort?: number;
     replicas: number;
@@ -656,9 +733,13 @@ export class ServicesService {
       args.traefik?.routes?.length && args.traefik
         ? `# traefik.routers: ${args.traefik.routes.map((r) => r.router).join('|')}\n`
         : '';
+    const registryPushLine =
+      args.registryPushImage?.trim()
+        ? `# registry.pushImage: ${args.registryPushImage.trim()}\n`
+        : '';
     const traefikLabelsSection = this.buildTraefikLabelSection(args.traefik);
     return `# weehawk application service
-# sourceDir: ${args.sourceDir}
+${registryPushLine}# sourceDir: ${args.sourceDir}
 # buildPath: ${args.buildPath}
 # dockerfilePath: ${args.dockerfilePath}
 # buildMode: ${args.buildMode}
@@ -875,6 +956,14 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     const networkMerged = this.ensureTraefikExternalNetwork(network, service);
     const traefik = await this.buildTraefikIngressForCompose(service, containerPort);
 
+    const preservedRegistry = this.parseConfigHeaderValue(
+      previousConfig,
+      'registry.pushImage',
+    )?.trim();
+    const registryRef =
+      preservedRegistry && preservedRegistry.length > 0 ? preservedRegistry : undefined;
+    const imageNameForStack = registryRef ?? `${service.appName}:latest`;
+
     service.dockerConfig = this.composeApplicationDockerConfig({
       sourceDir: 'app-source',
       buildPath,
@@ -883,7 +972,8 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       deployMode: 'source',
       imageRef: undefined,
       dockerfileGenerated,
-      imageName: `${service.appName}:latest`,
+      imageName: imageNameForStack,
+      registryPushImage: registryRef,
       containerPort,
       publishPort,
       replicas,
@@ -1788,13 +1878,68 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     };
   }
 
+  private async assertDeployRemoteServer(remoteId: number): Promise<void> {
+    const rs = await this.remoteServerRepository.findOneBy({ id: remoteId });
+    if (!rs) {
+      throw new BadRequestException('Remote server not found');
+    }
+    if (rs.serverRole === 'build') {
+      throw new BadRequestException(
+        'That host is a build-only server. Pick a deploy server to run containers, or change its role under Remote servers.',
+      );
+    }
+  }
+
+  private async assertBuildRemoteServer(remoteId: number): Promise<void> {
+    const rs = await this.remoteServerRepository.findOneBy({ id: remoteId });
+    if (!rs) {
+      throw new BadRequestException('Remote server not found');
+    }
+    if (rs.serverRole !== 'build') {
+      throw new BadRequestException(
+        'Only hosts marked as build servers can be used as the dedicated image-build target.',
+      );
+    }
+  }
+
   async findOne(id: number) {
     const service = await this.serviceRepository.findOne({ 
-      where: { id }, 
-      relations: ['project', 'remoteServer'] 
+      where: { id },
+      relations: ['project', 'remoteServer', 'buildRemoteServer'] 
     });
     if (!service) throw new NotFoundException(`Service #${id} not found`);
     return service;
+  }
+
+  /**
+   * Foreign keys for Docker-over-SSH (deploy / optional build). Read via query so executor does not rely on @RelationId hydration.
+   * Uses fixed SQL aliases and lowercases keys — PostgreSQL returns unquoted aliases lowercase, which previously broke `pick('buildRemoteServerId')`.
+   */
+  async getDockerSshTargetIds(serviceId: number): Promise<{
+    remoteServerId: number | null;
+    buildRemoteServerId: number | null;
+  }> {
+    const raw = (await this.serviceRepository
+      .createQueryBuilder('s')
+      .select('s.remoteServerId', 'wh_rid')
+      .addSelect('s.buildRemoteServerId', 'wh_bid')
+      .where('s.id = :id', { id: serviceId })
+      .getRawOne()) as Record<string, unknown> | undefined;
+    const n = (v: unknown): number | null => {
+      if (v === null || v === undefined) return null;
+      const x = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(x) ? x : null;
+    };
+    if (!raw) {
+      return { remoteServerId: null, buildRemoteServerId: null };
+    }
+    const byLower = Object.fromEntries(
+      Object.entries(raw).map(([k, v]) => [k.toLowerCase(), v]),
+    );
+    return {
+      remoteServerId: n(byLower['wh_rid']),
+      buildRemoteServerId: n(byLower['wh_bid']),
+    };
   }
 
   async remove(id: number) {
@@ -1809,19 +1954,62 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     const service = await this.findOne(id);
     if (updateServiceDto.remoteServerId !== undefined) {
       if (updateServiceDto.remoteServerId !== null) {
-        const rs = await this.remoteServerRepository.findOneBy({
-          id: updateServiceDto.remoteServerId,
-        });
-        if (!rs) {
-          throw new BadRequestException('Remote server not found');
-        }
+        await this.assertDeployRemoteServer(updateServiceDto.remoteServerId);
       }
     }
-    const updated = this.serviceRepository.merge(service, updateServiceDto);
+    if (updateServiceDto.buildRemoteServerId !== undefined) {
+      if (updateServiceDto.buildRemoteServerId !== null) {
+        await this.assertBuildRemoteServer(updateServiceDto.buildRemoteServerId);
+      }
+    }
+    if (updateServiceDto.registryPushImage !== undefined) {
+      if (
+        updateServiceDto.registryPushImage != null &&
+        String(updateServiceDto.registryPushImage).trim() !== ''
+      ) {
+        this.validateDockerImageRef(String(updateServiceDto.registryPushImage));
+      }
+      if (service.composeType !== composeType.APPLICATION) {
+        throw new BadRequestException(
+          'registryPushImage applies only to application (Swarm) services.',
+        );
+      }
+    }
+
+    const {
+      remoteServerId: remotePatch,
+      buildRemoteServerId: buildPatch,
+      registryPushImage: registryPushPatch,
+      ...mergeFields
+    } = updateServiceDto;
+    const updated = this.serviceRepository.merge(service, mergeFields);
+
+    // @RelationId fields are not persisted by merge/save; set ManyToOne refs so FK columns update.
+    if (remotePatch !== undefined) {
+      updated.remoteServer =
+        remotePatch === null
+          ? null
+          : await this.remoteServerRepository.findOneByOrFail({ id: remotePatch });
+    }
+    if (buildPatch !== undefined) {
+      updated.buildRemoteServer =
+        buildPatch === null
+          ? null
+          : await this.remoteServerRepository.findOneByOrFail({ id: buildPatch });
+    }
+
+    if (registryPushPatch !== undefined && updated.composeType === composeType.APPLICATION) {
+      updated.dockerConfig = this.mergeRegistryPushHeader(
+        updated.dockerConfig || '',
+        registryPushPatch,
+      );
+    }
+
     const shouldRefreshAppCompose =
       updated.composeType === composeType.APPLICATION &&
       (updateServiceDto.domains !== undefined ||
-        updateServiceDto.traefikRoutes !== undefined) &&
+        updateServiceDto.traefikRoutes !== undefined ||
+        registryPushPatch !== undefined) &&
       (updated.dockerConfig || '').trim().length > 0;
     if (shouldRefreshAppCompose) {
       updated.dockerConfig = await this.composeApplicationDockerConfigForService(updated);

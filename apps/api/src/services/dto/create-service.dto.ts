@@ -76,4 +76,27 @@ export class CreateServiceDto {
     @ValidateIf((_, v) => v !== null && v !== undefined)
     @IsInt()
     remoteServerId?: number | null;
+
+    @ApiProperty({
+        required: false,
+        nullable: true,
+        description:
+            'Optional: SSH host used only for `docker build` on Swarm application services (must be a build-role remote server). Deploy uses remoteServerId.',
+    })
+    @IsOptional()
+    @ValidateIf((_, v) => v !== null && v !== undefined)
+    @IsInt()
+    buildRemoteServerId?: number | null;
+
+    @ApiProperty({
+        required: false,
+        nullable: true,
+        description:
+            'Swarm application: full image ref for build+push (e.g. docker.io/myorg/app:latest). Requires `docker login` on the API host (Registry page). Stack deploy then pulls on the deploy host.',
+    })
+    @IsOptional()
+    @ValidateIf((_, v) => v !== null && v !== undefined)
+    @IsString()
+    @MaxLength(512)
+    registryPushImage?: string | null;
 }

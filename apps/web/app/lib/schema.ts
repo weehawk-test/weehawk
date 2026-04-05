@@ -59,6 +59,17 @@ export const serviceSchema = z.object({
     })
     .nullable()
     .optional(),
+  /** Swarm application: optional host for `docker build` only (must be a build-role server). */
+  buildRemoteServerId: z.number().nullable().optional(),
+  buildRemoteServer: z
+    .object({
+      id: z.number(),
+      name: z.string(),
+    })
+    .nullable()
+    .optional(),
+  /** Swarm app: full image ref for build+push; stored in compose header `registry.pushImage`. */
+  registryPushImage: z.string().nullable().optional(),
 });
 export type Service = z.infer<typeof serviceSchema>;
 const POSTGRES_IMAGE_REF = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,127}$/;

@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -35,6 +36,17 @@ export class CreateRemoteServerDto {
   @MinLength(1)
   @MaxLength(64)
   sshUser!: string;
+
+  @ApiProperty({
+    required: false,
+    enum: ['deploy', 'build'],
+    default: 'deploy',
+    description:
+      'deploy = run containers on this host; build = dedicated host for image builds (Swarm applications can use a separate build host).',
+  })
+  @IsOptional()
+  @IsIn(['deploy', 'build'])
+  serverRole?: 'deploy' | 'build';
 
   @ApiProperty({
     description:

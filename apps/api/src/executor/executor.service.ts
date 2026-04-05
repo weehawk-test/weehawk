@@ -1,4 +1,5 @@
 import {
+  HttpException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -22,11 +23,15 @@ import { runIsolatedApplicationBuild } from './executor-application-build';
 import { getApplicationBuildRuntimeImages } from './executor-build-config';
 import {
   firstComposeServiceName,
+  firstImageRefFromComposeYaml,
   parseConfigHeaderValue,
   parseEnv,
 } from './executor-compose-parse';
 import { removeDeploymentFolder } from './executor-deployment-fs';
-import { stderrIndicatesDockerFailure } from './executor-docker';
+import {
+  formatExecError,
+  stderrIndicatesDockerFailure,
+} from './executor-docker';
 import type { ExecuteDeployOptions } from './executor-types';
 import {
   forceRollingRestartStackServices,
@@ -43,6 +48,7 @@ import {
   type DatabaseBackupConfig,
 } from '../backup/database-backup.types';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
+import { RegistryService } from '../registry/registry.service';
 
 export type { ExecuteDeployOptions } from './executor-types';
 
@@ -61,6 +67,14 @@ function pickDockerSshEnv(
   return o;
 }
 
+/** Isolated `docker run` builds must talk to the API host’s default daemon, not DOCKER_HOST from process.env / service.env. */
+function envForLocalDockerCli(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const o = { ...base };
+  delete o.DOCKER_HOST;
+  delete o.DOCKER_SSH_OPTS;
+  return o;
+}
+
 @Injectable()
 export class ExecutorService {
   constructor(
@@ -68,14 +82,25 @@ export class ExecutorService {
     private readonly servicesService: ServicesService,
     private readonly configService: ConfigService,
     private readonly remoteServersService: RemoteServersService,
+    private readonly registryService: RegistryService,
   ) {}
+
+  private async getBaseProcessEnvForService(
+    service: Service,
+  ): Promise<NodeJS.ProcessEnv> {
+    const envVars = parseEnv(service.env || '');
+    return { ...process.env, ...envVars };
+  }
 
   private async getProcessEnvForService(
     service: Service,
   ): Promise<NodeJS.ProcessEnv> {
-    const envVars = parseEnv(service.env || '');
-    const base: NodeJS.ProcessEnv = { ...process.env, ...envVars };
-    return this.remoteServersService.mergeDockerHostEnv(service, base);
+    const base = await this.getBaseProcessEnvForService(service);
+    const ids = await this.servicesService.getDockerSshTargetIds(service.id);
+    return this.remoteServersService.mergeDockerHostEnvForDeployIds(
+      base,
+      ids.remoteServerId,
+    );
   }
 
   /**
@@ -129,7 +154,9 @@ export class ExecutorService {
           const buildPath = parseConfigHeaderValue(rawConfig, 'buildPath') || '.';
           const dockerfilePath =
             parseConfigHeaderValue(rawConfig, 'dockerfilePath') || 'Dockerfile';
-          const imageName = `${service.appName}:latest`;
+          const registryPush = parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim();
+          const defaultTag = `${service.appName}:latest`;
+          const imageTag = registryPush?.length ? registryPush : defaultTag;
           const sourceRoot = path.join(deployDir, sourceDir);
           const fullContext = path.join(deployDir, sourceDir, buildPath);
           const sourceRootExists = await fs
@@ -152,32 +179,38 @@ export class ExecutorService {
                 `Dockerfile not found for build: "${dockerfileRel}" under build context.`,
               );
             });
-            const rid =
-              service.remoteServerId ?? service.remoteServer?.id ?? null;
-            if (rid != null) {
-              const fArg =
-                dockerfileRel === 'Dockerfile'
-                  ? ''
-                  : ` -f "${dockerfileRel.replace(/"/g, '\\"')}"`;
-              const buildCmd = `docker build${fArg} -t ${imageName} .`;
-              const { stdout: bOut, stderr: bErr } = await execAsync(buildCmd, {
-                cwd: fullContext,
-                env: execOpts.env,
-                maxBuffer: 50 * 1024 * 1024,
-              });
-              buildLogPrefix = [bOut, bErr]
-                .filter((s) => s && String(s).trim())
-                .join('\n');
-              if (buildLogPrefix) {
-                buildLogPrefix += '\n';
+            const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+            const buildBase = await this.getBaseProcessEnvForService(service);
+            const buildEnv = await this.remoteServersService.mergeDockerHostEnvForBuildIds(
+              buildBase,
+              sshIds,
+            );
+            const useRemoteDockerBuild = Boolean(pickDockerSshEnv(buildEnv));
+            const buildRemoteServerId =
+              sshIds.buildRemoteServerId ?? sshIds.remoteServerId;
+            if (useRemoteDockerBuild) {
+              if (buildRemoteServerId == null) {
+                throw new InternalServerErrorException(
+                  'Remote Docker build is enabled but no remote server id was resolved for this service.',
+                );
               }
+              const dockerfilePosix = dockerfileRel.split(/[/\\]/).join('/');
+              const buildResult = await this.remoteServersService.buildImageUsingDockerodeSsh(
+                buildRemoteServerId,
+                {
+                  contextPath: fullContext,
+                  dockerfilePosix,
+                  tag: imageTag,
+                },
+              );
+              buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
             } else {
               const buildResult = await runIsolatedApplicationBuild(buildImages, {
                 serviceId: service.id,
                 fullContextHostPath: fullContext,
                 dockerfilePathFromConfig: dockerfilePath,
-                imageName,
-                execEnv: execOpts.env,
+                imageName: imageTag,
+                execEnv: envForLocalDockerCli(buildBase),
                 deployLogEmitter,
               });
               buildLogPrefix = [buildResult.stdout, buildResult.stderr]
@@ -187,33 +220,127 @@ export class ExecutorService {
                 buildLogPrefix += '\n';
               }
             }
+            if (registryPush?.trim()) {
+              if (useRemoteDockerBuild && buildRemoteServerId != null) {
+                const pushAuth =
+                  await this.registryService.getRegistryAuthConfigForImageRef(
+                    registryPush,
+                  );
+                try {
+                  const pushResult =
+                    await this.remoteServersService.pushImageUsingDockerodeSsh(
+                      buildRemoteServerId,
+                      {
+                        imageRef: registryPush,
+                        auth: pushAuth,
+                      },
+                    );
+                  if (pushResult.output) {
+                    buildLogPrefix =
+                      (buildLogPrefix || '') + pushResult.output + '\n';
+                  }
+                } catch (pushErr) {
+                  if (mode === 'deploy') {
+                    await removeDeploymentFolder(deployDir);
+                  }
+                  if (pushErr instanceof HttpException) {
+                    return { success: false, output: pushErr.message };
+                  }
+                  return {
+                    success: false,
+                    output:
+                      `Docker registry push failed for "${registryPush}". Check saved registry credentials for this host and project permissions.\n\n` +
+                      formatExecError(pushErr),
+                  };
+                }
+              } else {
+                const pushEsc = registryPush.replace(/"/g, '\\"');
+                const pushCmd = `docker push "${pushEsc}"`;
+                const pushEnv = envForLocalDockerCli(buildBase);
+                const merged = await this.registryService.mergePushEnvForImageRef(
+                  registryPush,
+                  pushEnv,
+                );
+                const mergedEnv = merged.env;
+                try {
+                  const { stdout: pu, stderr: pe } = await execAsync(pushCmd, {
+                    cwd: fullContext,
+                    env: mergedEnv,
+                    maxBuffer: 50 * 1024 * 1024,
+                  });
+                  const pushLog = [pu, pe]
+                    .filter((s) => s && String(s).trim())
+                    .join('\n');
+                  if (pushLog) {
+                    buildLogPrefix = (buildLogPrefix || '') + pushLog + '\n';
+                  }
+                } catch (pushErr) {
+                  if (mode === 'deploy') {
+                    await removeDeploymentFolder(deployDir);
+                  }
+                  return {
+                    success: false,
+                    output:
+                      `Docker registry push failed for "${registryPush}". Check saved registry credentials for this host and project permissions.\n\n` +
+                      formatExecError(pushErr),
+                  };
+                } finally {
+                  await merged.cleanup();
+                }
+              }
+            }
           }
           /* If source was removed after a previous deploy, skip build and rely on existing local image + stack deploy. */
         }
-        const command = `docker stack deploy -c "${composeFile}" ${service.appName}`;
-        const { stdout, stderr } = await execAsync(command, execOpts);
-        let out = [buildLogPrefix, stdout, stderr].filter((s) => s && s.trim()).join('\n');
-        let err = stderr ?? '';
-
-        if (mode === 'redeploy') {
-          const forced = await forceRollingRestartStackServices(
-            service.appName,
-            pickDockerSshEnv(execOpts.env),
+        const authImageRef =
+          parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim() ||
+          firstImageRefFromComposeYaml(finalConfig) ||
+          '';
+        let stackDeployEnv = execOpts.env;
+        let stackRegistryCleanup: (() => Promise<void>) | undefined;
+        if (authImageRef.trim()) {
+          const merged = await this.registryService.mergePushEnvForImageRef(
+            authImageRef,
+            execOpts.env,
           );
-          out = [out, forced.output].filter(Boolean).join('\n');
-          err += forced.stderr;
+          stackDeployEnv = merged.env;
+          stackRegistryCleanup = merged.cleanup;
         }
+        const stackEsc = service.appName.replace(/"/g, '\\"');
+        const composeEsc = composeFile.replace(/"/g, '\\"');
+        const command = `docker stack deploy -c "${composeEsc}" --with-registry-auth "${stackEsc}"`;
+        try {
+          const { stdout, stderr } = await execAsync(command, {
+            cwd: execOpts.cwd,
+            env: stackDeployEnv,
+          });
+          let out = [buildLogPrefix, stdout, stderr].filter((s) => s && s.trim()).join('\n');
+          let err = [buildLogPrefix, stderr]
+            .filter((s) => s && String(s).trim())
+            .join('\n');
 
-        const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
-        const success = !stderrIndicatesFailure;
-        if (success) {
-          await maybeRemoveApplicationSourceAfterDeploy(
-            service,
-            deployDir,
-            this.configService,
-          );
+          if (mode === 'redeploy') {
+            const forced = await forceRollingRestartStackServices(
+              service.appName,
+              pickDockerSshEnv(execOpts.env),
+            );
+            out = [out, forced.output].filter(Boolean).join('\n');
+            err += forced.stderr;
+          }
+
+          const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
+          const success = !stderrIndicatesFailure;
+          if (success) {
+            await maybeRemoveApplicationSourceAfterDeploy(
+              service,
+              deployDir,
+              this.configService,
+            );
+          }
+          return { success, output: out };
+        } finally {
+          await stackRegistryCleanup?.();
         }
-        return { success, output: out };
       }
 
       const base = `docker compose -f "${composeFile}" -p ${service.appName}`;
@@ -240,9 +367,20 @@ export class ExecutorService {
       if (mode === 'deploy') {
         await removeDeploymentFolder(deployDir);
       }
-      throw new InternalServerErrorException(
-        `Deployment failed: ${error.message}`,
-      );
+      if (error instanceof HttpException) {
+        const res = error.getResponse();
+        let msg: string;
+        if (typeof res === 'string') {
+          msg = res;
+        } else if (res && typeof res === 'object' && 'message' in res) {
+          const m = (res as { message?: string | string[] }).message;
+          msg = Array.isArray(m) ? m.join('\n') : String(m ?? error.message);
+        } else {
+          msg = error.message;
+        }
+        return { success: false, output: msg };
+      }
+      return { success: false, output: formatExecError(error) };
     }
   }
 

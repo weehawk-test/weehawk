@@ -129,10 +129,15 @@ export function useUpdateService() {
           | "domains"
           | "traefikRoutes"
           | "remoteServerId"
+          | "buildRemoteServerId"
+          | "registryPushImage"
         >
       >;
     }) => updateServiceApi(id, patch),
     onSuccess: (data) => {
+      // Keep ["service", id] in sync immediately so UI (e.g. remote host selects) does not revert
+      // after navigation; invalidate alone can race or be skipped with staleTime: Infinity + no refetchOnMount.
+      qc.setQueryData(["service", String(data.id)], data);
       qc.invalidateQueries({ queryKey: ["services", data.projectId] });
       qc.invalidateQueries({ queryKey: ["services"] });
       qc.invalidateQueries({ queryKey: ["service", data.id] });

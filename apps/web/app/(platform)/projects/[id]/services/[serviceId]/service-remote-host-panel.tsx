@@ -14,6 +14,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const updateService = useUpdateService();
+  const isApplication = service.type === "application";
 
   const q = useQuery({
     queryKey: ["remote-servers"],
@@ -25,30 +26,104 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     service.remoteServerId != null ? String(service.remoteServerId) : "",
   );
 
+  const [buildValue, setBuildValue] = useState<string>(() =>
+    service.buildRemoteServerId != null ? String(service.buildRemoteServerId) : "",
+  );
+
+  const [registryValue, setRegistryValue] = useState<string>(() => service.registryPushImage ?? "");
+
   const currentId = service.remoteServerId ?? null;
+  const currentBuildId = service.buildRemoteServerId ?? null;
 
   useEffect(() => {
     setValue(currentId != null ? String(currentId) : "");
   }, [currentId]);
-  const options = useMemo(() => q.data ?? [], [q.data]);
 
+  useEffect(() => {
+    setBuildValue(currentBuildId != null ? String(currentBuildId) : "");
+  }, [currentBuildId]);
+
+  useEffect(() => {
+    setRegistryValue(service.registryPushImage ?? "");
+  }, [service.registryPushImage]);
+
+  const deployOptions = useMemo(
+    () => (q.data ?? []).filter((r) => r.serverRole === "deploy"),
+    [q.data],
+  );
+  const buildOptions = useMemo(
+    () => (q.data ?? []).filter((r) => r.serverRole === "build"),
+    [q.data],
+  );
+
+  /** Build and deploy use different Docker daemons → image must go through a registry (push/pull). */
+  const showRegistryImageField = useMemo(() => {
+    if (!isApplication) return false;
+    const deployId = value === "" ? null : Number(value);
+    const effectiveBuildId =
+      buildValue === ""
+        ? deployId
+        : Number.isFinite(Number(buildValue))
+          ? Number(buildValue)
+          : null;
+    return deployId !== effectiveBuildId;
+  }, [isApplication, value, buildValue]);
+
+  const deployDirty =
+    (value === "" && currentId !== null) || (value !== "" && Number(value) !== currentId);
+  const buildDirty =
+    isApplication &&
+    ((buildValue === "" && currentBuildId !== null) ||
+      (buildValue !== "" && Number(buildValue) !== currentBuildId));
+  const currentRegistry = (service.registryPushImage ?? "").trim();
+  const registryDirty =
+    showRegistryImageField && registryValue.trim() !== currentRegistry;
+  /** Saved registry ref no longer needed (same build/deploy daemon) — offer Save to clear it. */
+  const staleRegistryWhenMerged =
+    isApplication && !showRegistryImageField && currentRegistry !== "";
   const dirty =
-    (value === "" && currentId !== null) ||
-    (value !== "" && Number(value) !== currentId);
+    deployDirty || buildDirty || registryDirty || staleRegistryWhenMerged;
 
   const save = () => {
-    const next =
-      value === "" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+    if (showRegistryImageField && registryValue.trim() === "") {
+      toast({
+        title: "Image name required",
+        description: "Enter the full name (e.g. ghcr.io/you/app:latest). Sign in under Registry on this server first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const patch: {
+      remoteServerId?: number | null;
+      buildRemoteServerId?: number | null;
+      registryPushImage?: string | null;
+    } = {};
+    if (deployDirty) {
+      patch.remoteServerId =
+        value === "" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
+    }
+    if (buildDirty) {
+      patch.buildRemoteServerId =
+        buildValue === ""
+          ? null
+          : Number.isFinite(Number(buildValue))
+            ? Number(buildValue)
+            : null;
+    }
+    if (registryDirty) {
+      const t = registryValue.trim();
+      patch.registryPushImage = t === "" ? null : t;
+    }
+    if (staleRegistryWhenMerged) {
+      patch.registryPushImage = null;
+    }
     updateService.mutate(
-      { id: service.id, patch: { remoteServerId: next } },
+      { id: service.id, patch },
       {
         onSuccess: () => {
           toast({
             title: "Saved",
-            description:
-              next == null
-                ? "Deploy commands will run on this Weehawk host."
-                : "Deploy commands will use Docker over SSH on the selected host.",
+            description: "Host choices updated for this service.",
           });
         },
         onError: (e: Error) =>
@@ -70,15 +145,16 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           </div>
           <div>
             <h3 className="text-sm font-semibold">Remote Docker host</h3>
-            <p className="text-xs text-muted-foreground mt-1 max-w-xl leading-relaxed">
-              Optional: run <code className="text-foreground/80">docker compose</code>,{" "}
-              <code className="text-foreground/80">stack deploy</code>, and related commands on another machine over SSH (
-              <code className="text-foreground/80">DOCKER_HOST=ssh://…</code>). Compose files stay on this server; Docker syncs
-              context over SSH. Configure hosts under{" "}
+            <p className="text-xs text-muted-foreground mt-1 max-w-md leading-relaxed">
+              Choose hosts below, then <strong>Save</strong>. Add machines in{" "}
               <Link href="/remote-server" className="text-primary hover:underline">
                 Remote servers
               </Link>
-              .
+              . If build and run use different machines, sign in on{" "}
+              <Link href="/registry" className="text-primary hover:underline">
+                Registry
+              </Link>{" "}
+              (this server) and fill the image name when it appears.
             </p>
           </div>
         </div>
@@ -93,7 +169,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           </button>
         </div>
       </div>
-      <div className="px-5 py-4">
+      <div className="px-5 py-4 space-y-4">
         {q.isLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
@@ -102,32 +178,109 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         ) : q.isError ? (
           <p className="text-sm text-red-300">{(q.error as Error).message}</p>
         ) : (
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 max-w-xl">
-            <label className="text-xs text-muted-foreground shrink-0 sm:w-32">Target host</label>
-            <select
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              className="flex-1 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
-            >
-              <option value="">This server (local Docker)</option>
-              {options.map((r) => (
-                <option key={r.id} value={String(r.id)}>
-                  {r.name} — {r.sshUser}@{r.host}
-                  {r.port !== 22 ? `:${r.port}` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
+          <>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 max-w-xl">
+              <label className="text-xs text-muted-foreground shrink-0 sm:w-32">Deploy host</label>
+              <select
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                className="flex-1 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
+              >
+                <option value="">This server (local Docker)</option>
+                {deployOptions.map((r) => (
+                  <option key={r.id} value={String(r.id)}>
+                    {r.name} — {r.sshUser}@{r.host}
+                    {r.port !== 22 ? `:${r.port}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {isApplication ? (
+              <div className="flex flex-col sm:flex-row sm:items-start gap-3 max-w-xl">
+                <label className="text-xs text-muted-foreground shrink-0 sm:w-32 pt-2">
+                  Build host
+                  <span className="block font-normal text-[10px] text-muted-foreground/80 mt-0.5 normal-case">
+                    Optional
+                  </span>
+                </label>
+                <div className="flex-1 min-w-0 space-y-1">
+                  <select
+                    value={buildValue}
+                    onChange={(e) => setBuildValue(e.target.value)}
+                    className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
+                  >
+                    <option value="">Same as deploy host (or local if no deploy host)</option>
+                    {buildOptions.map((r) => (
+                      <option key={r.id} value={String(r.id)}>
+                        {r.name} — {r.sshUser}@{r.host}
+                        {r.port !== 22 ? `:${r.port}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Optional: build on another machine; deploy stays above.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {isApplication && showRegistryImageField ? (
+              <div className="flex flex-col sm:flex-row sm:items-start gap-3 max-w-xl border-t border-white/5 pt-4">
+                <label className="text-xs text-muted-foreground shrink-0 sm:w-32 pt-2">
+                  Registry image
+                  <span className="block font-normal text-[10px] text-amber-200/90 mt-0.5 normal-case">
+                    Required here
+                  </span>
+                </label>
+                <div className="flex-1 min-w-0 space-y-2">
+                  <input
+                    type="text"
+                    value={registryValue}
+                    onChange={(e) => setRegistryValue(e.target.value)}
+                    placeholder="e.g. ghcr.io/myorg/myapp:latest"
+                    autoComplete="off"
+                    spellCheck={false}
+                    required
+                    aria-required
+                    className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/40 font-mono"
+                  />
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Sign in on{" "}
+                    <Link href="/registry" className="text-primary hover:underline">
+                      Registry
+                    </Link>{" "}
+                    on this server first.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </>
         )}
-        {options.length === 0 && !q.isLoading && !q.isError && (
-          <p className="text-xs text-muted-foreground mt-3">
-            No remote hosts yet. Add one in{" "}
+        {(q.data ?? []).length === 0 && !q.isLoading && !q.isError && (
+          <p className="text-xs text-muted-foreground mt-1">
+            No remote machines yet. Add one under{" "}
             <Link href="/remote-server" className="text-primary hover:underline">
               Remote servers
-            </Link>{" "}
-            (paste or generate a key; stored encrypted in the database).
+            </Link>
+            .
           </p>
         )}
+        {(q.data ?? []).length > 0 &&
+          deployOptions.length === 0 &&
+          !q.isLoading &&
+          !q.isError && (
+            <p className="text-xs text-amber-200/90 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
+              Only <strong>Build</strong> hosts here—add a <strong>Deploy</strong> host or use this server.
+            </p>
+          )}
+        {isApplication &&
+          buildOptions.length === 0 &&
+          (q.data ?? []).length > 0 &&
+          !q.isLoading &&
+          !q.isError && (
+            <p className="text-[11px] text-muted-foreground">
+              No build-only hosts yet—builds follow deploy for now.
+            </p>
+          )}
       </div>
     </div>
   );

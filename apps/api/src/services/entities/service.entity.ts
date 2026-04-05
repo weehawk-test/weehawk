@@ -66,6 +66,17 @@ export class Service {
   @RelationId((s: Service) => s.remoteServer)
   remoteServerId?: number | null;
 
+  /** When set, application image builds (`docker build` over SSH) use this host; deploy still uses {@link remoteServerId}. */
+  @ManyToOne(() => RemoteServer, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'buildRemoteServerId' })
+  buildRemoteServer?: RemoteServer | null;
+
+  @RelationId((s: Service) => s.buildRemoteServer)
+  buildRemoteServerId?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

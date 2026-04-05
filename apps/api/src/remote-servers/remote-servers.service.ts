@@ -45,6 +45,7 @@ export type RemoteServerSafe = {
   host: string;
   port: number;
   sshUser: string;
+  serverRole: 'deploy' | 'build';
   /** How SSH identity is provided (never exposes raw PEM or ciphertext). */
   authMode: 'stored' | 'file' | 'none';
   /** True when a key is configured (DB or file). */
@@ -89,6 +90,7 @@ export class RemoteServersService {
       host: rs.host,
       port: rs.port,
       sshUser: rs.sshUser,
+      serverRole: rs.serverRole === 'build' ? 'build' : 'deploy',
       authMode,
       hasPrivateKey,
       privateKeyPath: hasPath ? rs.privateKeyPath! : null,
@@ -220,6 +222,67 @@ export class RemoteServersService {
     if (!rs) {
       return base;
     }
+    if (rs.serverRole === 'build') {
+      throw new BadRequestException(
+        'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
+      );
+    }
+    const extra = await this.dockerHostEnvForServer(rs);
+    return { ...base, ...extra };
+  }
+
+  /**
+   * Env for `docker build` over SSH: dedicated build host when set, otherwise deploy host.
+   * Prefer {@link mergeDockerHostEnvForBuildIds} from the executor with DB-resolved FKs so RelationId hydration cannot drop `buildRemoteServerId`.
+   */
+  async mergeDockerHostEnvForBuild(
+    service: Service,
+    base: NodeJS.ProcessEnv,
+  ): Promise<NodeJS.ProcessEnv> {
+    return this.mergeDockerHostEnvForBuildIds(base, {
+      buildRemoteServerId:
+        service.buildRemoteServerId ?? service.buildRemoteServer?.id ?? null,
+      remoteServerId: service.remoteServerId ?? service.remoteServer?.id ?? null,
+    });
+  }
+
+  /** Same as {@link mergeDockerHostEnvForBuild} but uses FK columns read from `services` (reliable during deploy). */
+  async mergeDockerHostEnvForBuildIds(
+    base: NodeJS.ProcessEnv,
+    ids: { buildRemoteServerId: number | null; remoteServerId: number | null },
+  ): Promise<NodeJS.ProcessEnv> {
+    const id = ids.buildRemoteServerId ?? ids.remoteServerId;
+    if (id == null) {
+      return base;
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id } });
+    if (!rs) {
+      return base;
+    }
+    const extra = await this.dockerHostEnvForServer(rs);
+    return { ...base, ...extra };
+  }
+
+  /**
+   * Deploy / stack / compose only: `remoteServerId` (not build host).
+   * Prefer over {@link mergeDockerHostEnv} when `service` may not hydrate RelationId FKs.
+   */
+  async mergeDockerHostEnvForDeployIds(
+    base: NodeJS.ProcessEnv,
+    remoteServerId: number | null,
+  ): Promise<NodeJS.ProcessEnv> {
+    if (remoteServerId == null) {
+      return base;
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      return base;
+    }
+    if (rs.serverRole === 'build') {
+      throw new BadRequestException(
+        'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
+      );
+    }
     const extra = await this.dockerHostEnvForServer(rs);
     return { ...base, ...extra };
   }
@@ -251,6 +314,7 @@ export class RemoteServersService {
       host: dto.host.trim(),
       port: dto.port ?? 22,
       sshUser: dto.sshUser.trim(),
+      serverRole: dto.serverRole === 'build' ? 'build' : 'deploy',
       privateKeyEncrypted,
       privateKeyPath: null,
       extraSshOptions: dto.extraSshOptions?.trim() || null,
@@ -264,8 +328,9 @@ export class RemoteServersService {
     let privateKeyEncrypted: string | null | undefined = existing.privateKeyEncrypted;
     let privateKeyPath: string | null | undefined = existing.privateKeyPath;
 
-    if (dto.privateKey !== undefined) {
-      const pem = dto.privateKey.trim();
+    // @IsOptional() skips validators when a field is null; never call .trim() on null (TypeError → 500).
+    if (dto.privateKey != null) {
+      const pem = String(dto.privateKey).trim();
       if (pem.length > 0) {
         privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
         privateKeyPath = null;
@@ -280,15 +345,41 @@ export class RemoteServersService {
       );
     }
 
+    const svcRepo = this.remoteServerRepository.manager.getRepository(Service);
+    if (dto.serverRole === 'build' && existing.serverRole !== 'build') {
+      const n = await svcRepo.count({ where: { remoteServer: { id } } });
+      if (n > 0) {
+        throw new BadRequestException(
+          `Cannot mark as build server: ${n} service(s) still use this host as the deploy target. Unlink them first.`,
+        );
+      }
+    }
+    if (dto.serverRole === 'deploy' && existing.serverRole === 'build') {
+      const n = await svcRepo.count({ where: { buildRemoteServer: { id } } });
+      if (n > 0) {
+        throw new BadRequestException(
+          `Cannot mark as deploy server: ${n} service(s) still use this host as the build target. Clear the build host on those services first.`,
+        );
+      }
+    }
+
     const merged = this.remoteServerRepository.merge(existing, {
-      name: dto.name !== undefined ? dto.name.trim() : existing.name,
-      host: dto.host !== undefined ? dto.host.trim() : existing.host,
-      sshUser: dto.sshUser !== undefined ? dto.sshUser.trim() : existing.sshUser,
-      port: dto.port !== undefined ? dto.port : existing.port,
+      name: dto.name != null ? String(dto.name).trim() : existing.name,
+      host: dto.host != null ? String(dto.host).trim() : existing.host,
+      sshUser: dto.sshUser != null ? String(dto.sshUser).trim() : existing.sshUser,
+      port: dto.port != null ? dto.port : existing.port,
+      serverRole:
+        dto.serverRole === 'build'
+          ? 'build'
+          : dto.serverRole === 'deploy'
+            ? 'deploy'
+            : existing.serverRole,
       extraSshOptions:
         dto.extraSshOptions === undefined
           ? existing.extraSshOptions
-          : dto.extraSshOptions?.trim() || null,
+          : dto.extraSshOptions != null
+            ? String(dto.extraSshOptions).trim() || null
+            : null,
       privateKeyEncrypted: nextEnc,
       privateKeyPath: nextPath,
     });
@@ -298,14 +389,13 @@ export class RemoteServersService {
 
   async remove(id: number): Promise<void> {
     await this.findEntityOrFail(id);
-    const n = await this.remoteServerRepository.manager
-      .getRepository(Service)
-      .createQueryBuilder('s')
-      .where('s.remoteServerId = :id', { id })
-      .getCount();
+    const repo = this.remoteServerRepository.manager.getRepository(Service);
+    const nDeploy = await repo.count({ where: { remoteServer: { id } } });
+    const nBuild = await repo.count({ where: { buildRemoteServer: { id } } });
+    const n = nDeploy + nBuild;
     if (n > 0) {
       throw new BadRequestException(
-        `Cannot delete: ${n} service(s) still use this remote server. Unlink them first.`,
+        `Cannot delete: ${n} service(s) still reference this remote server (deploy and/or build). Unlink them first.`,
       );
     }
     await this.remoteServerRepository.delete(id);
@@ -327,6 +417,184 @@ export class RemoteServersService {
       const msg = e instanceof Error ? e.message : String(e);
       throw new InternalServerErrorException(
         `Remote Docker console (host #${id}): ${msg}`,
+      );
+    }
+  }
+
+  /** All files under `rootAbs` as POSIX paths relative to the context root (for Dockerode `buildImage` + .dockerignore). */
+  private async collectRelativeFilePathsForDockerBuild(rootAbs: string): Promise<string[]> {
+    const root = path.resolve(rootAbs);
+    const out: string[] = [];
+
+    const walk = async (dirAbs: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(dirAbs, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const ent of entries) {
+        const full = path.join(dirAbs, ent.name);
+        if (ent.isDirectory()) {
+          await walk(full);
+        } else if (ent.isFile()) {
+          const rel = path.relative(root, full);
+          out.push(rel.split(path.sep).join('/'));
+        } else if (ent.isSymbolicLink()) {
+          try {
+            const st = await fs.stat(full);
+            if (st.isFile()) {
+              const rel = path.relative(root, full);
+              out.push(rel.split(path.sep).join('/'));
+            }
+          } catch {
+            /* skip broken symlinks */
+          }
+        }
+      }
+    };
+
+    await walk(root);
+    return out;
+  }
+
+  private followDockerProgressToString(
+    docker: Dockerode,
+    stream: NodeJS.ReadableStream,
+  ): Promise<{ text: string; streamError: string | null }> {
+    type DockerWithFollow = Dockerode & {
+      followProgress: (
+        s: NodeJS.ReadableStream,
+        onFinished: (err: Error | null | undefined, output?: unknown[]) => void,
+        onProgress?: (e: unknown) => void,
+      ) => void;
+    };
+    return new Promise((resolve, reject) => {
+      (docker as DockerWithFollow).followProgress(
+        stream,
+        (err: Error | null | undefined, output?: unknown[]) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          const events = output ?? [];
+          const textParts: string[] = [];
+          let streamError: string | null = null;
+          for (const ev of events) {
+            if (!ev || typeof ev !== 'object') continue;
+            const o = ev as Record<string, unknown>;
+            if (typeof o.stream === 'string') textParts.push(o.stream);
+            if (typeof o.status === 'string') textParts.push(`${o.status}\n`);
+            if (typeof o.progress === 'string') textParts.push(`${o.progress}\n`);
+            if (o.error != null) {
+              streamError = String(o.error);
+              if (
+                o.errorDetail &&
+                typeof o.errorDetail === 'object' &&
+                o.errorDetail !== null &&
+                'message' in o.errorDetail
+              ) {
+                streamError += `\n${String((o.errorDetail as { message: string }).message)}`;
+              }
+            }
+          }
+          resolve({ text: textParts.join(''), streamError });
+        },
+        undefined,
+      );
+    });
+  }
+
+  /**
+   * Build on a remote host via Dockerode + ssh2 (same as console / testConnection), not `docker build` + DOCKER_HOST=ssh://…
+   * (avoids OpenSSH/dial-stdio issues on some API hosts).
+   */
+  async buildImageUsingDockerodeSsh(
+    remoteServerId: number,
+    params: { contextPath: string; dockerfilePosix: string; tag: string },
+  ): Promise<{ output: string }> {
+    const rs = await this.findEntityOrFail(remoteServerId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const docker = this.createDockerodeForRemote(rs, pem);
+    const ctx = path.resolve(params.contextPath);
+    const src = await this.collectRelativeFilePathsForDockerBuild(ctx);
+    if (src.length === 0) {
+      throw new BadRequestException(`Build context has no files: ${ctx}`);
+    }
+    let stream: NodeJS.ReadableStream;
+    try {
+      stream = await docker.buildImage(
+        { context: ctx, src },
+        {
+          t: params.tag,
+          dockerfile: params.dockerfilePosix,
+        },
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new InternalServerErrorException(
+        `Remote Docker build (host #${remoteServerId}) failed to start: ${msg}`,
+      );
+    }
+    try {
+      const { text, streamError } = await this.followDockerProgressToString(docker, stream);
+      if (streamError) {
+        throw new InternalServerErrorException(
+          `Docker build failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+        );
+      }
+      return { output: text.trim() || '(build finished with no log output)' };
+    } catch (e) {
+      if (e instanceof InternalServerErrorException || e instanceof BadRequestException) {
+        throw e;
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new InternalServerErrorException(
+        `Docker build failed on remote host #${remoteServerId}: ${msg}`,
+      );
+    }
+  }
+
+  /** Push an image on a remote host via Dockerode (registry auth from caller). */
+  async pushImageUsingDockerodeSsh(
+    remoteServerId: number,
+    params: {
+      imageRef: string;
+      auth: { username: string; password: string; serveraddress: string } | null;
+    },
+  ): Promise<{ output: string }> {
+    const rs = await this.findEntityOrFail(remoteServerId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const docker = this.createDockerodeForRemote(rs, pem);
+    const image = docker.getImage(params.imageRef);
+    const opts: Record<string, unknown> = {};
+    if (params.auth) {
+      opts.authconfig = params.auth;
+    }
+    let stream: NodeJS.ReadableStream;
+    try {
+      stream = await image.push(opts);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new InternalServerErrorException(
+        `Remote Docker push (host #${remoteServerId}) failed to start: ${msg}`,
+      );
+    }
+    try {
+      const { text, streamError } = await this.followDockerProgressToString(docker, stream);
+      if (streamError) {
+        throw new InternalServerErrorException(
+          `Docker registry push failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+        );
+      }
+      return { output: text.trim() || '(push finished with no log output)' };
+    } catch (e) {
+      if (e instanceof InternalServerErrorException || e instanceof BadRequestException) {
+        throw e;
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new InternalServerErrorException(
+        `Docker registry push failed on remote host #${remoteServerId}: ${msg}`,
       );
     }
   }

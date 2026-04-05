@@ -1,4 +1,5 @@
 import { API_BASE } from "./api";
+import { authFetch } from "./auth-fetch";
 
 type ApiErrorShape = { message?: string | string[] };
 
@@ -67,4 +68,56 @@ export function registryLogoutApi(body: RegistryLogoutPayload) {
       body: JSON.stringify(body),
     },
   );
+}
+
+export type RegistryAccountRow = {
+  id: number;
+  name: string;
+  providerUrl: string;
+  username: string;
+  lastVerifiedAt: string | null;
+};
+
+export async function fetchRegistryAccounts(accessToken: string): Promise<RegistryAccountRow[]> {
+  const res = await authFetch(accessToken, `${API_BASE}/registry/accounts`, { method: "GET" });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data as RegistryAccountRow[];
+}
+
+export type CreateRegistryAccountPayload = {
+  name: string;
+  providerUrl: string;
+  username: string;
+  password: string;
+};
+
+export async function createRegistryAccountApi(
+  accessToken: string,
+  body: CreateRegistryAccountPayload,
+): Promise<RegistryAccountRow> {
+  const res = await authFetch(accessToken, `${API_BASE}/registry/accounts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
+  }
+  return JSON.parse(text) as RegistryAccountRow;
+}
+
+export async function deleteRegistryAccountApi(accessToken: string, id: number): Promise<void> {
+  const res = await authFetch(accessToken, `${API_BASE}/registry/accounts/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
+  }
 }

@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ServicesModule } from '../services/services.module';
 import { RemoteServersModule } from '../remote-servers/remote-servers.module';
+import { RegistryModule } from '../registry/registry.module';
 import { ExecutorService } from './executor.service';
 
 /**
@@ -8,7 +9,11 @@ import { ExecutorService } from './executor.service';
  * Depends on {@link ServicesService} via forwardRef (circular with {@link ServicesModule}).
  */
 @Module({
-  imports: [forwardRef(() => ServicesModule), RemoteServersModule],
+  imports: [
+    forwardRef(() => ServicesModule),
+    RemoteServersModule,
+    RegistryModule,
+  ],
   providers: [ExecutorService],
   exports: [ExecutorService],
 })

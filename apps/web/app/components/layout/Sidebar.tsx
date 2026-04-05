@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, LayoutDashboard, FolderKanban, KeyRound, UserCircle, ChevronUp,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, RadioTower, Server, Terminal,
+  GitBranch, RadioTower, Server,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useState } from "react";
@@ -57,7 +57,6 @@ const mainNavSections: { label: string; items: { href: string; label: string; ic
     label: "More",
     items: [
       { href: "/traefik", label: "Traefik", icon: RadioTower },
-      { href: "/console/local", label: "Host console", icon: Terminal },
       { href: "/remote-server", label: "Remote servers", icon: Server },
     ],
   },
@@ -98,7 +97,6 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
 
   const isActive = (href: string) => {
     if (href === "/") return location === "/";
-    if (href === "/console/local") return location.startsWith("/console/local");
     if (href === "/notifications/channels") return location.startsWith("/notifications");
     if (href === "/registry") {
       return location === "/registry" || location.startsWith("/registry/saved");
@@ -110,7 +108,11 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
       return location === "/traefik" || location.startsWith("/traefik/");
     }
     if (href === "/remote-server") {
-      return location === "/remote-server" || location.startsWith("/remote-server/");
+      return (
+        location === "/remote-server" ||
+        location.startsWith("/remote-server/") ||
+        location.startsWith("/console/local")
+      );
     }
     return location.startsWith(href);
   };
