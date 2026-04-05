@@ -1,36 +1,26 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { NotificationMicrosoftTeams } from '../entities/notification-microsoft-teams.entity';
+import { Notification } from '../entities/notification.entity';
+import { notificationPlainText } from '../notification-format';
+import { channelConfigRecord } from './channel-config';
 import { NotificationProvider } from './notification-provider.interface';
-import { ChannelPreview, ProviderResult } from './provider.types';
+import { ChannelPreview, ProviderSendResult } from './provider.types';
 import { postJson, readString } from './http-utils';
 
 @Injectable()
 export class MicrosoftTeamsProvider implements NotificationProvider {
   readonly type = NotificationChannelType.MICROSOFT_TEAMS;
 
-  constructor(
-    @InjectRepository(NotificationMicrosoftTeams)
-    private readonly repo: Repository<NotificationMicrosoftTeams>,
-  ) {}
-
-  async saveConfig(
-    channelId: string,
-    config: Record<string, unknown>,
-  ): Promise<void> {
-    await this.repo.save(
-      this.repo.create({
-        channelId,
-        webhookUrl: readString(config, 'webhookUrl'),
-      }),
-    );
+  normalizeConfig(config: Record<string, unknown>): Record<string, unknown> {
+    return {
+      webhookUrl: readString(config, 'webhookUrl'),
+    };
   }
 
-  async preview(channelId: string): Promise<ChannelPreview> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const webhookUrl = row?.webhookUrl?.trim() ?? '';
+  async preview(channel: NotificationChannel): Promise<ChannelPreview> {
+    const cfg = channelConfigRecord(channel);
+    const webhookUrl = readString(cfg, 'webhookUrl');
     return {
       credentialPreview: webhookUrl
         ? `webhook•••${webhookUrl.slice(-10)}`
@@ -40,14 +30,14 @@ export class MicrosoftTeamsProvider implements NotificationProvider {
   }
 
   async send(
-    channelId: string,
-    _channelName: string,
-    message: string,
-  ): Promise<ProviderResult> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const webhookUrl = row?.webhookUrl?.trim() ?? '';
-    if (!webhookUrl)
+    channel: NotificationChannel,
+    notification: Notification,
+  ): Promise<ProviderSendResult> {
+    const cfg = channelConfigRecord(channel);
+    const webhookUrl = readString(cfg, 'webhookUrl');
+    if (!webhookUrl) {
       return { ok: false, description: 'Missing Teams webhook URL' };
-    return postJson(webhookUrl, { text: message });
+    }
+    return postJson(webhookUrl, { text: notificationPlainText(notification) });
   }
 }

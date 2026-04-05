@@ -2,22 +2,14 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { NotificationChannel } from './entities/notification-channel.entity';
-import { NotificationLog } from './entities/notification-log.entity';
-import { NotificationsService } from './notifications.service';
+import { NotificationDelivery } from './entities/notification-delivery.entity';
+import { Notification } from './entities/notification.entity';
+import { NotificationService } from './notification.service';
 import { NotificationsController } from './notifications.controller';
-import { NotificationTelegram } from './entities/notification-telegram.entity';
-import { NotificationEmail } from './entities/notification-email.entity';
-import { NotificationDiscord } from './entities/notification-discord.entity';
-import { NotificationLark } from './entities/notification-lark.entity';
-import { NotificationMicrosoftTeams } from './entities/notification-microsoft-teams.entity';
-import { NotificationResend } from './entities/notification-resend.entity';
-import { NotificationGotify } from './entities/notification-gotify.entity';
-import { NotificationNtfy } from './entities/notification-ntfy.entity';
-import { NotificationPushover } from './entities/notification-pushover.entity';
-import { NotificationStack } from './entities/notification-stack.entity';
 import { ProviderRegistryService } from './providers/provider-registry.service';
 import { TelegramProvider } from './providers/telegram.provider';
 import { EmailProvider } from './providers/email.provider';
+import { SlackProvider } from './providers/slack.provider';
 import { DiscordProvider } from './providers/discord.provider';
 import { LarkProvider } from './providers/lark.provider';
 import { MicrosoftTeamsProvider } from './providers/microsoft-teams.provider';
@@ -25,31 +17,22 @@ import { ResendProvider } from './providers/resend.provider';
 import { GotifyProvider } from './providers/gotify.provider';
 import { NtfyProvider } from './providers/ntfy.provider';
 import { PushoverProvider } from './providers/pushover.provider';
-import { StackProvider } from './providers/stack.provider';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([
       NotificationChannel,
-      NotificationLog,
-      NotificationTelegram,
-      NotificationEmail,
-      NotificationDiscord,
-      NotificationLark,
-      NotificationMicrosoftTeams,
-      NotificationResend,
-      NotificationGotify,
-      NotificationNtfy,
-      NotificationPushover,
-      NotificationStack,
+      Notification,
+      NotificationDelivery,
     ]),
     AuthModule,
   ],
   controllers: [NotificationsController],
   providers: [
-    NotificationsService,
+    NotificationService,
     TelegramProvider,
     EmailProvider,
+    SlackProvider,
     DiscordProvider,
     LarkProvider,
     MicrosoftTeamsProvider,
@@ -57,12 +40,12 @@ import { StackProvider } from './providers/stack.provider';
     GotifyProvider,
     NtfyProvider,
     PushoverProvider,
-    StackProvider,
     {
       provide: ProviderRegistryService,
       useFactory: (
         telegram: TelegramProvider,
         email: EmailProvider,
+        slack: SlackProvider,
         discord: DiscordProvider,
         lark: LarkProvider,
         teams: MicrosoftTeamsProvider,
@@ -70,11 +53,11 @@ import { StackProvider } from './providers/stack.provider';
         gotify: GotifyProvider,
         ntfy: NtfyProvider,
         pushover: PushoverProvider,
-        stack: StackProvider,
       ) =>
         new ProviderRegistryService([
           telegram,
           email,
+          slack,
           discord,
           lark,
           teams,
@@ -82,11 +65,11 @@ import { StackProvider } from './providers/stack.provider';
           gotify,
           ntfy,
           pushover,
-          stack,
         ]),
       inject: [
         TelegramProvider,
         EmailProvider,
+        SlackProvider,
         DiscordProvider,
         LarkProvider,
         MicrosoftTeamsProvider,
@@ -94,10 +77,9 @@ import { StackProvider } from './providers/stack.provider';
         GotifyProvider,
         NtfyProvider,
         PushoverProvider,
-        StackProvider,
       ],
     },
   ],
-  exports: [NotificationsService],
+  exports: [NotificationService],
 })
 export class NotificationsModule {}

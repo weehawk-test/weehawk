@@ -6,7 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import * as path from 'path';
 import { Repository } from 'typeorm';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationService } from '../notifications/notification.service';
 import {
   createBackupTempDir,
   removeBackupTempDir,
@@ -55,7 +55,7 @@ export class CronJobsService {
     private readonly cronJobRepo: Repository<CronJob>,
     private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
-    private readonly notificationsService: NotificationsService,
+    private readonly notificationsService: NotificationService,
     private readonly s3Service: S3Service,
   ) {}
 

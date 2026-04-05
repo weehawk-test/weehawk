@@ -16,7 +16,7 @@ export function Toaster() {
             className={`pointer-events-auto w-80 p-4 rounded-xl shadow-2xl backdrop-blur-md border ${
               toast.variant === 'destructive' 
                 ? 'bg-destructive/10 border-destructive/20 text-destructive' 
-                : 'bg-card/90 border-white/10 text-foreground'
+                : 'bg-card/90 border-border text-foreground'
             }`}
           >
             <h4 className="font-semibold text-sm mb-1">{toast.title}</h4>

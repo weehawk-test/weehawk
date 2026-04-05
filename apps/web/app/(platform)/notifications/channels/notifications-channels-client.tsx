@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Layers,
   Gamepad2,
   Bird,
   Users,
@@ -19,6 +19,7 @@ import {
   Send,
   Trash2,
   MessageCircle,
+  MessagesSquare,
   Eye,
   EyeOff,
   ExternalLink,
@@ -46,8 +47,8 @@ import { useConfirm } from "@/components/confirm/ConfirmProvider";
 
 const CHANNEL_TYPE_OPTIONS = [
   { value: "telegram", label: "Telegram", icon: Send, iconClass: "text-sky-400" },
-  { value: "stack", label: "Stack", icon: Layers, iconClass: "text-orange-400" },
   { value: "discord", label: "Discord", icon: Gamepad2, iconClass: "text-indigo-400" },
+  { value: "slack", label: "Slack", icon: MessagesSquare, iconClass: "text-purple-400" },
   { value: "lark", label: "Lark", icon: Bird, iconClass: "text-cyan-400" },
   { value: "microsoft-teams", label: "Microsoft Teams", icon: Users, iconClass: "text-blue-400" },
   { value: "email", label: "Email", icon: Mail, iconClass: "text-emerald-400" },
@@ -161,13 +162,13 @@ export function NotificationsChannelsClient({
     toAddresses: [""],
   });
   const [discordForm, setDiscordForm] = useState({ webhookUrl: "" });
+  const [slackForm, setSlackForm] = useState({ webhookUrl: "" });
   const [larkForm, setLarkForm] = useState({ webhookUrl: "", secret: "" });
   const [teamsForm, setTeamsForm] = useState({ webhookUrl: "" });
   const [resendForm, setResendForm] = useState({ apiKey: "", fromAddress: "", toAddress: "" });
   const [gotifyForm, setGotifyForm] = useState({ serverUrl: "", appToken: "", priority: "5" });
   const [ntfyForm, setNtfyForm] = useState({ serverUrl: "https://ntfy.sh", topic: "", token: "" });
   const [pushoverForm, setPushoverForm] = useState({ userKey: "", appToken: "", device: "" });
-  const [stackForm, setStackForm] = useState({ webhookUrl: "", project: "" });
 
   const addEmailRecipient = () => {
     setEmailForm((prev) => ({ ...prev, toAddresses: [...prev.toAddresses, ""] }));
@@ -202,6 +203,7 @@ export function NotificationsChannelsClient({
       };
     }
     if (channelType === "discord") return { webhookUrl: discordForm.webhookUrl.trim() };
+    if (channelType === "slack") return { webhookUrl: slackForm.webhookUrl.trim() };
     if (channelType === "lark") return { webhookUrl: larkForm.webhookUrl.trim(), secret: larkForm.secret.trim() };
     if (channelType === "microsoft-teams") return { webhookUrl: teamsForm.webhookUrl.trim() };
     if (channelType === "resend") {
@@ -212,7 +214,7 @@ export function NotificationsChannelsClient({
     }
     if (channelType === "ntfy") return { serverUrl: ntfyForm.serverUrl.trim(), topic: ntfyForm.topic.trim(), token: ntfyForm.token.trim() };
     if (channelType === "pushover") return { appToken: pushoverForm.appToken.trim(), userKey: pushoverForm.userKey.trim(), device: pushoverForm.device.trim() };
-    return { webhookUrl: stackForm.webhookUrl.trim(), project: stackForm.project.trim() };
+    return {};
   };
   const isPlatformValid = () => {
     if (form.type === "telegram") return Boolean(telegramForm.token.trim() && telegramForm.target.trim());
@@ -227,13 +229,14 @@ export function NotificationsChannelsClient({
       );
     }
     if (form.type === "discord") return Boolean(discordForm.webhookUrl.trim());
+    if (form.type === "slack") return Boolean(slackForm.webhookUrl.trim());
     if (form.type === "lark") return Boolean(larkForm.webhookUrl.trim());
     if (form.type === "microsoft-teams") return Boolean(teamsForm.webhookUrl.trim());
     if (form.type === "resend") return Boolean(resendForm.apiKey.trim() && resendForm.fromAddress.trim() && resendForm.toAddress.trim());
     if (form.type === "gotify") return Boolean(gotifyForm.serverUrl.trim() && gotifyForm.appToken.trim());
     if (form.type === "ntfy") return Boolean(ntfyForm.serverUrl.trim() && ntfyForm.topic.trim());
     if (form.type === "pushover") return Boolean(pushoverForm.appToken.trim() && pushoverForm.userKey.trim());
-    return Boolean(stackForm.webhookUrl.trim());
+    return false;
   };
 
   const testDraftMutation = useMutation({
@@ -395,7 +398,7 @@ export function NotificationsChannelsClient({
       <div className="mb-4">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input className="input-field !pl-10 w-full" placeholder="Search channels..." value={channelsLocalQ} onChange={(e) => setChannelsLocalQ(e.target.value)} />
+          <input className="input-field !pl-10 w-full bg-card/50" placeholder="Search channels..." value={channelsLocalQ} onChange={(e) => setChannelsLocalQ(e.target.value)} />
         </div>
         {channels.length > 0 && (
           <div className="mt-3 flex items-center gap-3 flex-wrap">
@@ -414,7 +417,7 @@ export function NotificationsChannelsClient({
           </div>
         )}
       </div>
-      {loading && <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>}
+      {loading && <div className="flex items-center gap-2 text-muted-foreground mb-4"><Loader2 className="w-4 h-4 animate-spin" />Loading…</div>}
       {listError && !loading && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive mb-4">
           {listErrorMessage}
@@ -423,15 +426,18 @@ export function NotificationsChannelsClient({
           </button>
         </div>
       )}
-      <AnimatePresence>
-        {showAdd && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-y-0 left-64 right-0 z-50 bg-black/60 backdrop-blur-[3px] flex items-center justify-center p-4"
-            onClick={closeAddModal}
-          >
+      {typeof document !== "undefined" &&
+        createPortal(
+        <AnimatePresence>
+          {showAdd && (
+            <motion.div
+              key="add-channel"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
+              onClick={closeAddModal}
+            >
             <motion.div
               initial={{ opacity: 0, y: 14, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -442,11 +448,11 @@ export function NotificationsChannelsClient({
             >
               <div className="flex items-start justify-between gap-4 mb-5">
                 <div>
-                  <h3 className="text-base font-semibold flex items-center gap-2">
-                    <MessageCircle className="w-4 h-4 text-primary" />
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <MessageCircle className="w-5 h-5 text-primary" />
                     Add Notification Channel
                   </h3>
-                  <p className="text-xs text-muted-foreground mt-1">Create a provider to send alerts from WeeHawk.</p>
+                  <p className="text-sm text-muted-foreground mt-1">Create a provider to send alerts from WeeHawk.</p>
                 </div>
                 <button
                   type="button"
@@ -459,11 +465,11 @@ export function NotificationsChannelsClient({
               </div>
               <div className="grid grid-cols-1 gap-3 mb-4">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Channel Name</label>
+                <label className="text-sm text-muted-foreground mb-1 block">Channel Name</label>
                 <input className="input-field" placeholder="e.g. Production Alerts" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-2 block">Provider</label>
+                <label className="text-sm text-muted-foreground mb-2 block">Provider</label>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                   {CHANNEL_TYPE_OPTIONS.map((option) => {
                     const PlatformIcon = option.icon;
@@ -472,7 +478,7 @@ export function NotificationsChannelsClient({
                         key={option.value}
                         type="button"
                         onClick={() => setForm({ ...form, type: option.value })}
-                        className={`rounded-lg border px-3 py-2 text-xs md:text-sm transition-colors ${
+                        className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                           form.type === option.value
                             ? "border-primary/60 bg-primary/15 text-foreground"
                             : "border-white/10 bg-white/[0.02] text-muted-foreground hover:text-foreground"
@@ -489,17 +495,17 @@ export function NotificationsChannelsClient({
               {form.type === "telegram" && (
                 <>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+                    <label className="text-sm text-muted-foreground mb-1 flex items-center justify-between">
                       Telegram Token
-                      <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1 text-[11px]">
-                        Get from BotFather <ExternalLink className="w-3 h-3" />
+                      <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1 text-sm">
+                        Get from BotFather <ExternalLink className="w-3.5 h-3.5" />
                       </a>
                     </label>
                     <input className="input-field font-mono text-sm" placeholder="123456789:ABCdef..." value={telegramForm.token} onChange={(e) => setTelegramForm({ ...telegramForm, token: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                      Target <span className="text-[11px] text-muted-foreground/60">Use @username or numeric ID</span>
+                    <label className="text-sm text-muted-foreground mb-1 flex items-center justify-between">
+                      Target <span className="text-sm text-muted-foreground/60">Use @username or numeric ID</span>
                     </label>
                     <input className="input-field font-mono text-sm" placeholder="-1001234567890" value={telegramForm.target} onChange={(e) => setTelegramForm({ ...telegramForm, target: e.target.value })} />
                   </div>
@@ -510,31 +516,31 @@ export function NotificationsChannelsClient({
                 <>
                   <p className="text-sm font-medium">Fill the next fields.</p>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">SMTP Server</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">SMTP Server</label>
                     <input className="input-field font-mono text-sm" placeholder="smtp.gmail.com" value={emailForm.smtpServer} onChange={(e) => setEmailForm({ ...emailForm, smtpServer: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">SMTP Port</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">SMTP Port</label>
                     <input className="input-field font-mono text-sm" placeholder="587" type="number" value={emailForm.smtpPort} onChange={(e) => setEmailForm({ ...emailForm, smtpPort: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Username</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Username</label>
                     <input className="input-field" placeholder="username" value={emailForm.username} onChange={(e) => setEmailForm({ ...emailForm, username: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Password</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Password</label>
                     <input className="input-field" type="password" placeholder="****************" value={emailForm.password} onChange={(e) => setEmailForm({ ...emailForm, password: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">From Address</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">From Address</label>
                     <input className="input-field" placeholder="from@example.com" value={emailForm.fromAddress} onChange={(e) => setEmailForm({ ...emailForm, fromAddress: e.target.value })} />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground block">To Addresses</label>
+                    <label className="text-sm text-muted-foreground block">To Addresses</label>
                     {emailForm.toAddresses.map((address, index) => (
                       <div key={index} className="flex gap-2">
                         <input className="input-field" placeholder="email@example.com" value={address} onChange={(e) => updateEmailRecipient(index, e.target.value)} />
-                        <button type="button" onClick={() => removeEmailRecipient(index)} className="btn-secondary text-xs px-3" disabled={emailForm.toAddresses.length === 1}>
+                        <button type="button" onClick={() => removeEmailRecipient(index)} className="btn-secondary text-sm px-3" disabled={emailForm.toAddresses.length === 1}>
                           Remove
                         </button>
                       </div>
@@ -548,19 +554,31 @@ export function NotificationsChannelsClient({
 
               {form.type === "discord" && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Webhook URL</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">Webhook URL</label>
                   <input className="input-field font-mono text-sm" placeholder="https://discord.com/api/webhooks/..." value={discordForm.webhookUrl} onChange={(e) => setDiscordForm({ webhookUrl: e.target.value })} />
+                </div>
+              )}
+
+              {form.type === "slack" && (
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">Incoming webhook URL</label>
+                  <input
+                    className="input-field font-mono text-sm"
+                    placeholder="https://hooks.slack.com/services/..."
+                    value={slackForm.webhookUrl}
+                    onChange={(e) => setSlackForm({ webhookUrl: e.target.value })}
+                  />
                 </div>
               )}
 
               {form.type === "lark" && (
                 <>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Webhook URL</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Webhook URL</label>
                     <input className="input-field font-mono text-sm" placeholder="https://open.larksuite.com/open-apis/bot/v2/hook/..." value={larkForm.webhookUrl} onChange={(e) => setLarkForm({ ...larkForm, webhookUrl: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Secret (optional)</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Secret (optional)</label>
                     <input className="input-field" placeholder="Lark signing secret" value={larkForm.secret} onChange={(e) => setLarkForm({ ...larkForm, secret: e.target.value })} />
                   </div>
                 </>
@@ -568,7 +586,7 @@ export function NotificationsChannelsClient({
 
               {form.type === "microsoft-teams" && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Incoming Webhook URL</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">Incoming Webhook URL</label>
                   <input className="input-field font-mono text-sm" placeholder="https://outlook.office.com/webhook/..." value={teamsForm.webhookUrl} onChange={(e) => setTeamsForm({ webhookUrl: e.target.value })} />
                 </div>
               )}
@@ -576,15 +594,15 @@ export function NotificationsChannelsClient({
               {form.type === "resend" && (
                 <>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">API Key</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">API Key</label>
                     <input className="input-field" placeholder="re_..." value={resendForm.apiKey} onChange={(e) => setResendForm({ ...resendForm, apiKey: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">From Address</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">From Address</label>
                     <input className="input-field" placeholder="alerts@yourdomain.com" value={resendForm.fromAddress} onChange={(e) => setResendForm({ ...resendForm, fromAddress: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">To Address</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">To Address</label>
                     <input className="input-field" placeholder="team@yourdomain.com" value={resendForm.toAddress} onChange={(e) => setResendForm({ ...resendForm, toAddress: e.target.value })} />
                   </div>
                 </>
@@ -593,15 +611,15 @@ export function NotificationsChannelsClient({
               {form.type === "gotify" && (
                 <>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Server URL</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Server URL</label>
                     <input className="input-field font-mono text-sm" placeholder="https://gotify.example.com" value={gotifyForm.serverUrl} onChange={(e) => setGotifyForm({ ...gotifyForm, serverUrl: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">App Token</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">App Token</label>
                     <input className="input-field" placeholder="Gotify app token" value={gotifyForm.appToken} onChange={(e) => setGotifyForm({ ...gotifyForm, appToken: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Priority</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Priority</label>
                     <input className="input-field" type="number" min={1} max={10} value={gotifyForm.priority} onChange={(e) => setGotifyForm({ ...gotifyForm, priority: e.target.value })} />
                   </div>
                 </>
@@ -610,15 +628,15 @@ export function NotificationsChannelsClient({
               {form.type === "ntfy" && (
                 <>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Server URL</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Server URL</label>
                     <input className="input-field font-mono text-sm" placeholder="https://ntfy.sh" value={ntfyForm.serverUrl} onChange={(e) => setNtfyForm({ ...ntfyForm, serverUrl: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Topic</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Topic</label>
                     <input className="input-field" placeholder="weehawk-alerts" value={ntfyForm.topic} onChange={(e) => setNtfyForm({ ...ntfyForm, topic: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Access Token (optional)</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Access Token (optional)</label>
                     <input className="input-field" placeholder="Bearer token" value={ntfyForm.token} onChange={(e) => setNtfyForm({ ...ntfyForm, token: e.target.value })} />
                   </div>
                 </>
@@ -627,32 +645,20 @@ export function NotificationsChannelsClient({
               {form.type === "pushover" && (
                 <>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">User Key</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">User Key</label>
                     <input className="input-field" placeholder="Pushover user key" value={pushoverForm.userKey} onChange={(e) => setPushoverForm({ ...pushoverForm, userKey: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">App Token</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">App Token</label>
                     <input className="input-field" placeholder="Pushover API token" value={pushoverForm.appToken} onChange={(e) => setPushoverForm({ ...pushoverForm, appToken: e.target.value })} />
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Device (optional)</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Device (optional)</label>
                     <input className="input-field" placeholder="iphone-15" value={pushoverForm.device} onChange={(e) => setPushoverForm({ ...pushoverForm, device: e.target.value })} />
                   </div>
                 </>
               )}
 
-              {form.type === "stack" && (
-                <>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Webhook URL</label>
-                    <input className="input-field font-mono text-sm" placeholder="https://stack.example.com/hooks/..." value={stackForm.webhookUrl} onChange={(e) => setStackForm({ ...stackForm, webhookUrl: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Project / Workspace (optional)</label>
-                    <input className="input-field" placeholder="core-platform" value={stackForm.project} onChange={(e) => setStackForm({ ...stackForm, project: e.target.value })} />
-                  </div>
-                </>
-              )}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -683,15 +689,27 @@ export function NotificationsChannelsClient({
               </div>
             </motion.div>
           </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
         )}
 
-        {showChannelAction && actionChannel && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-y-0 left-64 right-0 z-50 bg-black/55 backdrop-blur-[2px] flex items-center justify-center p-4">
+      {typeof document !== "undefined" &&
+        createPortal(
+        <AnimatePresence>
+          {showChannelAction && actionChannel && (
+            <motion.div
+              key="channel-actions"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
+            >
             <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} className="w-full max-w-xl glass-panel rounded-2xl border border-primary/25 p-5">
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
-                  <h3 className="text-sm font-semibold">Channel Actions</h3>
-                  <p className="text-xs text-muted-foreground mt-1">{actionChannel.name}</p>
+                  <h3 className="text-lg font-semibold">Channel Actions</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{actionChannel.name}</p>
                 </div>
                 <button
                   type="button"
@@ -699,7 +717,7 @@ export function NotificationsChannelsClient({
                     setShowChannelAction(false);
                     setActionMessage("");
                   }}
-                  className="btn-secondary text-xs"
+                  className="btn-secondary text-sm"
                 >
                   Close
                 </button>
@@ -707,7 +725,7 @@ export function NotificationsChannelsClient({
 
               <div className="space-y-3 mb-4">
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Message</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">Message</label>
                   <textarea className="input-field min-h-[110px] resize-none" placeholder="Write a message to send..." value={actionMessage} onChange={(e) => setActionMessage(e.target.value)} />
                 </div>
               </div>
@@ -731,14 +749,20 @@ export function NotificationsChannelsClient({
               </div>
             </motion.div>
           </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
         )}
-      </AnimatePresence>
       {!loading && !listError && channels.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-12 text-center">
-          <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4"><Bell className="w-8 h-8 text-muted-foreground" /></div>
-          <h3 className="font-semibold mb-1">No channels configured</h3>
-          <p className="text-muted-foreground text-sm mb-5">Add your first provider to start receiving notifications.</p>
-          <button type="button" onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2 mx-auto"><Plus className="w-4 h-4" />Add Channel</button>
+        <div className="glass-panel backdrop-blur-none p-12 rounded-2xl flex flex-col items-center justify-center text-center">
+          <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
+            <Bell className="w-10 h-10 text-muted-foreground" />
+          </div>
+          <h3 className="text-xl font-bold mb-2">No channels configured</h3>
+          <p className="text-muted-foreground mb-8 max-w-md">Add your first provider to start receiving notifications.</p>
+          <button type="button" onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
+            <Plus className="w-5 h-5" /> Add Channel
+          </button>
         </div>
       ) : (
         <>
@@ -765,7 +789,7 @@ export function NotificationsChannelsClient({
                       <h3 className="font-semibold text-lg leading-tight truncate" title={ch.name}>
                         {ch.name}
                       </h3>
-                      <p className="text-xs text-muted-foreground mt-1 truncate">
+                      <p className="text-sm text-muted-foreground mt-1 truncate">
                         {channelTypeLabel(ch.type)}
                       </p>
                     </div>
@@ -806,28 +830,28 @@ export function NotificationsChannelsClient({
                       onClick={() => toggleReveal(ch.id)}
                       className="hover:text-foreground transition-colors flex-shrink-0"
                     >
-                      {revealedTokens.has(ch.id) ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      {revealedTokens.has(ch.id) ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                  <p className="text-xs font-mono truncate">Target: {ch.targetPreview}</p>
+                  <p className="text-sm font-mono truncate">Target: {ch.targetPreview}</p>
                 </div>
 
-                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
-                  <div className="flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
+                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-sm text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-4 h-4" />
                     {formatDateUTC(ch.createdAt)}
                   </div>
                   <button
                     type="button"
                     onClick={() => openChannelActions(ch.id, ch.name)}
                     disabled={sendMutation.isPending || testMutation.isPending}
-                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 text-xs disabled:opacity-50"
+                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 text-sm disabled:opacity-50"
                     title="Send/Test actions"
                   >
                     {sendMutation.isPending || testMutation.isPending ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
+                      <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
-                      <SendHorizontal className="w-3 h-3" />
+                      <SendHorizontal className="w-4 h-4" />
                     )}
                     Actions
                   </button>

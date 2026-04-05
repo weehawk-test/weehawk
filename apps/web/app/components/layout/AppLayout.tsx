@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { useRequireAuth, useAuth } from "@/contexts/auth-context";
+import { SidebarLayoutProvider } from "@/contexts/sidebar-layout-context";
 import { SignInPage } from "@/components/auth/sign-in-page";
 
 interface AppLayoutProps {
@@ -37,14 +38,16 @@ export function AppLayout({ children }: AppLayoutProps) {
     pathname.startsWith("/secrets/");
 
   return (
-    <div className="flex min-h-screen bg-background relative overflow-hidden">
-      <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-white/[0.04] rounded-full blur-[120px] pointer-events-none" />
-      <div className="fixed bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-white/[0.03] rounded-full blur-[100px] pointer-events-none" />
+    <SidebarLayoutProvider>
+      <div className="flex min-h-screen bg-background relative overflow-hidden">
+        <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-primary/[0.06] dark:bg-white/[0.04] rounded-full blur-[120px] pointer-events-none" />
+        <div className="fixed bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-primary/[0.04] dark:bg-white/[0.03] rounded-full blur-[100px] pointer-events-none" />
 
-      <Sidebar variant={dockerShell ? "docker" : "main"} />
-      <main className="flex-1 ml-64 overflow-y-auto relative z-10 min-h-screen">
-        <div className="max-w-6xl mx-auto p-8">{children}</div>
-      </main>
-    </div>
+        <Sidebar variant={dockerShell ? "docker" : "main"} />
+        <main className="flex-1 overflow-y-auto relative z-10 min-h-screen ml-[var(--app-sidebar-width)] transition-[margin-left] duration-200 ease-out">
+          <div className="max-w-6xl mx-auto p-8">{children}</div>
+        </main>
+      </div>
+    </SidebarLayoutProvider>
   );
 }

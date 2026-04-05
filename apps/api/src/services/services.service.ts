@@ -66,6 +66,13 @@ export class ServicesService {
     private readonly traefikService: TraefikService,
   ) {}
 
+  private isCloudEdition(): boolean {
+    return (
+      (this.configService.get<string>('WEEHAWK_EDITION') ?? 'selfhosted').toLowerCase() ===
+      'cloud'
+    );
+  }
+
   async create(createServiceDto: CreateServiceDto) {
     const {
       projectId,
@@ -1955,6 +1962,10 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     if (updateServiceDto.remoteServerId !== undefined) {
       if (updateServiceDto.remoteServerId !== null) {
         await this.assertDeployRemoteServer(updateServiceDto.remoteServerId);
+      } else if (this.isCloudEdition()) {
+        throw new BadRequestException(
+          'Weehawk Cloud does not allow clearing the deploy host; workloads must run on an SSH-connected server.',
+        );
       }
     }
     if (updateServiceDto.buildRemoteServerId !== undefined) {

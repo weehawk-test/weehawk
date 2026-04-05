@@ -7,7 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import * as path from 'path';
 import { Repository } from 'typeorm';
-import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationService } from '../notifications/notification.service';
 import {
   createBackupTempDir,
   removeBackupTempDir,
@@ -53,7 +53,7 @@ export class WebhooksService {
     private readonly webhookRepo: Repository<Webhook>,
     private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
-    private readonly notificationsService: NotificationsService,
+    private readonly notificationsService: NotificationService,
     private readonly s3Service: S3Service,
   ) {}
 

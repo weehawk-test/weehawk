@@ -20,7 +20,11 @@ export type AuthResponse = {
   firstName: string;
   lastName: string;
   email: string;
+  /** Omitted in older cached sessions; treat as unverified. */
+  emailVerified?: boolean;
   imageUrl: string | null;
+  role?: string;
+  provider?: string;
 };
 
 export type SetupStatus = {
@@ -73,4 +77,51 @@ export async function logoutApi(email?: string): Promise<void> {
     body: JSON.stringify({ email }),
     credentials: "include",
   });
+}
+
+export async function forgotPassword(email: string): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ token, newPassword }),
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function confirmEmail(token: string): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/confirm-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ token }),
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function confirmEmailChange(token: string): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/confirm-email-change`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({ token }),
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
 }

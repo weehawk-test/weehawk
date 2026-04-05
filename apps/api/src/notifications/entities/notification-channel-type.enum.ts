@@ -1,6 +1,6 @@
 export enum NotificationChannelType {
   TELEGRAM = 'telegram',
-  STACK = 'stack',
+  SLACK = 'slack',
   DISCORD = 'discord',
   LARK = 'lark',
   MICROSOFT_TEAMS = 'microsoft-teams',

@@ -1,7 +1,12 @@
 import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
 
-export type ProviderResult = { ok: true } | { ok: false; description: string };
+export type ProviderSendResult =
+  | { ok: true; response?: string | Record<string, unknown> }
+  | { ok: false; description: string; response?: string | Record<string, unknown> };
+
+/** @deprecated Prefer ProviderSendResult; kept for HTTP helpers. */
+export type ProviderResult = ProviderSendResult;
 
 export type ChannelPreview = {
   credentialPreview: string;

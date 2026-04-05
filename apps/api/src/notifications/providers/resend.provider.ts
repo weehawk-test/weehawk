@@ -1,39 +1,29 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { NotificationResend } from '../entities/notification-resend.entity';
+import { Notification } from '../entities/notification.entity';
+import { notificationPlainText } from '../notification-format';
+import { channelConfigRecord } from './channel-config';
 import { NotificationProvider } from './notification-provider.interface';
-import { ChannelPreview, ProviderResult } from './provider.types';
+import { ChannelPreview, ProviderSendResult } from './provider.types';
 import { postJson, readString } from './http-utils';
 
 @Injectable()
 export class ResendProvider implements NotificationProvider {
   readonly type = NotificationChannelType.RESEND;
 
-  constructor(
-    @InjectRepository(NotificationResend)
-    private readonly repo: Repository<NotificationResend>,
-  ) {}
-
-  async saveConfig(
-    channelId: string,
-    config: Record<string, unknown>,
-  ): Promise<void> {
-    await this.repo.save(
-      this.repo.create({
-        channelId,
-        apiKey: readString(config, 'apiKey'),
-        fromAddress: readString(config, 'fromAddress'),
-        toAddress: readString(config, 'toAddress'),
-      }),
-    );
+  normalizeConfig(config: Record<string, unknown>): Record<string, unknown> {
+    return {
+      apiKey: readString(config, 'apiKey'),
+      fromAddress: readString(config, 'fromAddress'),
+      toAddress: readString(config, 'toAddress'),
+    };
   }
 
-  async preview(channelId: string): Promise<ChannelPreview> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const apiKey = row?.apiKey?.trim() ?? '';
-    const toAddress = row?.toAddress?.trim() ?? '';
+  async preview(channel: NotificationChannel): Promise<ChannelPreview> {
+    const cfg = channelConfigRecord(channel);
+    const apiKey = readString(cfg, 'apiKey');
+    const toAddress = readString(cfg, 'toAddress');
     return {
       credentialPreview: apiKey ? `key•••${apiKey.slice(-6)}` : 'not set',
       targetPreview: toAddress || 'resend',
@@ -41,15 +31,13 @@ export class ResendProvider implements NotificationProvider {
   }
 
   async send(
-    channelId: string,
-    channelName: string,
-    message: string,
-  ): Promise<ProviderResult> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    if (!row) return { ok: false, description: 'Missing Resend configuration' };
-    const apiKey = row.apiKey.trim();
-    const fromAddress = row.fromAddress.trim();
-    const toAddress = row.toAddress.trim();
+    channel: NotificationChannel,
+    notification: Notification,
+  ): Promise<ProviderSendResult> {
+    const cfg = channelConfigRecord(channel);
+    const apiKey = readString(cfg, 'apiKey');
+    const fromAddress = readString(cfg, 'fromAddress');
+    const toAddress = readString(cfg, 'toAddress');
     if (!apiKey || !fromAddress || !toAddress) {
       return { ok: false, description: 'Missing Resend API key/from/to' };
     }
@@ -58,8 +46,10 @@ export class ResendProvider implements NotificationProvider {
       {
         from: fromAddress,
         to: [toAddress],
-        subject: `Weehawk Notification - ${channelName}`,
-        text: message,
+        subject: notification.title.trim()
+          ? `Weehawk — ${notification.title}`
+          : `Weehawk Notification — ${channel.name}`,
+        text: notificationPlainText(notification),
       },
       { Authorization: `Bearer ${apiKey}` },
     );

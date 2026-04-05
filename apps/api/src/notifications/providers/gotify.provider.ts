@@ -1,39 +1,29 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { NotificationGotify } from '../entities/notification-gotify.entity';
+import { Notification } from '../entities/notification.entity';
+import { notificationPlainText } from '../notification-format';
+import { channelConfigRecord } from './channel-config';
 import { NotificationProvider } from './notification-provider.interface';
-import { ChannelPreview, ProviderResult } from './provider.types';
+import { ChannelPreview, ProviderSendResult } from './provider.types';
 import { postJson, readString } from './http-utils';
 
 @Injectable()
 export class GotifyProvider implements NotificationProvider {
   readonly type = NotificationChannelType.GOTIFY;
 
-  constructor(
-    @InjectRepository(NotificationGotify)
-    private readonly repo: Repository<NotificationGotify>,
-  ) {}
-
-  async saveConfig(
-    channelId: string,
-    config: Record<string, unknown>,
-  ): Promise<void> {
+  normalizeConfig(config: Record<string, unknown>): Record<string, unknown> {
     const priority = Number.parseInt(readString(config, 'priority') || '5', 10);
-    await this.repo.save(
-      this.repo.create({
-        channelId,
-        serverUrl: readString(config, 'serverUrl'),
-        appToken: readString(config, 'appToken'),
-        priority: Number.isFinite(priority) ? priority : 5,
-      }),
-    );
+    return {
+      serverUrl: readString(config, 'serverUrl'),
+      appToken: readString(config, 'appToken'),
+      priority: Number.isFinite(priority) ? priority : 5,
+    };
   }
 
-  async preview(channelId: string): Promise<ChannelPreview> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const serverUrl = row?.serverUrl?.trim() ?? '';
+  async preview(channel: NotificationChannel): Promise<ChannelPreview> {
+    const cfg = channelConfigRecord(channel);
+    const serverUrl = readString(cfg, 'serverUrl');
     return {
       credentialPreview: serverUrl
         ? `server•••${serverUrl.slice(-10)}`
@@ -43,21 +33,21 @@ export class GotifyProvider implements NotificationProvider {
   }
 
   async send(
-    channelId: string,
-    channelName: string,
-    message: string,
-  ): Promise<ProviderResult> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    if (!row) return { ok: false, description: 'Missing Gotify configuration' };
-    const serverUrl = row.serverUrl.trim();
-    const appToken = row.appToken.trim();
-    if (!serverUrl || !appToken)
+    channel: NotificationChannel,
+    notification: Notification,
+  ): Promise<ProviderSendResult> {
+    const cfg = channelConfigRecord(channel);
+    const serverUrl = readString(cfg, 'serverUrl');
+    const appToken = readString(cfg, 'appToken');
+    const priority = Number(cfg['priority']);
+    if (!serverUrl || !appToken) {
       return { ok: false, description: 'Missing Gotify server/app token' };
+    }
     const url = `${serverUrl.replace(/\/+$/, '')}/message?token=${encodeURIComponent(appToken)}`;
     return postJson(url, {
-      title: channelName,
-      message,
-      priority: row.priority ?? 5,
+      title: notification.title.trim() || channel.name,
+      message: notificationPlainText(notification),
+      priority: Number.isFinite(priority) ? priority : 5,
     });
   }
 }

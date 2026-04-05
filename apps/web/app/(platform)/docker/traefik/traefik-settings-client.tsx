@@ -16,7 +16,7 @@ function CopyBlock({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
   const empty = !text.trim();
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 overflow-hidden">
+    <div className="rounded-xl border border-border bg-muted/60 dark:bg-black/20 overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 bg-white/[0.03]">
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
         <button
@@ -119,7 +119,7 @@ export function TraefikSettingsClient() {
               Enter your Let&apos;s Encrypt email and the domain where you want the Weehawk UI (port{" "}
               <span className="font-mono text-zinc-300">3000</span> on this server). Copy the generated files, deploy
               Traefik, then put the dynamic YAML on disk as shown. Project{" "}
-              <Link href="/projects" className="text-primary hover:underline">
+              <Link href="/" className="text-primary hover:underline">
                 Domains
               </Link>{" "}
               for apps still use the <span className="font-mono">weehawk</span> overlay.

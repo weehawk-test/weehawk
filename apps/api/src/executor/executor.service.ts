@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   HttpException,
   Injectable,
   InternalServerErrorException,
@@ -113,6 +114,15 @@ export class ExecutorService {
     options?: ExecuteDeployOptions,
   ) {
     const service = await this.servicesService.findOne(id);
+    const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
+    const cloudEdition =
+      (this.configService.get<string>('WEEHAWK_EDITION') ?? 'selfhosted').toLowerCase() ===
+      'cloud';
+    if (cloudEdition && sshTargets.remoteServerId == null) {
+      throw new BadRequestException(
+        'Weehawk Cloud requires a remote deploy host. Open the service, set Remote Docker host, and save before deploying.',
+      );
+    }
     const rawConfig = (service.dockerConfig || '').trim();
     if (!rawConfig) {
       if (service.composeType === composeType.DATABASES) {

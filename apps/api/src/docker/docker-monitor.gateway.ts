@@ -32,7 +32,6 @@ export class DockerMonitorGateway implements OnGatewayConnection {
     const topic = (url.searchParams.get('topic') ?? 'stats').toLowerCase();
     const allowedTopics = new Set([
       'stats',
-      'overview',
       'containers.paged',
       'services.paged',
       'images.paged',
@@ -82,28 +81,6 @@ export class DockerMonitorGateway implements OnGatewayConnection {
       }
     };
 
-    const sendOverview = async () => {
-      if (disposed || client.readyState !== 1) return;
-      try {
-        const [containers, stats] = await Promise.all([
-          this.dockerService.getContainers(),
-          this.dockerService.getSystemStats(),
-        ]);
-        if (disposed || client.readyState !== 1) return;
-        client.send(
-          JSON.stringify({
-            type: 'overview',
-            at: Date.now(),
-            data: { containers, stats },
-          }),
-        );
-      } catch (e) {
-        if (disposed || client.readyState !== 1) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        client.send(JSON.stringify({ type: 'error', message: msg }));
-      }
-    };
-
     const sendPaged = async () => {
       if (disposed || client.readyState !== 1) return;
       try {
@@ -141,16 +118,10 @@ export class DockerMonitorGateway implements OnGatewayConnection {
       }
     };
 
-    if (topic === 'overview') await sendOverview();
-    else if (topic === 'stats') await sendStats();
+    if (topic === 'stats') await sendStats();
     else await sendPaged();
     const activeTimer = setInterval(
-      () =>
-        void (topic === 'overview'
-          ? sendOverview()
-          : topic === 'stats'
-            ? sendStats()
-            : sendPaged()),
+      () => void (topic === 'stats' ? sendStats() : sendPaged()),
       intervalMs,
     );
 

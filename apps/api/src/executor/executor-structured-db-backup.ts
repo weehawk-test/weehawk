@@ -82,7 +82,7 @@ export async function runStructuredDatabaseBackup(
   const outDir = path.resolve(destDir);
   const ts = Date.now();
 
-  // نستخدم Buffer كافتراضي للجميع للتعامل مع البيانات الثنائية (Binary Data)
+  // Use Buffer for all modes so binary pg_dump output is handled correctly.
   const optsBuf = {
     cwd: deployDir,
     env: envMerged,
@@ -100,21 +100,21 @@ export async function runStructuredDatabaseBackup(
         const u = shQuoteSingle(user);
         const d = shQuoteSingle(db);
 
-        // بناء الأمر بناءً على التنسيق المختار
+        // Build the dump command for the selected format.
         let dumpCmd = `pg_dump -w -U '${u}'`;
         if (fmt === 'postgres_custom_gzip') {
-          dumpCmd += ` -Fc`; // Custom format (مضغوط تلقائياً)
+          dumpCmd += ` -Fc`; // Custom format (compressed by default)
         } else if (fmt === 'postgres_tar_gzip') {
           dumpCmd += ` -Ft`; // Tar format
         }
-        // ملاحظة: الـ SQL العادي لا يحتاج flag إضافي، وسيخرج لـ stdout
-        
+        // Plain SQL needs no extra format flag; output goes to stdout.
+
         dumpCmd += ` '${d}'`;
 
         const inner = PG_CONTAINER_PASSWORD_SETUP + `exec ${dumpCmd}`;
         const args = dockerExecArgs(containerId, ['sh', '-c', inner]);
         
-        // تنفيذ الأمر واستلام النتيجة كـ Buffer
+        // Run the command and capture stdout as a Buffer.
         const r = await execFileAsync('docker', args, optsBuf);
         const stdout = r.stdout as Buffer;
         const stderr = r.stderr ? r.stderr.toString('utf8') : '';
@@ -137,7 +137,7 @@ export async function runStructuredDatabaseBackup(
         const archiveBasename = `db-${appNameForFile}-${ts}.${ext}`;
         const fullPath = path.join(outDir, archiveBasename);
 
-        // إذا كان التنسيق SQL عادي، نقوم بضغطه يدوياً. التنسيقات الأخرى تُحفظ كما هي.
+        // Gzip plain SQL ourselves; other formats are written as returned by pg_dump.
         if (fmt === 'postgres_sql_gzip') {
           await fs.writeFile(fullPath, gzipSync(stdout));
         } else {

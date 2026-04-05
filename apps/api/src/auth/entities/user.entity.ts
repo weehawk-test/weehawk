@@ -60,6 +60,9 @@ export class User {
   @Column({ name: 'last_login', type: 'timestamp', nullable: true })
   lastLogin: Date | null = null;
 
+  @Column({ name: 'email_verified', type: 'boolean', default: false })
+  emailVerified!: boolean;
+
   @OneToMany(() => RefreshToken, (rt) => rt.user)
   refreshTokens?: RefreshToken[];
 }

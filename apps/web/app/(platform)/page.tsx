@@ -1,6 +1,31 @@
-import { HomePageClient } from "./home-page-client";
+import ProjectsClient from "./projects/ProjectsClient";
+import { fetchProjectsSSR } from "@/lib/server-fetch";
+import type { ProjectsPageResponse } from "@/lib/projects-api";
 
-/** Root route must stay a Server Component; client UI lives in `home-page-client.tsx` to avoid Turbopack mis-bundling `page.tsx` as RSC while it contains hooks. */
-export default function Page() {
-  return <HomePageClient />;
+export default async function HomeProjectsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string; q?: string }>;
+}) {
+  const sp = await searchParams;
+  const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
+  const q = typeof sp.q === "string" ? sp.q : "";
+
+  let initialPageData: ProjectsPageResponse | undefined;
+  let initialError: string | null = null;
+
+  try {
+    initialPageData = await fetchProjectsSSR(page, q);
+  } catch (e) {
+    initialError = e instanceof Error ? e.message : "Unknown error";
+  }
+
+  return (
+    <ProjectsClient
+      urlPage={page}
+      urlQ={q}
+      initialPageData={initialPageData}
+      initialError={initialError}
+    />
+  );
 }

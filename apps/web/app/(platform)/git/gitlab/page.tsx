@@ -134,7 +134,7 @@ export default function GitLabGitSettingsPage() {
             href="https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:text-white"
+            className="underline underline-offset-2 hover:text-foreground"
           >
             Personal Access Token
           </a>{" "}
@@ -143,13 +143,13 @@ export default function GitLabGitSettingsPage() {
             href="https://docs.gitlab.com/ee/user/group/settings/group_access_tokens.html"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:text-white"
+            className="underline underline-offset-2 hover:text-foreground"
           >
             Group access token
           </a>
           ) with at least{" "}
-          <code className="rounded bg-black/30 px-1 text-[11px]">read_api</code> and{" "}
-          <code className="rounded bg-black/30 px-[3px] text-[11px]">read_repository</code> for private repos. Paste it below and save.
+          <code className="rounded bg-muted px-1 text-[11px] dark:bg-black/30">read_api</code> and{" "}
+          <code className="rounded bg-muted px-[3px] text-[11px] dark:bg-black/30">read_repository</code> for private repos. Paste it below and save.
         </p>
       </div>
 

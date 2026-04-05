@@ -85,12 +85,12 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
     privateKey.trim().length >= 64;
 
   return (
-    <div className="mt-5 space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-4 sm:p-5 text-left">
+    <div className="mt-5 space-y-4 rounded-xl border border-border bg-white/[0.02] p-4 sm:p-5 text-left">
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-primary">SSH connection</p>
         <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-          Generate a key or paste your own, add the public key to the server, then save. Keys are stored encrypted
-          on the API when <code className="text-[11px] bg-muted/60 px-1 rounded">WEEHAWK_ENCRYPTION_KEY</code> is set.
+          Generate a key or paste your own, add the public key to the server, then save. Keys are stored encrypted on
+          the database.
         </p>
       </div>
 
@@ -124,7 +124,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
               className={`flex-1 min-w-[120px] text-left rounded-lg border px-3 py-2 transition-colors ${
                 serverRole === opt.value
                   ? "border-primary/40 bg-primary/10 text-foreground"
-                  : "border-white/10 bg-black/20 text-muted-foreground hover:border-white/20"
+                  : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
               }`}
             >
               <span className="text-xs font-medium block">{opt.title}</span>
@@ -143,7 +143,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
               setName(e.target.value);
               setSavedRow(null);
             }}
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-black/40 px-3 py-2 text-sm"
             placeholder="Production"
           />
         </label>
@@ -155,7 +155,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
               setHost(e.target.value);
               setSavedRow(null);
             }}
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-black/40 px-3 py-2 text-sm"
             placeholder="203.0.113.10"
           />
         </label>
@@ -167,7 +167,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
               setPort(e.target.value);
               setSavedRow(null);
             }}
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-black/40 px-3 py-2 text-sm"
             placeholder="22"
           />
         </label>
@@ -179,7 +179,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
               setSshUser(e.target.value);
               setSavedRow(null);
             }}
-            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-border bg-black/40 px-3 py-2 text-sm"
             placeholder="deploy"
           />
         </label>
@@ -192,7 +192,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
               setGeneratedPublicKey(null);
               setSavedRow(null);
             }}
-            className="w-full min-h-[120px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs font-mono"
+            className="w-full min-h-[120px] rounded-lg border border-border bg-black/40 px-3 py-2 text-xs font-mono"
             placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
             spellCheck={false}
             autoComplete="off"

@@ -28,14 +28,18 @@ export default async function RootLayout({
 }>) {
   const profile = await fetchUserProfileSSR();
   const initialUser = profile
-    ? { email: profile.email, firstName: profile.firstName, lastName: profile.lastName }
+    ? {
+        email: profile.email,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        emailVerified: profile.emailVerified ?? false,
+      }
     : null;
 
   return (
     <html
       lang="en"
       className={`${fontSans.variable} ${fontMono.variable} h-full`}
-      style={{ backgroundColor: "hsl(0, 0%, 2%)" }}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background">

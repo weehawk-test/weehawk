@@ -69,7 +69,7 @@ export default function OnboardingSshPage() {
           href="/onboarding/server"
           className="text-primary hover:underline underline-offset-4"
         >
-          ← Back to step 1
+          Back to step 1
         </Link>
       </p>
       <RegisterRemoteServerOnboarding accessToken={token} />

@@ -1,41 +1,29 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { NotificationTelegram } from '../entities/notification-telegram.entity';
+import { Notification } from '../entities/notification.entity';
 import { sendTelegramMessage } from '../telegram-api';
+import { notificationPlainText } from '../notification-format';
+import { channelConfigRecord } from './channel-config';
 import { NotificationProvider } from './notification-provider.interface';
-import { ChannelPreview, ProviderResult } from './provider.types';
+import { ChannelPreview, ProviderSendResult } from './provider.types';
 import { readString } from './http-utils';
 
 @Injectable()
 export class TelegramProvider implements NotificationProvider {
   readonly type = NotificationChannelType.TELEGRAM;
 
-  constructor(
-    @InjectRepository(NotificationTelegram)
-    private readonly repo: Repository<NotificationTelegram>,
-  ) {}
-
-  async saveConfig(
-    channelId: string,
-    config: Record<string, unknown>,
-  ): Promise<void> {
-    const token = readString(config, 'token');
-    const target = readString(config, 'target');
-    await this.repo.save(
-      this.repo.create({
-        channelId,
-        token,
-        target,
-      }),
-    );
+  normalizeConfig(config: Record<string, unknown>): Record<string, unknown> {
+    return {
+      token: readString(config, 'token'),
+      target: readString(config, 'target'),
+    };
   }
 
-  async preview(channelId: string): Promise<ChannelPreview> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const token = row?.token?.trim() ?? '';
-    const target = row?.target?.trim() ?? '';
+  async preview(channel: NotificationChannel): Promise<ChannelPreview> {
+    const cfg = channelConfigRecord(channel);
+    const token = readString(cfg, 'token');
+    const target = readString(cfg, 'target');
     return {
       credentialPreview: token ? `token•••${token.slice(-6)}` : 'not set',
       targetPreview: target || 'not set',
@@ -43,16 +31,16 @@ export class TelegramProvider implements NotificationProvider {
   }
 
   async send(
-    channelId: string,
-    _channelName: string,
-    message: string,
-  ): Promise<ProviderResult> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const token = row?.token?.trim() ?? '';
-    const target = row?.target?.trim() ?? '';
+    channel: NotificationChannel,
+    notification: Notification,
+  ): Promise<ProviderSendResult> {
+    const cfg = channelConfigRecord(channel);
+    const token = readString(cfg, 'token');
+    const target = readString(cfg, 'target');
     if (!token || !target) {
       return { ok: false, description: 'Missing Telegram token/target' };
     }
-    return sendTelegramMessage(token, target, message);
+    const text = notificationPlainText(notification);
+    return sendTelegramMessage(token, target, text);
   }
 }

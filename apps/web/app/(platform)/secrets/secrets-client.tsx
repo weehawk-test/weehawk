@@ -79,7 +79,7 @@ function CreateSecretModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-y-0 left-64 right-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-y-0 left-[var(--app-sidebar-width)] right-0 z-50 flex items-center justify-center p-4 modal-scrim">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -174,7 +174,7 @@ function EditSecretModal({ secret, onClose }: { secret: DockerSecretListItem; on
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 modal-scrim">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}

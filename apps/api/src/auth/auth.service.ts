@@ -2,6 +2,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -16,14 +17,18 @@ import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuthProvider } from './auth-provider.enum';
+import { EmailConfirmationService } from '../email/email-confirmation.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly refreshTokenService: RefreshTokenService,
+    private readonly emailConfirmationService: EmailConfirmationService,
   ) {}
 
   /** `cloud` = multi-tenant style open registration; default `selfhosted` = first user only. */
@@ -67,10 +72,18 @@ export class AuthService {
       email: dto.email.toLowerCase(),
       passwordHash: hash,
       authProvider: AuthProvider.LOCAL,
+      emailVerified: false,
       createdAt: now,
       updatedAt: now,
     });
     const saved = await this.userRepo.save(user);
+    try {
+      await this.emailConfirmationService.sendConfirmationEmail(saved);
+    } catch (err) {
+      this.logger.warn(
+        `Could not send confirmation email: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     const accessToken = this.generateAccessToken(saved);
     const refreshToken =
       await this.refreshTokenService.createRefreshToken(saved);
@@ -134,6 +147,7 @@ export class AuthService {
     if (user) {
       if (!user.googleId) user.googleId = googleId;
       user.authProvider = AuthProvider.GOOGLE;
+      user.emailVerified = true;
       // Do not sync name/avatar from Google on every login — user may have edited profile locally.
       user.lastLogin = now;
       user.updatedAt = now;
@@ -147,6 +161,7 @@ export class AuthService {
         authProvider: AuthProvider.GOOGLE,
         googleId,
         imageUrl,
+        emailVerified: true,
         createdAt: now,
         updatedAt: now,
         lastLogin: now,
@@ -209,6 +224,7 @@ export class AuthService {
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
+      emailVerified: user.emailVerified,
       imageUrl: user.imageUrl ?? null,
       role: 'USER',
       provider: user.authProvider ?? AuthProvider.LOCAL,

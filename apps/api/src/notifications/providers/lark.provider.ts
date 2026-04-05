@@ -1,37 +1,27 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { NotificationLark } from '../entities/notification-lark.entity';
+import { Notification } from '../entities/notification.entity';
+import { notificationPlainText } from '../notification-format';
+import { channelConfigRecord } from './channel-config';
 import { NotificationProvider } from './notification-provider.interface';
-import { ChannelPreview, ProviderResult } from './provider.types';
+import { ChannelPreview, ProviderSendResult } from './provider.types';
 import { postJson, readString } from './http-utils';
 
 @Injectable()
 export class LarkProvider implements NotificationProvider {
   readonly type = NotificationChannelType.LARK;
 
-  constructor(
-    @InjectRepository(NotificationLark)
-    private readonly repo: Repository<NotificationLark>,
-  ) {}
-
-  async saveConfig(
-    channelId: string,
-    config: Record<string, unknown>,
-  ): Promise<void> {
-    await this.repo.save(
-      this.repo.create({
-        channelId,
-        webhookUrl: readString(config, 'webhookUrl'),
-        secret: readString(config, 'secret') || null,
-      }),
-    );
+  normalizeConfig(config: Record<string, unknown>): Record<string, unknown> {
+    return {
+      webhookUrl: readString(config, 'webhookUrl'),
+      secret: readString(config, 'secret') || null,
+    };
   }
 
-  async preview(channelId: string): Promise<ChannelPreview> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const webhookUrl = row?.webhookUrl?.trim() ?? '';
+  async preview(channel: NotificationChannel): Promise<ChannelPreview> {
+    const cfg = channelConfigRecord(channel);
+    const webhookUrl = readString(cfg, 'webhookUrl');
     return {
       credentialPreview: webhookUrl
         ? `webhook•••${webhookUrl.slice(-10)}`
@@ -41,17 +31,18 @@ export class LarkProvider implements NotificationProvider {
   }
 
   async send(
-    channelId: string,
-    _channelName: string,
-    message: string,
-  ): Promise<ProviderResult> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const webhookUrl = row?.webhookUrl?.trim() ?? '';
-    if (!webhookUrl)
+    channel: NotificationChannel,
+    notification: Notification,
+  ): Promise<ProviderSendResult> {
+    const cfg = channelConfigRecord(channel);
+    const webhookUrl = readString(cfg, 'webhookUrl');
+    if (!webhookUrl) {
       return { ok: false, description: 'Missing Lark webhook URL' };
+    }
+    const text = notificationPlainText(notification);
     return postJson(webhookUrl, {
       msg_type: 'text',
-      content: { text: message },
+      content: { text },
     });
   }
 }

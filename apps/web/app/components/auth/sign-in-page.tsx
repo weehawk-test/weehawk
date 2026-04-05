@@ -216,18 +216,12 @@ export function SignInPage() {
           <div className="flex items-center justify-between gap-2">
             <Label htmlFor="password">Password</Label>
             {isCloud && !isRegisterForm && (
-              <button
-                type="button"
+              <Link
+                href="/forgot-password"
                 className="text-xs font-medium text-primary hover:underline shrink-0"
-                onClick={() =>
-                  toast({
-                    title: "Coming soon",
-                    description: "Password reset will be available in a future update.",
-                  })
-                }
               >
                 Forgot password?
-              </button>
+              </Link>
             )}
           </div>
           <PasswordInput

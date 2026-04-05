@@ -18,6 +18,7 @@ import {
 } from "@/lib/remote-servers-api";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
+import { isCloudEdition } from "@/lib/weehawk-edition";
 
 function emptyForm() {
   return {
@@ -51,6 +52,7 @@ function emptyEditDraft(): EditDraft {
 }
 
 export function RemoteServerSettingsClient() {
+  const hideLocalDockerHost = isCloudEdition();
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -210,22 +212,9 @@ export function RemoteServerSettingsClient() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Remote servers</h1>
             <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
-              Paste an OpenSSH private key, or use <strong>Generate key pair</strong>. Keys are stored{" "}
-              <strong>encrypted</strong> in the database.
-            </p>
-            <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed mt-1">
-              Mark each host as <strong>Deploy</strong> (runs stacks/containers) or <strong>Build</strong> (dedicated{" "}
-              <code className="text-foreground/80">docker build</code> over SSH for Swarm applications), similar to{" "}
-              <a
-                href="https://docs.dokploy.com/docs/core/remote-servers/build-server"
-                className="text-primary hover:underline"
-                target="_blank"
-                rel="noreferrer"
-              >
-                Dokploy
-              </a>
-              . Each host has an id: link a service deploy target or optional build host. Use <strong>Console</strong> for the
-              WeeDocker UI on that machine.
+              Connect and manage remote hosts via encrypted SSH keys. Assign each server a specific role,{" "}
+              <strong>Deploy</strong> for running containers and stacks, or <strong>Build</strong> to handle heavy Docker
+              builds externally.
             </p>
           </div>
         </div>
@@ -247,7 +236,7 @@ export function RemoteServerSettingsClient() {
         </div>
 
         {creating && (
-          <div className="glass-panel rounded-xl p-5 space-y-3 border border-white/10">
+          <div className="glass-panel rounded-xl p-5 space-y-3 border border-border">
             <p className="text-xs text-muted-foreground">New remote Docker host</p>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -289,7 +278,7 @@ export function RemoteServerSettingsClient() {
                     className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
                       form.serverRole === opt.value
                         ? "border-primary/40 bg-primary/10 text-foreground"
-                        : "border-white/10 bg-black/20 text-muted-foreground hover:border-white/20"
+                        : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
                     }`}
                   >
                     <span className="text-xs font-medium block">{opt.title}</span>
@@ -304,7 +293,7 @@ export function RemoteServerSettingsClient() {
                 <input
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                   placeholder="Production"
                 />
               </label>
@@ -313,7 +302,7 @@ export function RemoteServerSettingsClient() {
                 <input
                   value={form.host}
                   onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                   placeholder="203.0.113.10"
                 />
               </label>
@@ -322,7 +311,7 @@ export function RemoteServerSettingsClient() {
                 <input
                   value={form.port}
                   onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
-                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                   placeholder="22"
                 />
               </label>
@@ -331,7 +320,7 @@ export function RemoteServerSettingsClient() {
                 <input
                   value={form.sshUser}
                   onChange={(e) => setForm((f) => ({ ...f, sshUser: e.target.value }))}
-                  className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                   placeholder="deploy"
                 />
               </label>
@@ -343,7 +332,7 @@ export function RemoteServerSettingsClient() {
                     setForm((f) => ({ ...f, privateKey: e.target.value }));
                     setGeneratedPublicKey(null);
                   }}
-                  className="w-full min-h-[140px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-xs font-mono"
+                  className="w-full min-h-[140px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-xs font-mono"
                   placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
                   spellCheck={false}
                   autoComplete="off"
@@ -366,7 +355,7 @@ export function RemoteServerSettingsClient() {
                   setForm(emptyForm());
                   setGeneratedPublicKey(null);
                 }}
-                className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-muted-foreground"
+                className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground"
               >
                 Cancel
               </button>
@@ -375,35 +364,37 @@ export function RemoteServerSettingsClient() {
         )}
 
         <div className="space-y-2">
-          <div className="glass-panel rounded-xl border border-white/10 overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="font-medium text-sm truncate">Local Docker</p>
-                  <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
-                    Host
-                  </span>
+          {!hideLocalDockerHost ? (
+            <div className="glass-panel rounded-xl border border-border overflow-hidden">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-medium text-sm truncate">Local Docker</p>
+                    <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
+                      Host
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Docker engine on this machine (same console as remote hosts, no SSH).
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Docker engine on this machine (same console as remote hosts, no SSH).
-                </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Link
-                  href="/console/local/containers"
-                  scroll={false}
-                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-white/10 hover:bg-white/5"
-                  title="Open WeeDocker console for this host"
-                >
-                  <Terminal className="size-3.5" />
-                  Console
-                </Link>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Link
+                    href="/console/local/containers"
+                    scroll={false}
+                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
+                    title="Open WeeDocker console for this host"
+                  >
+                    <Terminal className="size-3.5" />
+                    Console
+                  </Link>
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
 
           {(list.data ?? []).length === 0 && !creating ? (
-            <p className="text-sm text-muted-foreground py-8 text-center border border-dashed border-white/10 rounded-xl">
+            <p className="text-sm text-muted-foreground py-8 text-center border border-dashed border-border rounded-xl">
               No remote hosts yet. Add a host and paste a private key, or generate a new pair.
             </p>
           ) : null}
@@ -411,7 +402,7 @@ export function RemoteServerSettingsClient() {
           {(list.data ?? []).map((row) => (
               <div
                 key={row.id}
-                className="glass-panel rounded-xl border border-white/10 overflow-hidden"
+                className="glass-panel rounded-xl border border-border overflow-hidden"
               >
                 {editingId === row.id ? (
                   <div className="p-5 space-y-3">
@@ -462,7 +453,7 @@ export function RemoteServerSettingsClient() {
                             className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
                               editDraft.serverRole === opt.value
                                 ? "border-primary/40 bg-primary/10 text-foreground"
-                                : "border-white/10 bg-black/20 text-muted-foreground hover:border-white/20"
+                                : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
                             }`}
                           >
                             <span className="text-xs font-medium block">{opt.title}</span>
@@ -479,7 +470,7 @@ export function RemoteServerSettingsClient() {
                         <input
                           value={editDraft.name}
                           onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
-                          className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                         />
                       </label>
                       <label className="space-y-1 block">
@@ -487,7 +478,7 @@ export function RemoteServerSettingsClient() {
                         <input
                           value={editDraft.host}
                           onChange={(e) => setEditDraft((d) => ({ ...d, host: e.target.value }))}
-                          className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                         />
                       </label>
                       <label className="space-y-1 block">
@@ -495,7 +486,7 @@ export function RemoteServerSettingsClient() {
                         <input
                           value={editDraft.port}
                           onChange={(e) => setEditDraft((d) => ({ ...d, port: e.target.value }))}
-                          className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                         />
                       </label>
                       <label className="space-y-1 block">
@@ -503,7 +494,7 @@ export function RemoteServerSettingsClient() {
                         <input
                           value={editDraft.sshUser}
                           onChange={(e) => setEditDraft((d) => ({ ...d, sshUser: e.target.value }))}
-                          className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm"
+                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                         />
                       </label>
                       {row.authMode === "file" ? (
@@ -525,7 +516,7 @@ export function RemoteServerSettingsClient() {
                               setGeneratedPublicKey(null);
                             }
                           }}
-                          className="w-full min-h-[100px] rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-xs"
+                          className="w-full min-h-[100px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 font-mono text-xs"
                           placeholder="Leave empty to keep current key, or paste / generate a new one"
                           spellCheck={false}
                           autoComplete="off"
@@ -547,7 +538,7 @@ export function RemoteServerSettingsClient() {
                           setEditingId(null);
                           setGeneratedPublicKey(null);
                         }}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-white/10 text-muted-foreground"
+                        className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground"
                       >
                         Cancel
                       </button>
@@ -600,7 +591,7 @@ export function RemoteServerSettingsClient() {
                         <Link
                           href={`/console/${row.id}/containers`}
                           scroll={false}
-                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-white/10 hover:bg-white/5"
+                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
                           title="Open WeeDocker console for this host (full Docker UI)"
                         >
                           <Terminal className="size-3.5" />
@@ -608,7 +599,7 @@ export function RemoteServerSettingsClient() {
                         </Link>
                       ) : (
                         <span
-                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-white/10 opacity-40 cursor-not-allowed"
+                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border opacity-40 cursor-not-allowed"
                           title="Configure a private key first"
                         >
                           <Terminal className="size-3.5" />
@@ -619,7 +610,7 @@ export function RemoteServerSettingsClient() {
                         type="button"
                         disabled={testMut.isPending}
                         onClick={() => testMut.mutate(row.id)}
-                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-white/10 hover:bg-white/5"
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
                         title="Check SSH and remote Docker API (Dockerode over SSH from the API)"
                       >
                         {testMut.isPending ? (
@@ -635,7 +626,7 @@ export function RemoteServerSettingsClient() {
                           setGeneratedPublicKey(null);
                           setEditingId(row.id);
                         }}
-                        className="text-xs px-2.5 py-1.5 rounded-lg border border-white/10 hover:bg-white/5"
+                        className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
                       >
                         Edit
                       </button>

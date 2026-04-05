@@ -28,6 +28,10 @@ export class NotificationChannel {
   @Column({ type: 'enum', enum: NotificationChannelType })
   type!: NotificationChannelType;
 
+  /** Provider-specific credentials and targets (token, webhook URL, SMTP settings, etc.). */
+  @Column({ type: 'jsonb', nullable: true })
+  config!: Record<string, unknown> | null;
+
   @Column({ name: 'is_active', default: true })
   isActive!: boolean;
 

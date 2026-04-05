@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { HardDrive, Plus, Search, Trash2, Loader2, PlugZap, Save, X, Pencil, ChevronRight, Clock, FolderOpen } from "lucide-react";
@@ -480,13 +481,16 @@ export function S3Client({
         </div>
       )}
 
-      <AnimatePresence>
-        {modal?.type === "view" && (
+      {typeof document !== "undefined" &&
+        createPortal(
+        <AnimatePresence>
+          {modal?.type === "view" && (
           <motion.div
+            key="s3-view"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-y-0 left-64 right-0 z-50 bg-black/60 backdrop-blur-[3px] flex min-h-full items-center justify-center p-4 md:p-6"
+            className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4 md:p-6"
             onClick={closeModal}
           >
             <motion.div
@@ -578,15 +582,20 @@ export function S3Client({
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body,
+        )}
 
-      <AnimatePresence>
-        {(modal?.type === "add" || modal?.type === "edit") && (
+      {typeof document !== "undefined" &&
+        createPortal(
+        <AnimatePresence>
+          {(modal?.type === "add" || modal?.type === "edit") && (
           <motion.div
+            key={modal.type === "edit" ? "s3-edit" : "s3-add"}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-y-0 left-64 right-0 z-50 bg-black/60 backdrop-blur-[3px] flex min-h-full items-center justify-center p-4 md:p-6"
+            className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4 md:p-6"
             onClick={closeModal}
           >
             <motion.div
@@ -698,7 +707,9 @@ export function S3Client({
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body,
+        )}
     </>
   );
 }

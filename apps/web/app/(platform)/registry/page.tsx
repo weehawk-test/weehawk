@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -69,6 +70,10 @@ export default function RegistryPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
 
   const accountsQ = useQuery({
     queryKey: ["registry-accounts"],
@@ -253,23 +258,12 @@ export default function RegistryPage() {
 
   return (
     <>
-      <div className="max-w-4xl mx-auto space-y-10 pb-12">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6">
-        <div className="flex items-start gap-4 min-w-0">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/20 to-transparent">
-            <ShieldCheck className="w-7 h-7 text-primary" />
-          </div>
-          <div>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-mono mb-1">
-              Integrations
-            </p>
-            <h1 className="text-3xl font-bold tracking-tight">Registry</h1>
-            <p className="text-sm text-muted-foreground mt-2 max-w-lg leading-relaxed">
-              Credentials are verified then stored encrypted on the server (same idea as Dokploy). Deploy uses them for{" "}
-              <code className="text-xs bg-muted/50 px-1 rounded">docker push</code> without relying only on this machine’s
-              default Docker login file.
-            </p>
-          </div>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground mb-2">Registry</h1>
+          <p className="text-muted-foreground">
+            Verify and store registry credentials on the server.     
+          </p>
         </div>
         <button
           type="button"
@@ -284,15 +278,15 @@ export default function RegistryPage() {
             }
             setShowAdd(true);
           }}
-          className="btn-primary inline-flex items-center justify-center gap-2 shrink-0 self-start sm:self-auto"
+          className="btn-primary flex items-center justify-center gap-2 shrink-0"
         >
           <Plus className="w-5 h-5" /> Add registry
         </button>
       </div>
 
       {accessToken ? (
-        <div className="space-y-4">
-          <div className="relative flex-1 min-w-[220px] max-w-md">
+        <div className="mb-4">
+          <div className="relative flex-1 min-w-[220px]">
             <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
@@ -331,8 +325,14 @@ export default function RegistryPage() {
       ) : null}
 
       {!accessToken ? (
-        <div className="rounded-2xl border border-white/10 bg-card/30 px-6 py-10 text-center text-sm text-muted-foreground">
-          Sign in to view and add registry accounts stored on the server.
+        <div className="glass-panel backdrop-blur-none p-12 rounded-2xl flex flex-col items-center justify-center text-center">
+          <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
+            <ShieldCheck className="w-10 h-10 text-muted-foreground" />
+          </div>
+          <h3 className="text-xl font-bold mb-2">Sign in required</h3>
+          <p className="text-muted-foreground max-w-md text-sm">
+            Sign in to view and add registry accounts stored on the server.
+          </p>
         </div>
       ) : accountsQ.isLoading ? (
         <div className="flex justify-center py-20">
@@ -341,34 +341,43 @@ export default function RegistryPage() {
       ) : accountsQ.isError ? (
         <p className="text-sm text-red-400">{(accountsQ.error as Error).message}</p>
       ) : filtered.length === 0 ? (
-        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/80 via-card/40 to-card/20 p-12 flex flex-col items-center justify-center text-center">
-          <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-primary/10 blur-3xl pointer-events-none" />
-          <div className="relative w-20 h-20 rounded-2xl border border-white/10 bg-black/30 flex items-center justify-center mb-6">
+        <div className="glass-panel backdrop-blur-none p-12 rounded-2xl flex flex-col items-center justify-center text-center">
+          <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
             <ShieldCheck className="w-10 h-10 text-muted-foreground" />
           </div>
-          <h3 className="text-xl font-bold mb-2 relative">No connected registries yet</h3>
-          <p className="text-muted-foreground mb-8 max-w-md text-sm leading-relaxed relative">
+          <h3 className="text-xl font-bold mb-2">No registries yet</h3>
+          <p className="text-muted-foreground mb-8 max-w-md">
             {search ? "No registries match your search." : "Add a registry to verify and save credentials on the server."}
           </p>
           {!search && (
-            <button type="button" onClick={() => setShowAdd(true)} className="btn-primary relative inline-flex items-center gap-2">
+            <button type="button" onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> Add registry
             </button>
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {filtered.map((item) => (
             <div
               key={item.id}
-              className="group relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-900/80 via-card/40 to-card/20 p-6 flex flex-col min-h-[180px] transition-all duration-300 hover:border-primary/35 hover:shadow-[0_20px_60px_-24px_rgba(59,130,246,0.35)]"
+              className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col min-h-[180px] group interactive-card"
             >
-              <div className="absolute -right-6 -top-6 h-28 w-28 rounded-full bg-blue-500/10 blur-3xl pointer-events-none group-hover:bg-blue-500/15 transition-colors" />
-              <div className="relative flex justify-between items-start mb-4">
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-lg leading-tight truncate">{item.name}</h3>
-                  <p className="text-xs text-muted-foreground mt-1 font-mono truncate">{item.providerUrl}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{item.username}</p>
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2 rounded-lg flex-shrink-0 bg-primary/10 text-primary">
+                    <ShieldCheck className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-lg leading-tight truncate" title={item.name}>
+                      {item.name}
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1 font-mono truncate" title={item.providerUrl}>
+                      {item.providerUrl}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1 truncate" title={item.username}>
+                      {item.username}
+                    </p>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                   <button
@@ -393,7 +402,7 @@ export default function RegistryPage() {
                   </div>
                 </div>
               </div>
-              <div className="relative mt-auto pt-4 border-t border-white/5 flex items-center justify-end">
+              <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-end">
                 <button
                   type="button"
                   onClick={() => void logoutSaved(item.providerUrl)}
@@ -408,22 +417,24 @@ export default function RegistryPage() {
           ))}
         </div>
       )}
-      </div>
 
-      <AnimatePresence>
-        {showAdd && (
+      {portalReady &&
+        createPortal(
+        <AnimatePresence>
+          {showAdd && (
           <motion.div
+            key="registry-add"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-y-0 left-64 right-0 z-50 bg-black/60 backdrop-blur-[3px] flex items-center justify-center p-4"
+            className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4"
             onClick={() => setShowAdd(false)}
           >
             <motion.div
               initial={{ opacity: 0, y: 14, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 14, scale: 0.98 }}
-              className="w-full max-w-3xl max-h-[88vh] overflow-y-auto relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-slate-950/90 via-card/70 to-card/30 p-5 sm:p-6 shadow-[0_24px_64px_-28px_rgba(0,0,0,0.55)]"
+              className="w-full max-w-3xl max-h-[88vh] overflow-y-auto relative overflow-hidden rounded-2xl glass-panel backdrop-blur-none p-5 sm:p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-4 mb-5">
@@ -496,7 +507,9 @@ export default function RegistryPage() {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
+        </AnimatePresence>,
+        document.body,
+        )}
     </>
   );
 }

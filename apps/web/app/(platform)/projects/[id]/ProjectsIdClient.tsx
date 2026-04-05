@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
@@ -241,8 +242,9 @@ function CreateServiceModal({
     }
   };
 
-  return (
-    <div className="fixed top-0 right-0 bottom-0 left-64 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4">
       <DatabaseEnginePicker
         open={dbPickerOpen}
         selectedId={databaseEngine}
@@ -539,7 +541,9 @@ function CreateServiceModal({
           </div>
         </form>
       </div>
-    </div>
+      </div>
+    </>,
+    document.body,
   );
 }
 
@@ -681,7 +685,7 @@ export default function ProjectsIdClient({
           <p className="text-muted-foreground">
             {initialProjectError ? initialProjectError : "Project not found."}
           </p>
-          <Link href="/projects" className="btn-secondary mt-4 inline-flex items-center gap-2">
+          <Link href="/" className="btn-secondary mt-4 inline-flex items-center gap-2">
             <FolderKanban className="w-4 h-4" /> Projects
           </Link>
         </div>
@@ -700,12 +704,12 @@ export default function ProjectsIdClient({
       ) : null}
 
       <div className="flex items-center gap-2 text-sm text-muted-foreground mb-8">
-        <Link href="/projects">
+        <Link href="/">
           <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors">
             <FolderKanban className="w-3.5 h-3.5" /> Projects
           </span>
         </Link>
-        <span className="text-white/20">/</span>
+        <span className="text-muted-foreground/35">/</span>
         <span className="text-foreground font-medium">{project.name}</span>
       </div>
 

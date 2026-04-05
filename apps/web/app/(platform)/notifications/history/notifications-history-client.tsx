@@ -235,6 +235,11 @@ export function NotificationsHistoryClient({
                           <CheckCircle className="w-3.5 h-3.5" />
                           Sent
                         </span>
+                      ) : log.status === "pending" ? (
+                        <span className="flex items-center gap-1.5 text-amber-400 text-xs font-medium">
+                          <Clock className="w-3.5 h-3.5" />
+                          Pending
+                        </span>
                       ) : (
                         <span className="flex items-center gap-1.5 text-red-400 text-xs font-medium">
                           <XCircle className="w-3.5 h-3.5" />

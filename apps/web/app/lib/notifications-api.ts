@@ -16,8 +16,9 @@ export type NotificationLog = {
   channelId: string | null;
   channelName: string;
   message: string;
-  status: "sent" | "failed";
+  status: "sent" | "failed" | "pending";
   sentAt: string;
+  errorDetail?: string | null;
 };
 
 export type PaginatedNotificationLogsResponse = {

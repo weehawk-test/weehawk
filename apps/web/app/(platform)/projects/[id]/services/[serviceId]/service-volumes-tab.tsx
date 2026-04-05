@@ -6,6 +6,7 @@ import { HardDrive, Loader2, AlertCircle, RefreshCw, FolderOpen, Lock, Archive }
 import { motion } from "framer-motion";
 import { useServiceVolumes } from "@/hooks/use-services";
 import { useToast } from "@/hooks/use-toast";
+import { isCloudEdition } from "@/lib/weehawk-edition";
 
 type Props = {
   serviceId: string;
@@ -24,6 +25,7 @@ function rowSupportsBackup(mountType: string): boolean {
 }
 
 export function ServiceVolumesTab({ serviceId, enabled }: Props) {
+  const showLocalDockerVolumesLink = !isCloudEdition();
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data, isLoading, isFetching, refetch } = useServiceVolumes(serviceId, enabled);
@@ -61,12 +63,14 @@ export function ServiceVolumesTab({ serviceId, enabled }: Props) {
             {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Refresh
           </button>
-          <Link href="/console/local/volumes" prefetch={false}>
-            <button type="button" className="btn-primary flex items-center gap-2 text-sm">
-              <HardDrive className="w-4 h-4" />
-              Docker volumes
-            </button>
-          </Link>
+          {showLocalDockerVolumesLink ? (
+            <Link href="/console/local/volumes" prefetch={false}>
+              <button type="button" className="btn-primary flex items-center gap-2 text-sm">
+                <HardDrive className="w-4 h-4" />
+                Docker volumes
+              </button>
+            </Link>
+          ) : null}
         </div>
       </div>
 

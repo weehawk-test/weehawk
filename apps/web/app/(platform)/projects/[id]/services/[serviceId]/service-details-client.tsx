@@ -144,7 +144,7 @@ networks:
   },
   stack: {
     label: "Stack",
-    color: "bg-white/5 text-zinc-200 border-white/10",
+    color: "bg-white/5 text-zinc-200 border-border",
     glow: "shadow-[0_0_24px_rgba(255,255,255,0.05)]",
     icon: Layers,
     placeholder: `version: '3.8'
@@ -639,16 +639,16 @@ export default function ServiceDetails({
     <>
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-muted-foreground mb-8">
-        <Link href="/projects">
+        <Link href="/">
           <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors">
             <FolderKanban className="w-3.5 h-3.5" /> Projects
           </span>
         </Link>
-        <span className="text-white/20">/</span>
+        <span className="text-muted-foreground/35">/</span>
         <Link href={`/projects/${projectId}`}>
           <span className="hover:text-foreground cursor-pointer transition-colors">{project?.name ?? "Project"}</span>
         </Link>
-        <span className="text-white/20">/</span>
+        <span className="text-muted-foreground/35">/</span>
         <span className="text-foreground font-medium">{service.name}</span>
       </div>
 
@@ -795,7 +795,7 @@ export default function ServiceDetails({
         </div>
 
         {/* ── Tabs ── */}
-        <div className="flex gap-1 p-1 bg-card/50 rounded-xl border border-white/5 w-fit overflow-x-auto">
+        <div className="flex gap-1 p-1 bg-card/50 rounded-xl border border-border w-fit overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -808,7 +808,7 @@ export default function ServiceDetails({
                 }`}
               >
                 {active && (
-                  <motion.div layoutId="tab-bg" className="absolute inset-0 bg-white/10 rounded-lg border border-white/10"
+                  <motion.div layoutId="tab-bg" className="absolute inset-0 bg-white/10 rounded-lg border border-border"
                     initial={false} transition={{ type: "spring", stiffness: 400, damping: 35 }} />
                 )}
                 <Icon className="w-4 h-4 relative z-10" />
@@ -963,7 +963,7 @@ export default function ServiceDetails({
             <motion.div key="config" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="glass-panel rounded-2xl overflow-hidden">
               {/* Toolbar */}
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/5">
+              <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/60">
                 <div className="flex items-center gap-2">
                   <FileCode className="w-4 h-4 text-primary" />
                   <span className="text-sm font-semibold">{service.name}.yml</span>
@@ -973,7 +973,7 @@ export default function ServiceDetails({
                   {editingConfig ? (
                     <>
                       <button onClick={() => setEditingConfig(false)}
-                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-white/5 border border-white/5 transition-colors">
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors">
                         <X className="w-3.5 h-3.5" />Cancel
                       </button>
                       <button onClick={handleSaveConfig}
@@ -984,16 +984,16 @@ export default function ServiceDetails({
                   ) : (
                     <>
                       <button onClick={() => { setConfigDraft(service.config || ""); setEditingConfig(true); }}
-                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-white/5 border border-white/5 transition-colors">
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors">
                         <Edit3 className="w-3.5 h-3.5" />Edit
                       </button>
                       {service.config && <>
                         <button onClick={() => { navigator.clipboard.writeText(service.config); toast({ title: "Copied!" }); }}
-                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-white/5 border border-white/5 transition-colors">
+                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors">
                           <Copy className="w-3.5 h-3.5" />Copy
                         </button>
                         <button onClick={handleDownload}
-                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-white/5 border border-white/5 transition-colors">
+                          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors">
                           <Download className="w-3.5 h-3.5" />Download
                         </button>
                       </>}
@@ -1007,16 +1007,16 @@ export default function ServiceDetails({
                   value={configDraft}
                   onChange={(e) => setConfigDraft(e.target.value)}
                   placeholder={typeConf.placeholder}
-                  className="w-full bg-black/70 text-emerald-200 font-mono text-xs p-5 min-h-[420px] resize-y outline-none border-none leading-relaxed placeholder:text-zinc-700"
+                  className="w-full bg-zinc-100 text-zinc-900 dark:bg-black/70 dark:text-emerald-200 font-mono text-xs p-5 min-h-[420px] resize-y outline-none border-none leading-relaxed placeholder:text-muted-foreground"
                   spellCheck={false}
                 />
               ) : service.config ? (
-                <div className="bg-black/70 overflow-x-auto">
+                <div className="bg-zinc-100 dark:bg-black/70 overflow-x-auto">
                   <table className="w-full border-collapse text-xs font-mono leading-relaxed">
                     <tbody>
                       {service.config.split("\n").map((line, i) => (
-                        <tr key={i} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="select-none text-right pr-4 pl-4 py-0.5 text-zinc-600 border-r border-white/5 min-w-[3rem] w-10">{i + 1}</td>
+                        <tr key={i} className="hover:bg-accent/40 transition-colors">
+                          <td className="select-none text-right pr-4 pl-4 py-0.5 text-zinc-600 border-r border-border/60 min-w-[3rem] w-10">{i + 1}</td>
                           <td className="pl-5 pr-5 py-0.5 whitespace-pre">{colorizeYaml(line)}</td>
                         </tr>
                       ))}
@@ -1024,7 +1024,7 @@ export default function ServiceDetails({
                   </table>
                 </div>
               ) : (
-                <div className="bg-black/50 p-12 text-center">
+                <div className="bg-muted/55 dark:bg-black/50 p-12 text-center">
                   <FileCode className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-30" />
                   <p className="text-muted-foreground text-sm mb-1 font-medium">No configuration yet</p>
                   <p className="text-muted-foreground/60 text-xs mb-5 max-w-sm mx-auto">
@@ -1637,7 +1637,7 @@ function ServiceBackupPanel({
 
   if (s3ProfilesQuery.isPending) {
     return (
-      <div className="glass-panel rounded-2xl border border-white/10 max-w-lg mx-auto px-8 py-10 flex flex-col items-center justify-center gap-4 min-h-[200px]">
+      <div className="glass-panel rounded-2xl border border-border max-w-lg mx-auto px-8 py-10 flex flex-col items-center justify-center gap-4 min-h-[200px]">
         <div className="relative">
           <div className="absolute inset-0 rounded-full bg-primary/20 blur-xl scale-150" aria-hidden />
           <Loader2 className="relative w-8 h-8 animate-spin text-primary" aria-label="Loading S3 profiles" />
@@ -1650,7 +1650,7 @@ function ServiceBackupPanel({
   if (s3Profiles.length === 0) {
     return (
       <div className="relative max-w-lg mx-auto">
-        <div className="glass-panel rounded-2xl border border-white/10 overflow-hidden p-8 md:p-10 text-center shadow-[0_24px_48px_-28px_rgba(0,0,0,0.45)]">
+        <div className="glass-panel rounded-2xl border border-border overflow-hidden p-8 md:p-10 text-center shadow-[0_24px_48px_-28px_rgba(0,0,0,0.45)]">
           <div
             className="pointer-events-none absolute -top-24 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-amber-500/15 blur-[72px]"
             aria-hidden
@@ -1739,7 +1739,7 @@ function ServiceBackupPanel({
 
               {s3Block}
 
-              <div className="flex items-center gap-3 pt-2 border-t border-white/5">
+              <div className="flex items-center gap-3 pt-2 border-t border-border/60">
                 <button
                   type="button"
                   className="btn-primary flex items-center gap-2"
@@ -1758,13 +1758,13 @@ function ServiceBackupPanel({
               </div>
 
               {output ? (
-                <pre className="mt-4 text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+                <pre className="mt-4 text-xs font-mono text-foreground dark:text-zinc-200 bg-muted/65 dark:bg-black/30 border border-border rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
                   {output}
                 </pre>
               ) : null}
             </>
           ) : (
-            <div className="pt-2 border-t border-white/5 space-y-4">
+            <div className="pt-2 border-t border-border/60 space-y-4">
               <h3 className="text-sm font-semibold tracking-tight">Import database from S3</h3>
               {importDbS3 ? (
                 <div className="rounded-lg border border-border/50 bg-muted/15 px-3 py-2 text-left">
@@ -1808,7 +1808,7 @@ function ServiceBackupPanel({
                 </button>
               </div>
               {importOutDb ? (
-                <pre className="text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+                <pre className="text-xs font-mono text-foreground dark:text-zinc-200 bg-muted/65 dark:bg-black/30 border border-border rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
                   {importOutDb}
                 </pre>
               ) : null}
@@ -1941,7 +1941,7 @@ function ServiceBackupPanel({
           <>
             {s3Block}
 
-            <div className="flex items-center gap-3 pt-2 border-t border-white/5">
+            <div className="flex items-center gap-3 pt-2 border-t border-border/60">
               <button
                 type="button"
                 className="btn-primary flex items-center gap-2"
@@ -1961,13 +1961,13 @@ function ServiceBackupPanel({
             </div>
 
             {output ? (
-              <pre className="mt-4 text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+              <pre className="mt-4 text-xs font-mono text-foreground dark:text-zinc-200 bg-muted/65 dark:bg-black/30 border border-border rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
                 {output}
               </pre>
             ) : null}
           </>
         ) : (
-          <div className="pt-2 border-t border-white/5 space-y-4">
+          <div className="pt-2 border-t border-border/60 space-y-4">
             <div>
               <h3 className="text-sm font-semibold tracking-tight">Import volume from S3</h3>
               <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
@@ -2024,7 +2024,7 @@ function ServiceBackupPanel({
               </button>
             </div>
             {importOutVol ? (
-              <pre className="text-xs font-mono text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
+              <pre className="text-xs font-mono text-foreground dark:text-zinc-200 bg-muted/65 dark:bg-black/30 border border-border rounded-lg p-4 whitespace-pre-wrap break-all leading-relaxed">
                 {importOutVol}
               </pre>
             ) : null}
@@ -2197,7 +2197,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
   return (
     <div className="glass-panel rounded-2xl border border-sky-500/20 overflow-hidden">
       {/* Header */}
-      <div className="px-5 md:px-8 pt-6 md:pt-8 pb-5 border-b border-white/5">
+      <div className="px-5 md:px-8 pt-6 md:pt-8 pb-5 border-b border-border/60">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold tracking-tight flex flex-wrap items-center gap-2">
@@ -2218,7 +2218,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
       </div>
 
       {/* Image + stack status */}
-      <div className="px-5 md:px-8 py-4 bg-muted/15 border-b border-white/5">
+      <div className="px-5 md:px-8 py-4 bg-muted/15 border-b border-border/60">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between gap-y-2 max-w-3xl">
           <div className="min-w-0">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-1">Image</p>
@@ -2241,7 +2241,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
           >
             Credentials
           </h4>
-          <div className="rounded-xl border border-white/10 bg-black/20 p-4 md:p-5">
+          <div className="rounded-xl border border-border bg-muted/60 dark:bg-black/20 p-4 md:p-5">
             <dl className="grid gap-5 sm:grid-cols-2 text-sm">
               {hasDbName && (
                 <div className="min-w-0">
@@ -2302,7 +2302,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
                 </dd>
               </div>
               {rootPassKey ? (
-                <div className="sm:col-span-2 pt-1 border-t border-white/5">
+                <div className="sm:col-span-2 pt-1 border-t border-border/60">
                   <dt className="text-[11px] font-medium text-muted-foreground mb-1.5">Root password</dt>
                   <dd className="font-mono text-foreground break-all text-[13px]">
                     {showPassword ? (
@@ -2335,7 +2335,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
             Scaling &amp; host access
           </h4>
           <div className="grid gap-4 md:grid-cols-2 max-w-3xl">
-            <div className="rounded-xl border border-white/10 bg-black/15 p-4">
+            <div className="rounded-xl border border-border bg-muted/50 dark:bg-black/15 p-4">
               <p className="text-[11px] font-medium text-muted-foreground mb-2">Replicas</p>
               {!editingReplicas ? (
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2391,7 +2391,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
                 </div>
               )}
             </div>
-            <div className="rounded-xl border border-white/10 bg-black/15 p-4">
+            <div className="rounded-xl border border-border bg-muted/50 dark:bg-black/15 p-4">
               <p className="text-[11px] font-medium text-muted-foreground mb-2">
                 Host port <span className="text-muted-foreground/80 font-normal">→ container {containerPort}</span>
               </p>
@@ -2466,7 +2466,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
 
         {/* Internal URL */}
         {internalUrl ? (
-          <section aria-labelledby="db-internal-url-heading" className="pt-2 border-t border-white/10">
+          <section aria-labelledby="db-internal-url-heading" className="pt-2 border-t border-border">
             <h4
               id="db-internal-url-heading"
               className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-3"
@@ -2479,15 +2479,15 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
                 <span className="font-mono text-foreground/90">{internalUrl.host}</span>.
               </p>
               {internalUrl.passwordPlaceholder ? (
-                <p className="text-[11px] text-sky-100/85 leading-relaxed rounded-lg border border-sky-500/20 bg-black/20 px-3 py-2">
+                <p className="text-[11px] text-sky-900 dark:text-sky-100/85 leading-relaxed rounded-lg border border-sky-500/20 bg-muted/60 dark:bg-black/20 px-3 py-2">
                   Secrets use placeholder{" "}
-                  <code className="text-[10px] font-mono bg-black/35 px-1 py-0.5 rounded">{DB_URL_PASSWORD_PLACEHOLDER}</code>{" "}
+                  <code className="text-[10px] font-mono bg-muted/70 dark:bg-black/35 px-1 py-0.5 rounded">{DB_URL_PASSWORD_PLACEHOLDER}</code>{" "}
                   — substitute your password when connecting, or store the password in Environment to show it in the URL
                   here.
                 </p>
               ) : null}
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-4">
-                <code className="block flex-1 min-w-0 rounded-lg border border-white/10 bg-black/30 px-3 py-2.5 text-xs font-mono text-sky-100/90 break-all leading-relaxed">
+                <code className="block flex-1 min-w-0 rounded-lg border border-border bg-muted/65 dark:bg-black/30 px-3 py-2.5 text-xs font-mono text-sky-900 dark:text-sky-100/90 break-all leading-relaxed">
                   {showInternalUrl ? (
                     internalUrl.displayUrl
                   ) : (
@@ -2673,7 +2673,7 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
         <label className="text-xs font-medium text-muted-foreground block">Docker image</label>
         <div className="relative max-w-2xl">
           <input
-            className={`input-field w-full font-mono text-sm pr-10 ${!imageUnlocked ? "bg-zinc-950/80 !text-zinc-500 border-white/10 cursor-not-allowed" : ""}`}
+            className={`input-field w-full font-mono text-sm pr-10 ${!imageUnlocked ? "bg-zinc-950/80 !text-zinc-500 border-border cursor-not-allowed" : ""}`}
             value={image}
             onChange={(e) => setImage(e.target.value)}
             placeholder={defaultDatabaseImage(engine)}
@@ -2684,7 +2684,7 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
           <button
             type="button"
             onClick={() => setImageUnlocked((v) => !v)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10"
+            className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/70"
             aria-label={imageUnlocked ? "Lock image field" : "Unlock image field"}
           >
             {imageUnlocked ? <LockOpen className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
@@ -3599,7 +3599,7 @@ function ApplicationArchivePanel({
               className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                 deployTarget === "source"
                   ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
-                  : "border-white/10 bg-black/25 text-muted-foreground hover:text-foreground"
+                  : "border-border bg-muted/55 dark:bg-black/25 text-muted-foreground hover:text-foreground"
               }`}
             >
               Source code
@@ -3610,7 +3610,7 @@ function ApplicationArchivePanel({
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                 deployTarget === "image"
                   ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
-                  : "border-white/10 bg-black/25 text-muted-foreground hover:text-foreground"
+                  : "border-border bg-muted/55 dark:bg-black/25 text-muted-foreground hover:text-foreground"
               }`}
             >
               <Container className="h-3.5 w-3.5 shrink-0 opacity-90" />
@@ -3645,7 +3645,7 @@ function ApplicationArchivePanel({
               className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
                 showGithubPanel
                   ? "border-sky-500/50 bg-sky-500/10 hover:bg-sky-500/15"
-                  : "border-white/10 bg-black/25 hover:border-sky-500/35 hover:bg-white/[0.04]"
+                  : "border-border bg-muted/55 dark:bg-black/25 hover:border-sky-500/35 hover:bg-accent/50"
               }`}
             >
               <Image
@@ -3675,7 +3675,7 @@ function ApplicationArchivePanel({
               className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
                 showGitlabPanel
                   ? "border-orange-500/50 bg-orange-500/10 hover:bg-orange-500/15"
-                  : "border-white/10 bg-black/25 hover:border-orange-500/35 hover:bg-white/[0.04]"
+                  : "border-border bg-muted/55 dark:bg-black/25 hover:border-orange-500/35 hover:bg-accent/50"
               }`}
             >
               <Image
@@ -3740,7 +3740,7 @@ function ApplicationArchivePanel({
                 className={`group relative flex h-full min-h-[4.75rem] w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   zipDragOver
                     ? "border-primary bg-primary/10"
-                    : "border-violet-500/35 bg-black/30 hover:border-violet-500/55 hover:bg-violet-500/5"
+                    : "border-violet-500/35 bg-muted/65 dark:bg-black/30 hover:border-violet-500/55 hover:bg-violet-500/5"
                 }`}
               >
                 <span className="relative flex h-9 w-9 shrink-0 items-center justify-center">
@@ -3772,7 +3772,7 @@ function ApplicationArchivePanel({
                       e.stopPropagation();
                       setFile(null);
                     }}
-                    className="absolute right-1 top-1 z-10 rounded p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground"
+                    className="absolute right-1 top-1 z-10 rounded p-1 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
                     aria-label="Remove file"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -3787,7 +3787,7 @@ function ApplicationArchivePanel({
             id="github-deploy-panel"
             className="rounded-xl border border-sky-500/25 bg-gradient-to-br from-sky-500/[0.07] via-transparent to-transparent p-4 space-y-3"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
               <p className="text-xs font-medium text-foreground">GitHub — deploy from repository</p>
               <Link
                 href="/git/github"
@@ -3846,7 +3846,7 @@ function ApplicationArchivePanel({
                       : String(githubReposError)}
                   </p>
                 ) : null}
-                <ul className="max-h-56 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/[0.06] bg-black/20">
+                <ul className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border/50 bg-muted/60 dark:bg-black/20">
                   {githubReposLoading && githubReposList.length === 0 ? (
                     <li className="px-3 py-6 flex justify-center text-muted-foreground">
                       <Loader2 className="h-6 w-6 animate-spin opacity-70" />
@@ -3932,7 +3932,7 @@ function ApplicationArchivePanel({
                 ) : null}
               </div>
             ) : (
-              <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+              <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-border bg-muted/50 dark:bg-black/15 px-3 py-2">
                 Complete{" "}
                 <Link href="/git/github" className="text-sky-300/90 hover:underline">
                   Git → GitHub
@@ -4013,7 +4013,7 @@ function ApplicationArchivePanel({
             id="gitlab-deploy-panel"
             className="rounded-xl border border-orange-500/25 bg-gradient-to-br from-orange-500/[0.07] via-transparent to-transparent p-4 space-y-3"
           >
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
               <p className="text-xs font-medium text-foreground">GitLab — deploy from repository</p>
               <Link
                 href="/git/gitlab"
@@ -4072,7 +4072,7 @@ function ApplicationArchivePanel({
                       : String(gitlabProjectsError)}
                   </p>
                 ) : null}
-                <ul className="max-h-56 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/[0.06] bg-black/20">
+                <ul className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border/50 bg-muted/60 dark:bg-black/20">
                   {gitlabProjectsLoading && gitlabProjectsList.length === 0 ? (
                     <li className="px-3 py-6 flex justify-center text-muted-foreground">
                       <Loader2 className="h-6 w-6 animate-spin opacity-70" />
@@ -4153,7 +4153,7 @@ function ApplicationArchivePanel({
                 ) : null}
               </div>
             ) : (
-              <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+              <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-border bg-muted/50 dark:bg-black/15 px-3 py-2">
                 Save a <strong className="text-foreground/90">personal or group access token</strong> on{" "}
                 <Link href="/git/gitlab" className="text-orange-300/90 hover:underline">
                   Git → GitLab
@@ -4253,7 +4253,7 @@ function ApplicationArchivePanel({
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Build path</label>
           <input className="input-field font-mono text-sm" value={buildPath} onChange={(e) => setBuildPath(e.target.value)} placeholder="." />
         </div>
-        <div className="sm:col-span-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
+        <div className="sm:col-span-2 rounded-lg border border-border bg-muted/60 dark:bg-black/20 px-3 py-2.5">
           <p className="text-xs font-medium text-foreground mb-1">Dockerfile-first build</p>
           <p className="text-[11px] text-muted-foreground leading-relaxed">
             If your project includes a <code className="text-[10px]">Dockerfile</code> in the build path, it is used as-is.
@@ -4296,7 +4296,7 @@ function ApplicationArchivePanel({
                 e.preventDefault();
                 setOpenAppSection((prev) => (prev === "env" ? null : "env"));
               }}
-              className="flex cursor-pointer list-none items-center gap-3 rounded-xl border border-white/10 bg-zinc-950/30 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden"
+              className="flex cursor-pointer list-none items-center gap-3 rounded-xl border border-border bg-zinc-950/30 px-3 py-2.5 text-left transition-colors hover:bg-accent/50 [&::-webkit-details-marker]:hidden"
             >
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-violet-500/30 bg-violet-500/10">
                 <Variable className="h-3.5 w-3.5 text-violet-300" />
@@ -4515,7 +4515,7 @@ function InfoCard({ icon, label, value, mono = false, copyable = false, onCopy, 
         )}
         {copyable && onCopy && (
           <button onClick={onCopy}
-            className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-foreground flex-shrink-0">
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-accent/70 text-muted-foreground hover:text-foreground flex-shrink-0">
             <Copy className="w-3.5 h-3.5" />
           </button>
         )}
@@ -4551,7 +4551,7 @@ function EnvFilePanel({ service }: { service: Service }) {
 
   return (
     <div className="glass-panel rounded-2xl overflow-hidden">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 px-5 py-3.5 border-b border-white/5">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 px-5 py-3.5 border-b border-border/60">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <Variable className="w-4 h-4 text-primary shrink-0" />
@@ -4572,7 +4572,7 @@ function EnvFilePanel({ service }: { service: Service }) {
               <button
                 type="button"
                 onClick={() => setEditing(false)}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-white/5 border border-white/5 transition-colors"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
               >
                 <X className="w-3.5 h-3.5" />
                 Cancel
@@ -4595,7 +4595,7 @@ function EnvFilePanel({ service }: { service: Service }) {
                   navigator.clipboard.writeText(envText);
                   toast({ title: "Copied", description: ".env copied to clipboard." });
                 }}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-white/5 border border-white/5 transition-colors"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
               >
                 <Copy className="w-3.5 h-3.5" />
                 Copy
@@ -4606,7 +4606,7 @@ function EnvFilePanel({ service }: { service: Service }) {
                   setDraft(envText);
                   setEditing(true);
                 }}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-white/5 border border-white/5 transition-colors"
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 Edit
@@ -4620,11 +4620,11 @@ function EnvFilePanel({ service }: { service: Service }) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder={'NODE_ENV=production\nPORT=3000\n# optional comment'}
-          className="w-full bg-black/70 text-zinc-200 font-mono text-xs p-5 min-h-[320px] resize-y outline-none border-none leading-relaxed placeholder:text-zinc-700"
+          className="w-full bg-zinc-100 text-zinc-900 dark:bg-black/70 dark:text-zinc-200 font-mono text-xs p-5 min-h-[320px] resize-y outline-none border-none leading-relaxed placeholder:text-muted-foreground"
           spellCheck={false}
         />
       ) : (
-        <pre className="w-full bg-black/70 text-zinc-300 font-mono text-xs p-5 min-h-[200px] min-w-0 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
+        <pre className="w-full bg-zinc-100 text-zinc-800 dark:bg-black/70 dark:text-zinc-300 font-mono text-xs p-5 min-h-[200px] min-w-0 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
           {envText.trim() ? (
             envText
           ) : (
@@ -4750,7 +4750,7 @@ function DomainsPanel({ service }: { service: Service }) {
             key={`${index}-${route.router}`}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            className="glass-panel rounded-xl p-5 border border-white/10 space-y-4"
+            className="glass-panel rounded-xl p-5 border border-border space-y-4"
           >
             <div className="flex items-center justify-between gap-2">
               <h4 className="text-sm font-semibold flex items-center gap-2">

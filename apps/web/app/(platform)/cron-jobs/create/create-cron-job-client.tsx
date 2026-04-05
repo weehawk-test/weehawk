@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateCronJob } from "@/hooks/use-cron-jobs";
@@ -242,10 +243,11 @@ export function CreateCronJobClient({ initialServices, initialChannels, initialS
     );
   };
 
-  return (
-    <>
-      <div className="max-w-2xl mx-auto">
-        <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
+  return createPortal(
+    <div className="fixed inset-0 z-[80] overflow-y-auto modal-scrim">
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div className="max-w-2xl w-full py-8">
+          <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
           <div className="mb-6 flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-foreground">Create cron job</h1>
             <Link href="/cron-jobs" aria-label="Close">
@@ -322,7 +324,7 @@ export function CreateCronJobClient({ initialServices, initialChannels, initialS
               </div>
             </div>
 
-            <div className="space-y-4 rounded-xl border border-white/10 bg-black/30 p-4">
+            <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
               <p className="text-sm font-medium text-foreground">Action when triggered</p>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Action</label>
@@ -531,8 +533,10 @@ export function CreateCronJobClient({ initialServices, initialChannels, initialS
               </button>
             </div>
           </div>
+          </div>
         </div>
       </div>
-    </>
+    </div>,
+    document.body,
   );
 }

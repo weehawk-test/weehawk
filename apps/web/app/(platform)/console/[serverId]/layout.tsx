@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { parseConsoleServerSlug } from "@/lib/console-target";
+import { isCloudEdition } from "@/lib/weehawk-edition";
 
 export default async function ConsoleServerLayout({
   children,
@@ -10,6 +11,9 @@ export default async function ConsoleServerLayout({
   params: Promise<{ serverId: string }>;
 }) {
   const { serverId } = await params;
+  if (isCloudEdition() && serverId === "local") {
+    notFound();
+  }
   const target = parseConsoleServerSlug(serverId);
   if (target == null) notFound();
 

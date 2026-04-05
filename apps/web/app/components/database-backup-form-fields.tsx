@@ -142,7 +142,7 @@ export function DatabaseBackupFormFields({
         </p>
       )}
       {knownEngineFromStack ? (
-        <div className="rounded-lg border border-white/10 bg-black/25 px-3 py-2.5">
+        <div className="rounded-lg border border-border bg-muted/55 dark:bg-black/25 px-3 py-2.5">
           <p className="text-[11px] text-muted-foreground mb-0.5">Database engine</p>
           <p className="text-sm font-medium text-foreground">
             {getDatabaseEngineById(knownEngineFromStack)?.name ?? knownEngineFromStack}
@@ -219,7 +219,7 @@ export function DatabaseBackupFormFields({
           <p className="text-[11px] text-muted-foreground mt-1">Not used for this engine.</p>
         ) : null}
       </div>
-      <div className="rounded-lg border border-white/10 bg-black/30 px-3 py-2.5">
+      <div className="rounded-lg border border-border bg-muted/65 dark:bg-black/30 px-3 py-2.5">
         <p className="text-[11px] font-medium text-muted-foreground mb-1.5">What will run</p>
         <p className="font-mono text-xs text-foreground/95 whitespace-pre-wrap break-all leading-relaxed">
           {preview}

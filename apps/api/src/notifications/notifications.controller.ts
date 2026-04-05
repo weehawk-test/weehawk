@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { NotificationsService } from './notifications.service';
+import { NotificationService } from './notification.service';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
@@ -39,7 +39,7 @@ type AuthedReq = { user?: { userId: number; email: string } };
 )
 @Controller('/api/notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(private readonly notificationsService: NotificationService) {}
 
   private userId(req: AuthedReq): number {
     const id = req.user?.userId;

@@ -92,7 +92,7 @@ export default function OnboardingServerPage() {
         value={deployTarget}
         onChange={setDeployTarget}
         onSetupLater={skipDeploySetupAndEnterApp}
-        onRemoteSshSetup={isCloud ? () => router.push("/onboarding/ssh") : undefined}
+        onRemoteSshSetup={() => router.push("/onboarding/ssh")}
       />
     </AuthPageShell>
   );

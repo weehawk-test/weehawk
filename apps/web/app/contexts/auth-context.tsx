@@ -18,6 +18,7 @@ export type AuthUser = {
   email: string;
   firstName: string;
   lastName: string;
+  emailVerified?: boolean;
 };
 
 type AuthContextValue = {
@@ -25,7 +26,11 @@ type AuthContextValue = {
   user: AuthUser | null;
   isReady: boolean;
   setSession: (res: AuthResponse) => void;
-  updateUser: (patch: Partial<Pick<AuthUser, "firstName" | "lastName">>) => void;
+  /** Refetch profile from the API (cookies) and update local user state. */
+  refreshSession: () => Promise<void>;
+  updateUser: (
+    patch: Partial<Pick<AuthUser, "firstName" | "lastName" | "emailVerified">>,
+  ) => void;
   logout: () => Promise<void>;
 };
 
@@ -53,6 +58,7 @@ export function AuthProvider({
         email: profile.email,
         firstName: profile.firstName,
         lastName: profile.lastName,
+        emailVerified: profile.emailVerified ?? false,
       });
     } catch {
       setAccessToken(null);
@@ -72,12 +78,17 @@ export function AuthProvider({
       email: res.email,
       firstName: res.firstName,
       lastName: res.lastName,
+      emailVerified: res.emailVerified ?? false,
     });
     window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
   }, []);
 
   const updateUser = useCallback(
-    (patch: Partial<Pick<AuthUser, "firstName" | "lastName">>) => {
+    (
+      patch: Partial<
+        Pick<AuthUser, "firstName" | "lastName" | "emailVerified">
+      >,
+    ) => {
       setUser((prev) => (prev ? { ...prev, ...patch } : prev));
     },
     [],
@@ -102,10 +113,11 @@ export function AuthProvider({
       user,
       isReady,
       setSession,
+      refreshSession,
       updateUser,
       logout,
     }),
-    [accessToken, user, isReady, setSession, updateUser, logout],
+    [accessToken, user, isReady, setSession, refreshSession, updateUser, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

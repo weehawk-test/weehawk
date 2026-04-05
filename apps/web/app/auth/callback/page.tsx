@@ -28,6 +28,7 @@ export default function AuthOAuthCallbackPage() {
           firstName: profile.firstName,
           lastName: profile.lastName,
           email: profile.email,
+          emailVerified: profile.emailVerified ?? false,
           imageUrl: profile.imageUrl,
         });
         const onboarding =

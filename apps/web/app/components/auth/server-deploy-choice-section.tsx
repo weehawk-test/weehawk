@@ -36,7 +36,6 @@ export function ServerDeployChoiceSection({
   }, [value]);
 
   const isCloud = variant === "cloud";
-  const remoteDisabled = !isCloud;
 
   return (
     <div className="space-y-5">
@@ -50,7 +49,7 @@ export function ServerDeployChoiceSection({
             ? sshSeparatePage
               ? "Step 1 of 2: Weehawk Cloud runs Docker on servers you reach over SSH. Click Remote server to open the SSH connection page, or set up later."
               : "Weehawk Cloud runs Docker on machines you reach over SSH (VPS, cloud VM, or homelab). Click Remote server to open the SSH setup form, or skip and configure later."
-            : "Pick how CPU and RAM will be used for your apps and services. You can adjust this later when SSH and more targets are supported."}
+            : "Pick how CPU and RAM will be used for your apps and services. Use localhost on this machine, or connect a remote host over SSH. You can change this later in settings."}
         </p>
       </header>
 
@@ -72,48 +71,38 @@ export function ServerDeployChoiceSection({
         )}
 
         <OptionRow
-          disabled={remoteDisabled}
+          disabled={false}
           selected={
-            remoteDisabled
-              ? false
-              : isCloud && !sshSeparatePage
-                ? value === "remote" && remoteSshRevealed
-                : value === "remote"
+            isCloud && !sshSeparatePage ? value === "remote" && remoteSshRevealed : value === "remote"
           }
           onSelect={() => {
-            if (remoteDisabled) return;
             onChange("remote");
-            if (isCloud) {
-              if (sshSeparatePage) onRemoteSshSetup?.();
-              else setRemoteSshRevealed(true);
+            if (sshSeparatePage) {
+              onRemoteSshSetup?.();
+            } else if (isCloud) {
+              setRemoteSshRevealed(true);
             }
           }}
           icon={<Server className="size-4" aria-hidden />}
           title="Remote servers"
-          badge={
-            remoteDisabled ? (
-              <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-100/95">
-                Coming soon
-              </span>
-            ) : null
-          }
+          badge={null}
           body={
             isCloud
               ? sshSeparatePage
                 ? "Use a VPS, cloud VM, or home server over SSH. Click to go to step 2: generate keys, save the host in the database, and test Docker over SSH."
                 : "Use a VPS, cloud VM, or home server you reach over SSH. Click this card to open the SSH connection form—generate keys, save the host, and test Docker over SSH."
-              : "Any server you can SSH into: VPS, cloud instance, or lab hardware. We’ll add the connection flow in a future release."
+              : sshSeparatePage
+                ? "Use a VPS, cloud VM, or home server over SSH. Click to go to step 2: generate keys, save the host, and test Docker over SSH."
+                : "Use any machine you reach over SSH—VPS, cloud VM, or homelab. Click this card to open the SSH connection form."
           }
           footnote={
-            remoteDisabled
-              ? null
+            sshSeparatePage
+              ? "Open step 2 — SSH connection"
               : isCloud
-                ? sshSeparatePage
-                  ? "Open step 2 — SSH connection"
-                  : remoteSshRevealed
-                    ? "Default for Weehawk Cloud"
-                    : "Click to open SSH setup"
-                : "Default for Weehawk Cloud"
+                ? remoteSshRevealed
+                  ? "Default for Weehawk Cloud"
+                  : "Click to open SSH setup"
+                : null
           }
         />
       </div>

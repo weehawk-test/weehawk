@@ -246,7 +246,7 @@ export async function fetchDockerStats(): Promise<DockerContainerStats[]> {
 }
 
 export function dockerMonitorWsUrl(
-  topic: "stats" | "overview",
+  topic: "stats",
   options?: { intervalMs?: number },
 ) {
   const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
@@ -259,10 +259,6 @@ export function dockerMonitorWsUrl(
 
 export function dockerMonitorStatsWsUrl(options?: { intervalMs?: number }) {
   return dockerMonitorWsUrl("stats", options);
-}
-
-export function dockerMonitorOverviewWsUrl(options?: { intervalMs?: number }) {
-  return dockerMonitorWsUrl("overview", options);
 }
 
 export type DockerPagedWsTopic =

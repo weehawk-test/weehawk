@@ -1,19 +1,18 @@
+import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { ChannelPreview, ProviderResult } from './provider.types';
+import { Notification } from '../entities/notification.entity';
+import { ChannelPreview, ProviderSendResult } from './provider.types';
 
 export interface NotificationProvider {
   readonly type: NotificationChannelType;
 
-  /** Persist provider-specific config for a channel. */
-  saveConfig(channelId: string, config: Record<string, unknown>): Promise<void>;
+  /** Normalize and persist-safe shape for JSONB `NotificationChannel.config`. */
+  normalizeConfig(config: Record<string, unknown>): Record<string, unknown>;
 
-  /** Return masked UI preview fields. */
-  preview(channelId: string): Promise<ChannelPreview>;
+  preview(channel: NotificationChannel): Promise<ChannelPreview>;
 
-  /** Send a message using stored config. */
   send(
-    channelId: string,
-    channelName: string,
-    message: string,
-  ): Promise<ProviderResult>;
+    channel: NotificationChannel,
+    notification: Notification,
+  ): Promise<ProviderSendResult>;
 }

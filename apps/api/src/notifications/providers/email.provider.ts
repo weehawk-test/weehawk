@@ -1,26 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import nodemailer from 'nodemailer';
-import { Repository } from 'typeorm';
+import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { NotificationEmail } from '../entities/notification-email.entity';
+import { Notification } from '../entities/notification.entity';
+import { notificationPlainText } from '../notification-format';
+import { channelConfigRecord } from './channel-config';
 import { NotificationProvider } from './notification-provider.interface';
-import { ChannelPreview, ProviderResult } from './provider.types';
+import { ChannelPreview, ProviderSendResult } from './provider.types';
 import { readString } from './http-utils';
 
 @Injectable()
 export class EmailProvider implements NotificationProvider {
   readonly type = NotificationChannelType.EMAIL;
 
-  constructor(
-    @InjectRepository(NotificationEmail)
-    private readonly repo: Repository<NotificationEmail>,
-  ) {}
-
-  async saveConfig(
-    channelId: string,
-    config: Record<string, unknown>,
-  ): Promise<void> {
+  normalizeConfig(config: Record<string, unknown>): Record<string, unknown> {
     const toRaw = config['toAddresses'];
     const toAddresses = Array.isArray(toRaw)
       ? toRaw.filter(
@@ -31,24 +24,20 @@ export class EmailProvider implements NotificationProvider {
       readString(config, 'smtpPort') || '587',
       10,
     );
-
-    await this.repo.save(
-      this.repo.create({
-        channelId,
-        smtpServer: readString(config, 'smtpServer'),
-        smtpPort: Number.isFinite(smtpPort) ? smtpPort : 587,
-        username: readString(config, 'username'),
-        password: readString(config, 'password'),
-        fromAddress: readString(config, 'fromAddress'),
-        toAddressesJson: JSON.stringify(toAddresses),
-      }),
-    );
+    return {
+      smtpServer: readString(config, 'smtpServer'),
+      smtpPort: Number.isFinite(smtpPort) ? smtpPort : 587,
+      username: readString(config, 'username'),
+      password: readString(config, 'password'),
+      fromAddress: readString(config, 'fromAddress'),
+      toAddresses,
+    };
   }
 
-  async preview(channelId: string): Promise<ChannelPreview> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    const username = row?.username?.trim() ?? '';
-    const fromAddress = row?.fromAddress?.trim() ?? '';
+  async preview(channel: NotificationChannel): Promise<ChannelPreview> {
+    const cfg = channelConfigRecord(channel);
+    const username = readString(cfg, 'username');
+    const fromAddress = readString(cfg, 'fromAddress');
     return {
       credentialPreview: username || 'smtp credentials',
       targetPreview: fromAddress || 'email',
@@ -56,19 +45,16 @@ export class EmailProvider implements NotificationProvider {
   }
 
   async send(
-    channelId: string,
-    channelName: string,
-    message: string,
-  ): Promise<ProviderResult> {
-    const row = await this.repo.findOne({ where: { channelId } });
-    if (!row) return { ok: false, description: 'Missing email configuration' };
-
-    const smtpServer = row.smtpServer.trim();
-    const smtpPort = row.smtpPort;
-    const username = row.username.trim();
-    const password = row.password;
-    const fromAddress = row.fromAddress.trim();
-    const toRaw = row.toAddressesJson ? JSON.parse(row.toAddressesJson) : [];
+    channel: NotificationChannel,
+    notification: Notification,
+  ): Promise<ProviderSendResult> {
+    const cfg = channelConfigRecord(channel);
+    const smtpServer = readString(cfg, 'smtpServer');
+    const smtpPort = Number(cfg['smtpPort']);
+    const username = readString(cfg, 'username');
+    const password = readString(cfg, 'password');
+    const fromAddress = readString(cfg, 'fromAddress');
+    const toRaw = cfg['toAddresses'];
     const toAddresses = Array.isArray(toRaw)
       ? toRaw.filter(
           (v): v is string => typeof v === 'string' && v.trim().length > 0,
@@ -77,7 +63,7 @@ export class EmailProvider implements NotificationProvider {
 
     if (
       !smtpServer ||
-      !smtpPort ||
+      !Number.isFinite(smtpPort) ||
       !username ||
       !password ||
       !fromAddress ||
@@ -97,8 +83,10 @@ export class EmailProvider implements NotificationProvider {
       await transport.sendMail({
         from: fromAddress,
         to: toAddresses.join(', '),
-        subject: `Weehawk Notification - ${channelName}`,
-        text: message,
+        subject: notification.title.trim()
+          ? `Weehawk — ${notification.title}`
+          : `Weehawk Notification — ${channel.name}`,
+        text: notificationPlainText(notification),
       });
       return { ok: true };
     } catch (e) {

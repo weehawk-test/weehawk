@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
@@ -50,8 +51,9 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
     });
   };
 
-  return (
-    <div className="fixed top-0 right-0 bottom-0 left-64 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+  /** Portal to `body`: modal inside `main` (`z-10`) cannot stack above sidebar (`z-40`), so blur never reached it. */
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 modal-scrim">
       <div className="glass-panel rounded-2xl p-8 w-full max-w-lg relative overflow-hidden">
         <div className="absolute top-0 right-0 w-48 h-48 bg-primary/10 blur-[60px] pointer-events-none" />
         <h2 className="text-2xl font-bold mb-1">New Project</h2>
@@ -91,7 +93,8 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

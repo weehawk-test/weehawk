@@ -9,8 +9,10 @@ import type { Service } from "@/lib/schema";
 import { useUpdateService } from "@/hooks/use-services";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
+import { isCloudEdition } from "@/lib/weehawk-edition";
 
 export function ServiceRemoteHostPanel({ service }: { service: Service }) {
+  const cloud = isCloudEdition();
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const updateService = useUpdateService();
@@ -85,6 +87,14 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     deployDirty || buildDirty || registryDirty || staleRegistryWhenMerged;
 
   const save = () => {
+    if (cloud && value === "") {
+      toast({
+        title: "Remote host required",
+        description: "In Weehawk Cloud, choose a deploy host from your SSH-connected servers.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (showRegistryImageField && registryValue.trim() === "") {
       toast({
         title: "Image name required",
@@ -184,9 +194,19 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
               <select
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
-                className="flex-1 min-w-0 rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
+                className="flex-1 min-w-0 rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
               >
-                <option value="">This server (local Docker)</option>
+                {!cloud ? (
+                  <option value="">This server (local Docker)</option>
+                ) : deployOptions.length === 0 ? (
+                  <option value="" disabled>
+                    Add a remote host first (Remote servers)
+                  </option>
+                ) : (
+                  <option value="" disabled>
+                    Select remote deploy host…
+                  </option>
+                )}
                 {deployOptions.map((r) => (
                   <option key={r.id} value={String(r.id)}>
                     {r.name} — {r.sshUser}@{r.host}
@@ -207,9 +227,11 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                   <select
                     value={buildValue}
                     onChange={(e) => setBuildValue(e.target.value)}
-                    className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
+                    className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
                   >
-                    <option value="">Same as deploy host (or local if no deploy host)</option>
+                    <option value="">
+                      {cloud ? "Same as deploy host" : "Same as deploy host (or local if no deploy host)"}
+                    </option>
                     {buildOptions.map((r) => (
                       <option key={r.id} value={String(r.id)}>
                         {r.name} — {r.sshUser}@{r.host}
@@ -241,7 +263,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                     spellCheck={false}
                     required
                     aria-required
-                    className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/40 font-mono"
+                    className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-primary/40 font-mono"
                   />
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
                     Sign in on{" "}
