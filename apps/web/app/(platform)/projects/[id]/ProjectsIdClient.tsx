@@ -33,25 +33,25 @@ import {
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
     label: "Docker Compose",
-    color: "bg-zinc-500/10 text-zinc-300 border-zinc-500/20",
+    color: "bg-zinc-500/10 text-zinc-700 border-zinc-400/40 dark:text-zinc-300 dark:border-zinc-500/20",
     icon: Container,
     placeholder: `version: '3.8'\nservices:\n  app:\n    image: nginx:latest\n    ports:\n      - "80:80"`,
   },
   stack: {
     label: "Stack",
-    color: "bg-white/5 text-zinc-200 border-white/10",
+    color: "bg-muted/70 text-zinc-800 border-zinc-300/60 dark:bg-white/5 dark:text-zinc-200 dark:border-white/10",
     icon: Layers,
     placeholder: `version: '3.8'\nservices:\n  app:\n    image: nginx:latest\n    deploy:\n      replicas: 2`,
   },
   application: {
     label: "Application",
-    color: "bg-violet-500/10 text-violet-200 border-violet-500/25",
+    color: "bg-violet-500/10 text-violet-800 border-violet-400/45 dark:text-violet-200 dark:border-violet-500/25",
     icon: PackageOpen,
     placeholder: "",
   },
   databases: {
     label: "Databases",
-    color: "bg-sky-500/10 text-sky-200 border-sky-500/25",
+    color: "bg-sky-500/10 text-sky-800 border-sky-400/45 dark:text-sky-200 dark:border-sky-500/25",
     icon: Database,
     placeholder: "",
   },
@@ -91,14 +91,14 @@ function ServiceRuntimeStatus({ serviceId }: { serviceId: string }) {
   return (
     <div
       className={`flex w-full items-center justify-center gap-1.5 text-[10px] font-medium ${
-        running ? "text-emerald-400/95" : "text-red-400/95"
+        running ? "text-emerald-700 dark:text-emerald-400/95" : "text-red-700 dark:text-red-400/95"
       }`}
     >
       <span
         className={`h-2 w-2 shrink-0 rounded-full ${
           running
-            ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.55)]"
-            : "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.35)]"
+            ? "bg-emerald-600 shadow-[0_0_5px_rgba(5,150,105,0.45)] dark:bg-emerald-500 dark:shadow-[0_0_6px_rgba(16,185,129,0.55)]"
+            : "bg-red-600 shadow-[0_0_4px_rgba(220,38,38,0.4)] dark:bg-red-500 dark:shadow-[0_0_4px_rgba(239,68,68,0.35)]"
         }`}
         aria-hidden
       />
@@ -312,7 +312,7 @@ function CreateServiceModal({
           {type === "databases" && databaseEngine && (
             <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4 space-y-4">
               <div>
-                <h3 className="text-sm font-semibold text-sky-200 mb-0.5">
+                <h3 className="text-sm font-semibold text-sky-800 dark:text-sky-200 mb-0.5">
                   {getDatabaseEngineById(databaseEngine)?.name ?? "Database"}
                 </h3>
                 <p className="text-xs text-muted-foreground leading-relaxed">

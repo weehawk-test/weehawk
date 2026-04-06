@@ -15,6 +15,7 @@ import {
 } from "@/lib/pending-onboarding-auth";
 import type { ServerDeployTarget } from "@/lib/server-deploy-preference";
 import { writeServerDeployChoice } from "@/lib/server-deploy-preference";
+import { editionFromEnv } from "@/lib/weehawk-edition";
 
 export default function OnboardingServerPage() {
   const router = useRouter();
@@ -42,7 +43,7 @@ export default function OnboardingServerPage() {
     setGateOk(true);
   }, [isReady, accessToken, router]);
 
-  const edition = setupQuery.data?.edition ?? "selfhosted";
+  const edition = setupQuery.data?.edition ?? editionFromEnv();
   const isCloud = edition === "cloud";
 
   useEffect(() => {

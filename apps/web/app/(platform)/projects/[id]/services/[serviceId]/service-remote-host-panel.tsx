@@ -13,15 +13,16 @@ import { isCloudEdition } from "@/lib/weehawk-edition";
 
 export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   const cloud = isCloudEdition();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const ownerKey = user?.userId;
   const { toast } = useToast();
   const updateService = useUpdateService();
   const isApplication = service.type === "application";
 
   const q = useQuery({
-    queryKey: ["remote-servers"],
+    queryKey: ["remote-servers", ownerKey],
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && ownerKey != null,
   });
 
   const [value, setValue] = useState<string>(() =>

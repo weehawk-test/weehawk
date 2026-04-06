@@ -2,13 +2,18 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { RemoteServer } from './entities/remote-server.entity';
+import { RemoteServerProvisionJob } from './entities/remote-server-provision-job.entity';
 import { RemoteServersController } from './remote-servers.controller';
 import { RemoteServersService } from './remote-servers.service';
+import { RemoteServerProvisionService } from './remote-server-provision.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([RemoteServer]), AuthModule],
+  imports: [
+    TypeOrmModule.forFeature([RemoteServer, RemoteServerProvisionJob]),
+    AuthModule,
+  ],
   controllers: [RemoteServersController],
-  providers: [RemoteServersService],
-  exports: [RemoteServersService],
+  providers: [RemoteServersService, RemoteServerProvisionService],
+  exports: [RemoteServersService, RemoteServerProvisionService],
 })
 export class RemoteServersModule {}

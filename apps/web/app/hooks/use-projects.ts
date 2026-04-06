@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CreateProjectInput, Project } from "@/lib/schema";
+import { useAuth } from "@/contexts/auth-context";
 import {
   createProjectApi,
   deleteProjectApi,
@@ -16,6 +17,8 @@ export function useProjectsPage(
   ssrQ: string,
   initialPageData?: ProjectsPageResponse,
 ) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
   const trimmed = q.trim();
   const ssrTrim = ssrQ.trim();
   const hasSsrInitial =
@@ -24,12 +27,14 @@ export function useProjectsPage(
     trimmed === ssrTrim;
 
   return useQuery({
-    queryKey: ["projects", "list", page, trimmed],
+    queryKey: ["projects", "list", ownerKey, page, trimmed],
     queryFn: () => fetchProjectsPage(page, undefined, trimmed),
-    initialData: hasSsrInitial ? initialPageData : undefined,
-    initialDataUpdatedAt: hasSsrInitial ? Date.now() : undefined,
-    staleTime: hasSsrInitial ? Infinity : 10_000,
-    refetchOnMount: hasSsrInitial ? false : true,
+    initialData:
+      hasSsrInitial && user?.userId != null ? initialPageData : undefined,
+    initialDataUpdatedAt:
+      hasSsrInitial && user?.userId != null ? Date.now() : undefined,
+    staleTime: hasSsrInitial && user?.userId != null ? Infinity : 10_000,
+    refetchOnMount: hasSsrInitial && user?.userId != null ? false : true,
     refetchOnWindowFocus: false,
   });
 }
@@ -41,10 +46,12 @@ export function useProject(
   id: string,
   options?: { initialData?: Project; skipClientFetch?: boolean },
 ) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
   const skip = options?.skipClientFetch === true;
   const hasInitial = options?.initialData !== undefined;
   return useQuery({
-    queryKey: ["projects", id],
+    queryKey: ["projects", ownerKey, id],
     queryFn: () => fetchProject(id),
     enabled: !!id && !skip,
     initialData: options?.initialData,
@@ -59,7 +66,7 @@ export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateProjectInput) => createProjectApi(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects", "list"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects", "list"], exact: false }),
   });
 }
 
@@ -67,7 +74,7 @@ export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteProjectApi(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects", "list"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects", "list"], exact: false }),
   });
 }
 
@@ -77,8 +84,8 @@ export function useToggleProject() {
     mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
       updateProjectApi(id, { isActive }),
     onSuccess: (_, v) => {
-      qc.invalidateQueries({ queryKey: ["projects", "list"] });
-      qc.invalidateQueries({ queryKey: ["projects", v.id] });
+      void v;
+      qc.invalidateQueries({ queryKey: ["projects"], exact: false });
     },
   });
 }

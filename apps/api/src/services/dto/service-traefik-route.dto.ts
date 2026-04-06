@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -50,4 +51,13 @@ export class ServiceTraefikRouteDto {
   @Min(1)
   @Max(65535)
   port?: number | null;
+
+  @ApiPropertyOptional({
+    description:
+      'When true (default), use HTTPS entrypoint + ACME. When false, HTTP entrypoint only (no TLS resolver label).',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  https?: boolean;
 }

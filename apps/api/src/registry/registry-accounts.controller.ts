@@ -16,7 +16,7 @@ import { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
 @ApiTags('Registry')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('registry/accounts')
+@Controller('api/registry/accounts')
 export class RegistryAccountsController {
   constructor(private readonly registryService: RegistryService) {}
 

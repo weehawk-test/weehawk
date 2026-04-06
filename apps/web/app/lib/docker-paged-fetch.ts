@@ -99,7 +99,7 @@ export async function fetchDockerContainersPaged(
   q: string,
 ): Promise<PaginatedContainersResponse> {
   const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedContainersResponse>(`/docker-monitor/containers/paged?${qs}`);
+  return fetchPaged<PaginatedContainersResponse>(`/api/docker-monitor/containers/paged?${qs}`);
 }
 
 export async function fetchDockerImagesPaged(
@@ -108,7 +108,7 @@ export async function fetchDockerImagesPaged(
   q: string,
 ): Promise<PaginatedImagesResponse> {
   const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedImagesResponse>(`/docker-monitor/images/paged?${qs}`);
+  return fetchPaged<PaginatedImagesResponse>(`/api/docker-monitor/images/paged?${qs}`);
 }
 
 export async function fetchDockerServicesPaged(
@@ -117,7 +117,7 @@ export async function fetchDockerServicesPaged(
   q: string,
 ): Promise<PaginatedServicesResponse> {
   const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedServicesResponse>(`/docker-monitor/services/paged?${qs}`);
+  return fetchPaged<PaginatedServicesResponse>(`/api/docker-monitor/services/paged?${qs}`);
 }
 
 export async function fetchDockerVolumesPaged(
@@ -126,7 +126,7 @@ export async function fetchDockerVolumesPaged(
   q: string,
 ): Promise<PaginatedVolumesResponse> {
   const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedVolumesResponse>(`/docker-monitor/volumes/paged?${qs}`);
+  return fetchPaged<PaginatedVolumesResponse>(`/api/docker-monitor/volumes/paged?${qs}`);
 }
 
 export async function fetchDockerNetworksPaged(
@@ -135,7 +135,7 @@ export async function fetchDockerNetworksPaged(
   q: string,
 ): Promise<PaginatedNetworksResponse> {
   const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedNetworksResponse>(`/docker-monitor/networks/paged?${qs}`);
+  return fetchPaged<PaginatedNetworksResponse>(`/api/docker-monitor/networks/paged?${qs}`);
 }
 
 export async function fetchDockerSecretsPaged(
@@ -144,7 +144,7 @@ export async function fetchDockerSecretsPaged(
   q: string,
 ): Promise<PaginatedSecretsResponse> {
   const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedSecretsResponse>(`/docker-secrets/paged?${qs}`);
+  return fetchPaged<PaginatedSecretsResponse>(`/api/docker-secrets/paged?${qs}`);
 }
 
 export const DOCKER_LIST_PAGE_SIZE = 10;

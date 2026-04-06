@@ -2,6 +2,9 @@ import ProjectsClient from "./projects/ProjectsClient";
 import { fetchProjectsSSR } from "@/lib/server-fetch";
 import type { ProjectsPageResponse } from "@/lib/projects-api";
 
+/** Always run with the incoming request cookies (JWT). Avoids stale/cached RSC without auth. */
+export const dynamic = "force-dynamic";
+
 export default async function HomeProjectsPage({
   searchParams,
 }: {

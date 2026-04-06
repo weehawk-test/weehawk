@@ -79,11 +79,12 @@ export function getDatabaseEngineById(id: string) {
 /**
  * Some vendor PNGs ship with a solid black rectangle behind the mark. On dark UI
  * we use `mix-blend-screen` so black pixels pick up the backdrop (transparent look).
+ * On light backgrounds, screen blending washes out light-colored marks — only apply in `.dark`.
  */
 const ENGINE_LOGO_SCREEN_BLEND: readonly DatabaseEngineId[] = ["mysql", "mariadb", "redis"];
 
 export function databaseLogoBlendClass(engineId: DatabaseEngineId): string {
-  return ENGINE_LOGO_SCREEN_BLEND.includes(engineId) ? "mix-blend-screen" : "";
+  return ENGINE_LOGO_SCREEN_BLEND.includes(engineId) ? "dark:mix-blend-screen" : "";
 }
 
 /** Reads `# engine: postgres` (etc.) from stored service `config` / `dockerConfig`. */

@@ -6,7 +6,7 @@ import { LogoutRegistryDto } from './dto/logout-registry.dto';
 import { VerifyRegistryConnectionDto } from './dto/verify-registry-connection.dto';
 
 @ApiTags('Registry')
-@Controller('registry')
+@Controller('api/registry')
 export class RegistryController {
   constructor(private readonly registryService: RegistryService) {}
 

@@ -2,14 +2,25 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { User } from 'src/auth/entities/user.entity';
 
 @Entity('remote_servers')
 export class RemoteServer {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  /** Owner; null only for rows created before per-user isolation (hidden from API until migrated). */
+  @Column({ name: 'user_id', type: 'int', nullable: true })
+  userId!: number | null;
+
+  @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({ name: 'user_id' })
+  user!: User | null;
 
   @Column({ type: 'varchar', length: 120 })
   name!: string;
@@ -48,6 +59,13 @@ export class RemoteServer {
    */
   @Column({ type: 'text', nullable: true })
   extraSshOptions?: string | null;
+
+  /**
+   * Public IPv4 for Magic Traefik.me hostnames (`*.x.x.x.x.traefik.me`).
+   * Falls back to `WEEHAWK_MAGIC_TRAEFIK_ME_PUBLIC_IP` when unset.
+   */
+  @Column({ type: 'varchar', length: 45, nullable: true })
+  publicIpv4?: string | null;
 
   @CreateDateColumn()
   createdAt!: Date;

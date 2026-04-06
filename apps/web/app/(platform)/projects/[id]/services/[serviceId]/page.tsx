@@ -1,11 +1,15 @@
 import ServiceDetailsClient from "./service-details-client";
-import { fetchProject } from "@/lib/projects-api";
-import { fetchService, fetchServiceRuntime } from "@/lib/services-api";
 import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 import type { Project, Service } from "@/lib/schema";
 import { fetchDockerSecretsPaged } from "@/lib/docker-paged-fetch";
-import { fetchS3BucketObjectsSSR, fetchS3ProfilesSSR } from "@/lib/server-fetch";
+import {
+  fetchProjectSSR,
+  fetchServiceRuntimeSSR,
+  fetchServiceSSR,
+  fetchS3BucketObjectsSSR,
+  fetchS3ProfilesSSR,
+} from "@/lib/server-fetch";
 import { normalizeS3PrefixParam } from "@/lib/s3-prefix-param";
 import type { S3BucketListResponse } from "@/lib/s3-api";
 
@@ -29,25 +33,12 @@ export default async function ServiceDetailsPage({
   let initialSecretsPaged: PaginatedSecretsResponse | null = null;
 
   if (safeProjectId) {
-    try {
-      initialProject = await fetchProject(safeProjectId);
-    } catch {
-      initialProject = null;
-    }
+    initialProject = await fetchProjectSSR(safeProjectId);
   }
 
   if (safeServiceId) {
-    try {
-      initialService = await fetchService(safeServiceId);
-    } catch {
-      initialService = null;
-    }
-
-    try {
-      initialRuntime = await fetchServiceRuntime(safeServiceId);
-    } catch {
-      initialRuntime = null;
-    }
+    initialService = await fetchServiceSSR(safeServiceId);
+    initialRuntime = await fetchServiceRuntimeSSR(safeServiceId);
 
     if (initialService?.type !== "application") {
       try {

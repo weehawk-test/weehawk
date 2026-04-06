@@ -32,7 +32,7 @@ export function DatabaseEnginePicker({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md"
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md dark:bg-black/70"
           onClick={(e) => {
             if (e.target === e.currentTarget) onCancel();
           }}
@@ -42,20 +42,20 @@ export function DatabaseEnginePicker({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 12 }}
             transition={{ type: "spring", stiffness: 380, damping: 32 }}
-            className="relative w-full max-w-3xl max-h-[min(90vh,720px)] overflow-hidden rounded-2xl border border-white/10 bg-zinc-950/95 shadow-2xl shadow-black/40 flex flex-col"
+            className="relative flex max-h-[min(90vh,720px)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-4 px-6 pt-6 pb-4 border-b border-white/5 shrink-0">
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-6 pb-4 pt-6">
               <div>
-                <h2 id="db-picker-title" className="text-xl font-semibold tracking-tight">
+                <h2 id="db-picker-title" className="text-xl font-semibold tracking-tight text-foreground">
                   {title}
                 </h2>
-                <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">{subtitle}</p>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{subtitle}</p>
               </div>
               <button
                 type="button"
                 onClick={onCancel}
-                className="rounded-lg p-2 text-muted-foreground hover:bg-white/10 hover:text-foreground transition-colors shrink-0"
+                className="shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 aria-label="Close"
               >
                 <X className="w-5 h-5" />
@@ -71,10 +71,10 @@ export function DatabaseEnginePicker({
                       <button
                         type="button"
                         onClick={() => onSelect(eng.id)}
-                        className={`w-full h-[8.5rem] text-left rounded-xl border transition-colors p-4 flex gap-4 items-start focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
+                        className={`flex h-[8.5rem] w-full items-start gap-4 rounded-xl border p-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
                           active
-                            ? "border-sky-500/50 bg-sky-500/10 ring-1 ring-sky-500/20"
-                            : "border-white/10 bg-zinc-900/50 hover:bg-zinc-900 hover:border-sky-500/25"
+                            ? "border-sky-500/50 bg-sky-500/10 ring-1 ring-sky-500/20 dark:bg-sky-500/15"
+                            : "border-border bg-muted/50 hover:border-sky-500/40 hover:bg-muted"
                         }`}
                       >
                         <span className="relative h-14 w-28 shrink-0 flex items-center justify-center">

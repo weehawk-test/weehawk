@@ -8,19 +8,39 @@ import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import { URL } from 'url';
 import * as pty from 'node-pty';
+import { ConfigService } from '@nestjs/config';
 import { ExecutorService } from '../executor/executor.service';
+import {
+  assertLocalHostDockerAllowed,
+  LOCAL_HOST_DOCKER_FORBIDDEN_MESSAGE,
+} from '../common/weehawk-edition';
 
 @WebSocketGateway({
   path: '/ws/service-terminal',
   cors: { origin: true },
 })
 export class ServiceTerminalGateway implements OnGatewayConnection {
-  constructor(private readonly executorService: ExecutorService) {}
+  constructor(
+    private readonly executorService: ExecutorService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @WebSocketServer()
   server: Server;
 
   async handleConnection(client: WebSocket, ...args: unknown[]) {
+    try {
+      assertLocalHostDockerAllowed(this.configService);
+    } catch (e) {
+      const msg =
+        e instanceof Error && e.message
+          ? e.message
+          : LOCAL_HOST_DOCKER_FORBIDDEN_MESSAGE;
+      client.send(JSON.stringify({ type: 'error', message: msg }));
+      client.close(4403, 'forbidden');
+      return;
+    }
+
     const req = args[0] as IncomingMessage | undefined;
     const pathAndQuery = req?.url ?? '/';
     const host = req?.headers?.host ?? 'localhost';

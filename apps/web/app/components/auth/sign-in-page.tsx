@@ -23,6 +23,7 @@ import {
 } from "@/lib/auth-api";
 import { toast } from "@/hooks/use-toast";
 import { savePendingOnboardingAuth } from "@/lib/pending-onboarding-auth";
+import { editionFromEnv } from "@/lib/weehawk-edition";
 
 /** Sign-in / first-user setup at `/` (no sidebar). */
 export function SignInPage() {
@@ -60,7 +61,7 @@ export function SignInPage() {
     window.history.replaceState({}, "", window.location.pathname);
   }, []);
 
-  const edition = setupQuery.data?.edition ?? "selfhosted";
+  const edition = setupQuery.data?.edition ?? editionFromEnv();
   const isCloud = edition === "cloud";
   const needsSetup = setupQuery.data?.needsSetup === true;
   const isRegisterForm = needsSetup;

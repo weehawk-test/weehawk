@@ -41,7 +41,13 @@ export function GoogleOAuthButton({
     <Button
       type="button"
       variant="outline"
-      className="w-full h-11 gap-3 border-white/15 bg-zinc-950/90 text-foreground shadow-none backdrop-blur-sm hover:bg-zinc-900 hover:text-foreground"
+      className={
+        "w-full h-11 gap-3 rounded-md " +
+        "border-zinc-300/95 bg-white text-zinc-800 shadow-sm " +
+        "hover:bg-zinc-50 hover:text-zinc-900 hover:border-zinc-400/90 " +
+        "dark:border-white/15 dark:bg-zinc-950/90 dark:text-foreground dark:shadow-none dark:backdrop-blur-sm " +
+        "dark:hover:bg-zinc-900 dark:hover:text-foreground"
+      }
       onClick={() => {
         window.location.assign(GOOGLE_AUTHORIZE_URL);
       }}
@@ -56,7 +62,7 @@ export function AuthEmailDivider() {
   return (
     <div className="relative my-5" role="separator" aria-label="Or continue with email">
       <div className="absolute inset-0 flex items-center" aria-hidden>
-        <span className="w-full border-t border-white/10" />
+        <span className="w-full border-t border-border dark:border-white/10" />
       </div>
       <div className="relative flex justify-center">
         <span className="rounded-md bg-background/95 px-3 py-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground backdrop-blur-sm">

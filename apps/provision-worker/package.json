@@ -1,0 +1,9 @@
+{
+  "name": "provision-worker",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter api exec node -r tsconfig-paths/register -r ts-node/register src/provision-worker.ts",
+    "devcontainer": "pnpm --filter api exec node -r tsconfig-paths/register -r ts-node/register src/provision-worker.ts",
+    "start": "pnpm --filter api exec node dist/provision-worker.js"
+  }
+}

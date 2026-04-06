@@ -1,4 +1,5 @@
 import { API_BASE } from "./api";
+import { authFetch } from "./auth-fetch";
 import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
 import type { DatabaseEngineId } from "./database-engines";
 import type { DatabaseBackupConfig } from "./database-backup-preview";
@@ -17,18 +18,24 @@ function nestErrorMessage(text: string, fallback: string): string {
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
-  const isBrowser = typeof window !== "undefined";
+  const url = `${base}${path}`;
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const headers: HeadersInit = {
     Accept: "application/json",
     ...(!isFormData && init?.body ? { "Content-Type": "application/json" } : {}),
     ...init?.headers,
   };
-  return fetch(`${base}${path}`, {
+  if (typeof window !== "undefined") {
+    return authFetch("cookie-session", url, {
+      ...init,
+      cache: "no-store",
+      headers,
+    });
+  }
+  return fetch(url, {
     ...init,
     cache: "no-store",
     headers,
-    ...(isBrowser ? { credentials: init?.credentials ?? "include" } : {}),
   });
 }
 
@@ -67,11 +74,13 @@ function parseTraefikRoutes(raw: unknown): TraefikRouteRule[] {
     let port: number | null | undefined;
     if (o.port === null || o.port === undefined) port = null;
     else if (typeof o.port === "number" && Number.isFinite(o.port)) port = o.port;
+    const https = o.https === false ? false : true;
     out.push({
       router: router.trim().toLowerCase(),
       hosts,
       pathPrefix,
       port: port ?? null,
+      https,
     });
   }
   return out;
@@ -193,7 +202,17 @@ export function mapApiServiceToService(row: unknown): Service {
     remoteServerId,
     remoteServer:
       rs && typeof rs.id === "number" && typeof rs.name === "string"
-        ? { id: rs.id, name: rs.name }
+        ? {
+            id: rs.id,
+            name: rs.name,
+            publicIpv4:
+              (rs as { publicIpv4?: string | null }).publicIpv4 === null ||
+              (rs as { publicIpv4?: string | null }).publicIpv4 === undefined
+                ? null
+                : typeof (rs as { publicIpv4?: unknown }).publicIpv4 === "string"
+                  ? (rs as { publicIpv4: string }).publicIpv4
+                  : null,
+          }
         : undefined,
     buildRemoteServerId,
     buildRemoteServer:
@@ -201,6 +220,18 @@ export function mapApiServiceToService(row: unknown): Service {
         ? { id: brs.id, name: brs.name }
         : undefined,
     registryPushImage: parseRegistryPushImageFromConfig(cfg),
+    magicTraefikMeUrl:
+      s.magicTraefikMeUrl === null || s.magicTraefikMeUrl === undefined
+        ? null
+        : typeof s.magicTraefikMeUrl === "string"
+          ? s.magicTraefikMeUrl
+          : null,
+    magicTraefikMeIpv4:
+      s.magicTraefikMeIpv4 === null || s.magicTraefikMeIpv4 === undefined
+        ? null
+        : typeof s.magicTraefikMeIpv4 === "string"
+          ? s.magicTraefikMeIpv4
+          : null,
   };
 }
 
@@ -212,7 +243,7 @@ export async function fetchServices(projectId?: string): Promise<Service[]> {
     params.set("all", "1");
   }
   const q = params.toString() ? `?${params.toString()}` : "";
-  const res = await apiFetch(`/services${q}`);
+  const res = await apiFetch(`/api/services${q}`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -233,7 +264,7 @@ export async function fetchServicesPage(
   params.set("limit", String(SERVICES_PAGE_SIZE));
   const trimmed = q.trim();
   if (trimmed) params.set("q", trimmed);
-  const res = await apiFetch(`/services?${params.toString()}`);
+  const res = await apiFetch(`/api/services?${params.toString()}`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -242,7 +273,34 @@ export async function fetchServicesPage(
 }
 
 export async function fetchService(id: string): Promise<Service> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}`);
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}`);
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
+/** Manual opt-in: roll a random Magic traefik.me hostname (stored on the service; updates stack YAML when present). */
+export async function rollMagicTraefikMeApi(
+  serviceId: string,
+  body: { publicIpv4: string },
+): Promise<Service> {
+  const res = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/magic-traefik-me/roll`,
+    { method: "POST", body: JSON.stringify({ publicIpv4: body.publicIpv4 }) },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
+export async function clearMagicTraefikMeApi(serviceId: string): Promise<Service> {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(serviceId)}/magic-traefik-me`, {
+    method: "DELETE",
+  });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -256,12 +314,17 @@ export async function createServiceApi(input: CreateServiceInput): Promise<Servi
   if (rest.type === "databases" && databaseEngine) {
     dockerConfig = `# weehawk database service\n# engine: ${databaseEngine}\n`;
   } else if (rest.type === "application") {
-    const ext = (appExternalNetworkNames ?? []).map((s) => s.trim()).filter(Boolean);
+    const extRaw = (appExternalNetworkNames ?? []).map((s) => s.trim()).filter(Boolean);
     const stk = (appStackNetworkKeys ?? []).map((s) => s.trim()).filter(Boolean);
+    const ext =
+      extRaw.length === 0
+        ? ["weehawk"]
+        : extRaw.some((n) => n.toLowerCase() === "weehawk")
+          ? extRaw
+          : ["weehawk", ...extRaw];
     let header = "# weehawk application service\n";
-    if (ext.length) header += `# app.networks.external: ${ext.join("|")}\n`;
+    header += `# app.networks.external: ${ext.join("|")}\n`;
     if (stk.length) header += `# app.networks.stack: ${stk.join("|")}\n`;
-    if (!ext.length && !stk.length) header += "# app.networks: none\n";
     dockerConfig = header;
   }
   const body = {
@@ -272,7 +335,7 @@ export async function createServiceApi(input: CreateServiceInput): Promise<Servi
     dockerConfig,
     projectId: Number(rest.projectId),
   };
-  const res = await apiFetch("/services", {
+  const res = await apiFetch("/api/services", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -305,7 +368,7 @@ export async function applyPostgresDatabaseApi(
     image?: string;
   },
 ): Promise<Service> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/postgres`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/postgres`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -338,7 +401,7 @@ export async function applyDatabaseApi(
     image?: string;
   },
 ): Promise<Service> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -354,7 +417,7 @@ export async function updatePostgresStackApi(
   id: string,
   body: { publishPort?: number | null; replicas?: number },
 ): Promise<Service> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/postgres/stack`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/postgres/stack`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -370,7 +433,7 @@ export async function updateDatabaseStackApi(
   engine: DatabaseEngineId,
   body: { publishPort?: number | null; replicas?: number },
 ): Promise<Service> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}/stack`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}/stack`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -395,6 +458,7 @@ export async function updateServiceApi(
       | "remoteServerId"
       | "buildRemoteServerId"
       | "registryPushImage"
+      | "magicTraefikMeIpv4"
     >
   >,
 ): Promise<Service> {
@@ -409,8 +473,9 @@ export async function updateServiceApi(
   if (patch.buildRemoteServerId !== undefined)
     body.buildRemoteServerId = patch.buildRemoteServerId;
   if (patch.registryPushImage !== undefined) body.registryPushImage = patch.registryPushImage;
+  if (patch.magicTraefikMeIpv4 !== undefined) body.magicTraefikMeIpv4 = patch.magicTraefikMeIpv4;
 
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -425,7 +490,7 @@ export async function patchApplicationNetworksApi(
   id: string,
   body: { external: string[]; stack: string[] },
 ): Promise<Service> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/networks`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/networks`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -437,7 +502,7 @@ export async function patchApplicationNetworksApi(
 }
 
 export async function deleteServiceApi(id: string): Promise<void> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}`, { method: "DELETE" });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -446,7 +511,7 @@ export async function deleteServiceApi(id: string): Promise<void> {
 
 /** Stops containers/stack without deleting the service (see ExecutorService.shutdown). */
 export async function shutdownServiceApi(id: string): Promise<{ success: boolean; message?: string }> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/shutdown`, { method: "POST" });
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/shutdown`, { method: "POST" });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -460,7 +525,7 @@ export async function executeServiceDeploymentApi(
   id: string,
   mode: "deploy" | "reload" | "redeploy" = "deploy",
 ): Promise<{ success: boolean; output: string }> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/execute`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/execute`, {
     method: "POST",
     body: JSON.stringify({ mode }),
   });
@@ -486,7 +551,7 @@ export async function runServiceBackupNowApi(
         backupS3ProfileName: string;
       },
 ): Promise<{ ok: boolean; action: "volume_backup" | "database_backup"; output: string }> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/backup`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/backup`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -507,7 +572,7 @@ export async function importServiceBackupApi(
   id: string,
   formData: FormData,
 ): Promise<{ ok: boolean; output: string }> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/backup/import`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/backup/import`, {
     method: "POST",
     body: formData,
   });
@@ -529,7 +594,7 @@ export async function importServiceBackupFromS3Api(
     volumeSource?: string;
   },
 ): Promise<{ ok: boolean; output: string }> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/backup/import-from-s3`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/backup/import-from-s3`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -542,7 +607,7 @@ export async function importServiceBackupFromS3Api(
 }
 
 export async function fetchServiceRuntime(id: string): Promise<{ running: boolean }> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/runtime`);
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/runtime`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -567,7 +632,7 @@ export interface ServiceVolumesResponse {
 
 /** Declared mounts from the service compose file (`docker compose config` on the API host). */
 export async function fetchServiceVolumesApi(id: string): Promise<ServiceVolumesResponse> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/volumes`);
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/volumes`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -581,7 +646,7 @@ export async function fetchServiceVolumesApi(id: string): Promise<ServiceVolumes
 }
 
 export async function startServiceApi(id: string): Promise<{ success: boolean; output?: string }> {
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/start`, { method: "POST" });
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/start`, { method: "POST" });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -627,7 +692,7 @@ export async function uploadApplicationArchiveApi(
   }
   fd.append("file", file);
 
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/upload`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/upload`, {
     method: "POST",
     body: fd,
   });
@@ -657,7 +722,7 @@ export async function applicationGitCloneStageApi(
   if (options.githubRepoFullName?.trim()) body.githubRepoFullName = options.githubRepoFullName.trim();
   if (options.httpUrlToRepo?.trim()) body.httpUrlToRepo = options.httpUrlToRepo.trim();
   if (options.branch?.trim()) body.branch = options.branch.trim();
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/git-clone-stage`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/git-clone-stage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -700,7 +765,7 @@ export async function generateApplicationFromSourceApi(
     body.stackNetworks = stack.join("|");
     body.networksJson = JSON.stringify(options.networks);
   }
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/generate-from-source`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/generate-from-source`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -747,7 +812,7 @@ export async function uploadApplicationGitCloneApi(
     body.stackNetworks = stack.join("|");
     body.networksJson = JSON.stringify(options.networks);
   }
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/git-clone`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/git-clone`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -788,7 +853,7 @@ export async function patchApplicationImageDeployApi(
     body.stackNetworks = stack.join("|");
     body.networksJson = JSON.stringify(options.networks);
   }
-  const res = await apiFetch(`/services/${encodeURIComponent(id)}/application/image`, {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/image`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -802,9 +867,9 @@ export async function patchApplicationImageDeployApi(
   return mapApiServiceToService(json.service);
 }
 
-/** SSE endpoint: `GET /services/:id/logs/stream` (see `ServicesController.streamLogs`). */
+/** SSE endpoint: `GET /api/services/:id/logs/stream` (see `ServicesController.streamLogs`). */
 export function serviceLogsStreamUrl(serviceId: string): string {
-  return `${API_BASE}/services/${encodeURIComponent(serviceId)}/logs/stream`;
+  return `${API_BASE}/api/services/${encodeURIComponent(serviceId)}/logs/stream`;
 }
 
 function parseSseDataLine(line: string): string | null {
@@ -832,6 +897,7 @@ export async function streamServiceLogs(
       method: "GET",
       headers: { Accept: "text/event-stream" },
       mode: "cors",
+      credentials: typeof window !== "undefined" ? "include" : undefined,
       signal,
     });
   } catch (e) {

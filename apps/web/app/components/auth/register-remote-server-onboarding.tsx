@@ -8,6 +8,7 @@ import {
   createRemoteServerApi,
   generateRemoteSshKeypairApi,
   testRemoteServerApi,
+  testRemoteServerSshApi,
   type RemoteServerRow,
   type RemoteServerRole,
 } from "@/lib/remote-servers-api";
@@ -70,12 +71,25 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
     onSuccess: (data) => {
       toast({
         title: data.success ? "Docker reachable" : "Connection failed",
-        description: data.output.slice(0, 400) + (data.output.length > 400 ? "…" : ""),
+        description: data.output.slice(0, 900) + (data.output.length > 900 ? "…" : ""),
         variant: data.success ? "default" : "destructive",
       });
     },
     onError: (e: Error) =>
       toast({ title: "Test failed", description: e.message, variant: "destructive" }),
+  });
+
+  const testSshMut = useMutation({
+    mutationFn: (id: number) => testRemoteServerSshApi(accessToken, id),
+    onSuccess: (data) => {
+      toast({
+        title: data.success ? "SSH OK" : "SSH failed",
+        description: data.output.slice(0, 900) + (data.output.length > 900 ? "…" : ""),
+        variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (e: Error) =>
+      toast({ title: "SSH test failed", description: e.message, variant: "destructive" }),
   });
 
   const canSave =
@@ -212,18 +226,28 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
         </button>
         <button
           type="button"
+          disabled={!savedRow || testSshMut.isPending}
+          onClick={() => savedRow && testSshMut.mutate(savedRow.id)}
+          className="inline-flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-white/15 bg-white/[0.04] text-foreground disabled:opacity-50"
+        >
+          {testSshMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
+          Test SSH
+        </button>
+        <button
+          type="button"
           disabled={!savedRow || testMut.isPending}
           onClick={() => savedRow && testMut.mutate(savedRow.id)}
           className="inline-flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-white/15 bg-white/[0.04] text-foreground disabled:opacity-50"
         >
           {testMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <PlugZap className="size-3.5" />}
-          Test connection
+          Test Docker
         </button>
       </div>
       {savedRow ? (
         <p className="text-[11px] text-muted-foreground">
-          Host saved as <span className="text-foreground/90 font-medium">{savedRow.name}</span>. Test Docker over SSH,
-          then use <span className="text-foreground/90">Set up later</span> below when you are ready to open the app.
+          Host saved as <span className="text-foreground/90 font-medium">{savedRow.name}</span>. Test SSH first, then
+          Test Docker (remote API), then use <span className="text-foreground/90">Set up later</span> below when you are
+          ready to open the app.
         </p>
       ) : (
         <p className="text-[11px] text-muted-foreground">

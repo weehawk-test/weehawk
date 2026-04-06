@@ -6,12 +6,15 @@ import {
   Query,
   ParseIntPipe,
   DefaultValuePipe,
+  UseGuards,
 } from '@nestjs/common';
 import { DockerService } from './docker.service';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { CloudEditionLocalDockerGuard } from '../common/guards/cloud-edition-local-docker.guard';
 
 @ApiTags('Docker Engine Monitor')
-@Controller('docker-monitor')
+@UseGuards(CloudEditionLocalDockerGuard)
+@Controller('api/docker-monitor')
 export class DockerController {
   constructor(private readonly dockerService: DockerService) {}
 

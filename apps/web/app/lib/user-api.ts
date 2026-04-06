@@ -1,4 +1,5 @@
 import { API_BASE } from "./api";
+import { authFetch } from "./auth-fetch";
 
 export type UserProfile = {
   userId: number;
@@ -31,10 +32,9 @@ function authHeaders(_accessToken: string): HeadersInit {
 }
 
 export async function getProfile(accessToken: string): Promise<UserProfile> {
-  const res = await fetch(`${API_BASE}/api/user/profile`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/user/profile`, {
     method: "GET",
     headers: authHeaders(accessToken),
-    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -44,14 +44,13 @@ export async function updateProfile(
   accessToken: string,
   body: { firstName: string; lastName: string },
 ): Promise<UserProfile> {
-  const res = await fetch(`${API_BASE}/api/user/profile`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/user/profile`, {
     method: "PUT",
     headers: {
       ...authHeaders(accessToken),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -61,14 +60,13 @@ export async function changePassword(
   accessToken: string,
   body: { currentPassword: string; newPassword: string },
 ): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE}/api/user/password`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/user/password`, {
     method: "PUT",
     headers: {
       ...authHeaders(accessToken),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-    credentials: "include",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
@@ -78,15 +76,18 @@ export async function requestEmailChange(
   accessToken: string,
   newEmail: string,
 ): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE}/api/user/email/change-request`, {
-    method: "POST",
-    headers: {
-      ...authHeaders(accessToken),
-      "Content-Type": "application/json",
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/user/email/change-request`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(accessToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ newEmail: newEmail.trim().toLowerCase() }),
     },
-    body: JSON.stringify({ newEmail: newEmail.trim().toLowerCase() }),
-    credentials: "include",
-  });
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
@@ -94,14 +95,17 @@ export async function requestEmailChange(
 export async function resendConfirmationEmail(
   accessToken: string,
 ): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE}/api/user/email/resend-confirmation`, {
-    method: "POST",
-    headers: {
-      ...authHeaders(accessToken),
-      Accept: "application/json",
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/user/email/resend-confirmation`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(accessToken),
+        Accept: "application/json",
+      },
     },
-    credentials: "include",
-  });
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }

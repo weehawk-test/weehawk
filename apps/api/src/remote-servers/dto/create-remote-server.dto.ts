@@ -5,10 +5,12 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateRemoteServerDto {
@@ -65,4 +67,21 @@ export class CreateRemoteServerDto {
   @IsOptional()
   @IsString()
   extraSshOptions?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Public IPv4 for Magic Traefik.me default hostnames on services deployed to this host.',
+    example: '203.0.113.10',
+  })
+  @IsOptional()
+  @ValidateIf((_, o) => {
+    const v = (o as { publicIpv4?: string }).publicIpv4;
+    return v != null && String(v).trim().length > 0;
+  })
+  @IsString()
+  @Matches(/^(\d{1,3}\.){3}\d{1,3}$/, {
+    message: 'publicIpv4 must be a dotted IPv4 address',
+  })
+  publicIpv4?: string;
 }

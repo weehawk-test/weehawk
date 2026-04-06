@@ -29,6 +29,7 @@ export default async function RootLayout({
   const profile = await fetchUserProfileSSR();
   const initialUser = profile
     ? {
+        userId: profile.userId,
         email: profile.email,
         firstName: profile.firstName,
         lastName: profile.lastName,

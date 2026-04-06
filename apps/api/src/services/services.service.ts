@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   forwardRef,
   Inject,
 } from '@nestjs/common';
@@ -43,6 +44,10 @@ import { getErrorMessage } from '../utils/error-message';
 import { GitService } from '../git/git.service';
 import { TraefikService } from '../traefik/traefik.service';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
+import {
+  buildTraefikMeMagicHostname,
+  parseIpv4Octets,
+} from '../common/magic-traefik-me';
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +71,39 @@ export class ServicesService {
     private readonly traefikService: TraefikService,
   ) {}
 
+  /** Ensures the service exists and its project belongs to the given user (REST / cron / webhooks). */
+  async assertServiceOwnedByUser(
+    serviceId: number,
+    userId: number,
+  ): Promise<Service> {
+    const service = await this.serviceRepository.findOne({
+      where: { id: serviceId },
+      relations: ['project', 'remoteServer', 'buildRemoteServer'],
+    });
+    if (!service) {
+      throw new NotFoundException(`Service #${serviceId} not found`);
+    }
+    const puid = service.project?.userId;
+    if (puid == null || puid !== userId) {
+      throw new ForbiddenException();
+    }
+    return service;
+  }
+
+  private async assertProjectOwnedByUser(
+    projectId: number,
+    userId: number,
+  ): Promise<Project> {
+    const project = await this.projectRepository.findOneBy({ id: projectId });
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+    if (project.userId == null || project.userId !== userId) {
+      throw new ForbiddenException();
+    }
+    return project;
+  }
+
   private isCloudEdition(): boolean {
     return (
       (this.configService.get<string>('WEEHAWK_EDITION') ?? 'selfhosted').toLowerCase() ===
@@ -73,7 +111,7 @@ export class ServicesService {
     );
   }
 
-  async create(createServiceDto: CreateServiceDto) {
+  async create(createServiceDto: CreateServiceDto, userId: number) {
     const {
       projectId,
       appName,
@@ -82,14 +120,13 @@ export class ServicesService {
       registryPushImage: registryPushInCreate,
       ...serviceData
     } = createServiceDto;
-    const project = await this.projectRepository.findOneBy({ id: projectId });
-    if (!project) throw new NotFoundException('Project not found');
+    const project = await this.assertProjectOwnedByUser(projectId, userId);
 
     if (remoteServerId != null) {
-      await this.assertDeployRemoteServer(remoteServerId);
+      await this.assertDeployRemoteServer(remoteServerId, project.userId);
     }
     if (buildRemoteServerId != null) {
-      await this.assertBuildRemoteServer(buildRemoteServerId);
+      await this.assertBuildRemoteServer(buildRemoteServerId, project.userId);
     }
 
     const uniqueAppName = `${appName}-${randomBytes(2).toString('hex')}`;
@@ -134,7 +171,12 @@ export class ServicesService {
       saved = await this.serviceRepository.save(saved);
     }
 
-    return saved;
+    const hydrated =
+      (await this.serviceRepository.findOne({
+        where: { id: saved.id },
+        relations: ['project', 'remoteServer'],
+      })) ?? saved;
+    return this.withMagicTraefikMeUrl(hydrated);
   }
 
   private parseConfigHeaderValue(config: string, key: string): string | null {
@@ -487,13 +529,192 @@ export class ServicesService {
     return [...out];
   }
 
+  /** Loads `project` and `remoteServer` when missing — required for Magic Traefik.me hostnames. */
+  private async ensureServiceForMagicDomains(service: Service): Promise<Service> {
+    const needProject = !service.project?.id;
+    const needRemote =
+      service.remoteServerId != null && service.remoteServer === undefined;
+    if (!needProject && !needRemote) return service;
+    const row = await this.serviceRepository.findOne({
+      where: { id: service.id },
+      relations: ['project', 'remoteServer'],
+    });
+    return row ?? service;
+  }
+
+  private sanitizePlatformHostForComparison(raw: string | null | undefined): string {
+    if (raw == null || typeof raw !== 'string') return '';
+    const host =
+      raw
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .split('/')[0]
+        ?.trim() ?? '';
+    return host;
+  }
+
+  private isMagicTraefikMeEnabled(): boolean {
+    const v = this.configService.get<string>('WEEHAWK_MAGIC_TRAEFIK_ME_ENABLED');
+    if (v === undefined || v === null || String(v).trim() === '') return true;
+    return !['0', 'false', 'no', 'off'].includes(String(v).trim().toLowerCase());
+  }
+
+  /** Priority: user-supplied on service → remote host → API env (fallback only). */
+  private resolveDeployPublicIpv4(service: Service): string | null {
+    const fromSvc = service.magicTraefikMeIpv4?.trim();
+    if (fromSvc && parseIpv4Octets(fromSvc)) return fromSvc;
+    const fromRs = service.remoteServer?.publicIpv4?.trim();
+    if (fromRs && parseIpv4Octets(fromRs)) return fromRs;
+    const fromEnv = this.configService
+      .get<string>('WEEHAWK_MAGIC_TRAEFIK_ME_PUBLIC_IP')
+      ?.trim();
+    if (fromEnv && parseIpv4Octets(fromEnv)) return fromEnv;
+    return null;
+  }
+
+  /**
+   * Magic traefik.me host only when the user rolled the dice (`magicTraefikMeNonce` set).
+   * Not auto-generated for every service.
+   */
+  private async resolveMagicTraefikMeHostname(
+    service: Service,
+    platformHostNormalized: string,
+  ): Promise<string | null> {
+    if (!this.isMagicTraefikMeEnabled()) return null;
+    if (service.composeType !== composeType.APPLICATION) return null;
+    if (!service.project?.id) return null;
+    const nonce = service.magicTraefikMeNonce?.trim();
+    if (!nonce) return null;
+    const ipv4 = this.resolveDeployPublicIpv4(service);
+    if (!ipv4) return null;
+    const hostname = buildTraefikMeMagicHostname(
+      service.project.name,
+      service.name,
+      nonce,
+      ipv4,
+    );
+    if (!hostname) return null;
+    if (
+      platformHostNormalized &&
+      hostname.toLowerCase() === platformHostNormalized
+    ) {
+      return null;
+    }
+    return hostname;
+  }
+
+  /**
+   * User rolls dice: new 6-char hex nonce + optional stack YAML refresh for Swarm apps.
+   * `dto.publicIpv4` is saved on the service when provided (user-controlled; e.g. 127.0.0.1).
+   */
+  async rollMagicTraefikMeDomain(
+    id: number,
+    userId: number,
+    dto?: { publicIpv4?: string },
+  ) {
+    let s = await this.assertServiceOwnedByUser(id, userId);
+    if (s.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException(
+        'Magic traefik.me applies only to application (Swarm) services.',
+      );
+    }
+    s = await this.ensureServiceForMagicDomains(s);
+    if (!s.project?.id) {
+      throw new BadRequestException('Service has no project.');
+    }
+    const fromBody = dto?.publicIpv4?.trim();
+    if (fromBody) {
+      if (!parseIpv4Octets(fromBody)) {
+        throw new BadRequestException('publicIpv4 must be a valid dotted IPv4 address.');
+      }
+      s.magicTraefikMeIpv4 = fromBody;
+    }
+    const settings = await this.traefikService.getSettings();
+    const platformHost = this.sanitizePlatformHostForComparison(
+      settings.platformDomain,
+    );
+    const ipv4 = this.resolveDeployPublicIpv4(s);
+    if (!ipv4) {
+      throw new BadRequestException(
+        'Enter an IPv4 address for Magic traefik.me (saved on this service), or set it on the remote host.',
+      );
+    }
+    const nonce = randomBytes(3).toString('hex');
+    const hostname = buildTraefikMeMagicHostname(
+      s.project.name,
+      s.name,
+      nonce,
+      ipv4,
+    );
+    if (!hostname) {
+      throw new BadRequestException('Could not build magic hostname.');
+    }
+    if (platformHost && hostname.toLowerCase() === platformHost) {
+      throw new BadRequestException(
+        'Magic hostname would collide with the platform domain (Traefik UI).',
+      );
+    }
+    s.magicTraefikMeNonce = nonce;
+    await this.serviceRepository.save(s);
+    s = await this.assertServiceOwnedByUser(id, userId);
+    if ((s.dockerConfig || '').includes('# weehawk application service')) {
+      s.dockerConfig = await this.composeApplicationDockerConfigForService(s);
+      await this.serviceRepository.save(s);
+    }
+    const fresh = await this.assertServiceOwnedByUser(id, userId);
+    return this.withMagicTraefikMeUrl(fresh);
+  }
+
+  /** Remove Magic traefik.me host from Traefik labels (no auto-publish). */
+  async clearMagicTraefikMeDomain(id: number, userId: number) {
+    let s = await this.assertServiceOwnedByUser(id, userId);
+    if (s.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException(
+        'Magic traefik.me applies only to application (Swarm) services.',
+      );
+    }
+    s.magicTraefikMeNonce = null;
+    await this.serviceRepository.save(s);
+    s = await this.assertServiceOwnedByUser(id, userId);
+    if ((s.dockerConfig || '').includes('# weehawk application service')) {
+      s.dockerConfig = await this.composeApplicationDockerConfigForService(s);
+      await this.serviceRepository.save(s);
+    }
+    const fresh = await this.assertServiceOwnedByUser(id, userId);
+    return this.withMagicTraefikMeUrl(fresh);
+  }
+
+  async computeMagicTraefikMeQuickAccessUrl(service: Service): Promise<string | null> {
+    const svc = await this.ensureServiceForMagicDomains(service);
+    const settings = await this.traefikService.getSettings();
+    const platformHost = this.sanitizePlatformHostForComparison(
+      settings.platformDomain,
+    );
+    const host = await this.resolveMagicTraefikMeHostname(svc, platformHost);
+    if (!host) return null;
+    return `https://${host}`;
+  }
+
+  async withMagicTraefikMeUrl<T extends Service>(
+    service: T,
+  ): Promise<T & { magicTraefikMeUrl: string | null }> {
+    const magicTraefikMeUrl = await this.computeMagicTraefikMeQuickAccessUrl(service);
+    return { ...service, magicTraefikMeUrl };
+  }
+
+  /**
+   * Every application (Swarm) service attaches to the external `weehawk` overlay so Traefik
+   * (deployed on the same network) can reach the app without extra user configuration.
+   */
   private ensureTraefikExternalNetwork(
     network: { external: string[]; stack: string[] },
     service: Service,
   ): { external: string[]; stack: string[] } {
     const proxy = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK;
-    const hasHosts = this.collectServiceTraefikHosts(service).length > 0;
-    if (!hasHosts) return network;
+    if (service.composeType !== composeType.APPLICATION) {
+      return network;
+    }
     const ext = [...network.external];
     if (!ext.some((n) => n === proxy)) ext.push(proxy);
     return { external: ext, stack: [...network.stack] };
@@ -532,21 +753,24 @@ export class ServicesService {
   private buildTraefikLabelSection(
     traefik?: {
       certResolver: string;
-      entrypoint: string;
-      routes: Array<{ router: string; rule: string; port: number }>;
+      httpEntrypoint: string;
+      httpsEntrypoint: string;
+      routes: Array<{ router: string; rule: string; port: number; https: boolean }>;
     },
   ): string {
     if (!traefik?.routes?.length) return '';
     const lines: string[] = ['      labels:', '        - "traefik.enable=true"'];
     for (const r of traefik.routes) {
       const ruleEsc = this.escapeTraefikComposeLabelValue(r.rule);
+      const useTls = r.https !== false;
+      const ep = useTls ? traefik.httpsEntrypoint : traefik.httpEntrypoint;
       lines.push(`        - "traefik.http.routers.${r.router}.rule=${ruleEsc}"`);
-      lines.push(
-        `        - "traefik.http.routers.${r.router}.entrypoints=${traefik.entrypoint}"`,
-      );
-      lines.push(
-        `        - "traefik.http.routers.${r.router}.tls.certresolver=${traefik.certResolver}"`,
-      );
+      lines.push(`        - "traefik.http.routers.${r.router}.entrypoints=${ep}"`);
+      if (useTls) {
+        lines.push(
+          `        - "traefik.http.routers.${r.router}.tls.certresolver=${traefik.certResolver}"`,
+        );
+      }
       lines.push(
         `        - "traefik.http.services.${r.router}.loadbalancer.server.port=${r.port}"`,
       );
@@ -560,23 +784,46 @@ export class ServicesService {
   ): Promise<
     | {
         certResolver: string;
-        entrypoint: string;
-        routes: Array<{ router: string; rule: string; port: number }>;
+        httpEntrypoint: string;
+        httpsEntrypoint: string;
+        routes: Array<{ router: string; rule: string; port: number; https: boolean }>;
       }
     | undefined
   > {
+    if (service.composeType !== composeType.APPLICATION) {
+      return undefined;
+    }
+    const svc = await this.ensureServiceForMagicDomains(service);
     const settings = await this.traefikService.getSettings();
+    const platformHost = this.sanitizePlatformHostForComparison(
+      settings.platformDomain,
+    );
+    const magicHost = await this.resolveMagicTraefikMeHostname(svc, platformHost);
     const certResolver = (settings.certResolverName || 'letsencrypt').trim();
-    const entrypoint = (settings.httpsEntrypoint || 'websecure').trim();
-    const routes: Array<{ router: string; rule: string; port: number }> = [];
+    const httpEntrypoint = (settings.httpEntrypoint || 'web').trim();
+    const httpsEntrypoint = (settings.httpsEntrypoint || 'websecure').trim();
+    const routes: Array<{
+      router: string;
+      rule: string;
+      port: number;
+      https: boolean;
+    }> = [];
 
-    if (service.traefikRoutes && service.traefikRoutes.length > 0) {
-      for (const r of service.traefikRoutes) {
+    const appendMagicAlias = (hosts: string[]): string[] => {
+      if (!magicHost) return hosts;
+      const lower = new Set(hosts.map((h) => h.toLowerCase()));
+      if (lower.has(magicHost.toLowerCase())) return hosts;
+      return [...hosts, magicHost];
+    };
+
+    if (svc.traefikRoutes && svc.traefikRoutes.length > 0) {
+      for (const r of svc.traefikRoutes) {
         const router = (r.router || '').trim().toLowerCase();
         if (!router) continue;
-        const hosts = (r.hosts ?? [])
+        let hosts = (r.hosts ?? [])
           .map((h) => this.sanitizeDomainForTraefikRule(h))
           .filter((x): x is string => Boolean(x));
+        hosts = appendMagicAlias(hosts);
         if (!hosts.length) continue;
         const rule = this.buildTraefikHostPathRule(hosts, r.pathPrefix);
         if (!rule) continue;
@@ -584,23 +831,37 @@ export class ServicesService {
           r.port != null && Number.isFinite(Number(r.port))
             ? Math.min(65535, Math.max(1, Math.floor(Number(r.port))))
             : containerPort;
-        routes.push({ router, rule, port });
+        const https = r.https !== false;
+        routes.push({ router, rule, port, https });
+      }
+      if (!routes.length && magicHost) {
+        const rule = this.buildTraefikHostPathRule([magicHost], null);
+        if (rule) {
+          routes.push({
+            router: this.sanitizeTraefikRouterBase(svc),
+            rule,
+            port: containerPort,
+            https: true,
+          });
+        }
       }
     } else {
-      const ruleDomains = (service.domains ?? [])
+      let ruleDomains = (svc.domains ?? [])
         .map((d) => this.sanitizeDomainForTraefikRule(d))
         .filter((x): x is string => Boolean(x));
+      ruleDomains = appendMagicAlias(ruleDomains);
       if (!ruleDomains.length) return undefined;
       const rule = this.buildTraefikHostPathRule(ruleDomains, null);
       routes.push({
-        router: this.sanitizeTraefikRouterBase(service),
+        router: this.sanitizeTraefikRouterBase(svc),
         rule,
         port: containerPort,
+        https: true,
       });
     }
 
     if (!routes.length) return undefined;
-    return { certResolver, entrypoint, routes };
+    return { certResolver, httpEntrypoint, httpsEntrypoint, routes };
   }
 
   private async composeApplicationDockerConfigForService(
@@ -668,8 +929,9 @@ export class ServicesService {
     network: { external: string[]; stack: string[] };
     traefik?: {
       certResolver: string;
-      entrypoint: string;
-      routes: Array<{ router: string; rule: string; port: number }>;
+      httpEntrypoint: string;
+      httpsEntrypoint: string;
+      routes: Array<{ router: string; rule: string; port: number; https: boolean }>;
     };
   }): string {
     const ports =
@@ -858,8 +1120,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
   async patchApplicationNetworks(
     id: number,
     dto: { external?: string[]; stack?: string[] },
+    userId: number,
   ) {
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException(
         'This service is not an application-type service.',
@@ -989,7 +1252,13 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       network: networkMerged,
       traefik,
     });
-    return await this.serviceRepository.save(service);
+    const saved = await this.serviceRepository.save(service);
+    const hydrated =
+      (await this.serviceRepository.findOne({
+        where: { id: saved.id },
+        relations: ['project', 'remoteServer'],
+      })) ?? saved;
+    return this.withMagicTraefikMeUrl(hydrated);
   }
 
   private async cloneGitRepository(
@@ -1079,6 +1348,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
   async uploadApplicationArchive(
     id: number,
     file: Express.Multer.File,
+    userId: number,
     options?: {
       buildPath?: string;
       dockerfilePath?: string;
@@ -1098,7 +1368,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     if (!file || !file.buffer?.length) {
       throw new BadRequestException('ZIP file is required.');
     }
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
@@ -1149,8 +1419,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       externalNetworks?: string;
       stackNetworks?: string;
     },
+    userId: number,
   ) {
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
@@ -1192,8 +1463,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       httpUrlToRepo?: string;
       branch?: string;
     },
+    userId: number,
   ) {
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
@@ -1210,7 +1482,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
 
     await this.cloneGitRepository(cloneUrl, sourceDir, branch);
 
-    const fresh = await this.findOne(id);
+    const fresh = await this.assertServiceOwnedByUser(id, userId);
     return {
       success: true,
       message:
@@ -1235,8 +1507,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       externalNetworks?: string;
       stackNetworks?: string;
     },
+    userId: number,
   ) {
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
@@ -1286,8 +1559,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       externalNetworks?: string;
       stackNetworks?: string;
     },
+    userId: number,
   ) {
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
@@ -1336,10 +1610,15 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       traefik,
     });
     const saved = await this.serviceRepository.save(service);
+    const hydrated =
+      (await this.serviceRepository.findOne({
+        where: { id: saved.id },
+        relations: ['project', 'remoteServer'],
+      })) ?? saved;
     return {
       success: true,
       message: 'Application stack configured for image deploy.',
-      service: saved,
+      service: await this.withMagicTraefikMeUrl(hydrated),
     };
   }
 
@@ -1440,13 +1719,13 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
    * Stream `docker compose logs -f` or `docker service logs -f` using the same paths and
    * stack names as deploy (see `ExecutorService`).
    */
-  getServiceLogsStream(id: number): Observable<{ data: string }> {
+  getServiceLogsStream(id: number, userId: number): Observable<{ data: string }> {
     return new Observable((observer) => {
       let child: ChildProcess | null = null;
       let cancelled = false;
       let stderrBuf = '';
 
-      void this.findOne(id)
+      void this.assertServiceOwnedByUser(id, userId)
         .then(async (service) => {
           if (cancelled) return;
 
@@ -1529,9 +1808,13 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
   async executeDeployment(
     id: number,
     mode: 'deploy' | 'reload' | 'redeploy' = 'deploy',
-    options?: { deployLogEmitter?: EventEmitter },
+    options?: { deployLogEmitter?: EventEmitter; actingUserId?: number },
   ) {
-    await this.findOne(id);
+    if (options?.actingUserId !== undefined) {
+      await this.assertServiceOwnedByUser(id, options.actingUserId);
+    } else {
+      await this.findOne(id);
+    }
     const result = await this.executorService.execute(id, mode, options);
     if (result.success) {
       await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
@@ -1588,7 +1871,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     serviceId: number,
     dto: RunServiceBackupDto,
   ): Promise<{ ok: boolean; action: RunServiceBackupDto['action']; output: string }> {
-    await this.findOne(serviceId);
+    await this.assertServiceOwnedByUser(serviceId, userId);
     const contextId = `manual-service-${serviceId}-${Date.now()}`;
     const profileName = dto.backupS3ProfileName?.trim();
     if (!profileName) {
@@ -1665,8 +1948,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     databaseBackupConfigJson?: string,
     volumeSource?: string,
   ): Promise<{ ok: boolean; output: string }> {
-    void userId;
-    await this.findOne(serviceId);
+    await this.assertServiceOwnedByUser(serviceId, userId);
     if (!file || (!(file as { buffer?: Buffer }).buffer?.length && !file.path)) {
       throw new BadRequestException('file is required.');
     }
@@ -1737,8 +2019,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
   async runServiceImportBackupFromS3(
     serviceId: number,
     dto: ImportServiceBackupFromS3Dto,
+    userId: number,
   ): Promise<{ ok: boolean; output: string }> {
-    await this.findOne(serviceId);
+    await this.assertServiceOwnedByUser(serviceId, userId);
     const profile = dto.backupS3ProfileName.trim();
     const key = dto.s3Key.trim();
     if (!profile || !key) {
@@ -1806,42 +2089,48 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     }
   }
 
-  async startService(id: number) {
-    await this.findOne(id);
+  async startService(id: number, userId: number) {
+    await this.assertServiceOwnedByUser(id, userId);
     return await this.executorService.startContainers(id);
   }
 
-  async getRuntimeStatus(id: number) {
-    await this.findOne(id);
+  async getRuntimeStatus(id: number, userId: number) {
+    await this.assertServiceOwnedByUser(id, userId);
     return await this.executorService.getRuntimeStatus(id);
   }
 
-  async getServiceVolumes(id: number) {
-    await this.findOne(id);
+  async getServiceVolumes(id: number, userId: number) {
+    await this.assertServiceOwnedByUser(id, userId);
     return await this.executorService.getServiceVolumeMounts(id);
   }
 
-  async findAll() {
-    return await this.serviceRepository.find({ 
-      relations: ['project'], 
-      order: { createdAt: 'DESC' } 
-    });
-  }
-
-  async findByProjectId(projectId: number) {
-    return await this.serviceRepository.find({
-      where: { project: { id: projectId } },
-      relations: ['project'],
+  async findAll(userId: number) {
+    const rows = await this.serviceRepository.find({
+      where: { project: { userId } },
+      relations: ['project', 'remoteServer'],
       order: { createdAt: 'DESC' },
     });
+    return Promise.all(rows.map((s) => this.withMagicTraefikMeUrl(s)));
+  }
+
+  async findByProjectId(projectId: number, userId: number) {
+    await this.assertProjectOwnedByUser(projectId, userId);
+    const rows = await this.serviceRepository.find({
+      where: { project: { id: projectId } },
+      relations: ['project', 'remoteServer'],
+      order: { createdAt: 'DESC' },
+    });
+    return Promise.all(rows.map((s) => this.withMagicTraefikMeUrl(s)));
   }
 
   async findByProjectIdPaginated(
     projectId: number,
     page: number,
     limit: number,
-    q?: string,
+    q: string | undefined,
+    userId: number,
   ) {
+    await this.assertProjectOwnedByUser(projectId, userId);
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 8));
     const trimmed = (q ?? '').trim().toLowerCase();
@@ -1849,7 +2138,8 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     const countQb = this.serviceRepository
       .createQueryBuilder('service')
       .innerJoin('service.project', 'project')
-      .where('project.id = :projectId', { projectId });
+      .where('project.id = :projectId', { projectId })
+      .andWhere('project.userId = :userId', { userId });
 
     if (trimmed) {
       countQb.andWhere(
@@ -1862,7 +2152,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     const dataQb = this.serviceRepository
       .createQueryBuilder('service')
       .leftJoinAndSelect('service.project', 'project')
-      .where('project.id = :projectId', { projectId });
+      .leftJoinAndSelect('service.remoteServer', 'remoteServer')
+      .where('project.id = :projectId', { projectId })
+      .andWhere('project.userId = :userId', { userId });
 
     if (trimmed) {
       dataQb.andWhere(
@@ -1877,15 +2169,22 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       .take(safeLimit)
       .getMany();
 
+    const enriched = await Promise.all(
+      data.map((s) => this.withMagicTraefikMeUrl(s)),
+    );
+
     return {
-      data,
+      data: enriched,
       total,
       page: safePage,
       limit: safeLimit,
     };
   }
 
-  private async assertDeployRemoteServer(remoteId: number): Promise<void> {
+  private async assertDeployRemoteServer(
+    remoteId: number,
+    projectUserId: number | null,
+  ): Promise<void> {
     const rs = await this.remoteServerRepository.findOneBy({ id: remoteId });
     if (!rs) {
       throw new BadRequestException('Remote server not found');
@@ -1895,9 +2194,13 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
         'That host is a build-only server. Pick a deploy server to run containers, or change its role under Remote servers.',
       );
     }
+    this.assertRemoteServerBelongsToProjectOwner(rs, projectUserId);
   }
 
-  private async assertBuildRemoteServer(remoteId: number): Promise<void> {
+  private async assertBuildRemoteServer(
+    remoteId: number,
+    projectUserId: number | null,
+  ): Promise<void> {
     const rs = await this.remoteServerRepository.findOneBy({ id: remoteId });
     if (!rs) {
       throw new BadRequestException('Remote server not found');
@@ -1905,6 +2208,29 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     if (rs.serverRole !== 'build') {
       throw new BadRequestException(
         'Only hosts marked as build servers can be used as the dedicated image-build target.',
+      );
+    }
+    this.assertRemoteServerBelongsToProjectOwner(rs, projectUserId);
+  }
+
+  /** Same rules as {@link RemoteServersService.assertRemoteServerMatchesProject} but user-facing BadRequest for form/API. */
+  private assertRemoteServerBelongsToProjectOwner(
+    rs: RemoteServer,
+    projectUserId: number | null,
+  ): void {
+    const ru = rs.userId ?? null;
+    const pu = projectUserId ?? null;
+    if (ru != null && pu != null && ru !== pu) {
+      throw new BadRequestException('That remote server belongs to another account.');
+    }
+    if (ru == null && pu != null) {
+      throw new BadRequestException(
+        'That remote server is not linked to an account. Recreate it under Remote servers.',
+      );
+    }
+    if (ru != null && pu == null) {
+      throw new BadRequestException(
+        'This project has no owner; assign a user before linking a remote host.',
       );
     }
   }
@@ -1949,19 +2275,22 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     };
   }
 
-  async remove(id: number) {
-    const service = await this.findOne(id);
+  async remove(id: number, userId: number) {
+    const service = await this.assertServiceOwnedByUser(id, userId);
     await this.executorService.stopAndRemove(id);
     await this.removeManagedSecretsForService(service.dockerConfig || '');
     await this.serviceRepository.remove(service);
     return { success: true };
   }
 
-  async update(id: number, updateServiceDto: UpdateServiceDto) {
-    const service = await this.findOne(id);
+  async update(id: number, updateServiceDto: UpdateServiceDto, userId: number) {
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (updateServiceDto.remoteServerId !== undefined) {
       if (updateServiceDto.remoteServerId !== null) {
-        await this.assertDeployRemoteServer(updateServiceDto.remoteServerId);
+        await this.assertDeployRemoteServer(
+          updateServiceDto.remoteServerId,
+          service.project.userId,
+        );
       } else if (this.isCloudEdition()) {
         throw new BadRequestException(
           'Weehawk Cloud does not allow clearing the deploy host; workloads must run on an SSH-connected server.',
@@ -1970,7 +2299,10 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     }
     if (updateServiceDto.buildRemoteServerId !== undefined) {
       if (updateServiceDto.buildRemoteServerId !== null) {
-        await this.assertBuildRemoteServer(updateServiceDto.buildRemoteServerId);
+        await this.assertBuildRemoteServer(
+          updateServiceDto.buildRemoteServerId,
+          service.project.userId,
+        );
       }
     }
     if (updateServiceDto.registryPushImage !== undefined) {
@@ -2020,17 +2352,24 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       updated.composeType === composeType.APPLICATION &&
       (updateServiceDto.domains !== undefined ||
         updateServiceDto.traefikRoutes !== undefined ||
+        updateServiceDto.magicTraefikMeIpv4 !== undefined ||
         registryPushPatch !== undefined) &&
       (updated.dockerConfig || '').trim().length > 0;
     if (shouldRefreshAppCompose) {
       updated.dockerConfig = await this.composeApplicationDockerConfigForService(updated);
     }
-    return await this.serviceRepository.save(updated);
+    const saved = await this.serviceRepository.save(updated);
+    const hydrated =
+      (await this.serviceRepository.findOne({
+        where: { id: saved.id },
+        relations: ['project', 'remoteServer', 'buildRemoteServer'],
+      })) ?? saved;
+    return this.withMagicTraefikMeUrl(hydrated);
   }
 
 
-  async shutdownService(id: number) {
-    await this.findOne(id);
+  async shutdownService(id: number, userId: number) {
+    await this.assertServiceOwnedByUser(id, userId);
     return await this.executorService.shutdown(id);
   }
 
@@ -2042,8 +2381,9 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     id: number,
     engine: DatabaseEngine,
     dto: DatabaseSetupDto,
+    userId: number,
   ) {
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.DATABASES) {
       throw new BadRequestException(
         'This service is not a database-type service.',
@@ -2099,8 +2439,8 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     return await this.serviceRepository.save(service);
   }
 
-  async applyPostgresDatabase(id: number, dto: DatabaseSetupDto) {
-    return this.applyDatabase(id, 'postgres', dto);
+  async applyPostgresDatabase(id: number, dto: DatabaseSetupDto, userId: number) {
+    return this.applyDatabase(id, 'postgres', dto, userId);
   }
 
   /**
@@ -2111,11 +2451,12 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     id: number,
     engine: DatabaseEngine,
     dto: PostgresStackUpdateDto,
+    userId: number,
   ) {
     if (dto.publishPort === undefined && dto.replicas === undefined) {
-      return this.findOne(id);
+      return this.assertServiceOwnedByUser(id, userId);
     }
-    const service = await this.findOne(id);
+    const service = await this.assertServiceOwnedByUser(id, userId);
     if (service.composeType !== composeType.DATABASES) {
       throw new BadRequestException(
         'This service is not a database-type service.',
@@ -2197,8 +2538,12 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     return await this.serviceRepository.save(service);
   }
 
-  async updatePostgresStack(id: number, dto: PostgresStackUpdateDto) {
-    return this.updateDatabaseStack(id, 'postgres', dto);
+  async updatePostgresStack(
+    id: number,
+    dto: PostgresStackUpdateDto,
+    userId: number,
+  ) {
+    return this.updateDatabaseStack(id, 'postgres', dto, userId);
   }
 
   private parsePublishPortFromYaml(

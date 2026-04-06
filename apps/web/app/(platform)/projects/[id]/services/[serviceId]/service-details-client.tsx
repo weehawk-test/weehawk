@@ -17,6 +17,7 @@ import {
   PackageOpen,
   ArrowDownToLine,
   Search,
+  Dices,
 } from "lucide-react";
 import {
   useService,
@@ -42,7 +43,7 @@ import {
   type DatabaseEngineId,
 } from "@/lib/database-engines";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   fetchGitSettings,
@@ -63,14 +64,20 @@ import {
   generateApplicationFromSourceApi,
   runServiceBackupNowApi,
   importServiceBackupFromS3Api,
+  rollMagicTraefikMeApi,
+  clearMagicTraefikMeApi,
 } from "@/lib/services-api";
+import {
+  guessRollMagicIpv4,
+  hostnameFromMagicUrl,
+  subscribeMagicTraefikIpv4Changed,
+} from "@/lib/magic-traefik-me-client";
 import {
   parseApplicationBuildPath,
   parseApplicationDeployMode,
   parseApplicationImageRef,
   parseApplicationNetworkHeaders,
   parseApplicationStoreHeaders,
-  parseApplicationYamlPorts,
   parseServiceEnvLines,
   parseYamlImage,
   parseYamlPublishPort,
@@ -83,6 +90,16 @@ import { ServiceSecretsTab } from "./service-secrets-tab";
 import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 import { S3ImportObjectPicker } from "@/components/s3/S3ImportObjectPicker";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { listDatabaseBackupOptions } from "@/lib/database-backup-from-service";
 import {
   resolveBackupFormat,
@@ -111,8 +128,8 @@ function formatServiceDateUtc(iso: string): string {
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
     label: "Docker Compose",
-    color: "bg-zinc-500/10 text-zinc-300 border-zinc-500/20",
-    glow: "shadow-[0_0_24px_rgba(255,255,255,0.06)]",
+    color: "bg-zinc-500/10 text-zinc-700 border-zinc-400/40 dark:text-zinc-300 dark:border-zinc-500/20",
+    glow: "shadow-[0_0_20px_rgba(0,0,0,0.06)] dark:shadow-[0_0_24px_rgba(255,255,255,0.06)]",
     icon: Container,
     placeholder: `version: '3.8'
 
@@ -144,8 +161,8 @@ networks:
   },
   stack: {
     label: "Stack",
-    color: "bg-white/5 text-zinc-200 border-border",
-    glow: "shadow-[0_0_24px_rgba(255,255,255,0.05)]",
+    color: "bg-muted/70 text-zinc-800 border-zinc-300/60 dark:bg-white/5 dark:text-zinc-200 dark:border-border",
+    glow: "shadow-[0_0_20px_rgba(0,0,0,0.05)] dark:shadow-[0_0_24px_rgba(255,255,255,0.05)]",
     icon: Layers,
     placeholder: `version: '3.8'
 
@@ -180,15 +197,15 @@ networks:
   },
   application: {
     label: "Application",
-    color: "bg-violet-500/10 text-violet-200 border-violet-500/25",
-    glow: "shadow-[0_0_24px_rgba(139,92,246,0.10)]",
+    color: "bg-violet-500/10 text-violet-800 border-violet-400/45 dark:text-violet-200 dark:border-violet-500/25",
+    glow: "shadow-[0_0_20px_rgba(139,92,246,0.14)] dark:shadow-[0_0_24px_rgba(139,92,246,0.10)]",
     icon: PackageOpen,
     placeholder: "",
   },
   databases: {
     label: "Databases",
-    color: "bg-sky-500/10 text-sky-200 border-sky-500/25",
-    glow: "shadow-[0_0_24px_rgba(56,189,248,0.08)]",
+    color: "bg-sky-500/10 text-sky-800 border-sky-400/45 dark:text-sky-200 dark:border-sky-500/25",
+    glow: "shadow-[0_0_20px_rgba(56,189,248,0.14)] dark:shadow-[0_0_24px_rgba(56,189,248,0.08)]",
     icon: Database,
     placeholder: "",
   },
@@ -270,34 +287,52 @@ function defaultTraefikRouterName(appName?: string): string {
   return s.slice(0, 63);
 }
 
-function parseHostInput(raw: string): string[] {
-  return raw
-    .split(/[\n,]+/)
-    .map((x) => x.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, ""))
-    .filter(Boolean);
+/** One hostname per route (Traefik router rule). */
+function parseSingleHostname(raw: string): string[] {
+  const t = raw.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+  return t ? [t] : [];
+}
+
+function singleHostLabel(hosts: string[] | undefined): string {
+  return (hosts?.[0] ?? "").trim();
+}
+
+/** http(s) URL to open the route in a browser (hostname + optional path prefix). */
+function publicRouteOpenUrl(
+  hostRaw: string,
+  pathPrefix: string | null | undefined,
+  useHttps = true,
+): string | null {
+  const host = hostRaw.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+  if (!host) return null;
+  let path = pathPrefix?.trim() ?? "";
+  if (path && !path.startsWith("/")) path = `/${path}`;
+  const proto = useHttps ? "https" : "http";
+  return `${proto}://${host}${path}`;
 }
 
 function buildInitialTraefikRoutes(service: Service): TraefikRouteRule[] {
   const tr = service.traefikRoutes;
-  if (tr && tr.length > 0) return tr.map((r) => ({ ...r }));
+  if (tr && tr.length > 0) {
+    return tr.map((r) => ({
+      ...r,
+      hosts: r.hosts?.length ? [String(r.hosts[0]).trim()].filter(Boolean) : [],
+      https: r.https === false ? false : true,
+    }));
+  }
   if (service.domains?.length) {
+    const h0 = String(service.domains[0]).trim();
     return [
       {
         router: defaultTraefikRouterName(service.appName),
-        hosts: [...service.domains],
+        hosts: h0 ? [h0] : [],
         pathPrefix: null,
         port: null,
+        https: true,
       },
     ];
   }
-  return [
-    {
-      router: defaultTraefikRouterName(service.appName),
-      hosts: [],
-      pathPrefix: null,
-      port: null,
-    },
-  ];
+  return [];
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -685,7 +720,7 @@ export default function ServiceDetails({
                   <span className={`text-xs border rounded-full px-2.5 py-1 font-semibold ${typeConf.color}`}>{typeConf.label}</span>
                   {isDatabaseService ? (
                     <span
-                      className="text-xs border rounded-full px-2.5 py-1 font-semibold flex items-center gap-1.5 bg-sky-500/10 text-sky-300 border-sky-500/25"
+                      className="text-xs border rounded-full px-2.5 py-1 font-semibold flex items-center gap-1.5 bg-sky-500/10 text-sky-800 border-sky-400/45 dark:text-sky-300 dark:border-sky-500/25"
                       title={dbEngineId ? `Engine: ${getDatabaseEngineById(dbEngineId)?.name ?? dbEngineId}` : "Database service"}
                     >
                       <Database className="w-3 h-3" />
@@ -699,8 +734,8 @@ export default function ServiceDetails({
                     <span
                       className={`text-xs border rounded-full px-2.5 py-1 font-semibold flex items-center gap-1.5 ${
                         runningOnHost
-                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
-                          : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
+                          ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/35 dark:text-emerald-400 dark:border-emerald-500/25"
+                          : "bg-zinc-500/10 text-zinc-600 border-zinc-400/35 dark:text-zinc-400 dark:border-zinc-500/20"
                       }`}
                       title={isDatabaseService ? "From docker stack services on the Swarm manager" : "From docker compose ps / stack services on the server"}
                     >
@@ -1650,19 +1685,8 @@ function ServiceBackupPanel({
   if (s3Profiles.length === 0) {
     return (
       <div className="relative max-w-lg mx-auto">
-        <div className="glass-panel rounded-2xl border border-border overflow-hidden p-8 md:p-10 text-center shadow-[0_24px_48px_-28px_rgba(0,0,0,0.45)]">
-          <div
-            className="pointer-events-none absolute -top-24 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-amber-500/15 blur-[72px]"
-            aria-hidden
-          />
-          <div
-            className="pointer-events-none absolute -bottom-16 right-0 h-32 w-32 rounded-full bg-sky-500/10 blur-[56px]"
-            aria-hidden
-          />
+        <div className="rounded-2xl border border-border overflow-hidden p-8 md:p-10 text-center shadow-[0_24px_48px_-28px_rgba(0,0,0,0.45)]">
           <div className="relative">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500/20 via-amber-500/5 to-sky-500/15 border border-amber-500/25 shadow-inner">
-              <Cloud className="h-8 w-8 text-amber-300/90 drop-shadow-sm" strokeWidth={1.5} />
-            </div>
             <h3 className="text-lg font-semibold tracking-tight text-foreground mb-2">S3 destination required</h3>
             <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto mb-7">
               You must create an S3 destination first before you can run backups or restore from S3.
@@ -2901,8 +2925,6 @@ function ApplicationArchivePanel({
   );
   const [file, setFile] = useState<File | null>(null);
   const [buildPath, setBuildPath] = useState(".");
-  const [containerPort, setContainerPort] = useState("3000");
-  const [publishPort, setPublishPort] = useState("");
   const [replicas, setReplicas] = useState("1");
   const [uploading, setUploading] = useState(false);
   /** Generate stack from staged git source (POST generate-from-source). */
@@ -3092,13 +3114,6 @@ function ApplicationArchivePanel({
   useEffect(() => {
     const cfg = serviceRow?.config ?? "";
     if (!cfg.includes("# weehawk application service")) return;
-    const ports = parseApplicationYamlPorts(cfg);
-    if (ports) {
-      setContainerPort(String(ports.containerPort));
-      setPublishPort(String(ports.publishPort));
-    } else {
-      setPublishPort("");
-    }
     const rep = parseYamlReplicas(cfg);
     if (rep != null) setReplicas(String(rep));
   }, [serviceRow?.id, serviceRow?.config]);
@@ -3184,17 +3199,9 @@ function ApplicationArchivePanel({
         return null;
       }
     }
-    const cp = parseInt(containerPort || "3000", 10);
-    const rp = publishPort.trim() ? parseInt(publishPort.trim(), 10) : undefined;
+    const cp = 3000;
+    const rp: number | undefined = undefined;
     const rep = parseInt(replicas || "1", 10);
-    if (!Number.isInteger(cp) || cp < 1 || cp > 65535) {
-      toast({ title: "Invalid container port", description: "Use 1-65535.", variant: "destructive" });
-      return null;
-    }
-    if (rp != null && (!Number.isInteger(rp) || rp < 1 || rp > 65535)) {
-      toast({ title: "Invalid host port", description: "Use 1-65535 or leave empty.", variant: "destructive" });
-      return null;
-    }
     if (!Number.isInteger(rep) || rep < 1 || rep > 10) {
       toast({ title: "Invalid replicas", description: "Use a value between 1 and 10.", variant: "destructive" });
       return null;
@@ -3269,7 +3276,7 @@ function ApplicationArchivePanel({
       toast({
         title: "Repository fetched",
         description:
-          "Source is on the server. Set container port, env, and networks below, then click Generate stack from source.",
+          "Source is on the server. Set env and networks below, then click Generate stack from source.",
       });
     } catch (e) {
       toast({
@@ -3347,7 +3354,7 @@ function ApplicationArchivePanel({
       toast({
         title: "Repository fetched",
         description:
-          "Source is on the server. Set container port, env, and networks below, then click Generate stack from source.",
+          "Source is on the server. Set env and networks below, then click Generate stack from source.",
       });
     } catch (e) {
       toast({
@@ -3413,7 +3420,7 @@ function ApplicationArchivePanel({
       toast({
         title: "Fetch repository first",
         description:
-          "Click “Fetch repo” to download the source to the server, then set port and options and click Generate stack from source.",
+          "Click “Fetch repo” to download the source to the server, then configure options and click Generate stack from source.",
         variant: "destructive",
       });
       return;
@@ -3507,8 +3514,8 @@ function ApplicationArchivePanel({
       });
       return;
     }
-    const cp = parseInt(containerPort || "3000", 10);
-    const rp = publishPort.trim() ? parseInt(publishPort.trim(), 10) : undefined;
+    const cp = 3000;
+    const rp: number | undefined = undefined;
     const rep = parseInt(replicas || "1", 10);
     const cleanVars = variables
       .map((v) => ({ key: v.key.trim(), value: v.value, store: v.store }))
@@ -3518,14 +3525,6 @@ function ApplicationArchivePanel({
         toast({ title: "Invalid variable key", description: `Key "${v.key}" is invalid.`, variant: "destructive" });
         return;
       }
-    }
-    if (!Number.isInteger(cp) || cp < 1 || cp > 65535) {
-      toast({ title: "Invalid container port", description: "Use 1-65535.", variant: "destructive" });
-      return;
-    }
-    if (rp != null && (!Number.isInteger(rp) || rp < 1 || rp > 65535)) {
-      toast({ title: "Invalid host port", description: "Use 1-65535 or leave empty.", variant: "destructive" });
-      return;
     }
     if (!Number.isInteger(rep) || rep < 1 || rep > 10) {
       toast({ title: "Invalid replicas", description: "Use a value between 1 and 10.", variant: "destructive" });
@@ -3586,7 +3585,7 @@ function ApplicationArchivePanel({
   return (
     <div className="glass-panel rounded-2xl border border-violet-500/20 p-6 md:p-8">
       <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
-        <PackageOpen className="w-5 h-5 text-violet-300" />
+        <PackageOpen className="w-5 h-5 text-violet-700 dark:text-violet-300" />
         Application deploy Form
       </h3>
       <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
@@ -3598,7 +3597,7 @@ function ApplicationArchivePanel({
               onClick={() => setDeployTarget("source")}
               className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                 deployTarget === "source"
-                  ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
+                  ? "border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100"
                   : "border-border bg-muted/55 dark:bg-black/25 text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -3609,7 +3608,7 @@ function ApplicationArchivePanel({
               onClick={() => setDeployTarget("image")}
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                 deployTarget === "image"
-                  ? "border-violet-500/50 bg-violet-500/15 text-violet-100"
+                  ? "border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100"
                   : "border-border bg-muted/55 dark:bg-black/25 text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -3792,7 +3791,7 @@ function ApplicationArchivePanel({
               <Link
                 href="/git/github"
                 scroll={false}
-                className="inline-flex items-center gap-1 text-[11px] text-sky-300/90 hover:text-sky-200 hover:underline"
+                className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:text-sky-900 dark:text-sky-300/90 dark:hover:text-sky-200 hover:underline"
               >
                 Full integration page
                 <ExternalLink className="h-3 w-3 opacity-80" />
@@ -3934,7 +3933,7 @@ function ApplicationArchivePanel({
             ) : (
               <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-border bg-muted/50 dark:bg-black/15 px-3 py-2">
                 Complete{" "}
-                <Link href="/git/github" className="text-sky-300/90 hover:underline">
+                <Link href="/git/github" className="text-sky-700 hover:text-sky-900 dark:text-sky-300/90 hover:underline">
                   Git → GitHub
                 </Link>{" "}
                 (register the app via manifest) so the API has the App ID and private key. Until then, use a public repo HTTPS URL below (no auth).
@@ -4242,8 +4241,8 @@ function ApplicationArchivePanel({
             spellCheck={false}
           />
           <p className="text-[11px] text-muted-foreground leading-relaxed max-w-xl">
-            The stack uses this image as-is. Ensure the process listens on the{" "}
-            <span className="text-foreground font-medium">container port</span> you set below (maps to Swarm / health expectations).
+            The stack uses this image as-is. The generated service expects the app to listen on port{" "}
+            <span className="text-foreground font-medium">3000</span> inside the container (Swarm / health checks).
           </p>
         </div>
         )}
@@ -4263,14 +4262,6 @@ function ApplicationArchivePanel({
         </div>
         </>
         )}
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Container port</label>
-          <input className="input-field font-mono text-sm" value={containerPort} onChange={(e) => setContainerPort(e.target.value)} placeholder="3000" />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1.5">Host port (optional)</label>
-          <input className="input-field font-mono text-sm" value={publishPort} onChange={(e) => setPublishPort(e.target.value)} placeholder="8080" />
-        </div>
         <div>
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Replicas (1-10)</label>
           <input className="input-field font-mono text-sm" value={replicas} onChange={(e) => setReplicas(e.target.value)} placeholder="1" />
@@ -4296,26 +4287,26 @@ function ApplicationArchivePanel({
                 e.preventDefault();
                 setOpenAppSection((prev) => (prev === "env" ? null : "env"));
               }}
-              className="flex cursor-pointer list-none items-center gap-3 rounded-xl border border-border bg-zinc-950/30 px-3 py-2.5 text-left transition-colors hover:bg-accent/50 [&::-webkit-details-marker]:hidden"
+              className="flex cursor-pointer list-none items-center gap-3 rounded-xl border border-border bg-muted/35 px-3 py-2.5 text-left transition-colors hover:bg-muted/55 dark:bg-zinc-950/30 dark:hover:bg-accent/50 [&::-webkit-details-marker]:hidden"
             >
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-violet-500/30 bg-violet-500/10">
-                <Variable className="h-3.5 w-3.5 text-violet-300" />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-violet-400/40 bg-violet-500/[0.12] dark:border-violet-500/30 dark:bg-violet-500/10">
+                <Variable className="h-3.5 w-3.5 text-violet-700 dark:text-violet-300" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold text-violet-100">Environment and secrets</h3>
+                  <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-100">Environment and secrets</h3>
                   {filledEnvVarCount > 0 && (
-                    <span className="rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-200">
+                    <span className="rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
                       {filledEnvVarCount}
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                <p className="text-[11px] text-zinc-600 dark:text-muted-foreground mt-0.5 leading-snug">
                   Keys & values — Docker Secret or env; applied when you save the stack.
                 </p>
               </div>
               <ChevronDown
-                className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ${
+                className={`h-4 w-4 shrink-0 text-zinc-500 dark:text-muted-foreground transition-transform duration-300 ${
                   openAppSection === "env" ? "rotate-180" : ""
                 }`}
               />
@@ -4636,24 +4627,141 @@ function EnvFilePanel({ service }: { service: Service }) {
   );
 }
 
+// ─── Magic traefik.me dice (IPv4 default: /traefik) ───────────────────────────
+
+function MagicHostDice({
+  service,
+  onRolled,
+}: {
+  service: Service;
+  onRolled: (updated: Service) => void;
+}) {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [, bump] = useState(0);
+  useEffect(() => subscribeMagicTraefikIpv4Changed(() => bump((n) => n + 1)), []);
+
+  const resolvedIp = guessRollMagicIpv4(service);
+
+  const rollMagicMut = useMutation({
+    mutationFn: () => {
+      const ip = guessRollMagicIpv4(service).trim();
+      if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
+        return Promise.reject(
+          new Error("Set IPv4 in Traefik settings (/traefik) or use a deploy host with a public IP."),
+        );
+      }
+      return rollMagicTraefikMeApi(service.id, { publicIpv4: ip });
+    },
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ["service", user?.userId ?? "none", service.id] });
+      onRolled(data);
+      toast({
+        title: "Hostname generated",
+        description: "Save the dialog, then redeploy the stack.",
+      });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Could not roll", description: e.message, variant: "destructive" }),
+  });
+
+  const clearMagicMut = useMutation({
+    mutationFn: () => clearMagicTraefikMeApi(service.id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["service", user?.userId ?? "none", service.id] });
+      toast({ title: "Magic domain removed", description: "Redeploy the stack to apply." });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      <button
+        type="button"
+        title="Generate traefik.me hostname (e.g. …127.0.0.1.traefik.me)"
+        disabled={
+          rollMagicMut.isPending ||
+          clearMagicMut.isPending ||
+          !resolvedIp ||
+          !/^(\d{1,3}\.){3}\d{1,3}$/.test(resolvedIp.trim())
+        }
+        onClick={() => rollMagicMut.mutate()}
+        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-violet-500/35 bg-violet-500/15 text-violet-900 dark:text-violet-100 hover:bg-violet-500/25 transition-colors disabled:opacity-50"
+      >
+        {rollMagicMut.isPending ? (
+          <Loader2 className="w-5 h-5 animate-spin" />
+        ) : (
+          <Dices className="w-5 h-5" aria-hidden />
+        )}
+      </button>
+    </div>
+  );
+}
+
 // ─── DomainsPanel ─────────────────────────────────────────────────────────────
 
 function DomainsPanel({ service }: { service: Service }) {
   const { toast } = useToast();
   const saveRoutesMutation = useUpdateService();
+  const isApplication = service.type === "application";
 
   const seedKey = `${service.id}:${JSON.stringify(service.traefikRoutes)}:${JSON.stringify(service.domains)}`;
   const [routes, setRoutes] = useState<TraefikRouteRule[]>(() => buildInitialTraefikRoutes(service));
 
   useEffect(() => {
     setRoutes(buildInitialTraefikRoutes(service));
-  }, [seedKey, service]);
+  }, [seedKey]);
 
-  const saveRoutes = (next: TraefikRouteRule[]) => {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draftRouter, setDraftRouter] = useState("");
+  const [draftPath, setDraftPath] = useState("");
+  const [draftHost, setDraftHost] = useState("");
+  const [draftPort, setDraftPort] = useState("");
+  const [draftHttps, setDraftHttps] = useState(true);
+
+  const showMagicDice =
+    isApplication &&
+    (editingIndex === 0 || (editingIndex === null && routes.length === 0));
+
+  const resetDraft = () => {
+    setDraftRouter("");
+    setDraftPath("");
+    setDraftHost("");
+    setDraftPort("");
+    setDraftHttps(true);
+    setEditingIndex(null);
+  };
+
+  const openAddDialog = () => {
+    setEditingIndex(null);
+    const n = routes.length;
+    setDraftRouter(n === 0 ? defaultTraefikRouterName(service.appName) : `r${n + 1}`);
+    setDraftPath("");
+    setDraftHost("");
+    setDraftPort("");
+    setDraftHttps(true);
+    setDialogOpen(true);
+  };
+
+  const openEditDialog = (index: number) => {
+    const r = routes[index];
+    setEditingIndex(index);
+    setDraftRouter(r.router);
+    setDraftPath(r.pathPrefix ?? "");
+    setDraftHost(singleHostLabel(r.hosts));
+    setDraftPort(r.port != null ? String(r.port) : "");
+    setDraftHttps(r.https !== false);
+    setDialogOpen(true);
+  };
+
+  const sanitizeAndPersist = (next: TraefikRouteRule[], onDone?: () => void) => {
     const sanitized: TraefikRouteRule[] = [];
     for (const r of next) {
       const router = r.router.trim().toLowerCase();
-      const hosts = (r.hosts ?? []).map((h) => h.trim()).filter(Boolean);
+      const hosts = (r.hosts ?? []).map((h) => h.trim()).filter(Boolean).slice(0, 1);
       if (!router || !/^[a-z][a-z0-9_-]*$/.test(router)) continue;
       if (!hosts.length) continue;
       let port: number | null | undefined = r.port ?? null;
@@ -4665,7 +4773,13 @@ function DomainsPanel({ service }: { service: Service }) {
       let pathPrefix = r.pathPrefix?.trim() ?? null;
       if (pathPrefix === "") pathPrefix = null;
       if (pathPrefix && !pathPrefix.startsWith("/")) pathPrefix = `/${pathPrefix}`;
-      sanitized.push({ router, hosts, pathPrefix, port: port ?? null });
+      sanitized.push({
+        router,
+        hosts,
+        pathPrefix,
+        port: port ?? null,
+        https: r.https !== false,
+      });
     }
 
     saveRoutesMutation.mutate(
@@ -4677,152 +4791,289 @@ function DomainsPanel({ service }: { service: Service }) {
         },
       },
       {
-        onSuccess: () => toast({ title: "Routes saved", description: "Redeploy the stack to apply Traefik labels." }),
+        onSuccess: () => {
+          toast({ title: "Saved", description: "Redeploy the stack to apply Traefik labels." });
+          onDone?.();
+        },
         onError: (e: Error) =>
           toast({ title: "Error", description: e.message, variant: "destructive" }),
       },
     );
   };
 
-  const addRoute = () => {
-    setRoutes((prev) => [
-      ...prev,
-      {
-        router: `r${prev.length + 1}`,
-        hosts: [],
-        pathPrefix: null,
-        port: null,
-      },
-    ]);
+  const submitDialog = () => {
+    const router = draftRouter.trim().toLowerCase();
+    const hosts = parseSingleHostname(draftHost);
+    if (!router || !/^[a-z][a-z0-9_-]*$/.test(router)) {
+      toast({
+        title: "Invalid router",
+        description: "Use a lowercase name starting with a letter (a–z, 0–9, _, -).",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!hosts.length) {
+      toast({
+        title: "Hostname required",
+        description: "Enter a domain or use the dice.",
+        variant: "destructive",
+      });
+      return;
+    }
+    let port: number | null = null;
+    if (draftPort.trim()) {
+      const n = Math.floor(Number(draftPort));
+      if (!Number.isFinite(n) || n < 1 || n > 65535) {
+        toast({ title: "Invalid port", variant: "destructive" });
+        return;
+      }
+      port = n;
+    }
+    let pathPrefix = draftPath.trim() || null;
+    if (pathPrefix && !pathPrefix.startsWith("/")) pathPrefix = `/${pathPrefix}`;
+
+    const entry: TraefikRouteRule = { router, hosts, pathPrefix, port, https: draftHttps };
+    const next = [...routes];
+    if (editingIndex === null) next.push(entry);
+    else next[editingIndex] = entry;
+
+    sanitizeAndPersist(next, () => {
+      setDialogOpen(false);
+      resetDraft();
+    });
   };
 
-  const removeRoute = (index: number) => {
-    setRoutes((prev) => prev.filter((_, i) => i !== index));
+  const deleteDomain = (index: number) => {
+    const next = routes.filter((_, i) => i !== index);
+    sanitizeAndPersist(next);
   };
-
-  const updateRoute = (index: number, patch: Partial<TraefikRouteRule>) => {
-    setRoutes((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  };
-
-  const hostsText = (hosts: string[]) => hosts.join("\n");
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
-          <p className="text-sm text-muted-foreground">
-            Traefik routes
-          </p>
+          <p className="text-sm text-muted-foreground">Domains</p>
           <p className="text-xs text-muted-foreground/80 mt-1 max-w-2xl">
-            Define router name, hostnames, optional <span className="font-mono">PathPrefix</span> (e.g.{" "}
-            <span className="font-mono">/api</span>), and optional port if it differs from the app container port.
-            Uses <span className="font-mono">websecure</span> and your Let&apos;s Encrypt resolver from{" "}
+            Public hostnames for Traefik. Turn HTTPS off for HTTP-only (entrypoint{" "}
+            <span className="font-mono">web</span>); when on, TLS uses <span className="font-mono">websecure</span> and
+            your resolver from{" "}
             <Link href="/traefik" className="text-primary hover:underline">
               More → Traefik
             </Link>
-            . Attaches the <span className="font-mono">weehawk</span> overlay.
+            .
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button type="button" onClick={addRoute} className="btn-secondary text-sm flex items-center gap-1.5">
-            <Plus className="w-3.5 h-3.5" />
-            Add route
-          </button>
-          <button
-            type="button"
-            disabled={saveRoutesMutation.isPending}
-            className="btn-primary text-sm"
-            onClick={() => saveRoutes(routes)}
-          >
-            {saveRoutesMutation.isPending ? "Saving…" : "Save routes"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={openAddDialog}
+          className="inline-flex items-center gap-2 rounded-xl border border-border bg-white px-4 py-2.5 text-sm font-medium text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50 dark:border-white/20 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-100"
+        >
+          <Plus className="w-4 h-4" />
+          Add domain
+        </button>
       </div>
 
       <div className="space-y-4">
-        {routes.length === 0 && (
-          <div className="glass-panel rounded-xl p-8 text-center text-sm text-muted-foreground">
-            No routes. Click &quot;Add route&quot; to define Traefik labels.
+        {routes.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/80 bg-muted/20 px-6 py-14 text-center">
+            <Globe className="w-10 h-10 mx-auto text-muted-foreground/50 mb-3" />
+            <p className="text-sm text-muted-foreground">No domains yet.</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">Use Add domain to create a route.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {routes.map((route, index) => (
+              <motion.div
+                key={`${service.id}-traefik-route-${index}`}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="group flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-border bg-card/50 px-4 py-3.5 hover:border-border/90 transition-colors"
+              >
+                <div className="min-w-0 flex-1">
+                  {(() => {
+                    const hostLabel = singleHostLabel(route.hosts);
+                    const useHttps = route.https !== false;
+                    const openUrl = publicRouteOpenUrl(hostLabel, route.pathPrefix, useHttps);
+                    if (!hostLabel) {
+                      return <p className="font-mono text-sm font-medium text-muted-foreground">—</p>;
+                    }
+                    if (!openUrl) {
+                      return (
+                        <p className="font-mono text-sm font-medium text-foreground truncate" title={hostLabel}>
+                          {hostLabel}
+                        </p>
+                      );
+                    }
+                    return (
+                      <a
+                        href={openUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 min-w-0 max-w-full font-mono text-sm font-medium text-primary hover:underline"
+                        title={openUrl}
+                      >
+                        <span className="truncate">{hostLabel}</span>
+                        <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-70" aria-hidden />
+                      </a>
+                    );
+                  })()}
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                    <span>
+                      <span className="font-medium text-foreground/60">router</span> {route.router || "—"}
+                    </span>
+                    {route.pathPrefix ? (
+                      <span>
+                        <span className="font-medium text-foreground/60">path</span>{" "}
+                        <span className="font-mono">{route.pathPrefix}</span>
+                      </span>
+                    ) : null}
+                    <span>
+                      <span className="font-medium text-foreground/60">TLS</span>{" "}
+                      {route.https !== false ? "HTTPS" : "HTTP"}
+                    </span>
+                    {route.port != null ? (
+                      <span>
+                        <span className="font-medium text-foreground/60">port</span> {route.port}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => openEditDialog(index)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/70 transition-colors"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteDomain(index)}
+                    disabled={saveRoutesMutation.isPending}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/5 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete
+                  </button>
+                </div>
+              </motion.div>
+            ))}
           </div>
         )}
-        {routes.map((route, index) => (
-          <motion.div
-            key={`${index}-${route.router}`}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-panel rounded-xl p-5 border border-border space-y-4"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold flex items-center gap-2">
-                <Globe className="w-4 h-4 text-primary" />
-                Router{" "}
-                <span className="font-mono text-xs text-muted-foreground">{route.router || `…`}</span>
-              </h4>
-              <button
-                type="button"
-                onClick={() => removeRoute(index)}
-                className="text-xs text-muted-foreground hover:text-destructive transition-colors"
-              >
-                Remove
-              </button>
-            </div>
+      </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="block space-y-1.5">
-                <span className="text-[11px] text-muted-foreground">Router name</span>
-                <input
-                  className="input-field w-full font-mono text-sm"
-                  placeholder="backend"
-                  value={route.router}
-                  onChange={(e) =>
-                    updateRoute(index, { router: e.target.value.trim().toLowerCase() })
-                  }
-                />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-[11px] text-muted-foreground">Path prefix (optional)</span>
-                <input
-                  className="input-field w-full font-mono text-sm"
-                  placeholder="/api"
-                  value={route.pathPrefix ?? ""}
-                  onChange={(e) => updateRoute(index, { pathPrefix: e.target.value || null })}
-                />
-              </label>
-            </div>
-
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDialogOpen(false);
+            resetDraft();
+          } else {
+            setDialogOpen(true);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editingIndex === null ? "Add domain" : "Edit domain"}</DialogTitle>
+            <DialogDescription>
+              Set router, hostname, HTTPS (TLS), and optional path or port. The dice generates a random traefik.me
+              hostname for the primary domain only.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
             <label className="block space-y-1.5">
-              <span className="text-[11px] text-muted-foreground">Hostnames (one per line or comma-separated)</span>
-              <textarea
-                className="input-field w-full min-h-[72px] font-mono text-xs leading-relaxed"
-                placeholder={"app.example.com\nwww.example.com"}
-                value={hostsText(route.hosts)}
-                onChange={(e) =>
-                  updateRoute(index, { hosts: parseHostInput(e.target.value) })
-                }
+              <span className="text-[11px] text-muted-foreground">Router name</span>
+              <input
+                className="input-field w-full font-mono text-sm"
+                placeholder="backend"
+                value={draftRouter}
+                onChange={(e) => setDraftRouter(e.target.value.trim().toLowerCase())}
               />
             </label>
-
-            <label className="block space-y-1.5 max-w-xs">
-              <span className="text-[11px] text-muted-foreground">Container port (optional override)</span>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] text-muted-foreground">Path prefix (optional)</span>
+              <input
+                className="input-field w-full font-mono text-sm"
+                placeholder="/api"
+                value={draftPath}
+                onChange={(e) => setDraftPath(e.target.value)}
+              />
+            </label>
+            <div className="space-y-1.5">
+              <span className="text-[11px] text-muted-foreground">Hostname</span>
+              <div className="flex gap-2 items-center min-w-0">
+                <input
+                  className="input-field flex-1 min-w-0 font-mono text-sm"
+                  placeholder="app.example.com"
+                  value={draftHost}
+                  onChange={(e) => setDraftHost(e.target.value)}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
+                {showMagicDice ? (
+                  <MagicHostDice
+                    service={service}
+                    onRolled={(svc) => {
+                      const h = hostnameFromMagicUrl(svc.magicTraefikMeUrl);
+                      if (h) setDraftHost(h);
+                    }}
+                  />
+                ) : null}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+              <div className="space-y-0.5 min-w-0">
+                <Label htmlFor="domain-https" className="text-sm font-medium text-foreground cursor-pointer">
+                  HTTPS
+                </Label>
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  On: TLS + ACME (<span className="font-mono">websecure</span>). Off: HTTP only (<span className="font-mono">web</span>).
+                </p>
+              </div>
+              <Switch
+                id="domain-https"
+                checked={draftHttps}
+                onCheckedChange={(v) => setDraftHttps(Boolean(v))}
+                className="shrink-0"
+              />
+            </div>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] text-muted-foreground">Container port (optional)</span>
               <input
                 type="number"
                 min={1}
                 max={65535}
                 className="input-field w-full font-mono text-sm"
                 placeholder="Default from stack"
-                value={route.port ?? ""}
-                onChange={(e) => {
-                  const t = e.target.value.trim();
-                  updateRoute(index, {
-                    port: t === "" ? null : Math.floor(Number(t)),
-                  });
-                }}
+                value={draftPort}
+                onChange={(e) => setDraftPort(e.target.value)}
               />
             </label>
-          </motion.div>
-        ))}
-      </div>
-
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              onClick={() => {
+                setDialogOpen(false);
+                resetDraft();
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={saveRoutesMutation.isPending}
+              className="btn-primary text-sm"
+              onClick={submitDialog}
+            >
+              {saveRoutesMutation.isPending ? "Saving…" : "Save"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

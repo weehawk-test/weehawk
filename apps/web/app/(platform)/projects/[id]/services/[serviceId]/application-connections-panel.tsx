@@ -97,7 +97,7 @@ export function ApplicationConnectionsPanel({
             {selectedInCategory.map((v) => (
               <span
                 key={v}
-                className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-zinc-950/50 px-2 py-1 text-[11px] text-foreground"
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/90 px-2 py-1 text-[11px] text-foreground dark:border-white/15 dark:bg-zinc-950/50"
               >
                 <span className="max-w-[220px] truncate">{labelFor(options, v)}</span>
                 <button
@@ -118,7 +118,7 @@ export function ApplicationConnectionsPanel({
 
   const shellOuter =
     variant === "embedded"
-      ? "border-t border-white/10 pt-4 mt-4"
+      ? "border-t border-border pt-4 mt-4 dark:border-white/10"
       : "glass-panel rounded-2xl border border-violet-500/25 bg-violet-500/5 p-5";
 
   const connectionCount = selectedDatabases.length + selectedApplications.length + stackKeys.filter((k) => k.trim()).length;
@@ -134,28 +134,32 @@ export function ApplicationConnectionsPanel({
             e.preventDefault();
             onOpenChange?.(!open);
           }}
-          className={`flex cursor-pointer list-none items-center gap-3 rounded-xl border border-white/10 bg-zinc-950/30 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden ${variant === "embedded" ? "" : "border-violet-500/20"}`}
+          className={`flex cursor-pointer list-none items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors [&::-webkit-details-marker]:hidden ${
+            variant === "embedded"
+              ? "border-border bg-muted/35 hover:bg-muted/55 dark:border-white/10 dark:bg-zinc-950/30 dark:hover:bg-white/[0.04]"
+              : "border-violet-500/25 bg-muted/35 hover:bg-muted/50 dark:border-white/10 dark:bg-zinc-950/30 dark:hover:bg-white/[0.04]"
+          }`}
         >
           <div
-            className={`flex shrink-0 items-center justify-center rounded-xl border border-violet-500/30 bg-violet-500/10 ${variant === "embedded" ? "h-8 w-8" : "h-9 w-9"}`}
+            className={`flex shrink-0 items-center justify-center rounded-xl border border-violet-400/40 bg-violet-500/[0.12] dark:border-violet-500/30 dark:bg-violet-500/10 ${variant === "embedded" ? "h-8 w-8" : "h-9 w-9"}`}
           >
-            <Link2 className={`text-violet-300 ${variant === "embedded" ? "h-3.5 w-3.5" : "h-4 w-4"}`} />
+            <Link2 className={`text-violet-700 dark:text-violet-300 ${variant === "embedded" ? "h-3.5 w-3.5" : "h-4 w-4"}`} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold text-violet-100">Connections</h3>
+              <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-100">Connections</h3>
               {connectionCount > 0 && (
-                <span className="rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-200">
+                <span className="rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
                   {connectionCount}
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+            <p className="text-[11px] text-zinc-600 dark:text-muted-foreground mt-0.5 leading-snug">
               Databases, apps, extra paths — applied on upload.
             </p>
           </div>
           <ChevronDown
-            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ${
+            className={`h-4 w-4 shrink-0 text-zinc-500 dark:text-muted-foreground transition-transform duration-300 ${
               open ? "rotate-180" : ""
             }`}
           />
@@ -197,7 +201,7 @@ export function ApplicationConnectionsPanel({
             )}
           </div>
 
-          <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+          <div className="space-y-2 rounded-xl border border-border bg-muted/25 p-3 dark:border-white/10 dark:bg-white/[0.03]">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-medium text-foreground">Optional: extra paths</p>

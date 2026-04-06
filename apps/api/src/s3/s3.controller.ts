@@ -23,7 +23,7 @@ import { S3Service } from './s3.service';
 import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
 
 @ApiTags('S3')
-@Controller('s3')
+@Controller('api/s3')
 export class S3Controller {
   constructor(private readonly s3Service: S3Service) {}
 

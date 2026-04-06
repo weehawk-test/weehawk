@@ -141,6 +141,12 @@ export default function ProjectsClient({
     }
   }, [total, items.length, page, setPage]);
 
+  useEffect(() => {
+    if (pageData && !isError) {
+      setServerError(null);
+    }
+  }, [pageData, isError]);
+
   const handleRetry = async () => {
     setServerError(null);
     await refetch();

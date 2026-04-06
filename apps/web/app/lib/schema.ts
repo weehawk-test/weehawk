@@ -29,6 +29,8 @@ export const traefikRouteRuleSchema = z.object({
   hosts: z.array(z.string()).min(1),
   pathPrefix: z.string().max(256).nullable().optional(),
   port: z.number().int().min(1).max(65535).nullable().optional(),
+  /** When false, Traefik uses HTTP entrypoint only (no TLS). Default true. */
+  https: z.boolean().optional(),
 });
 export type TraefikRouteRule = z.infer<typeof traefikRouteRuleSchema>;
 
@@ -56,6 +58,7 @@ export const serviceSchema = z.object({
     .object({
       id: z.number(),
       name: z.string(),
+      publicIpv4: z.string().nullable().optional(),
     })
     .nullable()
     .optional(),
@@ -70,6 +73,10 @@ export const serviceSchema = z.object({
     .optional(),
   /** Swarm app: full image ref for build+push; stored in compose header `registry.pushImage`. */
   registryPushImage: z.string().nullable().optional(),
+  /** Auto-generated traefik.me quick access URL (API-computed; requires public IPv4). */
+  magicTraefikMeUrl: z.string().nullable().optional(),
+  /** User-saved IPv4 embedded in Magic traefik.me hostname (optional). */
+  magicTraefikMeIpv4: z.string().nullable().optional(),
 });
 export type Service = z.infer<typeof serviceSchema>;
 const POSTGRES_IMAGE_REF = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,127}$/;

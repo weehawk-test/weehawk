@@ -72,8 +72,8 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       <AlertDialog open={open} onOpenChange={handleOpenChange}>
         <AlertDialogContent
           className={cn(
-            "max-w-md border border-white/10 bg-zinc-950/95 p-0 shadow-2xl backdrop-blur-xl sm:rounded-2xl",
-            destructive && "border-destructive/25",
+            "max-w-md border border-border bg-card p-0 text-card-foreground shadow-2xl backdrop-blur-xl sm:rounded-2xl",
+            destructive && "border-destructive/30",
           )}
         >
           <div className="p-6 pb-0">
@@ -88,7 +88,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               >
                 <AlertTriangle className="h-5 w-5" />
               </div>
-              <AlertDialogTitle className="text-lg font-semibold leading-snug pr-2">
+              <AlertDialogTitle className="pr-2 text-lg font-semibold leading-snug text-foreground">
                 {options?.title ?? ""}
               </AlertDialogTitle>
               {options?.description ? (
@@ -100,8 +100,8 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               )}
             </AlertDialogHeader>
           </div>
-          <AlertDialogFooter className="flex-row gap-2 border-t border-white/5 bg-black/20 px-6 py-4 sm:justify-end">
-            <AlertDialogCancel className="mt-0 border-white/10 bg-transparent hover:bg-white/5">
+          <AlertDialogFooter className="flex-row gap-2 border-t border-border bg-muted/50 px-6 py-4 sm:justify-end">
+            <AlertDialogCancel className="mt-0">
               {options?.cancelLabel ?? "Cancel"}
             </AlertDialogCancel>
             <button

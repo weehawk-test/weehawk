@@ -45,7 +45,7 @@ export async function fetchDockerContainersPagedBrowser(
   pageSize: number,
   q: string,
 ): Promise<PaginatedContainersResponse> {
-  return fetchPaged(`/docker-monitor/containers/paged?${buildQuery(page, pageSize, q)}`);
+  return fetchPaged(`/api/docker-monitor/containers/paged?${buildQuery(page, pageSize, q)}`);
 }
 
 export async function fetchDockerImagesPagedBrowser(
@@ -53,7 +53,7 @@ export async function fetchDockerImagesPagedBrowser(
   pageSize: number,
   q: string,
 ): Promise<PaginatedImagesResponse> {
-  return fetchPaged(`/docker-monitor/images/paged?${buildQuery(page, pageSize, q)}`);
+  return fetchPaged(`/api/docker-monitor/images/paged?${buildQuery(page, pageSize, q)}`);
 }
 
 export async function fetchDockerServicesPagedBrowser(
@@ -61,7 +61,7 @@ export async function fetchDockerServicesPagedBrowser(
   pageSize: number,
   q: string,
 ): Promise<PaginatedServicesResponse> {
-  return fetchPaged(`/docker-monitor/services/paged?${buildQuery(page, pageSize, q)}`);
+  return fetchPaged(`/api/docker-monitor/services/paged?${buildQuery(page, pageSize, q)}`);
 }
 
 export async function fetchDockerVolumesPagedBrowser(
@@ -72,7 +72,7 @@ export async function fetchDockerVolumesPagedBrowser(
 ): Promise<PaginatedVolumesResponse> {
   const base = buildQuery(page, pageSize, q);
   const qs = includeSizes ? `${base}&includeSizes=true` : base;
-  return fetchPaged(`/docker-monitor/volumes/paged?${qs}`);
+  return fetchPaged(`/api/docker-monitor/volumes/paged?${qs}`);
 }
 
 export async function fetchDockerNetworksPagedBrowser(
@@ -80,5 +80,5 @@ export async function fetchDockerNetworksPagedBrowser(
   pageSize: number,
   q: string,
 ): Promise<PaginatedNetworksResponse> {
-  return fetchPaged(`/docker-monitor/networks/paged?${buildQuery(page, pageSize, q)}`);
+  return fetchPaged(`/api/docker-monitor/networks/paged?${buildQuery(page, pageSize, q)}`);
 }

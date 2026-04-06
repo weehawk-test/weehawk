@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { CreateServiceInput, Service } from "@/lib/schema";
+import { useAuth } from "@/contexts/auth-context";
 import {
   createServiceApi,
   deleteServiceApi,
@@ -20,9 +21,11 @@ export function useServices(
   projectId?: string,
   options?: { initialData?: Service[] },
 ) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
   const hasInitial = options?.initialData !== undefined;
   return useQuery({
-    queryKey: ["services", projectId],
+    queryKey: ["services", ownerKey, projectId],
     queryFn: () => fetchServices(projectId),
     enabled: projectId !== undefined && projectId !== "",
     initialData: options?.initialData,
@@ -39,6 +42,8 @@ export function useServicesPage(
   ssrQ: string,
   initialPageData?: ServicesPageResponse,
 ) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
   const trimmed = q.trim();
   const ssrTrim = ssrQ.trim();
   const hasSsrInitial =
@@ -46,23 +51,27 @@ export function useServicesPage(
     page === ssrPage &&
     trimmed === ssrTrim;
 
+  const useSsrData = hasSsrInitial && user?.userId != null;
+
   return useQuery({
-    queryKey: ["services", "list", projectId, page, trimmed],
+    queryKey: ["services", "list", ownerKey, projectId, page, trimmed],
     queryFn: () => fetchServicesPage(projectId, page, trimmed),
-    /** When SSR supplied this page/search, skip client GET /services (no duplicate in Network). */
-    enabled: projectId !== undefined && projectId !== "" && !hasSsrInitial,
-    initialData: hasSsrInitial ? initialPageData : undefined,
-    initialDataUpdatedAt: hasSsrInitial ? Date.now() : undefined,
-    staleTime: hasSsrInitial ? Infinity : 10_000,
-    refetchOnMount: hasSsrInitial ? false : true,
+    /** When SSR supplied this page/search, skip client GET /api/services (no duplicate in Network). */
+    enabled: projectId !== undefined && projectId !== "" && !useSsrData,
+    initialData: useSsrData ? initialPageData : undefined,
+    initialDataUpdatedAt: useSsrData ? Date.now() : undefined,
+    staleTime: useSsrData ? Infinity : 10_000,
+    refetchOnMount: useSsrData ? false : true,
     refetchOnWindowFocus: false,
   });
 }
 
 export function useService(id: string, options?: { initialData?: Service }) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
   const hasInitial = options?.initialData !== undefined;
   return useQuery({
-    queryKey: ["service", id],
+    queryKey: ["service", ownerKey, id],
     queryFn: () => fetchService(id),
     enabled: !!id,
     initialData: options?.initialData,
@@ -76,9 +85,11 @@ export function useServiceRuntime(
   id: string | undefined,
   options?: { initialData?: { running: boolean } },
 ) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
   const hasInitial = options?.initialData !== undefined;
   return useQuery({
-    queryKey: ["service-runtime", id],
+    queryKey: ["service-runtime", ownerKey, id],
     queryFn: () => fetchServiceRuntime(id!),
     enabled: !!id,
     initialDataUpdatedAt: hasInitial ? 0 : undefined,
@@ -90,8 +101,10 @@ export function useServiceRuntime(
 }
 
 export function useServiceVolumes(serviceId: string | undefined, enabled: boolean) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
   return useQuery({
-    queryKey: ["service-volumes", serviceId],
+    queryKey: ["service-volumes", ownerKey, serviceId],
     queryFn: () => fetchServiceVolumesApi(serviceId!),
     enabled: !!serviceId && enabled,
     staleTime: 15_000,
@@ -113,6 +126,7 @@ export function useCreateService() {
 
 export function useUpdateService() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: ({
       id,
@@ -137,7 +151,7 @@ export function useUpdateService() {
     onSuccess: (data) => {
       // Keep ["service", id] in sync immediately so UI (e.g. remote host selects) does not revert
       // after navigation; invalidate alone can race or be skipped with staleTime: Infinity + no refetchOnMount.
-      qc.setQueryData(["service", String(data.id)], data);
+      qc.setQueryData(["service", user?.userId ?? "none", String(data.id)], data);
       qc.invalidateQueries({ queryKey: ["services", data.projectId] });
       qc.invalidateQueries({ queryKey: ["services"] });
       qc.invalidateQueries({ queryKey: ["service", data.id] });

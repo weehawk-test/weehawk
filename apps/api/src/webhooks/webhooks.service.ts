@@ -207,7 +207,7 @@ export class WebhooksService {
     }
     if (dto.targetMode === 'service' && dto.serviceId != null) {
       try {
-        await this.servicesService.findOne(dto.serviceId);
+        await this.servicesService.assertServiceOwnedByUser(dto.serviceId, userId);
       } catch {
         throw new BadRequestException('Service not found.');
       }
@@ -367,6 +367,7 @@ export class WebhooksService {
           const r = await this.servicesService.executeDeployment(
             w.serviceId,
             'redeploy',
+            { actingUserId: w.userId },
           );
           success = Boolean(r.success);
           output = String(r.output ?? '');

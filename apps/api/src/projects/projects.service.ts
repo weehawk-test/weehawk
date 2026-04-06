@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { exec } from 'child_process';
@@ -29,24 +30,35 @@ export class ProjectsService {
     private readonly dockerSecrets: DockerSecretsService,
   ) {}
 
-  async create(createProjectDto: CreateProjectDto) {
+  async create(createProjectDto: CreateProjectDto, userId: number) {
     const existing = await this.projectRepository.findOneBy({
       name: createProjectDto.name,
+      userId,
     });
     if (existing) {
       throw new ConflictException('Project name already exists');
     }
 
-    const project = this.projectRepository.create(createProjectDto);
+    const project = this.projectRepository.create({
+      ...createProjectDto,
+      userId,
+    });
     return await this.projectRepository.save(project);
   }
 
-  async findAllPaginated(page: number, limit: number, q?: string) {
+  async findAllPaginated(
+    page: number,
+    limit: number,
+    q: string | undefined,
+    userId: number,
+  ) {
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 9));
     const trimmed = (q ?? '').trim().toLowerCase();
 
-    const countQb = this.projectRepository.createQueryBuilder('project');
+    const countQb = this.projectRepository
+      .createQueryBuilder('project')
+      .where('project.userId = :userId', { userId });
     if (trimmed) {
       countQb.andWhere(
         '(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, \'\')) LIKE :q)',
@@ -57,7 +69,8 @@ export class ProjectsService {
 
     const dataQb = this.projectRepository
       .createQueryBuilder('project')
-      .loadRelationCountAndMap('project.serviceCount', 'project.services');
+      .loadRelationCountAndMap('project.serviceCount', 'project.services')
+      .where('project.userId = :userId', { userId });
 
     if (trimmed) {
       dataQb.andWhere(
@@ -80,7 +93,7 @@ export class ProjectsService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, userId: number) {
     const project = await this.projectRepository.findOne({
       where: { id },
       relations: ['services'],
@@ -89,18 +102,21 @@ export class ProjectsService {
     if (!project) {
       throw new NotFoundException(`Project with ID ${id} not found`);
     }
+    if (project.userId == null || project.userId !== userId) {
+      throw new ForbiddenException();
+    }
 
     return project;
   }
 
-  async update(id: number, updateProjectDto: UpdateProjectDto) {
-    const project = await this.findOne(id);
+  async update(id: number, updateProjectDto: UpdateProjectDto, userId: number) {
+    const project = await this.findOne(id, userId);
     const updated = this.projectRepository.merge(project, updateProjectDto);
     return await this.projectRepository.save(updated);
   }
 
-  async remove(id: number) {
-    const project = await this.findOne(id);
+  async remove(id: number, userId: number) {
+    const project = await this.findOne(id, userId);
     const services = project.services ?? [];
     if (services.length > 0) {
       throw new ConflictException(

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Loader2, Plus, Server, Terminal, Trash2, PlugZap } from "lucide-react";
 import { PublicKeyCopyBlock } from "@/components/remote-server/public-key-copy-block";
+import { RemoteServerInstallBlock } from "@/components/remote-server/remote-server-install-block";
 import { useAuth } from "@/contexts/auth-context";
 import {
   createRemoteServerApi,
@@ -12,6 +13,7 @@ import {
   fetchRemoteServers,
   generateRemoteSshKeypairApi,
   testRemoteServerApi,
+  testRemoteServerSshApi,
   updateRemoteServerApi,
   type RemoteServerRow,
   type RemoteServerRole,
@@ -26,6 +28,7 @@ function emptyForm() {
     host: "",
     port: "22",
     sshUser: "",
+    publicIpv4: "",
     privateKey: "",
     serverRole: "deploy" as RemoteServerRole,
   };
@@ -36,6 +39,7 @@ type EditDraft = {
   host: string;
   port: string;
   sshUser: string;
+  publicIpv4: string;
   privateKeyReplace: string;
   serverRole: RemoteServerRole;
 };
@@ -46,6 +50,7 @@ function emptyEditDraft(): EditDraft {
     host: "",
     port: "22",
     sshUser: "",
+    publicIpv4: "",
     privateKeyReplace: "",
     serverRole: "deploy",
   };
@@ -53,15 +58,16 @@ function emptyEditDraft(): EditDraft {
 
 export function RemoteServerSettingsClient() {
   const hideLocalDockerHost = isCloudEdition();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  const ownerKey = user?.userId;
   const { toast } = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
 
   const list = useQuery({
-    queryKey: ["remote-servers"],
+    queryKey: ["remote-servers", ownerKey],
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && ownerKey != null,
   });
 
   const [creating, setCreating] = useState(false);
@@ -79,6 +85,7 @@ export function RemoteServerSettingsClient() {
           host: row.host,
           port: String(row.port),
           sshUser: row.sshUser,
+          publicIpv4: row.publicIpv4 ?? "",
           privateKeyReplace: "",
           serverRole: row.serverRole,
         });
@@ -117,6 +124,7 @@ export function RemoteServerSettingsClient() {
         sshUser: form.sshUser.trim(),
         privateKey: form.privateKey.trim(),
         serverRole: form.serverRole,
+        ...(form.publicIpv4.trim() ? { publicIpv4: form.publicIpv4.trim() } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["remote-servers"] });
@@ -137,6 +145,7 @@ export function RemoteServerSettingsClient() {
         port: Number(editDraft.port) || 22,
         sshUser: editDraft.sshUser.trim(),
         serverRole: editDraft.serverRole,
+        publicIpv4: editDraft.publicIpv4.trim() ? editDraft.publicIpv4.trim() : null,
       };
       const pem = editDraft.privateKeyReplace.trim();
       if (pem) {
@@ -168,13 +177,26 @@ export function RemoteServerSettingsClient() {
     onSuccess: (data, id) => {
       toast({
         title: data.success ? "Docker reachable" : "Connection failed",
-        description: data.output.slice(0, 400) + (data.output.length > 400 ? "…" : ""),
+        description: data.output.slice(0, 900) + (data.output.length > 900 ? "…" : ""),
         variant: data.success ? "default" : "destructive",
       });
       void id;
     },
     onError: (e: Error) =>
       toast({ title: "Test failed", description: e.message, variant: "destructive" }),
+  });
+
+  const testSshMut = useMutation({
+    mutationFn: (id: number) => testRemoteServerSshApi(accessToken ?? "", id),
+    onSuccess: (data) => {
+      toast({
+        title: data.success ? "SSH OK" : "SSH failed",
+        description: data.output.slice(0, 900) + (data.output.length > 900 ? "…" : ""),
+        variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (e: Error) =>
+      toast({ title: "SSH test failed", description: e.message, variant: "destructive" }),
   });
 
   if (!accessToken) {
@@ -322,6 +344,16 @@ export function RemoteServerSettingsClient() {
                   onChange={(e) => setForm((f) => ({ ...f, sshUser: e.target.value }))}
                   className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                   placeholder="deploy"
+                />
+              </label>
+              <label className="space-y-1 block sm:col-span-2">
+                <span className="text-xs text-muted-foreground">Public IPv4 (optional, Magic traefik.me)</span>
+                <input
+                  value={form.publicIpv4}
+                  onChange={(e) => setForm((f) => ({ ...f, publicIpv4: e.target.value }))}
+                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
+                  placeholder="203.0.113.10"
+                  autoComplete="off"
                 />
               </label>
               <label className="space-y-1 block sm:col-span-2">
@@ -497,6 +529,16 @@ export function RemoteServerSettingsClient() {
                           className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                         />
                       </label>
+                      <label className="space-y-1 block sm:col-span-2">
+                        <span className="text-xs text-muted-foreground">Public IPv4 (optional, Magic traefik.me)</span>
+                        <input
+                          value={editDraft.publicIpv4}
+                          onChange={(e) => setEditDraft((d) => ({ ...d, publicIpv4: e.target.value }))}
+                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
+                          placeholder="203.0.113.10"
+                          autoComplete="off"
+                        />
+                      </label>
                       {row.authMode === "file" ? (
                         <p className="text-xs text-muted-foreground sm:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
                           Legacy: key file on API host at{" "}
@@ -545,6 +587,7 @@ export function RemoteServerSettingsClient() {
                     </div>
                   </div>
                 ) : (
+                  <>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -578,6 +621,11 @@ export function RemoteServerSettingsClient() {
                         {row.sshUser}@{row.host}
                         {row.port !== 22 ? `:${row.port}` : ""}
                       </p>
+                      {row.publicIpv4 ? (
+                        <p className="text-[11px] text-muted-foreground font-mono mt-1">
+                          Public IPv4 (Magic): {row.publicIpv4}
+                        </p>
+                      ) : null}
                       {row.authMode === "file" && row.privateKeyPath ? (
                         <p className="text-[11px] text-zinc-500 font-mono mt-1 truncate break-all">
                           {row.privateKeyPath}
@@ -608,17 +656,31 @@ export function RemoteServerSettingsClient() {
                       )}
                       <button
                         type="button"
-                        disabled={testMut.isPending}
+                        disabled={testSshMut.isPending || !row.hasPrivateKey}
+                        onClick={() => testSshMut.mutate(row.id)}
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                        title="SSH only: ssh2 + shell (echo + uname). Does not use Docker."
+                      >
+                        {testSshMut.isPending ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <KeyRound className="size-3.5" />
+                        )}
+                        SSH
+                      </button>
+                      <button
+                        type="button"
+                        disabled={testMut.isPending || !row.hasPrivateKey}
                         onClick={() => testMut.mutate(row.id)}
-                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
-                        title="Check SSH and remote Docker API (Dockerode over SSH from the API)"
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                        title="Remote Docker API via Dockerode over SSH (same path as WeeDocker console)"
                       >
                         {testMut.isPending ? (
                           <Loader2 className="size-3.5 animate-spin" />
                         ) : (
                           <PlugZap className="size-3.5" />
                         )}
-                        Test
+                        Docker
                       </button>
                       <button
                         type="button"
@@ -651,6 +713,8 @@ export function RemoteServerSettingsClient() {
                       </button>
                     </div>
                   </div>
+                  <RemoteServerInstallBlock accessToken={accessToken} row={row} />
+                  </>
                 )}
               </div>
             ))}

@@ -7,3 +7,11 @@
 export function isCloudEdition(): boolean {
   return (process.env.NEXT_PUBLIC_WEEHAWK_EDITION ?? "").toLowerCase() === "cloud";
 }
+
+/**
+ * Same edition label as {@link isCloudEdition} for UI before `/api/auth/setup-status` resolves
+ * (e.g. first paint after refresh). Avoids flashing `selfhosted` while the query is loading.
+ */
+export function editionFromEnv(): "cloud" | "selfhosted" {
+  return isCloudEdition() ? "cloud" : "selfhosted";
+}

@@ -7,10 +7,16 @@ function isCloudEdition(): boolean {
 }
 
 export function middleware(request: NextRequest) {
-  if (!isCloudEdition()) {
+  const { pathname } = request.nextUrl;
+  const cloud = isCloudEdition();
+
+  if (!cloud) {
+    if (pathname === "/subscription" || pathname.startsWith("/subscription/")) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
     return NextResponse.next();
   }
-  const { pathname } = request.nextUrl;
+
   if (pathname === "/console/local" || pathname.startsWith("/console/local/")) {
     return NextResponse.redirect(new URL("/remote-server", request.url));
   }
@@ -18,5 +24,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/console/local", "/console/local/:path*"],
+  matcher: ["/console/local", "/console/local/:path*", "/subscription", "/subscription/:path*"],
 };

@@ -7,8 +7,13 @@ import { Server } from 'ws';
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import { URL } from 'url';
+import { ConfigService } from '@nestjs/config';
 import { DockerService } from './docker.service';
 import { DockerSecretsService } from '../dockersecrets/dockersecrets.service';
+import {
+  isCloudEdition,
+  LOCAL_HOST_DOCKER_FORBIDDEN_MESSAGE,
+} from '../common/weehawk-edition';
 
 @WebSocketGateway({
   path: '/ws/docker-monitor',
@@ -18,12 +23,24 @@ export class DockerMonitorGateway implements OnGatewayConnection {
   constructor(
     private readonly dockerService: DockerService,
     private readonly dockerSecretsService: DockerSecretsService,
+    private readonly configService: ConfigService,
   ) {}
 
   @WebSocketServer()
   server: Server;
 
   async handleConnection(client: WebSocket, ...args: unknown[]) {
+    if (isCloudEdition(this.configService)) {
+      client.send(
+        JSON.stringify({
+          type: 'error',
+          message: LOCAL_HOST_DOCKER_FORBIDDEN_MESSAGE,
+        }),
+      );
+      client.close(4403, 'forbidden');
+      return;
+    }
+
     const req = args[0] as IncomingMessage | undefined;
     const pathAndQuery = req?.url ?? '/';
     const host = req?.headers?.host ?? 'localhost';

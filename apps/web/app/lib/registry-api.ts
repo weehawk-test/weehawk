@@ -44,7 +44,7 @@ export type RegistryLogoutPayload = {
 };
 
 export function registryLoginApi(body: RegistryLoginPayload) {
-  return request<{ success: boolean; providerUrl: string }>("/registry/login", {
+  return request<{ success: boolean; providerUrl: string }>("/api/registry/login", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -52,7 +52,7 @@ export function registryLoginApi(body: RegistryLoginPayload) {
 
 export function registryVerifyApi(body: RegistryLoginPayload) {
   return request<{ success: boolean; message: string }>(
-    "/registry/verify-connection",
+    "/api/registry/verify-connection",
     {
       method: "POST",
       body: JSON.stringify(body),
@@ -62,7 +62,7 @@ export function registryVerifyApi(body: RegistryLoginPayload) {
 
 export function registryLogoutApi(body: RegistryLogoutPayload) {
   return request<{ success: boolean; providerUrl: string; output?: string }>(
-    "/registry/logout",
+    "/api/registry/logout",
     {
       method: "POST",
       body: JSON.stringify(body),
@@ -79,7 +79,7 @@ export type RegistryAccountRow = {
 };
 
 export async function fetchRegistryAccounts(accessToken: string): Promise<RegistryAccountRow[]> {
-  const res = await authFetch(accessToken, `${API_BASE}/registry/accounts`, { method: "GET" });
+  const res = await authFetch(accessToken, `${API_BASE}/api/registry/accounts`, { method: "GET" });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
@@ -100,7 +100,7 @@ export async function createRegistryAccountApi(
   accessToken: string,
   body: CreateRegistryAccountPayload,
 ): Promise<RegistryAccountRow> {
-  const res = await authFetch(accessToken, `${API_BASE}/registry/accounts`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/registry/accounts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -113,7 +113,7 @@ export async function createRegistryAccountApi(
 }
 
 export async function deleteRegistryAccountApi(accessToken: string, id: number): Promise<void> {
-  const res = await authFetch(accessToken, `${API_BASE}/registry/accounts/${id}`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/registry/accounts/${id}`, {
     method: "DELETE",
   });
   if (!res.ok) {

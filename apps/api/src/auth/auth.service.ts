@@ -85,9 +85,9 @@ export class AuthService {
       );
     }
     const accessToken = this.generateAccessToken(saved);
-    const refreshToken =
+    const { rawToken } =
       await this.refreshTokenService.createRefreshToken(saved);
-    return this.buildAuthResponse(saved, accessToken, refreshToken.token);
+    return this.buildAuthResponse(saved, accessToken, rawToken);
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
@@ -109,9 +109,9 @@ export class AuthService {
     await this.userRepo.save(user);
 
     const accessToken = this.generateAccessToken(user);
-    const refreshToken =
+    const { rawToken } =
       await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, refreshToken.token);
+    return this.buildAuthResponse(user, accessToken, rawToken);
   }
 
   async loginWithGoogle(profile: Profile): Promise<{
@@ -170,10 +170,10 @@ export class AuthService {
     }
 
     const accessToken = this.generateAccessToken(user);
-    const refreshToken =
+    const { rawToken } =
       await this.refreshTokenService.createRefreshToken(user);
     return {
-      auth: this.buildAuthResponse(user, accessToken, refreshToken.token),
+      auth: this.buildAuthResponse(user, accessToken, rawToken),
       isNewUser,
     };
   }
@@ -182,9 +182,11 @@ export class AuthService {
     const rt =
       await this.refreshTokenService.validateRefreshToken(refreshToken);
     const user = rt.user;
+    const { rawToken: newRefreshToken } =
+      await this.refreshTokenService.createRefreshToken(user);
+    await this.refreshTokenService.deleteById(rt.id);
     const accessToken = this.generateAccessToken(user);
-    const newRt = await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, newRt.token);
+    return this.buildAuthResponse(user, accessToken, newRefreshToken);
   }
 
   async logout(refreshToken: string, email?: string): Promise<void> {

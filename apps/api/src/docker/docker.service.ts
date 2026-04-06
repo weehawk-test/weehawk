@@ -4,6 +4,8 @@ import {
   InternalServerErrorException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { assertLocalHostDockerAllowed } from '../common/weehawk-edition';
 import {
   filterContainers,
   filterImages,
@@ -151,6 +153,8 @@ type ServiceInspectRow = {
 
 @Injectable()
 export class DockerService {
+  constructor(private readonly configService: ConfigService) {}
+
   /**
    * Cache the (expensive) `docker system df -v` parsed map briefly.
    * This command is noticeably slower than `docker volume ls`.
@@ -170,7 +174,12 @@ export class DockerService {
     return Math.min(Math.max(n, 1), 100);
   }
 
+  private assertHostDocker(): void {
+    assertLocalHostDockerAllowed(this.configService);
+  }
+
   async getContainers() {
+    this.assertHostDocker();
     try {
       const { stdout } = await execAsync('docker ps -a --format "{{json .}}"');
       return stdout
@@ -208,6 +217,7 @@ export class DockerService {
   }
 
   async getImages() {
+    this.assertHostDocker();
     try {
       const { stdout } = await execAsync(
         'docker images --no-trunc --format "{{json .}}"',
@@ -245,6 +255,7 @@ export class DockerService {
   }
 
   async getVolumes() {
+    this.assertHostDocker();
     try {
       const names = await this.listVolumeNames();
       if (names.length === 0) return [];
@@ -268,6 +279,7 @@ export class DockerService {
     search: string,
     includeSizes = false,
   ): Promise<PaginatedVolumesDto> {
+    this.assertHostDocker();
     const page = this.clampPage(pageRaw);
     const pageSize = this.clampPageSize(pageSizeRaw);
 
@@ -364,6 +376,7 @@ export class DockerService {
   }
 
   async getNetworks() {
+    this.assertHostDocker();
     try {
       const { stdout } = await execAsync(
         'docker network ls --no-trunc --format "{{json .}}"',
@@ -401,6 +414,7 @@ export class DockerService {
   }
 
   async getServices() {
+    this.assertHostDocker();
     try {
       const { stdout } = await execAsync('docker service ls --format "{{json .}}"');
       return stdout
@@ -438,6 +452,7 @@ export class DockerService {
   }
 
   async getSystemStats() {
+    this.assertHostDocker();
     try {
       const { stdout } = await execAsync(
         'docker stats --no-stream --format "{{json .}}"',
@@ -460,6 +475,7 @@ export class DockerService {
    * `tail` is clamped to 1–10000.
    */
   async getContainerLogs(idOrName: string, tail = 500) {
+    this.assertHostDocker();
     const target = assertNonEmptyParam(idOrName, 'Container id or name');
     const n = Math.min(Math.max(Number(tail) || 500, 1), 10000);
     try {
@@ -478,6 +494,7 @@ export class DockerService {
   }
 
   async getServiceLogs(idOrName: string, tail = 500) {
+    this.assertHostDocker();
     const target = assertNonEmptyParam(idOrName, 'Service id or name');
     const n = Math.min(Math.max(Number(tail) || 500, 1), 10000);
     try {
@@ -499,6 +516,7 @@ export class DockerService {
 
   /** Remove container (normal or force). */
   async removeContainer(idOrName: string, force = false) {
+    this.assertHostDocker();
     const target = assertNonEmptyParam(idOrName, 'Container id or name');
     try {
       await execFileAsync('docker', force ? ['rm', '-f', target] : ['rm', target]);
@@ -510,6 +528,7 @@ export class DockerService {
 
   /** Remove image by reference (repo:tag, digest, or image id). */
   async removeImage(ref: string) {
+    this.assertHostDocker();
     const imageRef = assertNonEmptyParam(ref, 'Image reference');
     try {
       const { stdout, stderr } = await execFileAsync(
@@ -541,6 +560,7 @@ export class DockerService {
 
   /** Remove a named volume. */
   async removeVolume(name: string, force = false) {
+    this.assertHostDocker();
     const volumeName = assertNonEmptyParam(name, 'Volume name');
     try {
       await execFileAsync(
@@ -621,6 +641,7 @@ export class DockerService {
 
   /** Remove a network by name or ID (fails for in-use or predefined networks). */
   async removeNetwork(idOrName: string, force = false) {
+    this.assertHostDocker();
     const target = assertNonEmptyParam(idOrName, 'Network id or name');
     try {
       await execFileAsync('docker', ['network', 'rm', target]);
@@ -640,6 +661,7 @@ export class DockerService {
   }
 
   async removeService(idOrName: string, force = false) {
+    this.assertHostDocker();
     const target = assertNonEmptyParam(idOrName, 'Service id or name');
     try {
       if (force) {

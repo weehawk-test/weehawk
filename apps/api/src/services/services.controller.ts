@@ -23,6 +23,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ServicesService } from './services.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
+import { RollMagicTraefikMeDto } from './dto/roll-magic-traefik-me.dto';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { UploadApplicationZipDto } from './dto/upload-application-zip.dto';
@@ -39,7 +40,9 @@ import { Observable, map } from 'rxjs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Services')
-@Controller('services')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('api/services')
 export class ServicesController {
   constructor(private readonly servicesService: ServicesService) {}
 
@@ -65,8 +68,11 @@ export class ServicesController {
 
   @Post()
   @ApiOperation({ summary: 'Create service record' })
-  create(@Body() createServiceDto: CreateServiceDto) {
-    return this.servicesService.create(createServiceDto);
+  create(
+    @Body() createServiceDto: CreateServiceDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.create(createServiceDto, this.uid(req));
   }
 
   @Post(':id/database/postgres')
@@ -78,8 +84,9 @@ export class ServicesController {
   applyPostgresDatabase(
     @Param('id') id: string,
     @Body() dto: DatabaseSetupDto,
+    @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.applyPostgresDatabase(+id, dto);
+    return this.servicesService.applyPostgresDatabase(+id, dto, this.uid(req));
   }
 
   @Post(':id/database/:engine')
@@ -92,11 +99,13 @@ export class ServicesController {
     @Param('id') id: string,
     @Param('engine') engine: string,
     @Body() dto: DatabaseSetupDto,
+    @Req() req: { user?: { userId: number } },
   ) {
     return this.servicesService.applyDatabase(
       +id,
       this.parseEngineOrThrow(engine),
       dto,
+      this.uid(req),
     );
   }
 
@@ -109,8 +118,9 @@ export class ServicesController {
   updatePostgresStack(
     @Param('id') id: string,
     @Body() dto: PostgresStackUpdateDto,
+    @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.updatePostgresStack(+id, dto);
+    return this.servicesService.updatePostgresStack(+id, dto, this.uid(req));
   }
 
   @Patch(':id/database/:engine/stack')
@@ -123,11 +133,13 @@ export class ServicesController {
     @Param('id') id: string,
     @Param('engine') engine: string,
     @Body() dto: PostgresStackUpdateDto,
+    @Req() req: { user?: { userId: number } },
   ) {
     return this.servicesService.updateDatabaseStack(
       +id,
       this.parseEngineOrThrow(engine),
       dto,
+      this.uid(req),
     );
   }
 
@@ -139,17 +151,18 @@ export class ServicesController {
   execute(
     @Param('id') id: string,
     @Body() body?: { mode?: 'deploy' | 'reload' | 'redeploy' },
+    @Req() req?: { user?: { userId: number } },
   ) {
     const m = body?.mode;
     const mode =
       m === 'reload' ? 'reload' : m === 'redeploy' ? 'redeploy' : 'deploy';
-    return this.servicesService.executeDeployment(+id, mode);
+    return this.servicesService.executeDeployment(+id, mode, {
+      actingUserId: this.uid(req!),
+    });
   }
 
   @Post(':id/backup')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Run one-off volume or database backup and upload to S3',
   })
@@ -169,8 +182,6 @@ export class ServicesController {
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 512 * 1024 * 1024 } }),
   )
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiOperation({
     summary:
       'Import a database dump or a volume .tar.gz backup (multipart file; runs on host)',
@@ -206,8 +217,6 @@ export class ServicesController {
   }
 
   @Post(':id/backup/import-from-s3')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
     summary:
@@ -218,8 +227,11 @@ export class ServicesController {
     @Body() dto: ImportServiceBackupFromS3Dto,
     @Req() req: { user?: { userId: number } },
   ) {
-    void req;
-    return this.servicesService.runServiceImportBackupFromS3(+id, dto);
+    return this.servicesService.runServiceImportBackupFromS3(
+      +id,
+      dto,
+      this.uid(req),
+    );
   }
 
   @Post(':id/application/upload')
@@ -233,7 +245,7 @@ export class ServicesController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: UploadApplicationZipDto,
-    @Req() req: Request,
+    @Req() req: Request & { user?: { userId: number } },
   ) {
     const raw = req.body as Record<string, unknown>;
     const fromDto =
@@ -256,12 +268,17 @@ export class ServicesController {
       typeof raw?.stackNetworks === 'string' ? String(raw.stackNetworks) : undefined;
     const stackNetworks = stkFromDto ?? stkFromRaw;
 
-    return this.servicesService.uploadApplicationArchive(+id, file, {
-      ...dto,
-      ...(networksJson !== undefined ? { networksJson } : {}),
-      ...(externalNetworks !== undefined ? { externalNetworks } : {}),
-      ...(stackNetworks !== undefined ? { stackNetworks } : {}),
-    });
+    return this.servicesService.uploadApplicationArchive(
+      +id,
+      file,
+      this.uid(req),
+      {
+        ...dto,
+        ...(networksJson !== undefined ? { networksJson } : {}),
+        ...(externalNetworks !== undefined ? { externalNetworks } : {}),
+        ...(stackNetworks !== undefined ? { stackNetworks } : {}),
+      },
+    );
   }
 
   @Post(':id/application/git-clone')
@@ -279,8 +296,13 @@ export class ServicesController {
   uploadApplicationGitClone(
     @Param('id') id: string,
     @Body() dto: ApplicationGitCloneDto,
+    @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.uploadApplicationFromGitClone(+id, dto);
+    return this.servicesService.uploadApplicationFromGitClone(
+      +id,
+      dto,
+      this.uid(req),
+    );
   }
 
   @Post(':id/application/git-clone-stage')
@@ -298,8 +320,13 @@ export class ServicesController {
   stageApplicationGitClone(
     @Param('id') id: string,
     @Body() dto: ApplicationGitCloneStageDto,
+    @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.stageApplicationGitClone(+id, dto);
+    return this.servicesService.stageApplicationGitClone(
+      +id,
+      dto,
+      this.uid(req),
+    );
   }
 
   @Post(':id/application/generate-from-source')
@@ -317,8 +344,13 @@ export class ServicesController {
   generateApplicationFromSource(
     @Param('id') id: string,
     @Body() dto: ApplicationGenerateFromSourceDto,
+    @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.generateApplicationFromSource(+id, dto);
+    return this.servicesService.generateApplicationFromSource(
+      +id,
+      dto,
+      this.uid(req),
+    );
   }
 
   @Patch(':id/application/networks')
@@ -330,8 +362,13 @@ export class ServicesController {
   patchApplicationNetworks(
     @Param('id') id: string,
     @Body() dto: PatchApplicationNetworksDto,
+    @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.patchApplicationNetworks(+id, dto);
+    return this.servicesService.patchApplicationNetworks(
+      +id,
+      dto,
+      this.uid(req),
+    );
   }
 
   @Patch(':id/application/image')
@@ -343,16 +380,24 @@ export class ServicesController {
   patchApplicationImage(
     @Param('id') id: string,
     @Body() dto: PatchApplicationImageDeployDto,
+    @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.setApplicationImageDeploy(+id, dto);
+    return this.servicesService.setApplicationImageDeploy(
+      +id,
+      dto,
+      this.uid(req),
+    );
   }
 
   @Post(':id/start')
   @ApiOperation({
     summary: 'Start stopped containers (compose start / up --no-build)',
   })
-  async start(@Param('id') id: string) {
-    return await this.servicesService.startService(+id);
+  async start(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return await this.servicesService.startService(+id, this.uid(req));
   }
 
   @Get()
@@ -380,7 +425,9 @@ export class ServicesController {
     @Query('limit') limitStr?: string,
     @Query('q') q?: string,
     @Query('all') allStr?: string,
+    @Req() req?: { user?: { userId: number } },
   ) {
+    const uid = this.uid(req!);
     if (projectId !== undefined && projectId !== '') {
       const n = Number(projectId);
       if (!Number.isFinite(n)) {
@@ -391,7 +438,7 @@ export class ServicesController {
         allStr === 'true' ||
         String(allStr).toLowerCase() === 'yes';
       if (all) {
-        return this.servicesService.findByProjectId(n);
+        return this.servicesService.findByProjectId(n, uid);
       }
       const page = parseInt(pageStr ?? '1', 10);
       const limit = parseInt(limitStr ?? '8', 10);
@@ -400,17 +447,21 @@ export class ServicesController {
         page,
         limit,
         q ?? '',
+        uid,
       );
     }
-    return this.servicesService.findAll();
+    return this.servicesService.findAll(uid);
   }
 
   @Get(':id/runtime')
   @ApiOperation({
     summary: 'Whether Docker reports running containers for this service',
   })
-  async runtime(@Param('id') id: string) {
-    return await this.servicesService.getRuntimeStatus(+id);
+  async runtime(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return await this.servicesService.getRuntimeStatus(+id, this.uid(req));
   }
 
   @Get(':id/volumes')
@@ -418,32 +469,83 @@ export class ServicesController {
     summary:
       'Compose-declared volume/bind mounts for this service (docker compose config)',
   })
-  async serviceVolumes(@Param('id') id: string) {
-    return await this.servicesService.getServiceVolumes(+id);
+  async serviceVolumes(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return await this.servicesService.getServiceVolumes(+id, this.uid(req));
+  }
+
+  @Post(':id/magic-traefik-me/roll')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary:
+      'Roll a Magic traefik.me hostname (manual opt-in). Optional body.publicIpv4 is saved on the service. Regenerates stack YAML when an application stack exists.',
+  })
+  rollMagicTraefikMe(
+    @Param('id') id: string,
+    @Body() body: RollMagicTraefikMeDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.rollMagicTraefikMeDomain(
+      +id,
+      this.uid(req),
+      body,
+    );
+  }
+
+  @Delete(':id/magic-traefik-me')
+  @ApiOperation({
+    summary: 'Remove Magic traefik.me hostname from this service (updates stack YAML when present)',
+  })
+  clearMagicTraefikMe(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.clearMagicTraefikMeDomain(+id, this.uid(req));
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get service details' })
-  findOne(@Param('id') id: string) {
-    return this.servicesService.findOne(+id);
+  async findOne(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    const s = await this.servicesService.assertServiceOwnedByUser(
+      +id,
+      this.uid(req),
+    );
+    return this.servicesService.withMagicTraefikMeUrl(s);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update service configuration' })
-  update(@Param('id') id: string, @Body() updateServiceDto: UpdateServiceDto) {
-    return this.servicesService.update(+id, updateServiceDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateServiceDto: UpdateServiceDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.update(+id, updateServiceDto, this.uid(req));
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Stop and delete service' })
-  remove(@Param('id') id: string) {
-    return this.servicesService.remove(+id);
+  remove(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.remove(+id, this.uid(req));
   }
 
   @Sse(':id/logs/stream')
   @ApiOperation({ summary: 'Real-time log streaming' })
-  streamLogs(@Param('id') id: string): Observable<MessageEvent> {
-    return this.servicesService.getServiceLogsStream(+id).pipe(
+  streamLogs(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ): Observable<MessageEvent> {
+    return this.servicesService
+      .getServiceLogsStream(+id, this.uid(req))
+      .pipe(
       map(
         (log) =>
           ({
@@ -455,7 +557,10 @@ export class ServicesController {
 
   @Post(':id/shutdown')
   @ApiOperation({ summary: 'Shutdown service without deleting configuration' })
-  async shutdown(@Param('id') id: string) {
-    return await this.servicesService.shutdownService(+id);
+  async shutdown(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return await this.servicesService.shutdownService(+id, this.uid(req));
   }
 }

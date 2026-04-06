@@ -1,4 +1,4 @@
-import { headers } from "next/headers";
+import { buildServerApiCookieHeaders } from "./server-cookie-headers";
 import type { WebhookDetail, WebhookListItem } from "./webhooks-api";
 import type { CronJobDetail, CronJobListItem } from "./cron-jobs-api";
 import type { Project, Service } from "./schema";
@@ -19,12 +19,7 @@ import {
 import { getServerApiBase } from "./server-api";
 
 async function cookieHeaders(): Promise<HeadersInit> {
-  const h = await headers();
-  const cookie = h.get("cookie");
-  return {
-    Accept: "application/json",
-    ...(cookie ? { Cookie: cookie } : {}),
-  };
+  return buildServerApiCookieHeaders();
 }
 
 function apiBase(): string {
@@ -84,7 +79,7 @@ export async function fetchCronJobsSSR(): Promise<CronJobListItem[]> {
 }
 
 export async function fetchProjectSSR(id: string): Promise<Project | null> {
-  const res = await fetch(`${apiBase()}/projects/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${apiBase()}/api/projects/${encodeURIComponent(id)}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -101,7 +96,7 @@ export async function fetchProjectsSSR(
   params.set("limit", String(PROJECTS_PAGE_SIZE));
   const trim = q.trim();
   if (trim) params.set("q", trim);
-  const res = await fetch(`${apiBase()}/projects?${params.toString()}`, {
+  const res = await fetch(`${apiBase()}/api/projects?${params.toString()}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -114,7 +109,7 @@ export async function fetchProjectsSSR(
 
 /** All services (no project filter). Used by webhook/cron create & edit pickers. */
 export async function fetchServicesSSR(): Promise<Service[]> {
-  const res = await fetch(`${apiBase()}/services`, {
+  const res = await fetch(`${apiBase()}/api/services`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -135,7 +130,7 @@ export async function fetchServicesPageSSR(
   params.set("limit", String(SERVICES_PAGE_SIZE));
   const trim = q.trim();
   if (trim) params.set("q", trim);
-  const res = await fetch(`${apiBase()}/services?${params.toString()}`, {
+  const res = await fetch(`${apiBase()}/api/services?${params.toString()}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -144,6 +139,27 @@ export async function fetchServicesPageSSR(
     throw new Error(text.trim() || res.statusText || `HTTP ${res.status}`);
   }
   return parseServicesPageResponse(text);
+}
+
+export async function fetchServiceSSR(id: string): Promise<Service | null> {
+  const res = await fetch(`${apiBase()}/api/services/${encodeURIComponent(id)}`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return mapApiServiceToService(await res.json());
+}
+
+export async function fetchServiceRuntimeSSR(
+  id: string,
+): Promise<{ running: boolean } | null> {
+  const res = await fetch(`${apiBase()}/api/services/${encodeURIComponent(id)}/runtime`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const j = (await res.json()) as { running?: boolean };
+  return { running: j.running === true };
 }
 
 export async function fetchNotificationChannelsSSR(): Promise<NotificationChannel[]> {
@@ -156,7 +172,7 @@ export async function fetchNotificationChannelsSSR(): Promise<NotificationChanne
 }
 
 export async function fetchS3ProfilesSSR(): Promise<S3ProfilePublic[]> {
-  const res = await fetch(`${apiBase()}/s3/profiles`, {
+  const res = await fetch(`${apiBase()}/api/s3/profiles`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -175,7 +191,7 @@ export async function fetchS3BucketObjectsSSR(
   if (prefix) q.set("prefix", prefix);
   const qs = q.toString();
   const res = await fetch(
-    `${apiBase()}/s3/profiles/${encodeURIComponent(profileName)}/objects${qs ? `?${qs}` : ""}`,
+    `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileName)}/objects${qs ? `?${qs}` : ""}`,
     { headers: await cookieHeaders(), cache: "no-store" },
   );
   if (!res.ok) return null;
@@ -189,7 +205,7 @@ export async function fetchS3PrefixSummarySSR(
 ): Promise<S3PrefixSummaryResponse | null> {
   const q = new URLSearchParams({ prefix: folderPrefix });
   const res = await fetch(
-    `${apiBase()}/s3/profiles/${encodeURIComponent(profileName)}/prefix-summary?${q.toString()}`,
+    `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileName)}/prefix-summary?${q.toString()}`,
     { headers: await cookieHeaders(), cache: "no-store" },
   );
   if (!res.ok) return null;

@@ -15,6 +15,7 @@ import { AUTH_CHANGE_EVENT } from "@/lib/auth-fetch";
 import { getProfile } from "@/lib/user-api";
 
 export type AuthUser = {
+  userId: number;
   email: string;
   firstName: string;
   lastName: string;
@@ -55,6 +56,7 @@ export function AuthProvider({
       const profile = await getProfile("cookie-session");
       setAccessToken("cookie-session");
       setUser({
+        userId: profile.userId,
         email: profile.email,
         firstName: profile.firstName,
         lastName: profile.lastName,
@@ -75,6 +77,7 @@ export function AuthProvider({
   const setSession = useCallback((res: AuthResponse) => {
     setAccessToken("cookie-session");
     setUser({
+      userId: res.userId,
       email: res.email,
       firstName: res.firstName,
       lastName: res.lastName,

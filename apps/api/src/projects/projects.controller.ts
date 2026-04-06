@@ -7,21 +7,37 @@ import {
   Param,
   Delete,
   Query,
+  Req,
+  UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
-import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Projects')
-@Controller('projects')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+/** `/api/projects` matches other controllers (`/api/user`, …) and typical `/api` ingress to this service. */
+@Controller('api/projects')
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
+  private uid(req: { user?: { userId: number } }): number {
+    const id = req.user?.userId;
+    if (id == null) throw new UnauthorizedException();
+    return id;
+  }
+
   @Post()
   @ApiOperation({ summary: 'Create a new project container' })
-  create(@Body() createProjectDto: CreateProjectDto) {
-    return this.projectsService.create(createProjectDto);
+  create(
+    @Body() createProjectDto: CreateProjectDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.projectsService.create(createProjectDto, this.uid(req));
   }
 
   @Get()
@@ -37,27 +53,40 @@ export class ProjectsController {
     @Query('page') pageStr?: string,
     @Query('limit') limitStr?: string,
     @Query('q') q?: string,
+    @Req() req?: { user?: { userId: number } },
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const limit = parseInt(limitStr ?? '9', 10);
-    return this.projectsService.findAllPaginated(page, limit, q ?? '');
+    return this.projectsService.findAllPaginated(
+      page,
+      limit,
+      q ?? '',
+      this.uid(req!),
+    );
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get project details and its services' })
-  findOne(@Param('id') id: string) {
-    return this.projectsService.findOne(+id);
+  findOne(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.projectsService.findOne(+id, this.uid(req));
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'update project' })
-  update(@Param('id') id: string, @Body() updateProjectDto: UpdateProjectDto) {
-    return this.projectsService.update(+id, updateProjectDto);
+  update(
+    @Param('id') id: string,
+    @Body() updateProjectDto: UpdateProjectDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.projectsService.update(+id, updateProjectDto, this.uid(req));
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'delete project' })
-  remove(@Param('id') id: string) {
-    return this.projectsService.remove(+id);
+  remove(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
+    return this.projectsService.remove(+id, this.uid(req));
   }
 }

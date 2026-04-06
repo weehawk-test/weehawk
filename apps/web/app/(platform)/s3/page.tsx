@@ -1,16 +1,14 @@
-import { headers } from "next/headers";
 import { API_BASE } from "@/lib/api";
 import { S3Client } from "@/components/s3/S3Client";
 import type { S3ProfilePublic } from "@/lib/s3-api";
+import { buildServerApiCookieHeaders } from "@/lib/server-cookie-headers";
+
+export const dynamic = "force-dynamic";
 
 async function getInitialProfiles(): Promise<S3ProfilePublic[]> {
-  const cookieHeader = (await headers()).get("cookie") ?? "";
-  const res = await fetch(`${API_BASE}/s3/profiles`, {
+  const res = await fetch(`${API_BASE}/api/s3/profiles`, {
     method: "GET",
-    headers: {
-      Accept: "application/json",
-      Cookie: cookieHeader,
-    },
+    headers: await buildServerApiCookieHeaders(),
     cache: "no-store",
   });
   if (!res.ok) {

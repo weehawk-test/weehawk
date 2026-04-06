@@ -28,8 +28,8 @@ async function refreshTokensOnce(): Promise<boolean> {
 }
 
 /**
- * Authenticated fetch: on 401, tries POST /api/auth/refresh once, updates localStorage,
- * then retries with the new access token (so expired JWTs do not strand the UI).
+ * Authenticated fetch: on 401, tries POST /api/auth/refresh once (cookies),
+ * then retries so expired JWTs do not strand the UI.
  */
 export async function authFetch(
   _accessToken: string,

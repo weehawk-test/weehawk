@@ -162,19 +162,19 @@ async function fetchJson(path: string): Promise<unknown> {
 }
 
 export async function fetchDockerContainers(): Promise<DockerContainer[]> {
-  const raw = await fetchJson("/docker-monitor/containers");
+  const raw = await fetchJson("/api/docker-monitor/containers");
   if (!Array.isArray(raw)) return [];
   return raw.map((item, i) => mapDockerPsRow(item as Record<string, unknown>, i));
 }
 
 export async function fetchDockerImages(): Promise<DockerImage[]> {
-  const raw = await fetchJson("/docker-monitor/images");
+  const raw = await fetchJson("/api/docker-monitor/images");
   if (!Array.isArray(raw)) return [];
   return raw.map((item, i) => mapDockerImageRow(item as Record<string, unknown>, i));
 }
 
 export async function fetchDockerVolumes(): Promise<DockerVolume[]> {
-  const raw = await fetchJson("/docker-monitor/volumes");
+  const raw = await fetchJson("/api/docker-monitor/volumes");
   if (!Array.isArray(raw)) return [];
   return raw.map((item, i) => mapDockerVolumeRow(item as Record<string, unknown>, i));
 }
@@ -240,7 +240,7 @@ export function mapDockerStatsRow(row: Record<string, unknown>): DockerContainer
 }
 
 export async function fetchDockerStats(): Promise<DockerContainerStats[]> {
-  const raw = await fetchJson("/docker-monitor/stats");
+  const raw = await fetchJson("/api/docker-monitor/stats");
   if (!Array.isArray(raw)) return [];
   return raw.map((item) => mapDockerStatsRow(item as Record<string, unknown>));
 }
@@ -362,12 +362,12 @@ export function dockerImageForceDeleteRef(img: DockerImage): string {
 
 export async function deleteDockerContainer(idOrName: string, force = false): Promise<void> {
   const qs = force ? "?force=true" : "";
-  await dockerDelete(`/docker-monitor/containers/${encodeURIComponent(idOrName)}${qs}`);
+  await dockerDelete(`/api/docker-monitor/containers/${encodeURIComponent(idOrName)}${qs}`);
 }
 
 export async function deleteDockerService(idOrName: string, force = false): Promise<void> {
   const qs = force ? "?force=true" : "";
-  await dockerDelete(`/docker-monitor/services/${encodeURIComponent(idOrName)}${qs}`);
+  await dockerDelete(`/api/docker-monitor/services/${encodeURIComponent(idOrName)}${qs}`);
 }
 
 export async function fetchDockerContainerLogs(
@@ -376,7 +376,7 @@ export async function fetchDockerContainerLogs(
 ): Promise<string> {
   const q = new URLSearchParams({ tail: String(tail) });
   const res = await fetch(
-    `${API_BASE}/docker-monitor/containers/${encodeURIComponent(idOrName)}/logs?${q}`,
+    `${API_BASE}/api/docker-monitor/containers/${encodeURIComponent(idOrName)}/logs?${q}`,
     { cache: "no-store" },
   );
   const text = await res.text();
@@ -401,7 +401,7 @@ export async function fetchDockerServiceLogs(
 ): Promise<string> {
   const q = new URLSearchParams({ tail: String(tail) });
   const res = await fetch(
-    `${API_BASE}/docker-monitor/services/${encodeURIComponent(idOrName)}/logs?${q}`,
+    `${API_BASE}/api/docker-monitor/services/${encodeURIComponent(idOrName)}/logs?${q}`,
     { cache: "no-store" },
   );
   const text = await res.text();
@@ -421,15 +421,15 @@ export async function fetchDockerServiceLogs(
 }
 
 export async function deleteDockerImage(ref: string): Promise<void> {
-  await dockerDelete(`/docker-monitor/images?ref=${encodeURIComponent(ref)}`);
+  await dockerDelete(`/api/docker-monitor/images?ref=${encodeURIComponent(ref)}`);
 }
 
 export async function deleteDockerVolume(name: string, force = false): Promise<void> {
   const qs = force ? "?force=true" : "";
-  await dockerDelete(`/docker-monitor/volumes/${encodeURIComponent(name)}${qs}`);
+  await dockerDelete(`/api/docker-monitor/volumes/${encodeURIComponent(name)}${qs}`);
 }
 
 export async function deleteDockerNetwork(nameOrId: string, force = false): Promise<void> {
   const qs = force ? "?force=true" : "";
-  await dockerDelete(`/docker-monitor/networks/${encodeURIComponent(nameOrId)}${qs}`);
+  await dockerDelete(`/api/docker-monitor/networks/${encodeURIComponent(nameOrId)}${qs}`);
 }

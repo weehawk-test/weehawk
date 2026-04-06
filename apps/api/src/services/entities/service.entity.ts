@@ -43,6 +43,19 @@ export class Service {
   @Column({ type: 'simple-json', nullable: true })
   traefikRoutes?: ServiceTraefikRoute[];
 
+  /**
+   * When set (6 hex chars), user opted in via “roll dice” — include Magic traefik.me host in Traefik labels.
+   * Not generated automatically for every service.
+   */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  magicTraefikMeNonce?: string | null;
+
+  /**
+   * User-supplied IPv4 embedded in the Magic traefik.me hostname (e.g. public IP or 127.0.0.1).
+   */
+  @Column({ type: 'varchar', length: 45, nullable: true })
+  magicTraefikMeIpv4?: string | null;
+
   @Column({ type: 'boolean', default: true })
   isActive!: boolean;
 

@@ -17,6 +17,8 @@ export type RemoteServerRow = {
   /** Only when authMode is `file`. */
   privateKeyPath: string | null;
   extraSshOptions: string | null;
+  /** Public IPv4 for Magic traefik.me hostnames on deployed services. */
+  publicIpv4: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -69,6 +71,10 @@ function mapRemoteServer(row: unknown): RemoteServerRow {
       r.extraSshOptions === null || r.extraSshOptions === undefined
         ? null
         : String(r.extraSshOptions),
+    publicIpv4:
+      r.publicIpv4 === null || r.publicIpv4 === undefined
+        ? null
+        : String(r.publicIpv4),
     createdAt:
       ca instanceof Date ? ca.toISOString() : typeof ca === "string" ? ca : new Date().toISOString(),
     updatedAt:
@@ -103,6 +109,7 @@ export async function createRemoteServerApi(
     privateKey: string;
     extraSshOptions?: string;
     serverRole?: RemoteServerRole;
+    publicIpv4?: string;
   },
 ): Promise<RemoteServerRow> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers`, {
@@ -128,6 +135,7 @@ export async function updateRemoteServerApi(
     privateKey: string;
     extraSshOptions: string | null;
     serverRole: RemoteServerRole;
+    publicIpv4: string | null;
   }>,
 ): Promise<RemoteServerRow> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}`, {
@@ -164,4 +172,146 @@ export async function testRemoteServerApi(
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
   return JSON.parse(text) as { success: boolean; output: string };
+}
+
+/** SSH only (ssh2 + shell); does not call remote Docker API. */
+export async function testRemoteServerSshApi(
+  accessToken: string,
+  id: number,
+): Promise<{ success: boolean; output: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}/test-ssh`, {
+    method: "POST",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return JSON.parse(text) as { success: boolean; output: string };
+}
+
+export async function fetchDockerPurgeScriptApi(
+  accessToken: string,
+): Promise<{ script: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/docker-purge-script`, {
+    method: "GET",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { script?: string };
+  if (typeof j.script !== "string") {
+    throw new Error("Invalid docker-purge-script response");
+  }
+  return { script: j.script };
+}
+
+export async function fetchProvisionScriptApi(
+  accessToken: string,
+  role: RemoteServerRole,
+): Promise<{ script: string }> {
+  const q = role === "build" ? "?role=build" : "?role=deploy";
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/provision-script${q}`, {
+    method: "GET",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { script?: string };
+  if (typeof j.script !== "string") {
+    throw new Error("Invalid provision-script response");
+  }
+  return { script: j.script };
+}
+
+export type ProvisionJobStatus = "pending" | "running" | "done" | "error";
+
+export type ProvisionJobKind = "provision" | "docker_purge";
+
+export type ProvisionJobRow = {
+  id: string;
+  remoteServerId: number;
+  jobKind: ProvisionJobKind;
+  status: ProvisionJobStatus;
+  log: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function enqueueRemoteProvisionApi(
+  accessToken: string,
+  serverId: number,
+): Promise<{ jobId: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${serverId}/provision`, {
+    method: "POST",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { jobId?: string };
+  if (typeof j.jobId !== "string") {
+    throw new Error("Invalid provision enqueue response");
+  }
+  return { jobId: j.jobId };
+}
+
+export async function enqueueRemoteDockerPurgeApi(
+  accessToken: string,
+  serverId: number,
+): Promise<{ jobId: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${serverId}/docker-purge`, {
+    method: "POST",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { jobId?: string };
+  if (typeof j.jobId !== "string") {
+    throw new Error("Invalid docker-purge enqueue response");
+  }
+  return { jobId: j.jobId };
+}
+
+export async function fetchProvisionJobApi(
+  accessToken: string,
+  jobId: string,
+): Promise<ProvisionJobRow> {
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/remote-servers/provision-jobs/${encodeURIComponent(jobId)}`,
+    { method: "GET" },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as Record<string, unknown>;
+  const rawKind = j.jobKind;
+  const jobKind: ProvisionJobKind =
+    rawKind === "docker_purge" ? "docker_purge" : "provision";
+  return {
+    id: String(j.id ?? jobId),
+    remoteServerId: typeof j.remoteServerId === "number" ? j.remoteServerId : Number(j.remoteServerId),
+    jobKind,
+    status: (j.status as ProvisionJobStatus) ?? "pending",
+    log: j.log === null || j.log === undefined ? null : String(j.log),
+    errorMessage:
+      j.errorMessage === null || j.errorMessage === undefined ? null : String(j.errorMessage),
+    createdAt:
+      j.createdAt instanceof Date
+        ? j.createdAt.toISOString()
+        : typeof j.createdAt === "string"
+          ? j.createdAt
+          : new Date().toISOString(),
+    updatedAt:
+      j.updatedAt instanceof Date
+        ? j.updatedAt.toISOString()
+        : typeof j.updatedAt === "string"
+          ? j.updatedAt
+          : new Date().toISOString(),
+  };
 }

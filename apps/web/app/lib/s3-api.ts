@@ -58,18 +58,18 @@ export type S3ProfilePublic = {
 };
 
 export function listS3ProfilesApi() {
-  return request<S3ProfilePublic[]>("/s3/profiles");
+  return request<S3ProfilePublic[]>("/api/s3/profiles");
 }
 
 export function saveS3ProfileApi(body: S3ProfilePayload) {
-  return request<{ success: boolean; profile: S3ProfilePublic }>("/s3/profiles", {
+  return request<{ success: boolean; profile: S3ProfilePublic }>("/api/s3/profiles", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
 export function testS3ConnectionApi(body: S3ProfilePayload) {
-  return request<{ success: boolean; message: string }>("/s3/test-connection", {
+  return request<{ success: boolean; message: string }>("/api/s3/test-connection", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -77,7 +77,7 @@ export function testS3ConnectionApi(body: S3ProfilePayload) {
 
 export function deleteS3ProfileApi(name: string) {
   return request<{ success: boolean; name: string }>(
-    `/s3/profiles/${encodeURIComponent(name)}`,
+    `/api/s3/profiles/${encodeURIComponent(name)}`,
     { method: "DELETE" },
   );
 }
@@ -100,13 +100,13 @@ export function listS3BucketObjectsApi(
   if (opts?.continuationToken) q.set("continuationToken", opts.continuationToken);
   const qs = q.toString();
   return request<S3BucketListResponse>(
-    `/s3/profiles/${encodeURIComponent(profileName)}/objects${qs ? `?${qs}` : ""}`,
+    `/api/s3/profiles/${encodeURIComponent(profileName)}/objects${qs ? `?${qs}` : ""}`,
   );
 }
 
 export function deleteS3ObjectApi(profileName: string, key: string) {
   return request<{ success: boolean; key: string }>(
-    `/s3/profiles/${encodeURIComponent(profileName)}/objects/delete`,
+    `/api/s3/profiles/${encodeURIComponent(profileName)}/objects/delete`,
     { method: "POST", body: JSON.stringify({ key }) },
   );
 }
@@ -115,7 +115,7 @@ export function deleteS3ObjectsBatchApi(profileName: string, keys: string[]) {
   return request<{
     deleted: string[];
     errors: { key: string; message: string }[];
-  }>(`/s3/profiles/${encodeURIComponent(profileName)}/objects/delete-batch`, {
+  }>(`/api/s3/profiles/${encodeURIComponent(profileName)}/objects/delete-batch`, {
     method: "POST",
     body: JSON.stringify({ keys }),
   });
@@ -131,7 +131,7 @@ export type S3PrefixSummaryResponse = {
 export function getPrefixSummaryApi(profileName: string, prefix: string) {
   const q = new URLSearchParams({ prefix });
   return request<S3PrefixSummaryResponse>(
-    `/s3/profiles/${encodeURIComponent(profileName)}/prefix-summary?${q.toString()}`,
+    `/api/s3/profiles/${encodeURIComponent(profileName)}/prefix-summary?${q.toString()}`,
   );
 }
 
@@ -139,7 +139,7 @@ export function deleteS3PrefixApi(profileName: string, prefix: string) {
   return request<{
     deletedCount: number;
     errors: { key: string; message: string }[];
-  }>(`/s3/profiles/${encodeURIComponent(profileName)}/objects/delete-prefix`, {
+  }>(`/api/s3/profiles/${encodeURIComponent(profileName)}/objects/delete-prefix`, {
     method: "POST",
     body: JSON.stringify({ prefix }),
   });
@@ -150,7 +150,7 @@ export async function uploadS3ObjectApi(profileName: string, key: string, file: 
   fd.append("file", file);
   fd.append("key", key);
   const res = await fetch(
-    `${API_BASE}/s3/profiles/${encodeURIComponent(profileName)}/objects/upload`,
+    `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileName)}/objects/upload`,
     {
       method: "POST",
       body: fd,
@@ -167,7 +167,7 @@ export async function uploadS3ObjectApi(profileName: string, key: string, file: 
 
 export async function downloadS3ObjectBlob(profileName: string, key: string): Promise<Blob> {
   const res = await fetch(
-    `${API_BASE}/s3/profiles/${encodeURIComponent(profileName)}/download?${new URLSearchParams({ key })}`,
+    `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileName)}/download?${new URLSearchParams({ key })}`,
     { credentials: "include", cache: "no-store" },
   );
   if (!res.ok) {

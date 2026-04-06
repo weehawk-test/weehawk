@@ -4,6 +4,20 @@ import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WsAdapter } from '@nestjs/platform-ws';
+import {
+  isCloudEditionFromProcessEnv,
+  LOCAL_HOST_DOCKER_FORBIDDEN_MESSAGE,
+} from './common/weehawk-edition';
+
+/** First-line HTTP rejection (before Nest guards); matches routes that must not hit host Docker in cloud. */
+function isCloudBlockedHostDockerPath(pathname: string): boolean {
+  return (
+    pathname.startsWith('/api/docker-monitor') ||
+    pathname.startsWith('/api/docker-secrets') ||
+    pathname.startsWith('/ws/docker-monitor') ||
+    pathname.startsWith('/ws/service-terminal')
+  );
+}
 
 function resolveCorsOrigin(corsEnv: string | undefined): boolean | string[] {
   const raw = corsEnv?.trim();
@@ -32,6 +46,28 @@ function resolveCorsOrigin(corsEnv: string | undefined): boolean | string[] {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  if (isCloudEditionFromProcessEnv()) {
+    app.use((req, res, next) => {
+      let pathname = (req as { path?: string }).path;
+      if (!pathname && req.url) {
+        try {
+          pathname = new URL(req.url, 'http://localhost').pathname;
+        } catch {
+          pathname = req.url.split('?')[0] ?? '';
+        }
+      }
+      if (pathname && isCloudBlockedHostDockerPath(pathname)) {
+        res.status(403).json({
+          statusCode: 403,
+          message: LOCAL_HOST_DOCKER_FORBIDDEN_MESSAGE,
+        });
+        return;
+      }
+      next();
+    });
+  }
+
   app.useWebSocketAdapter(new WsAdapter(app));
   const configService = app.get(ConfigService);
   const origin = resolveCorsOrigin(configService.get<string>('CORS_ORIGIN'));

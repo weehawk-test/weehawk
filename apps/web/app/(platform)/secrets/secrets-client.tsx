@@ -572,8 +572,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
             <p className="font-medium text-destructive">Could not load secrets</p>
             <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{listError}</p>
             <p className="text-muted-foreground text-xs mt-2">
-              Docker Swarm must be initialized and the API must run where <code className="text-xs">docker secret</code> works. Check{" "}
-              <code className="text-xs">NEXT_PUBLIC_API_URL</code> or <code className="text-xs">API_URL</code> for server-side fetches.
+              Docker Swarm must be initialized and the API must run where <code className="text-xs">docker secret</code> works.
             </p>
           </div>
         </div>

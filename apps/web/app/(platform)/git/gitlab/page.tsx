@@ -126,15 +126,15 @@ export default function GitLabGitSettingsPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-100/95 leading-relaxed">
-        <p className="font-medium text-amber-50 mb-1">Access token</p>
-        <p className="text-[13px] text-amber-100/85">
+      <div className="rounded-2xl border border-amber-600/25 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-950 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100/95">
+        <p className="mb-1 font-medium text-amber-950 dark:text-amber-50">Access token</p>
+        <p className="text-[13px] text-amber-900/90 dark:text-amber-100/85">
           Create a{" "}
           <a
             href="https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:text-foreground"
+            className="font-medium text-amber-950 underline underline-offset-2 hover:text-foreground dark:text-amber-50"
           >
             Personal Access Token
           </a>{" "}
@@ -143,17 +143,23 @@ export default function GitLabGitSettingsPage() {
             href="https://docs.gitlab.com/ee/user/group/settings/group_access_tokens.html"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline underline-offset-2 hover:text-foreground"
+            className="font-medium text-amber-950 underline underline-offset-2 hover:text-foreground dark:text-amber-50"
           >
             Group access token
           </a>
           ) with at least{" "}
-          <code className="rounded bg-muted px-1 text-[11px] dark:bg-black/30">read_api</code> and{" "}
-          <code className="rounded bg-muted px-[3px] text-[11px] dark:bg-black/30">read_repository</code> for private repos. Paste it below and save.
+          <code className="rounded bg-amber-100/90 px-1 text-[11px] text-amber-950 dark:bg-black/30 dark:text-amber-100">
+            read_api
+          </code>{" "}
+          and{" "}
+          <code className="rounded bg-amber-100/90 px-[3px] text-[11px] text-amber-950 dark:bg-black/30 dark:text-amber-100">
+            read_repository
+          </code>{" "}
+          for private repos. Paste it below and save.
         </p>
       </div>
 
-      <div className="glass-panel rounded-2xl border border-white/10 p-6 md:p-8 space-y-5">
+      <div className="glass-panel rounded-2xl p-6 md:p-8 space-y-5">
         <h2 className="text-base font-semibold">GitLab connection</h2>
         <p className="text-xs text-muted-foreground leading-relaxed -mt-2">
           This token is sent as <code className="text-[10px]">PRIVATE-TOKEN</code> to GitLab&apos;s API and used for authenticated <code className="text-[10px]">git clone</code> when needed.

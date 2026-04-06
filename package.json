@@ -4,8 +4,10 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "dev:cron-worker": "pnpm --filter cron-worker dev",
+    "dev:provision-worker": "pnpm --filter provision-worker dev",
     "devcontainer": "pnpm -r --parallel devcontainer",
-    "devcontainer:cron-worker": "pnpm --filter cron-worker devcontainer"
+    "devcontainer:cron-worker": "pnpm --filter cron-worker devcontainer",
+    "devcontainer:provision-worker": "pnpm --filter provision-worker devcontainer"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

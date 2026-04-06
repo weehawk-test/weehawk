@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -11,6 +12,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import Dockerode from 'dockerode';
+import { Client } from 'ssh2';
 import { RemoteServer } from './entities/remote-server.entity';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
 import { UpdateRemoteServerDto } from './dto/update-remote-server.dto';
@@ -39,6 +41,72 @@ import {
 import { decryptPrivateKey, encryptPrivateKey } from './ssh-key-crypto';
 import { generateEd25519SshKeyPair } from './ssh-ed25519-generate';
 
+/**
+ * Maps common Node/ssh2/Dockerode errors to clearer copy; keeps the original for debugging.
+ */
+function humanizeRemoteTestError(raw: string, mode: 'docker' | 'ssh'): string {
+  const t = (raw || '').trim();
+  const lower = t.toLowerCase();
+  const tech = t ? `\n\nTechnical: ${t}` : '';
+
+  if (
+    lower.includes('socket hang up') ||
+    lower.includes('econnreset') ||
+    lower.includes('connection reset')
+  ) {
+    return (
+      (mode === 'docker'
+        ? 'The connection closed unexpectedly while reaching the remote Docker API over SSH. Typical causes: wrong host or port; firewall blocking SSH; Docker Engine not installed or not running on the host; or the SSH session dropped before Docker answered. Run the SSH-only test: if that fails, fix SSH first; if SSH passes, install/start Docker on the server.'
+        : 'The connection closed unexpectedly during SSH. Typical causes: wrong host or port; firewall or security group blocking port 22 (or your custom port); sshd not running; or an unstable network between the Weehawk API and the server.') + tech
+    );
+  }
+
+  if (
+    lower.includes('etimedout') ||
+    lower.includes('timed out') ||
+    lower.includes('timeout') ||
+    lower.includes('readytimeout')
+  ) {
+    return (
+      (mode === 'docker'
+        ? 'Timed out talking to the remote host over SSH/Docker. Check the host is up, the port is correct, and nothing is blocking the path from the API server.'
+        : 'SSH connection timed out. Check the host is reachable from the machine running the Weehawk API, DNS resolves, and the SSH port is open.') + tech
+    );
+  }
+
+  if (lower.includes('econnrefused') || lower.includes('connection refused')) {
+    return (
+      (mode === 'docker'
+        ? 'Nothing accepted the connection on that host:port (connection refused). Confirm the SSH port and that sshd is listening.'
+        : 'Connection refused — no service accepted TCP on that host:port. Verify the SSH port and that sshd is running.') + tech
+    );
+  }
+
+  if (
+    lower.includes('enotfound') ||
+    lower.includes('getaddrinfo') ||
+    lower.includes('name or service not known')
+  ) {
+    return (
+      `Host name could not be resolved (DNS or invalid hostname). Check the host string.${tech}`
+    );
+  }
+
+  if (
+    lower.includes('authentication') ||
+    lower.includes('all configured authentication methods failed') ||
+    lower.includes('permission denied (publickey')
+  ) {
+    return (
+      (mode === 'docker'
+        ? 'SSH authentication failed before Docker could be reached. Ensure this server’s public key is in ~/.ssh/authorized_keys for the SSH user, and the private key in Weehawk matches.'
+        : 'SSH authentication failed. Ensure the public key is in ~/.ssh/authorized_keys on the server for this user, and the private key stored in Weehawk is the matching pair.') + tech
+    );
+  }
+
+  return t.length > 0 ? t : 'Unknown error';
+}
+
 export type RemoteServerSafe = {
   id: number;
   name: string;
@@ -52,6 +120,8 @@ export type RemoteServerSafe = {
   hasPrivateKey: boolean;
   privateKeyPath: string | null;
   extraSshOptions: string | null;
+  /** Public IPv4 for Magic Traefik.me hostnames (optional). */
+  publicIpv4: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -63,6 +133,44 @@ export class RemoteServersService {
     private readonly remoteServerRepository: Repository<RemoteServer>,
     private readonly configService: ConfigService,
   ) {}
+
+  /**
+   * Ensures a remote host used at deploy/build time belongs to the same account as the project.
+   */
+  assertRemoteServerMatchesProject(
+    rs: RemoteServer | null | undefined,
+    projectUserId: number | null,
+  ): void {
+    if (!rs) {
+      throw new NotFoundException('Remote server not found');
+    }
+    const ru = rs.userId ?? null;
+    const pu = projectUserId ?? null;
+    if (ru != null && pu != null && ru !== pu) {
+      throw new ForbiddenException(
+        'Remote server does not belong to this project owner.',
+      );
+    }
+    if (ru == null && pu != null) {
+      throw new ForbiddenException(
+        'This remote server is not linked to an account. Recreate it under Remote servers.',
+      );
+    }
+    if (ru != null && pu == null) {
+      throw new ForbiddenException(
+        'This project has no owner; assign a user before deploying.',
+      );
+    }
+  }
+
+  private async resolveProjectUserId(service: Service): Promise<number | null> {
+    const u = service.project?.userId;
+    if (u != null) return u;
+    const row = await this.remoteServerRepository.manager
+      .getRepository(Service)
+      .findOne({ where: { id: service.id }, relations: ['project'] });
+    return row?.project?.userId ?? null;
+  }
 
   private getEncryptionSecret(): string {
     const s = this.configService.get<string>('WEEHAWK_ENCRYPTION_KEY');
@@ -95,6 +203,7 @@ export class RemoteServersService {
       hasPrivateKey,
       privateKeyPath: hasPath ? rs.privateKeyPath! : null,
       extraSshOptions: rs.extraSshOptions ?? null,
+      publicIpv4: rs.publicIpv4?.trim() ? rs.publicIpv4.trim() : null,
       createdAt: rs.createdAt,
       updatedAt: rs.updatedAt,
     };
@@ -145,10 +254,15 @@ export class RemoteServersService {
   }
 
   /**
-   * Dockerode-over-SSH (ssh2), same approach as Dokploy — avoids spawning `docker` + system `ssh`
-   * so Windows hosts are not blocked by DOCKER_SSH_OPTS / interactive host-key prompts.
+   * Shared ssh2 connect params for Dockerode and plain SSH checks (loopback → localhost + IPv4).
    */
-  private createDockerodeForRemote(rs: RemoteServer, privateKeyPem: string): Dockerode {
+  private getSshConnectParams(rs: RemoteServer, privateKeyPem: string): {
+    host: string;
+    port: number;
+    username: string;
+    privateKey: Buffer;
+    family?: number;
+  } {
     const raw = rs.host.trim();
     const lower = raw.toLowerCase();
     const isLoopback =
@@ -158,17 +272,32 @@ export class RemoteServersService {
       lower === '[::1]';
     const host = isLoopback ? 'localhost' : raw;
     const port = rs.port ?? 22;
-    return new Dockerode({
+    return {
       host,
       port,
       username: rs.sshUser.trim(),
+      privateKey: Buffer.from(privateKeyPem, 'utf8'),
+      ...(isLoopback ? { family: 4 } : {}),
+    };
+  }
+
+  /**
+   * Dockerode-over-SSH (ssh2), same approach as Dokploy — avoids spawning `docker` + system `ssh`
+   * so Windows hosts are not blocked by DOCKER_SSH_OPTS / interactive host-key prompts.
+   */
+  private createDockerodeForRemote(rs: RemoteServer, privateKeyPem: string): Dockerode {
+    const p = this.getSshConnectParams(rs, privateKeyPem);
+    return new Dockerode({
+      host: p.host,
+      port: p.port,
+      username: p.username,
       protocol: 'ssh',
       sshOptions: {
-        privateKey: Buffer.from(privateKeyPem, 'utf8'),
+        privateKey: p.privateKey,
         readyTimeout: 60_000,
         // Match non-interactive “first connect” UX; deploy still uses Docker CLI + OpenSSH.
         hostVerifier: () => true,
-        ...(isLoopback ? { family: 4 } : {}),
+        ...(p.family != null ? { family: p.family } : {}),
       },
     });
   }
@@ -218,10 +347,12 @@ export class RemoteServersService {
     if (id == null) {
       return base;
     }
+    const projectUserId = await this.resolveProjectUserId(service);
     const rs = await this.remoteServerRepository.findOne({ where: { id } });
     if (!rs) {
       return base;
     }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
     if (rs.serverRole === 'build') {
       throw new BadRequestException(
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
@@ -239,18 +370,30 @@ export class RemoteServersService {
     service: Service,
     base: NodeJS.ProcessEnv,
   ): Promise<NodeJS.ProcessEnv> {
-    return this.mergeDockerHostEnvForBuildIds(base, {
-      buildRemoteServerId:
-        service.buildRemoteServerId ?? service.buildRemoteServer?.id ?? null,
-      remoteServerId: service.remoteServerId ?? service.remoteServer?.id ?? null,
-    });
+    return this.mergeDockerHostEnvForBuildIds(
+      base,
+      {
+        buildRemoteServerId:
+          service.buildRemoteServerId ?? service.buildRemoteServer?.id ?? null,
+        remoteServerId: service.remoteServerId ?? service.remoteServer?.id ?? null,
+      },
+      await this.resolveProjectUserId(service),
+    );
   }
 
   /** Same as {@link mergeDockerHostEnvForBuild} but uses FK columns read from `services` (reliable during deploy). */
   async mergeDockerHostEnvForBuildIds(
     base: NodeJS.ProcessEnv,
     ids: { buildRemoteServerId: number | null; remoteServerId: number | null },
+    projectUserId: number | null,
   ): Promise<NodeJS.ProcessEnv> {
+    const toCheck = new Set<number>();
+    if (ids.remoteServerId != null) toCheck.add(ids.remoteServerId);
+    if (ids.buildRemoteServerId != null) toCheck.add(ids.buildRemoteServerId);
+    for (const rid of toCheck) {
+      const row = await this.remoteServerRepository.findOne({ where: { id: rid } });
+      this.assertRemoteServerMatchesProject(row, projectUserId);
+    }
     const id = ids.buildRemoteServerId ?? ids.remoteServerId;
     if (id == null) {
       return base;
@@ -270,6 +413,7 @@ export class RemoteServersService {
   async mergeDockerHostEnvForDeployIds(
     base: NodeJS.ProcessEnv,
     remoteServerId: number | null,
+    projectUserId: number | null,
   ): Promise<NodeJS.ProcessEnv> {
     if (remoteServerId == null) {
       return base;
@@ -278,6 +422,7 @@ export class RemoteServersService {
     if (!rs) {
       return base;
     }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
     if (rs.serverRole === 'build') {
       throw new BadRequestException(
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
@@ -287,29 +432,48 @@ export class RemoteServersService {
     return { ...base, ...extra };
   }
 
-  async findAll(): Promise<RemoteServerSafe[]> {
-    const rows = await this.remoteServerRepository.find({ order: { name: 'ASC' } });
+  async findAll(userId: number): Promise<RemoteServerSafe[]> {
+    const rows = await this.remoteServerRepository.find({
+      where: { userId },
+      order: { name: 'ASC' },
+    });
     return rows.map((r) => this.toSafe(r));
   }
 
-  async findOne(id: number): Promise<RemoteServerSafe> {
-    const rs = await this.findEntityOrFail(id);
+  async findOne(id: number, userId: number): Promise<RemoteServerSafe> {
+    const rs = await this.findEntityOrFail(id, userId);
     return this.toSafe(rs);
   }
 
-  private async findEntityOrFail(id: number): Promise<RemoteServer> {
+  /**
+   * For SSH provision worker: load row + decrypted PEM after ownership check.
+   */
+  async getSshProvisionContext(
+    id: number,
+    userId: number,
+  ): Promise<{ server: RemoteServer; privateKeyPem: string }> {
+    const server = await this.findEntityOrFail(id, userId);
+    const privateKeyPem = await this.resolvePrivateKeyPem(server);
+    return { server, privateKeyPem };
+  }
+
+  private async findEntityOrFail(id: number, userId: number): Promise<RemoteServer> {
     const rs = await this.remoteServerRepository.findOne({ where: { id } });
     if (!rs) {
       throw new NotFoundException(`Remote server #${id} not found`);
     }
+    if (rs.userId == null || rs.userId !== userId) {
+      throw new ForbiddenException();
+    }
     return rs;
   }
 
-  async create(dto: CreateRemoteServerDto): Promise<RemoteServerSafe> {
+  async create(dto: CreateRemoteServerDto, userId: number): Promise<RemoteServerSafe> {
     const pem = dto.privateKey.trim();
     const privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
 
     const entity = this.remoteServerRepository.create({
+      userId,
       name: dto.name.trim(),
       host: dto.host.trim(),
       port: dto.port ?? 22,
@@ -318,13 +482,18 @@ export class RemoteServersService {
       privateKeyEncrypted,
       privateKeyPath: null,
       extraSshOptions: dto.extraSshOptions?.trim() || null,
+      publicIpv4: dto.publicIpv4?.trim() ? dto.publicIpv4.trim() : null,
     });
     const saved = await this.remoteServerRepository.save(entity);
     return this.toSafe(saved);
   }
 
-  async update(id: number, dto: UpdateRemoteServerDto): Promise<RemoteServerSafe> {
-    const existing = await this.findEntityOrFail(id);
+  async update(
+    id: number,
+    dto: UpdateRemoteServerDto,
+    userId: number,
+  ): Promise<RemoteServerSafe> {
+    const existing = await this.findEntityOrFail(id, userId);
     let privateKeyEncrypted: string | null | undefined = existing.privateKeyEncrypted;
     let privateKeyPath: string | null | undefined = existing.privateKeyPath;
 
@@ -380,6 +549,12 @@ export class RemoteServersService {
           : dto.extraSshOptions != null
             ? String(dto.extraSshOptions).trim() || null
             : null,
+      publicIpv4:
+        dto.publicIpv4 === undefined
+          ? existing.publicIpv4
+          : dto.publicIpv4 != null && String(dto.publicIpv4).trim()
+            ? String(dto.publicIpv4).trim()
+            : null,
       privateKeyEncrypted: nextEnc,
       privateKeyPath: nextPath,
     });
@@ -387,8 +562,8 @@ export class RemoteServersService {
     return this.toSafe(saved);
   }
 
-  async remove(id: number): Promise<void> {
-    await this.findEntityOrFail(id);
+  async remove(id: number, userId: number): Promise<void> {
+    await this.findEntityOrFail(id, userId);
     const repo = this.remoteServerRepository.manager.getRepository(Service);
     const nDeploy = await repo.count({ where: { remoteServer: { id } } });
     const nBuild = await repo.count({ where: { buildRemoteServer: { id } } });
@@ -403,9 +578,10 @@ export class RemoteServersService {
 
   private async withRemoteDocker<T>(
     id: number,
+    userId: number,
     fn: (docker: Dockerode) => Promise<T>,
   ): Promise<T> {
-    const rs = await this.findEntityOrFail(id);
+    const rs = await this.findEntityOrFail(id, userId);
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
@@ -512,8 +688,13 @@ export class RemoteServersService {
   async buildImageUsingDockerodeSsh(
     remoteServerId: number,
     params: { contextPath: string; dockerfilePosix: string; tag: string },
+    projectUserId: number | null,
   ): Promise<{ output: string }> {
-    const rs = await this.findEntityOrFail(remoteServerId);
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
     const docker = this.createDockerodeForRemote(rs, pem);
     const ctx = path.resolve(params.contextPath);
@@ -562,8 +743,13 @@ export class RemoteServersService {
       imageRef: string;
       auth: { username: string; password: string; serveraddress: string } | null;
     },
+    projectUserId: number | null,
   ): Promise<{ output: string }> {
-    const rs = await this.findEntityOrFail(remoteServerId);
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
     const docker = this.createDockerodeForRemote(rs, pem);
     const image = docker.getImage(params.imageRef);
@@ -601,65 +787,71 @@ export class RemoteServersService {
 
   async remoteConsoleContainersPaged(
     id: number,
+    userId: number,
     page: number,
     pageSize: number,
     q: string,
   ): Promise<PaginatedContainersDto> {
-    return this.withRemoteDocker(id, (docker) =>
+    return this.withRemoteDocker(id, userId, (docker) =>
       pagedRemoteContainers(docker, page, pageSize, q),
     );
   }
 
   async remoteConsoleImagesPaged(
     id: number,
+    userId: number,
     page: number,
     pageSize: number,
     q: string,
   ): Promise<PaginatedImagesDto> {
-    return this.withRemoteDocker(id, (docker) =>
+    return this.withRemoteDocker(id, userId, (docker) =>
       pagedRemoteImages(docker, page, pageSize, q),
     );
   }
 
   async remoteConsoleNetworksPaged(
     id: number,
+    userId: number,
     page: number,
     pageSize: number,
     q: string,
   ): Promise<PaginatedNetworksDto> {
-    return this.withRemoteDocker(id, (docker) =>
+    return this.withRemoteDocker(id, userId, (docker) =>
       pagedRemoteNetworks(docker, page, pageSize, q),
     );
   }
 
   async remoteConsoleVolumesPaged(
     id: number,
+    userId: number,
     page: number,
     pageSize: number,
     q: string,
   ): Promise<PaginatedVolumesDto> {
-    return this.withRemoteDocker(id, (docker) =>
+    return this.withRemoteDocker(id, userId, (docker) =>
       pagedRemoteVolumes(docker, page, pageSize, q),
     );
   }
 
   async remoteConsoleServicesPaged(
     id: number,
+    userId: number,
     page: number,
     pageSize: number,
     q: string,
   ): Promise<PaginatedServicesDto> {
-    return this.withRemoteDocker(id, (docker) =>
+    return this.withRemoteDocker(id, userId, (docker) =>
       pagedRemoteServices(docker, page, pageSize, q),
     );
   }
 
   async remoteConsoleContainerLogs(
     id: number,
+    userId: number,
     containerId: string,
     tail: number,
   ): Promise<{ logs: string }> {
-    const logs = await this.withRemoteDocker(id, (docker) =>
+    const logs = await this.withRemoteDocker(id, userId, (docker) =>
       remoteContainerLogs(docker, decodeURIComponent(containerId), tail),
     );
     return { logs };
@@ -667,10 +859,11 @@ export class RemoteServersService {
 
   async remoteConsoleServiceLogs(
     id: number,
+    userId: number,
     serviceId: string,
     tail: number,
   ): Promise<{ logs: string }> {
-    const logs = await this.withRemoteDocker(id, (docker) =>
+    const logs = await this.withRemoteDocker(id, userId, (docker) =>
       remoteServiceLogs(docker, decodeURIComponent(serviceId), tail),
     );
     return { logs };
@@ -678,17 +871,22 @@ export class RemoteServersService {
 
   async remoteConsoleRemoveContainer(
     id: number,
+    userId: number,
     containerId: string,
     force: boolean,
   ): Promise<{ success: boolean }> {
-    await this.withRemoteDocker(id, (docker) =>
+    await this.withRemoteDocker(id, userId, (docker) =>
       removeRemoteContainer(docker, decodeURIComponent(containerId), force),
     );
     return { success: true };
   }
 
-  async remoteConsoleRemoveImage(id: number, ref: string): Promise<{ success: boolean }> {
-    await this.withRemoteDocker(id, (docker) =>
+  async remoteConsoleRemoveImage(
+    id: number,
+    userId: number,
+    ref: string,
+  ): Promise<{ success: boolean }> {
+    await this.withRemoteDocker(id, userId, (docker) =>
       removeRemoteImage(docker, decodeURIComponent(ref)),
     );
     return { success: true };
@@ -696,10 +894,11 @@ export class RemoteServersService {
 
   async remoteConsoleRemoveVolume(
     id: number,
+    userId: number,
     name: string,
     force: boolean,
   ): Promise<{ success: boolean }> {
-    await this.withRemoteDocker(id, (docker) =>
+    await this.withRemoteDocker(id, userId, (docker) =>
       removeRemoteVolume(docker, decodeURIComponent(name), force),
     );
     return { success: true };
@@ -707,9 +906,10 @@ export class RemoteServersService {
 
   async remoteConsoleRemoveNetwork(
     id: number,
+    userId: number,
     networkId: string,
   ): Promise<{ success: boolean }> {
-    await this.withRemoteDocker(id, (docker) =>
+    await this.withRemoteDocker(id, userId, (docker) =>
       removeRemoteNetwork(docker, decodeURIComponent(networkId)),
     );
     return { success: true };
@@ -717,18 +917,22 @@ export class RemoteServersService {
 
   async remoteConsoleRemoveService(
     id: number,
+    userId: number,
     serviceId: string,
     force: boolean,
   ): Promise<{ success: boolean }> {
-    await this.withRemoteDocker(id, (docker) =>
+    await this.withRemoteDocker(id, userId, (docker) =>
       removeRemoteService(docker, decodeURIComponent(serviceId), force),
     );
     return { success: true };
   }
 
   /** Validates SSH + remote Docker via Dockerode (GET /version over `docker system dial-stdio`). */
-  async testConnection(id: number): Promise<{ success: boolean; output: string }> {
-    const rs = await this.findEntityOrFail(id);
+  async testConnection(
+    id: number,
+    userId: number,
+  ): Promise<{ success: boolean; output: string }> {
+    const rs = await this.findEntityOrFail(id, userId);
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
@@ -743,8 +947,98 @@ export class RemoteServersService {
       return { success: true, output: lines.join('\n') };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return { success: false, output: msg };
+      return { success: false, output: humanizeRemoteTestError(msg, 'docker') };
     }
+  }
+
+  /**
+   * SSH-only: connect with ssh2 and run a tiny shell command (no Docker / Dockerode).
+   * Use to verify key, host, port, and sshd before debugging remote Docker.
+   */
+  async testSshOnly(
+    id: number,
+    userId: number,
+  ): Promise<{ success: boolean; output: string }> {
+    const rs = await this.findEntityOrFail(id, userId);
+    try {
+      const pem = await this.resolvePrivateKeyPem(rs);
+      const p = this.getSshConnectParams(rs, pem);
+      const stdout = await this.execSshRemoteShell(p, "bash -lc 'echo weehawk-ssh-ok; uname -sn'");
+      const lines = [`SSH OK (${p.username}@${p.host}:${p.port})`, stdout.trim()].filter(
+        (s) => s.length > 0,
+      );
+      return { success: true, output: lines.join('\n') };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { success: false, output: humanizeRemoteTestError(msg, 'ssh') };
+    }
+  }
+
+  private async execSshRemoteShell(
+    p: {
+      host: string;
+      port: number;
+      username: string;
+      privateKey: Buffer;
+      family?: number;
+    },
+    command: string,
+  ): Promise<string> {
+    const client = new Client();
+    return new Promise((resolve, reject) => {
+      client
+        .once('ready', () => {
+          client.exec(command, (err, stream) => {
+            if (err) {
+              reject(err);
+              return;
+            }
+            let stdout = '';
+            let stderr = '';
+            stream.on('close', (code: number) => {
+              client.end();
+              if (code === 0) {
+                resolve(stdout);
+              } else {
+                reject(
+                  new BadRequestException(
+                    stderr.trim()
+                      ? `SSH remote command failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
+                      : `SSH remote command exited with code ${code}`,
+                  ),
+                );
+              }
+            });
+            stream.on('data', (d: Buffer) => {
+              stdout += d.toString();
+            });
+            stream.stderr.on('data', (d: Buffer) => {
+              stderr += d.toString();
+            });
+          });
+        })
+        .on('error', (err: Error & { level?: string }) => {
+          client.end();
+          if (err.level === 'client-authentication') {
+            reject(
+              new BadRequestException(
+                'SSH authentication failed — check the private key matches authorized_keys on the server.',
+              ),
+            );
+          } else {
+            reject(err);
+          }
+        })
+        .connect({
+          host: p.host,
+          port: p.port,
+          username: p.username,
+          privateKey: p.privateKey,
+          readyTimeout: 60_000,
+          hostVerifier: () => true,
+          ...(p.family != null ? { family: p.family } : {}),
+        });
+    });
   }
 
   /**

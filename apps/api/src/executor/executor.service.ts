@@ -98,9 +98,11 @@ export class ExecutorService {
   ): Promise<NodeJS.ProcessEnv> {
     const base = await this.getBaseProcessEnvForService(service);
     const ids = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId = service.project?.userId ?? null;
     return this.remoteServersService.mergeDockerHostEnvForDeployIds(
       base,
       ids.remoteServerId,
+      projectUserId,
     );
   }
 
@@ -191,9 +193,11 @@ export class ExecutorService {
             });
             const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
             const buildBase = await this.getBaseProcessEnvForService(service);
+            const projectUserId = service.project?.userId ?? null;
             const buildEnv = await this.remoteServersService.mergeDockerHostEnvForBuildIds(
               buildBase,
               sshIds,
+              projectUserId,
             );
             const useRemoteDockerBuild = Boolean(pickDockerSshEnv(buildEnv));
             const buildRemoteServerId =
@@ -212,6 +216,7 @@ export class ExecutorService {
                   dockerfilePosix,
                   tag: imageTag,
                 },
+                projectUserId,
               );
               buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
             } else {
@@ -244,6 +249,7 @@ export class ExecutorService {
                         imageRef: registryPush,
                         auth: pushAuth,
                       },
+                      projectUserId,
                     );
                   if (pushResult.output) {
                     buildLogPrefix =

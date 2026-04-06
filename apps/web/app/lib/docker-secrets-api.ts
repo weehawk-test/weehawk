@@ -41,7 +41,7 @@ export function mapDockerSecretLsRow(r: Record<string, unknown>, index: number):
 }
 
 export async function listDockerSecrets(): Promise<DockerSecretListItem[]> {
-  const raw = await request<unknown[]>("/docker-secrets");
+  const raw = await request<unknown[]>("/api/docker-secrets");
   if (!Array.isArray(raw)) return [];
   return raw.map((row, i) => mapDockerSecretLsRow(row as Record<string, unknown>, i));
 }
@@ -57,11 +57,11 @@ export async function fetchDockerSecretsPagedApi(
   });
   const t = q.trim();
   if (t) params.set("q", t);
-  return request<PaginatedSecretsResponse>(`/docker-secrets/paged?${params.toString()}`);
+  return request<PaginatedSecretsResponse>(`/api/docker-secrets/paged?${params.toString()}`);
 }
 
 export async function createDockerSecretApi(body: { name: string; value: string }) {
-  return request<{ success: boolean; name: string }>("/docker-secrets", {
+  return request<{ success: boolean; name: string }>("/api/docker-secrets", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -70,7 +70,7 @@ export async function createDockerSecretApi(body: { name: string; value: string 
 export async function deleteDockerSecretApi(name: string, force = false) {
   const enc = encodeURIComponent(name);
   const qs = force ? "?force=true" : "";
-  return request<{ success: boolean }>(`/docker-secrets/${enc}${qs}`, { method: "DELETE" });
+  return request<{ success: boolean }>(`/api/docker-secrets/${enc}${qs}`, { method: "DELETE" });
 }
 
 /** Docker secrets are immutable; rotation = rm + create with same name. */
@@ -81,7 +81,7 @@ export async function replaceDockerSecretApi(name: string, value: string) {
 
 export async function bulkImportSecretsApi(envText: string) {
   return request<{ message: string; created: string[]; failed: Array<{ key: string; error: string }> }>(
-    "/docker-secrets/bulk-import",
+    "/api/docker-secrets/bulk-import",
     { method: "POST", body: JSON.stringify({ envText }) },
   );
 }

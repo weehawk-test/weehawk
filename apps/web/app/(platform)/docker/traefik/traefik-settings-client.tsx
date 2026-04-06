@@ -11,6 +11,11 @@ import {
   type TraefikSettingsPayload,
 } from "@/lib/traefik-api";
 import { useToast } from "@/hooks/use-toast";
+import {
+  dispatchMagicTraefikIpv4Changed,
+  getMagicTraefikSiteIpv4,
+  setMagicTraefikSiteIpv4,
+} from "@/lib/magic-traefik-me-client";
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -56,6 +61,8 @@ export function TraefikSettingsClient() {
   const [acmeEmail, setAcmeEmail] = useState("");
   const [platformDomain, setPlatformDomain] = useState("");
   const [dirty, setDirty] = useState(false);
+  const [magicIpv4Draft, setMagicIpv4Draft] = useState("");
+  const [magicIpv4Dirty, setMagicIpv4Dirty] = useState(false);
 
   useEffect(() => {
     if (q.data && !dirty) {
@@ -63,6 +70,20 @@ export function TraefikSettingsClient() {
       setPlatformDomain(q.data.platformDomain ?? "");
     }
   }, [q.data, dirty]);
+
+  useEffect(() => {
+    if (magicIpv4Dirty) return;
+    const stored = getMagicTraefikSiteIpv4();
+    if (stored) {
+      setMagicIpv4Draft(stored);
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const h = window.location.hostname;
+      if (/^(\d{1,3}\.){3}\d{1,3}$/.test(h)) setMagicIpv4Draft(h);
+      else setMagicIpv4Draft("");
+    }
+  }, [magicIpv4Dirty]);
 
   const mut = useMutation({
     mutationFn: (patch: { acmeEmail: string; platformDomain: string }) =>
@@ -182,6 +203,56 @@ export function TraefikSettingsClient() {
           ) : (
             "Save"
           )}
+        </button>
+      </section>
+
+      <section className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-6 space-y-4 max-w-xl">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Magic traefik.me (site-wide)</h2>
+          <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+            Optional DNS name — not created until you roll a service. Set the IPv4 that{" "}
+            <span className="font-mono">traefik.me</span> should resolve to for <strong>all</strong> projects (your
+            public IP, LAN IP, or <span className="font-mono">127.0.0.1</span> for local tests). Rolling the dice on a
+            service&apos;s Domains tab uses this value unless that service has its own saved IP from a previous roll.
+            In local dev this page is typically{" "}
+            <span className="font-mono text-[11px]">http://localhost:3000/traefik</span>.
+          </p>
+        </div>
+        <label className="block space-y-1.5">
+          <span className="text-xs text-muted-foreground">Default IPv4 for Magic hostnames</span>
+          <input
+            className="input-field w-full font-mono text-sm"
+            placeholder="e.g. 203.0.113.10 or 127.0.0.1"
+            value={magicIpv4Draft}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => {
+              setMagicIpv4Dirty(true);
+              setMagicIpv4Draft(e.target.value);
+            }}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn-secondary text-sm"
+          onClick={() => {
+            const ip = magicIpv4Draft.trim();
+            if (ip !== "" && !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
+              toast({ title: "Invalid IPv4", description: "Enter four octets or leave empty.", variant: "destructive" });
+              return;
+            }
+            setMagicTraefikSiteIpv4(ip);
+            dispatchMagicTraefikIpv4Changed();
+            setMagicIpv4Dirty(false);
+            toast({
+              title: ip ? "Magic IPv4 saved for this browser" : "Cleared",
+              description: ip
+                ? "Service Domains → roll will use this address unless the service has a saved IP."
+                : "Falling back to deploy host or browser hostname when applicable.",
+            });
+          }}
+        >
+          Save Magic IPv4
         </button>
       </section>
 

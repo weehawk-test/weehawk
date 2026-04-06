@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -20,6 +21,7 @@ import {
   normalizeProviderUrl,
   registryHostFromImageRef,
 } from './registry-host-from-image';
+import { assertLocalHostDockerAllowed } from '../common/weehawk-edition';
 
 const execFileAsync = promisify(execFile);
 
@@ -68,6 +70,7 @@ export class RegistryService {
     stdinPayload?: string,
     env: NodeJS.ProcessEnv = process.env,
   ): Promise<ProcessResult> {
+    assertLocalHostDockerAllowed(this.configService);
     return new Promise((resolve, reject) => {
       const child = spawn('docker', args, {
         shell: false,
@@ -172,7 +175,11 @@ export class RegistryService {
       const saved = await this.registryAccountRepository.save(created);
       return this.toSafe(saved);
     } catch (e) {
-      if (e instanceof UnauthorizedException || e instanceof BadRequestException) {
+      if (
+        e instanceof UnauthorizedException ||
+        e instanceof BadRequestException ||
+        e instanceof ForbiddenException
+      ) {
         throw e;
       }
       const message = e instanceof Error ? e.message : String(e);
@@ -316,7 +323,10 @@ export class RegistryService {
         providerUrl: safeProviderUrl,
       };
     } catch (error) {
-      if (error instanceof UnauthorizedException) {
+      if (
+        error instanceof UnauthorizedException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
 
@@ -328,6 +338,7 @@ export class RegistryService {
   }
 
   async logout(providerUrl: string) {
+    assertLocalHostDockerAllowed(this.configService);
     const safeProviderUrl = normalizeProviderUrl(
       this.assertNonEmpty(providerUrl, 'providerUrl'),
     );
@@ -344,6 +355,9 @@ export class RegistryService {
         output: `${stdout ?? ''}${stderr ?? ''}`.trim(),
       };
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : String(error);
       throw new InternalServerErrorException(
         `Registry logout failed: ${message}`,
@@ -384,7 +398,10 @@ export class RegistryService {
         message: 'Registry credentials are valid',
       };
     } catch (error) {
-      if (error instanceof UnauthorizedException) {
+      if (
+        error instanceof UnauthorizedException ||
+        error instanceof ForbiddenException
+      ) {
         throw error;
       }
       const message = error instanceof Error ? error.message : String(error);

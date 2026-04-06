@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   InternalServerErrorException,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { DockerSecretsService } from './dockersecrets.service';
@@ -14,9 +15,11 @@ import {
   BulkImportDto,
   CreateDockersecretDto,
 } from './dto/create-dockersecret.dto';
+import { CloudEditionLocalDockerGuard } from '../common/guards/cloud-edition-local-docker.guard';
 
 @ApiTags('Docker Secrets')
-@Controller('docker-secrets')
+@UseGuards(CloudEditionLocalDockerGuard)
+@Controller('api/docker-secrets')
 export class DockerSecretsController {
   constructor(private readonly secretsService: DockerSecretsService) {}
 

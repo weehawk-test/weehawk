@@ -1,4 +1,5 @@
 import { API_BASE } from "./api";
+import { authFetch } from "./auth-fetch";
 import type { CreateProjectInput, Project } from "./schema";
 import { getServerApiBase } from "./server-api";
 
@@ -24,12 +25,24 @@ function nestErrorMessage(text: string, fallback: string): string {
 
 async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
+  const url = `${base}${path}`;
   const headers: HeadersInit = {
     Accept: "application/json",
     ...(init?.body ? { "Content-Type": "application/json" } : {}),
     ...init?.headers,
   };
-  return fetch(`${base}${path}`, { ...init, cache: "no-store", headers });
+  if (typeof window !== "undefined") {
+    return authFetch("cookie-session", url, {
+      ...init,
+      cache: "no-store",
+      headers,
+    });
+  }
+  return fetch(url, {
+    ...init,
+    cache: "no-store",
+    headers,
+  });
 }
 
 export function mapApiProjectToProject(raw: unknown): Project {
@@ -86,7 +99,7 @@ export async function fetchProjectsPage(
   params.set("limit", String(limit));
   const trimmed = q.trim();
   if (trimmed) params.set("q", trimmed);
-  const res = await apiFetch(`/projects?${params.toString()}`);
+  const res = await apiFetch(`/api/projects?${params.toString()}`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -95,7 +108,7 @@ export async function fetchProjectsPage(
 }
 
 export async function fetchProject(id: string): Promise<Project> {
-  const res = await apiFetch(`/projects/${encodeURIComponent(id)}`);
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -104,7 +117,7 @@ export async function fetchProject(id: string): Promise<Project> {
 }
 
 export async function createProjectApi(body: CreateProjectInput): Promise<Project> {
-  const res = await apiFetch("/projects", {
+  const res = await apiFetch("/api/projects", {
     method: "POST",
     body: JSON.stringify({
       name: body.name,
@@ -127,7 +140,7 @@ export async function updateProjectApi(
   if (patch.description !== undefined) body.description = patch.description;
   if (patch.isActive !== undefined) body.isActive = patch.isActive;
 
-  const res = await apiFetch(`/projects/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -139,7 +152,7 @@ export async function updateProjectApi(
 }
 
 export async function deleteProjectApi(id: string): Promise<void> {
-  const res = await apiFetch(`/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));

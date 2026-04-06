@@ -6,15 +6,15 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, FolderKanban, KeyRound, UserCircle, ChevronUp, ChevronLeft, ChevronRight,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, RadioTower, Server,
+  GitBranch, RadioTower, Server, CreditCard,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
 import { fetchSetupStatus } from "@/lib/auth-api";
-import { isCloudEdition } from "@/lib/weehawk-edition";
+import { editionFromEnv, isCloudEdition } from "@/lib/weehawk-edition";
 import type { LucideIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -34,35 +34,43 @@ function buildDockerNavItems(
   ];
 }
 
-const mainNavSections: { label: string; items: { href: string; label: string; icon: LucideIcon }[] }[] = [
-  {
-    label: "General",
-    items: [
-      { href: "/", label: "Projects", icon: FolderKanban },
-      { href: "/remote-server", label: "Servers", icon: Server },
-    ],
-  },
-  {
-    label: "Integrations",
-    items: [
-      { href: "/webhooks", label: "Webhooks", icon: Webhook },
-      { href: "/cron-jobs", label: "Cron Jobs", icon: Clock3 },
-      { href: "/notifications/channels", label: "Notifications", icon: Bell },
-      { href: "/s3", label: "S3 Destinations", icon: HardDrive },
-    ],
-  },
-  {
-    label: "Registry & Git",
-    items: [
-      { href: "/registry", label: "Registry", icon: ShieldCheck },
-      { href: "/git", label: "Git", icon: GitBranch },
-    ],
-  },
-  {
-    label: "More",
-    items: [{ href: "/traefik", label: "Traefik", icon: RadioTower }],
-  },
-];
+type MainNavSection = {
+  label: string;
+  items: { href: string; label: string; icon: LucideIcon }[];
+};
+
+function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
+  return [
+    {
+      label: "General",
+      items: [
+        { href: "/", label: "Projects", icon: FolderKanban },
+        { href: "/remote-server", label: "Servers", icon: Server },
+        ...(cloudEdition ? [{ href: "/subscription", label: "Subscription", icon: CreditCard }] : []),
+      ],
+    },
+    {
+      label: "Integrations",
+      items: [
+        { href: "/webhooks", label: "Webhooks", icon: Webhook },
+        { href: "/cron-jobs", label: "Cron Jobs", icon: Clock3 },
+        { href: "/notifications/channels", label: "Notifications", icon: Bell },
+        { href: "/s3", label: "S3 Destinations", icon: HardDrive },
+      ],
+    },
+    {
+      label: "Registry & Git",
+      items: [
+        { href: "/registry", label: "Registry", icon: ShieldCheck },
+        { href: "/git", label: "Git", icon: GitBranch },
+      ],
+    },
+    {
+      label: "More",
+      items: [{ href: "/traefik", label: "Traefik", icon: RadioTower }],
+    },
+  ];
+}
 
 function NavRow({
   collapsed,
@@ -133,7 +141,7 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
     staleTime: 0,
     gcTime: 0,
   });
-  const editionTag = setupQuery.data?.edition ?? "selfhosted";
+  const editionTag = setupQuery.data?.edition ?? editionFromEnv();
   const layoutGroupId = variant === "docker" ? "sidebar-nav-docker" : "sidebar-nav-main";
   const activeLayoutId = variant === "docker" ? "active-nav-docker" : "active-nav-main";
 
@@ -146,6 +154,7 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
       : user?.email?.[0]?.toUpperCase() ?? "U";
 
   const cloudUi = isCloudEdition();
+  const mainNavSections = useMemo(() => buildMainNavSections(cloudUi), [cloudUi]);
   const consoleMatch = /^\/console\/([^/]+)/.exec(location);
   const onSecretsShell = location === "/secrets" || location.startsWith("/secrets/");
   const consoleNavBase =
@@ -177,6 +186,9 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
         location.startsWith("/remote-server/") ||
         (!cloudUi && location.startsWith("/console/local"))
       );
+    }
+    if (href === "/subscription") {
+      return location === "/subscription" || location.startsWith("/subscription/");
     }
     return location.startsWith(href);
   };
