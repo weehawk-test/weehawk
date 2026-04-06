@@ -7,7 +7,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search } from "lucide-react";
+import { Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff } from "lucide-react";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
@@ -18,7 +18,9 @@ import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createServiceSchema, type CreateServiceInput, type Project } from "@/lib/schema";
 import { applyDatabaseApi, SERVICES_PAGE_SIZE, type ServicesPageResponse } from "@/lib/services-api";
+import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { DatabaseEnginePicker } from "@/components/database-engine-picker";
 import {
@@ -117,10 +119,14 @@ function CreateServiceModal({
   onCreated?: () => void;
 }) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const create = useCreateService();
   const { toast } = useToast();
   const [dbPickerOpen, setDbPickerOpen] = useState(false);
   const [imageUnlocked, setImageUnlocked] = useState(false);
+  const [showDbUserPass, setShowDbUserPass] = useState(false);
+  const [showDbRootPass, setShowDbRootPass] = useState(false);
+  const [showDbRedisPass, setShowDbRedisPass] = useState(false);
   const { register, handleSubmit, formState: { errors }, watch, setValue, getValues } = useForm<CreateServiceInput>({
     resolver: zodResolver(createServiceSchema) as Resolver<CreateServiceInput>,
     defaultValues: {
@@ -137,12 +143,6 @@ function CreateServiceModal({
         rootUser: "",
         rootPass: "",
         password: "",
-        storeDbName: "env",
-        storeUser: "env",
-        storePass: "secret",
-        storeRootUser: "env",
-        storeRootPass: "secret",
-        storePassword: "secret",
         volumePath: "",
         replicas: 1,
         publishPort: "",
@@ -170,12 +170,6 @@ function CreateServiceModal({
         rootUser: "",
         rootPass: "",
         password: "",
-        storeDbName: "env",
-        storeUser: "env",
-        storePass: "secret",
-        storeRootUser: "env",
-        storeRootPass: "secret",
-        storePassword: "secret",
         volumePath: "",
         replicas: 1,
         publishPort: "",
@@ -191,6 +185,12 @@ function CreateServiceModal({
       setImageUnlocked(false);
     }
   }, [type, databaseEngine, setValue]);
+
+  useEffect(() => {
+    setShowDbUserPass(false);
+    setShowDbRootPass(false);
+    setShowDbRedisPass(false);
+  }, [databaseEngine]);
 
   useEffect(() => {
     if (type === "databases" && !databaseEngine) {
@@ -211,18 +211,12 @@ function CreateServiceModal({
           rootUser: data.postgres.rootUser.trim() || undefined,
           rootPass: data.postgres.rootPass || undefined,
           password: data.postgres.password || undefined,
-          storeDbName: data.postgres.storeDbName,
-          storeUser: data.postgres.storeUser,
-          storePass: data.postgres.storePass,
-          storeRootUser: data.postgres.storeRootUser,
-          storeRootPass: data.postgres.storeRootPass,
-          storePassword: data.postgres.storePassword,
           volumePath: data.postgres.volumePath.trim() || undefined,
           replicas: data.postgres.replicas ?? 1,
           ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
           ...(img ? { image: img } : {}),
         });
-        await qc.invalidateQueries({ queryKey: ["service", created.id] });
+        await invalidateServiceScopedQueries(qc, created.id, user?.userId ?? "none");
       }
       toast({
         title: "Service Created",
@@ -372,10 +366,6 @@ function CreateServiceModal({
                     placeholder="myapp-db"
                     autoComplete="off"
                   />
-                  <select {...register("postgres.storeDbName")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
-                    <option value="env">Store in Environment</option>
-                    <option value="secret">Store in Docker Secret</option>
-                  </select>
                   {errors.postgres?.dbName && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.dbName.message}</p>
                   )}
@@ -390,10 +380,6 @@ function CreateServiceModal({
                     placeholder="appuser"
                     autoComplete="off"
                   />
-                  <select {...register("postgres.storeUser")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
-                    <option value="env">Store in Environment</option>
-                    <option value="secret">Store in Docker Secret</option>
-                  </select>
                   {errors.postgres?.user && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.user.message}</p>
                   )}
@@ -402,17 +388,24 @@ function CreateServiceModal({
                 {(databaseEngine === "postgres" || databaseEngine === "mysql" || databaseEngine === "mariadb") && (
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
-                  <input
-                    type="password"
-                    {...register("postgres.pass")}
-                    className="input-field w-full font-mono text-sm"
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                  />
-                  <select {...register("postgres.storePass")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
-                    <option value="secret">Store in Docker Secret</option>
-                    <option value="env">Store in Environment</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type={showDbUserPass ? "text" : "password"}
+                      {...register("postgres.pass")}
+                      className="input-field w-full font-mono text-sm pr-10"
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDbUserPass((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10"
+                      aria-label={showDbUserPass ? "Hide password" : "Show password"}
+                      title={showDbUserPass ? "Hide" : "Show"}
+                    >
+                      {showDbUserPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                   {errors.postgres?.pass && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.pass.message}</p>
                   )}
@@ -421,17 +414,24 @@ function CreateServiceModal({
                 {(databaseEngine === "mysql" || databaseEngine === "mariadb") && (
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root Password</label>
-                  <input
-                    type="password"
-                    {...register("postgres.rootPass")}
-                    className="input-field w-full font-mono text-sm"
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                  />
-                  <select {...register("postgres.storeRootPass")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
-                    <option value="secret">Store in Docker Secret</option>
-                    <option value="env">Store in Environment</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type={showDbRootPass ? "text" : "password"}
+                      {...register("postgres.rootPass")}
+                      className="input-field w-full font-mono text-sm pr-10"
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDbRootPass((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10"
+                      aria-label={showDbRootPass ? "Hide root password" : "Show root password"}
+                      title={showDbRootPass ? "Hide" : "Show"}
+                    >
+                      {showDbRootPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                   {errors.postgres?.rootPass && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.rootPass.message}</p>
                   )}
@@ -447,27 +447,30 @@ function CreateServiceModal({
                     placeholder="root"
                     autoComplete="off"
                   />
-                  <select {...register("postgres.storeRootUser")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
-                    <option value="env">Store in Environment</option>
-                    <option value="secret">Store in Docker Secret</option>
-                  </select>
                   {errors.postgres?.rootUser && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.rootUser.message}</p>
                   )}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root Password</label>
-                  <input
-                    type="password"
-                    {...register("postgres.rootPass")}
-                    className="input-field w-full font-mono text-sm"
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                  />
-                  <select {...register("postgres.storeRootPass")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
-                    <option value="secret">Store in Docker Secret</option>
-                    <option value="env">Store in Environment</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type={showDbRootPass ? "text" : "password"}
+                      {...register("postgres.rootPass")}
+                      className="input-field w-full font-mono text-sm pr-10"
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDbRootPass((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10"
+                      aria-label={showDbRootPass ? "Hide root password" : "Show root password"}
+                      title={showDbRootPass ? "Hide" : "Show"}
+                    >
+                      {showDbRootPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                   {errors.postgres?.rootPass && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.rootPass.message}</p>
                   )}
@@ -477,17 +480,24 @@ function CreateServiceModal({
                 {databaseEngine === "redis" && (
                 <div className="sm:col-span-2">
                   <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
-                  <input
-                    type="password"
-                    {...register("postgres.password")}
-                    className="input-field w-full font-mono text-sm"
-                    placeholder="••••••••"
-                    autoComplete="new-password"
-                  />
-                  <select {...register("postgres.storePassword")} className="input-field mt-1.5 w-full max-w-[12rem] text-xs">
-                    <option value="secret">Store in Docker Secret</option>
-                    <option value="env">Store in Environment</option>
-                  </select>
+                  <div className="relative">
+                    <input
+                      type={showDbRedisPass ? "text" : "password"}
+                      {...register("postgres.password")}
+                      className="input-field w-full font-mono text-sm pr-10"
+                      placeholder="••••••••"
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDbRedisPass((v) => !v)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10"
+                      aria-label={showDbRedisPass ? "Hide password" : "Show password"}
+                      title={showDbRedisPass ? "Hide" : "Show"}
+                    >
+                      {showDbRedisPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
                   {errors.postgres?.password && (
                     <p className="text-destructive text-xs mt-1">{errors.postgres.password.message}</p>
                   )}
@@ -564,6 +574,7 @@ export default function ProjectsIdClient({
 }) {
   const router = useRouter();
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
 
@@ -574,15 +585,18 @@ export default function ProjectsIdClient({
 
   useEffect(() => {
     if (initialProject) {
-      qc.setQueryData(["projects", projectId], initialProject);
+      qc.setQueryData(["projects", user?.userId ?? "none", projectId], initialProject);
     }
-  }, [initialProject, projectId, qc]);
+  }, [initialProject, projectId, qc, user?.userId]);
 
   useEffect(() => {
     if (initialServicesPage === undefined) return;
     const trimmed = urlQ.trim();
-    qc.setQueryData(["services", "list", projectId, urlPage, trimmed], initialServicesPage);
-  }, [initialServicesPage, projectId, urlPage, urlQ, qc]);
+    qc.setQueryData(
+      ["services", "list", user?.userId ?? "none", projectId, urlPage, trimmed],
+      initialServicesPage,
+    );
+  }, [initialServicesPage, projectId, urlPage, urlQ, qc, user?.userId]);
 
   const {
     data: servicesPageData,

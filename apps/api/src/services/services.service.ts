@@ -122,6 +122,12 @@ export class ServicesService {
     } = createServiceDto;
     const project = await this.assertProjectOwnedByUser(projectId, userId);
 
+    if (buildRemoteServerId != null && serviceData.buildOnLocalDockerHost === true) {
+      throw new BadRequestException(
+        'Cannot set a dedicated build host when building on this server (API). Clear build host or turn off “build on this server”.',
+      );
+    }
+
     if (remoteServerId != null) {
       await this.assertDeployRemoteServer(remoteServerId, project.userId);
     }
@@ -159,6 +165,14 @@ export class ServicesService {
       }
     }
 
+    this.assertRegistryForLocalBuildOnApiRemoteDeploy(
+      serviceData.composeType,
+      remoteServerId,
+      serviceData.buildOnLocalDockerHost === true,
+      serviceData.dockerConfig || '',
+      registryPushInCreate,
+    );
+
     let saved = await this.serviceRepository.save(service);
 
     if (
@@ -177,6 +191,30 @@ export class ServicesService {
         relations: ['project', 'remoteServer'],
       })) ?? saved;
     return this.withMagicTraefikMeUrl(hydrated);
+  }
+
+  /**
+   * Building on the API host while deploying to a remote Swarm requires push+pull via a registry.
+   */
+  private assertRegistryForLocalBuildOnApiRemoteDeploy(
+    serviceComposeType: composeType,
+    remoteServerId: number | null | undefined,
+    buildOnLocalDockerHost: boolean,
+    dockerConfig: string,
+    registryPushImage?: string | null,
+  ): void {
+    if (serviceComposeType !== composeType.APPLICATION) return;
+    if (!buildOnLocalDockerHost || remoteServerId == null) return;
+    const fromHeader = this.parseConfigHeaderValue(dockerConfig, 'registry.pushImage')?.trim();
+    const fromArg =
+      registryPushImage != null && String(registryPushImage).trim() !== ''
+        ? String(registryPushImage).trim()
+        : '';
+    if (!fromHeader && !fromArg) {
+      throw new BadRequestException(
+        'When build runs on this server and deploy targets a remote host, set a registry image so the remote can pull the image after push.',
+      );
+    }
   }
 
   private parseConfigHeaderValue(config: string, key: string): string | null {
@@ -392,7 +430,6 @@ export class ServicesService {
     publishPort?: number;
     replicas: number;
     envKeys: string[];
-    secretRefs: Record<string, string>;
   } {
     const raw = service.dockerConfig || '';
     const sourceDir = this.parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
@@ -403,11 +440,11 @@ export class ServicesService {
     const buildMode =
       bm === 'nixpacks' || bm === 'buildpacks' ? 'buildpacks' : 'dockerfile';
 
-    const secretRefs = this.parseApplicationSecretRefsFromDockerConfig(raw);
-
     const envKeys: string[] = [];
     for (const line of raw.split(/\r?\n/)) {
-      const m = line.match(/^\s*#\s*app\.store\.([A-Z0-9_]+):\s*env\s*$/i);
+      const m = line.match(
+        /^\s*#\s*app\.store\.([A-Z0-9_]+):\s*(env|secret)\s*$/i,
+      );
       if (m) envKeys.push(m[1]);
     }
 
@@ -484,7 +521,6 @@ export class ServicesService {
       publishPort,
       replicas,
       envKeys,
-      secretRefs,
     };
   }
 
@@ -760,20 +796,27 @@ export class ServicesService {
   ): string {
     if (!traefik?.routes?.length) return '';
     const lines: string[] = ['      labels:', '        - "traefik.enable=true"'];
+    /** One Traefik loadbalancer service per port; all routers reference it (Docker/Swarm multi-router pattern). */
+    const lbPortsSeen = new Set<number>();
     for (const r of traefik.routes) {
       const ruleEsc = this.escapeTraefikComposeLabelValue(r.rule);
       const useTls = r.https !== false;
       const ep = useTls ? traefik.httpsEntrypoint : traefik.httpEntrypoint;
+      const lbSvc = `whlb_${r.port}`;
       lines.push(`        - "traefik.http.routers.${r.router}.rule=${ruleEsc}"`);
       lines.push(`        - "traefik.http.routers.${r.router}.entrypoints=${ep}"`);
+      lines.push(`        - "traefik.http.routers.${r.router}.service=${lbSvc}"`);
       if (useTls) {
         lines.push(
           `        - "traefik.http.routers.${r.router}.tls.certresolver=${traefik.certResolver}"`,
         );
       }
-      lines.push(
-        `        - "traefik.http.services.${r.router}.loadbalancer.server.port=${r.port}"`,
-      );
+      if (!lbPortsSeen.has(r.port)) {
+        lbPortsSeen.add(r.port);
+        lines.push(
+          `        - "traefik.http.services.${lbSvc}.loadbalancer.server.port=${r.port}"`,
+        );
+      }
     }
     return `${lines.join('\n')}\n`;
   }
@@ -817,13 +860,21 @@ export class ServicesService {
     };
 
     if (svc.traefikRoutes && svc.traefikRoutes.length > 0) {
-      for (const r of svc.traefikRoutes) {
+      const multiRoute = svc.traefikRoutes.length > 1;
+      for (let i = 0; i < svc.traefikRoutes.length; i++) {
+        const r = svc.traefikRoutes[i];
         const router = (r.router || '').trim().toLowerCase();
         if (!router) continue;
         let hosts = (r.hosts ?? [])
           .map((h) => this.sanitizeDomainForTraefikRule(h))
           .filter((x): x is string => Boolean(x));
-        hosts = appendMagicAlias(hosts);
+        // Magic hostname must not be appended to every router: multiple Host(magic) rules match the same
+        // request and Traefik routing becomes ambiguous (often 404). Only the first listed route gets the alias.
+        if (!multiRoute) {
+          hosts = appendMagicAlias(hosts);
+        } else if (i === 0) {
+          hosts = appendMagicAlias(hosts);
+        }
         if (!hosts.length) continue;
         const rule = this.buildTraefikHostPathRule(hosts, r.pathPrefix);
         if (!rule) continue;
@@ -901,7 +952,6 @@ export class ServicesService {
       publishPort: args.publishPort,
       replicas: args.replicas,
       envKeys: args.envKeys,
-      secretRefs: args.secretRefs,
       network,
       traefik,
     });
@@ -925,7 +975,6 @@ export class ServicesService {
     publishPort?: number;
     replicas: number;
     envKeys: string[];
-    secretRefs: Record<string, string>;
     network: { external: string[]; stack: string[] };
     traefik?: {
       certResolver: string;
@@ -939,17 +988,7 @@ export class ServicesService {
         ? `    ports:\n      - "${args.publishPort}:${args.containerPort}"\n`
         : '';
     const envLines = args.envKeys.map((k) => `      ${k}: \${${k}}`);
-    for (const [k, secretName] of Object.entries(args.secretRefs)) {
-      envLines.push(`      ${k}_FILE: /run/secrets/${secretName}`);
-    }
     const envSection = envLines.length ? `    environment:\n${envLines.join('\n')}\n` : '';
-    const secretNames = Object.values(args.secretRefs);
-    const serviceSecretsSection = secretNames.length
-      ? `    secrets:\n${secretNames.map((n) => `      - ${n}`).join('\n')}\n`
-      : '';
-    const rootSecretsSection = secretNames.length
-      ? `secrets:\n${secretNames.map((n) => `  ${n}:\n    external: true`).join('\n')}\n`
-      : '';
 
     const ext = (args.network.external ?? []).map((n) => n.trim()).filter(Boolean);
     const stk = (args.network.stack ?? []).map((k) => k.trim()).filter(Boolean);
@@ -985,11 +1024,7 @@ export class ServicesService {
       ? `networks:\n${rootNetBlocks.join('\n')}\n`
       : '';
 
-    const storageHeader = [
-      ...args.envKeys.map((k) => `# app.store.${k}: env`),
-      ...Object.keys(args.secretRefs).map((k) => `# app.store.${k}: secret`),
-      ...Object.entries(args.secretRefs).map(([k, n]) => `# secret.${k}: ${n}`),
-    ].join('\n');
+    const storageHeader = args.envKeys.map((k) => `# app.store.${k}: env`).join('\n');
     const dockerfileGenLine =
       args.dockerfileGenerated !== undefined
         ? `# dockerfileGenerated: ${args.dockerfileGenerated ? 'true' : 'false'}\n`
@@ -1025,7 +1060,7 @@ ${ports}    deploy:
       placement:
         constraints:
           - node.role == manager
-${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}${rootSecretsSection}${rootNetworkSection}`;
+${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   }
 
   private async extractZipSafely(zipPath: string, targetDir: string): Promise<void> {
@@ -1164,10 +1199,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     const publishPort = options?.publishPort;
     const replicas = Math.min(10, Math.max(1, Math.floor(options?.replicas ?? 1)));
     const parsedVars = this.parseApplicationVariables(options?.variablesJson);
-    const storageMap = this.resolveApplicationStorageMap(parsedVars);
     const valuesMap = this.resolveApplicationValuesMap(parsedVars);
-    const envValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'env');
-    const secretValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'secret');
 
     let dockerfileGenerated: boolean | undefined;
     try {
@@ -1210,17 +1242,10 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     }
 
     const previousConfig = service.dockerConfig || '';
-    const secretRefs = this.mergeApplicationSecretRefs(
-      service.appName,
-      secretValues,
-      storageMap,
-      previousConfig,
-    );
-    await this.removeObsoleteManagedSecrets(previousConfig, secretRefs);
-    await this.ensureSecretsExist(secretRefs, secretValues);
+    await this.removeObsoleteManagedSecrets(previousConfig, {});
     const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
-    service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, envValues);
+    service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
     const networkMerged = this.ensureTraefikExternalNetwork(network, service);
@@ -1247,8 +1272,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       containerPort,
       publishPort,
       replicas,
-      envKeys: Object.keys(envValues),
-      secretRefs,
+      envKeys: Object.keys(valuesMap),
       network: networkMerged,
       traefik,
     });
@@ -1570,23 +1594,13 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     const publishPort = options.publishPort;
     const replicas = Math.min(10, Math.max(1, Math.floor(options.replicas ?? 1)));
     const parsedVars = this.parseApplicationVariables(options?.variablesJson);
-    const storageMap = this.resolveApplicationStorageMap(parsedVars);
     const valuesMap = this.resolveApplicationValuesMap(parsedVars);
-    const envValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'env');
-    const secretValues = this.pickCredentialsByStorage(valuesMap, storageMap, 'secret');
 
     const previousConfig = service.dockerConfig || '';
-    const secretRefs = this.mergeApplicationSecretRefs(
-      service.appName,
-      secretValues,
-      storageMap,
-      previousConfig,
-    );
-    await this.removeObsoleteManagedSecrets(previousConfig, secretRefs);
-    await this.ensureSecretsExist(secretRefs, secretValues);
+    await this.removeObsoleteManagedSecrets(previousConfig, {});
     const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
-    service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, envValues);
+    service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
     const networkMerged = this.ensureTraefikExternalNetwork(network, service);
@@ -1604,8 +1618,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       containerPort,
       publishPort,
       replicas,
-      envKeys: Object.keys(envValues),
-      secretRefs,
+      envKeys: Object.keys(valuesMap),
       network: networkMerged,
       traefik,
     });
@@ -1622,7 +1635,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     };
   }
 
-  private parseApplicationVariables(raw?: string): Array<{ key: string; value: string; store: 'env' | 'secret' }> {
+  private parseApplicationVariables(raw?: string): Array<{ key: string; value: string }> {
     if (!raw?.trim()) return [];
     let parsed: unknown;
     try {
@@ -1633,33 +1646,23 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     if (!Array.isArray(parsed)) {
       throw new BadRequestException('variablesJson must be an array.');
     }
-    const out: Array<{ key: string; value: string; store: 'env' | 'secret' }> = [];
+    const out: Array<{ key: string; value: string }> = [];
     for (const item of parsed) {
       if (!item || typeof item !== 'object') continue;
       const row = item as Record<string, unknown>;
       const key = String(row.key ?? '').trim();
       const value = String(row.value ?? '');
-      const storeRaw = String(row.store ?? 'secret').trim().toLowerCase();
-      const store = storeRaw === 'secret' ? 'secret' : 'env';
       if (!key) continue;
       if (!/^[A-Z_][A-Z0-9_]*$/i.test(key)) {
         throw new BadRequestException(`Invalid variable key: ${key}`);
       }
-      out.push({ key, value, store });
+      out.push({ key, value });
     }
     return out;
   }
 
-  private resolveApplicationStorageMap(
-    vars: Array<{ key: string; value: string; store: 'env' | 'secret' }>,
-  ): Record<string, 'env' | 'secret'> {
-    const out: Record<string, 'env' | 'secret'> = {};
-    for (const v of vars) out[v.key] = v.store;
-    return out;
-  }
-
   private resolveApplicationValuesMap(
-    vars: Array<{ key: string; value: string; store: 'env' | 'secret' }>,
+    vars: Array<{ key: string; value: string }>,
   ): Record<string, string> {
     const out: Record<string, string> = {};
     for (const v of vars) out[v.key] = v.value;
@@ -2251,11 +2254,13 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
   async getDockerSshTargetIds(serviceId: number): Promise<{
     remoteServerId: number | null;
     buildRemoteServerId: number | null;
+    buildOnLocalDockerHost: boolean;
   }> {
     const raw = (await this.serviceRepository
       .createQueryBuilder('s')
       .select('s.remoteServerId', 'wh_rid')
       .addSelect('s.buildRemoteServerId', 'wh_bid')
+      .addSelect('s.buildOnLocalDockerHost', 'wh_local')
       .where('s.id = :id', { id: serviceId })
       .getRawOne()) as Record<string, unknown> | undefined;
     const n = (v: unknown): number | null => {
@@ -2263,8 +2268,10 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       const x = typeof v === 'number' ? v : Number(v);
       return Number.isFinite(x) ? x : null;
     };
+    const asBool = (v: unknown): boolean =>
+      v === true || v === 't' || v === 1 || v === '1';
     if (!raw) {
-      return { remoteServerId: null, buildRemoteServerId: null };
+      return { remoteServerId: null, buildRemoteServerId: null, buildOnLocalDockerHost: false };
     }
     const byLower = Object.fromEntries(
       Object.entries(raw).map(([k, v]) => [k.toLowerCase(), v]),
@@ -2272,6 +2279,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     return {
       remoteServerId: n(byLower['wh_rid']),
       buildRemoteServerId: n(byLower['wh_bid']),
+      buildOnLocalDockerHost: asBool(byLower['wh_local']),
     };
   }
 
@@ -2296,6 +2304,15 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
           'Weehawk Cloud does not allow clearing the deploy host; workloads must run on an SSH-connected server.',
         );
       }
+    }
+    if (
+      updateServiceDto.buildOnLocalDockerHost === true &&
+      updateServiceDto.buildRemoteServerId !== undefined &&
+      updateServiceDto.buildRemoteServerId !== null
+    ) {
+      throw new BadRequestException(
+        'Cannot set a dedicated build host when building on this server (API). Clear the build host or turn off “build on this server”.',
+      );
     }
     if (updateServiceDto.buildRemoteServerId !== undefined) {
       if (updateServiceDto.buildRemoteServerId !== null) {
@@ -2339,6 +2356,12 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
         buildPatch === null
           ? null
           : await this.remoteServerRepository.findOneByOrFail({ id: buildPatch });
+      if (buildPatch !== null) {
+        updated.buildOnLocalDockerHost = false;
+      }
+    }
+    if (updated.buildOnLocalDockerHost === true) {
+      updated.buildRemoteServer = null;
     }
 
     if (registryPushPatch !== undefined && updated.composeType === composeType.APPLICATION) {
@@ -2348,16 +2371,40 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       );
     }
 
+    if (updateServiceDto.traefikRoutes !== undefined && Array.isArray(updateServiceDto.traefikRoutes)) {
+      const seen = new Set<string>();
+      for (const r of updateServiceDto.traefikRoutes) {
+        const name = (r?.router ?? '').trim().toLowerCase();
+        if (!name) continue;
+        if (seen.has(name)) {
+          throw new BadRequestException(
+            'Each Traefik route must have a unique router name. Duplicate names would overwrite labels on deploy.',
+          );
+        }
+        seen.add(name);
+      }
+    }
+
     const shouldRefreshAppCompose =
       updated.composeType === composeType.APPLICATION &&
       (updateServiceDto.domains !== undefined ||
         updateServiceDto.traefikRoutes !== undefined ||
         updateServiceDto.magicTraefikMeIpv4 !== undefined ||
-        registryPushPatch !== undefined) &&
+        registryPushPatch !== undefined ||
+        updateServiceDto.buildOnLocalDockerHost !== undefined) &&
       (updated.dockerConfig || '').trim().length > 0;
     if (shouldRefreshAppCompose) {
       updated.dockerConfig = await this.composeApplicationDockerConfigForService(updated);
     }
+
+    this.assertRegistryForLocalBuildOnApiRemoteDeploy(
+      updated.composeType,
+      updated.remoteServerId ?? null,
+      updated.buildOnLocalDockerHost === true,
+      updated.dockerConfig || '',
+      registryPushPatch,
+    );
+
     const saved = await this.serviceRepository.save(updated);
     const hydrated =
       (await this.serviceRepository.findOne({
@@ -2375,7 +2422,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
 
   /**
    * Generate database stack YAML from form fields → `dockerConfig`.
-   * Credentials are stored in Docker secrets and referenced from YAML.
+   * Credentials are stored in the service environment and referenced from YAML as `${VAR}`.
    */
   async applyDatabase(
     id: number,
@@ -2396,24 +2443,17 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
         `This service is not configured for ${engine} (engine mismatch).`,
       );
     }
-    // Allow re-applying database settings for the same engine so users can
-    // switch per-variable storage (env vs secret) after initial setup.
     const normalized = this.normalizeDatabaseSetupInput(engine, dto);
     const safeDb = this.databaseGenerator.sanitizeDbName(normalized.dbName);
     const allCredentials = this.credentialsForEngine(engine, safeDb, normalized);
-    const storageMap = this.resolveStorageMapForEngine(engine, dto);
-    const plainEnv = this.pickCredentialsByStorage(
-      allCredentials,
-      storageMap,
-      'env',
+    const plainEnvKeys = Object.keys(allCredentials).filter(
+      (k) => String(allCredentials[k] ?? '').trim().length > 0,
     );
-    const secretEnv = this.pickCredentialsByStorage(
-      allCredentials,
-      storageMap,
-      'secret',
+    const plainEnv = Object.fromEntries(
+      Object.entries(allCredentials).filter(
+        ([, v]) => String(v ?? '').trim().length > 0,
+      ),
     );
-    const secretRefs = this.buildSecretRefs(service.appName, secretEnv);
-    await this.ensureSecretsExist(secretRefs, secretEnv);
     try {
       service.dockerConfig = this.databaseGenerator.buildDatabaseDockerConfig(
         engine,
@@ -2422,9 +2462,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
         dto.publishPort,
         dto.image,
         normalized.volumePath,
-        Object.keys(plainEnv),
-        storageMap,
-        secretRefs,
+        plainEnvKeys,
       );
     } catch (e) {
       if (e instanceof Error && /Invalid .* image reference/.test(e.message)) {
@@ -2506,8 +2544,6 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     const currentVolumePath =
       raw.match(/^\s*#\s*volumePath:\s*(.+)$/m)?.[1]?.trim() ||
       this.databaseGenerator.defaultDataMount(engine);
-    const storageMap = this.resolveStorageMapFromHeader(raw, engine);
-    const currentSecretRefs = this.parseSecretRefsFromHeader(raw);
     if (
       currentImage &&
       !DatabaseGeneratorService.IMAGE_REF_PATTERN.test(currentImage)
@@ -2521,19 +2557,7 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       port,
       currentImage,
       currentVolumePath,
-      Object.keys(this.pickCredentialsByStorage(
-        this.credentialsForEngine(engine, dbName, {
-          user: '',
-          pass: '',
-          rootUser: '',
-          rootPass: '',
-          password: '',
-        }),
-        this.resolveStorageMapFromHeader(raw, engine),
-        'env',
-      )),
-      storageMap,
-      currentSecretRefs,
+      this.credentialKeysForEngine(engine),
     );
     return await this.serviceRepository.save(service);
   }
@@ -2718,159 +2742,17 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
     return { REDIS_PASSWORD: input.password as string };
   }
 
-  private pickCredentialsByStorage(
-    credentials: Record<string, string>,
-    storage: Record<string, 'env' | 'secret'>,
-    target: 'env' | 'secret',
-  ): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(credentials)) {
-      if (!v) continue;
-      if ((storage[k] ?? this.defaultStorageForKey(k)) === target) {
-        out[k] = v;
-      }
-    }
-    return out;
-  }
-
-  private defaultStorageForKey(key: string): 'env' | 'secret' {
-    return key.includes('PASSWORD') ? 'secret' : 'env';
-  }
-
-  private resolveStorageMapForEngine(
-    engine: DatabaseEngine,
-    dto: DatabaseSetupDto,
-  ): Record<string, 'env' | 'secret'> {
-    const pick = (v?: string): 'env' | 'secret' | undefined =>
-      v === 'env' || v === 'secret' ? v : undefined;
-    if (engine === 'postgres') {
-      return {
-        POSTGRES_DB: pick(dto.storeDbName) ?? 'env',
-        POSTGRES_USER: pick(dto.storeUser) ?? 'env',
-        POSTGRES_PASSWORD: pick(dto.storePass) ?? 'secret',
-      };
-    }
-    if (engine === 'mysql') {
-      return {
-        MYSQL_DATABASE: pick(dto.storeDbName) ?? 'env',
-        MYSQL_USER: pick(dto.storeUser) ?? 'env',
-        MYSQL_PASSWORD: pick(dto.storePass) ?? 'secret',
-        MYSQL_ROOT_PASSWORD: pick(dto.storeRootPass) ?? 'secret',
-      };
-    }
-    if (engine === 'mariadb') {
-      return {
-        MARIADB_DATABASE: pick(dto.storeDbName) ?? 'env',
-        MARIADB_USER: pick(dto.storeUser) ?? 'env',
-        MARIADB_PASSWORD: pick(dto.storePass) ?? 'secret',
-        MARIADB_ROOT_PASSWORD: pick(dto.storeRootPass) ?? 'secret',
-      };
-    }
-    if (engine === 'mongodb') {
-      return {
-        MONGO_INITDB_DATABASE: pick(dto.storeDbName) ?? 'env',
-        MONGO_INITDB_ROOT_USERNAME: pick(dto.storeRootUser) ?? 'env',
-        MONGO_INITDB_ROOT_PASSWORD: pick(dto.storeRootPass) ?? 'secret',
-      };
-    }
-    return { REDIS_PASSWORD: pick(dto.storePassword) ?? 'secret' };
-  }
-
-  private defaultStorageMapForEngine(
-    engine: DatabaseEngine,
-  ): Record<string, 'env' | 'secret'> {
-    if (engine === 'postgres') {
-      return {
-        POSTGRES_DB: 'env',
-        POSTGRES_USER: 'env',
-        POSTGRES_PASSWORD: 'secret',
-      };
-    }
-    if (engine === 'mysql') {
-      return {
-        MYSQL_DATABASE: 'env',
-        MYSQL_USER: 'env',
-        MYSQL_PASSWORD: 'secret',
-        MYSQL_ROOT_PASSWORD: 'secret',
-      };
-    }
-    if (engine === 'mariadb') {
-      return {
-        MARIADB_DATABASE: 'env',
-        MARIADB_USER: 'env',
-        MARIADB_PASSWORD: 'secret',
-        MARIADB_ROOT_PASSWORD: 'secret',
-      };
-    }
-    if (engine === 'mongodb') {
-      return {
-        MONGO_INITDB_DATABASE: 'env',
-        MONGO_INITDB_ROOT_USERNAME: 'env',
-        MONGO_INITDB_ROOT_PASSWORD: 'secret',
-      };
-    }
-    return { REDIS_PASSWORD: 'secret' };
-  }
-
-  private resolveStorageMapFromHeader(
-    raw: string,
-    engine: DatabaseEngine,
-  ): Record<string, 'env' | 'secret'> {
-    const out = this.defaultStorageMapForEngine(engine);
-    for (const line of raw.split(/\r?\n/)) {
-      const m = line.match(/^\s*#\s*store\.([A-Z0-9_]+):\s*(env|secret)\s*$/);
-      if (!m) continue;
-      out[m[1]] = m[2] as 'env' | 'secret';
-    }
-    return out;
-  }
-
-  private sanitizeSecretToken(raw: string): string {
-    return raw
-      .toLowerCase()
-      .replace(/[^a-z0-9_.-]/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 80);
-  }
-
-  private buildSecretRefs(
-    appName: string | undefined,
-    credentials: Record<string, string>,
-  ): Record<string, string> {
-    const app = this.sanitizeSecretToken(appName || 'db');
-    const refs: Record<string, string> = {};
-    for (const key of Object.keys(credentials)) {
-      refs[key] = `${app}_${this.sanitizeSecretToken(key)}`;
-    }
-    return refs;
-  }
-
-  /**
-   * Declared secret keys (from variablesJson) must stay in YAML headers even when
-   * the client sends an empty value (e.g. unreadable/redacted secrets after generate).
-   * Otherwise `pickCredentialsByStorage` drops them and the UI loses those rows.
-   * Reuse previous `# secret.KEY: name` when present so Docker secrets are not
-   * orphaned by name churn.
-   */
-  private mergeApplicationSecretRefs(
-    appName: string | undefined,
-    secretValues: Record<string, string>,
-    storageMap: Record<string, 'env' | 'secret'>,
-    previousConfig: string,
-  ): Record<string, string> {
-    const prevByKey = this.parseApplicationSecretRefsFromDockerConfig(previousConfig || '');
-    const built = this.buildSecretRefs(appName, secretValues);
-    const app = this.sanitizeSecretToken(appName || 'app');
-    const out: Record<string, string> = {};
-    for (const [key, store] of Object.entries(storageMap)) {
-      if (store !== 'secret') continue;
-      if (built[key]) {
-        out[key] = built[key];
-      } else {
-        out[key] = prevByKey[key] ?? `${app}_${this.sanitizeSecretToken(key)}`;
-      }
-    }
-    return out;
+  /** Env var names used in generated database stack YAML for the engine. */
+  private credentialKeysForEngine(engine: DatabaseEngine): string[] {
+    return Object.keys(
+      this.credentialsForEngine(engine, 'ph', {
+        user: 'u',
+        pass: 'p',
+        rootUser: 'ru',
+        rootPass: 'rp',
+        password: 'pw',
+      }),
+    );
   }
 
   private parseSecretRefsFromHeader(raw: string): Record<string, string> {
@@ -2922,21 +2804,6 @@ ${traefikLabelsSection}${envSection}${serviceSecretsSection}${svcNetworkSection}
       i++;
     }
     return names;
-  }
-
-  private async ensureSecretsExist(
-    refs: Record<string, string>,
-    credentials: Record<string, string>,
-  ): Promise<void> {
-    for (const [envKey, secretName] of Object.entries(refs)) {
-      const value = credentials[envKey];
-      if (!value) continue;
-      try {
-        await this.dockerSecrets.findOne(secretName);
-      } catch (e) {
-        await this.dockerSecrets.create(secretName, value);
-      }
-    }
   }
 
   /**

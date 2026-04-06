@@ -55,6 +55,13 @@ export function deriveAppNameFromServiceName(name: string): string {
 }
 
 function parseTraefikRoutes(raw: unknown): TraefikRouteRule[] {
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw) as unknown;
+    } catch {
+      return [];
+    }
+  }
   if (!Array.isArray(raw)) return [];
   const out: TraefikRouteRule[] = [];
   for (const item of raw) {
@@ -219,6 +226,10 @@ export function mapApiServiceToService(row: unknown): Service {
       brs && typeof brs.id === "number" && typeof brs.name === "string"
         ? { id: brs.id, name: brs.name }
         : undefined,
+    buildOnLocalDockerHost:
+      s.buildOnLocalDockerHost === true ||
+      s.buildOnLocalDockerHost === "true" ||
+      s.buildOnLocalDockerHost === 1,
     registryPushImage: parseRegistryPushImageFromConfig(cfg),
     magicTraefikMeUrl:
       s.magicTraefikMeUrl === null || s.magicTraefikMeUrl === undefined
@@ -356,12 +367,6 @@ export async function applyPostgresDatabaseApi(
     rootUser?: string;
     rootPass?: string;
     password?: string;
-    storeDbName?: "env" | "secret";
-    storeUser?: "env" | "secret";
-    storePass?: "env" | "secret";
-    storeRootUser?: "env" | "secret";
-    storeRootPass?: "env" | "secret";
-    storePassword?: "env" | "secret";
     volumePath?: string;
     replicas?: number;
     publishPort?: number;
@@ -389,12 +394,6 @@ export async function applyDatabaseApi(
     rootUser?: string;
     rootPass?: string;
     password?: string;
-    storeDbName?: "env" | "secret";
-    storeUser?: "env" | "secret";
-    storePass?: "env" | "secret";
-    storeRootUser?: "env" | "secret";
-    storeRootPass?: "env" | "secret";
-    storePassword?: "env" | "secret";
     volumePath?: string;
     replicas?: number;
     publishPort?: number;
@@ -457,6 +456,7 @@ export async function updateServiceApi(
       | "traefikRoutes"
       | "remoteServerId"
       | "buildRemoteServerId"
+      | "buildOnLocalDockerHost"
       | "registryPushImage"
       | "magicTraefikMeIpv4"
     >
@@ -472,6 +472,8 @@ export async function updateServiceApi(
   if (patch.remoteServerId !== undefined) body.remoteServerId = patch.remoteServerId;
   if (patch.buildRemoteServerId !== undefined)
     body.buildRemoteServerId = patch.buildRemoteServerId;
+  if (patch.buildOnLocalDockerHost !== undefined)
+    body.buildOnLocalDockerHost = patch.buildOnLocalDockerHost;
   if (patch.registryPushImage !== undefined) body.registryPushImage = patch.registryPushImage;
   if (patch.magicTraefikMeIpv4 !== undefined) body.magicTraefikMeIpv4 = patch.magicTraefikMeIpv4;
 
@@ -535,6 +537,123 @@ export async function executeServiceDeploymentApi(
   }
   const j = JSON.parse(text) as { success?: boolean; output?: string };
   return { success: j.success !== false, output: typeof j.output === "string" ? j.output : "" };
+}
+
+/** SSE: same deploy as `POST .../execute` with streamed chunks (`{ data }`) then `{ done, success, output }`. */
+export function serviceDeployStreamUrl(
+  serviceId: string,
+  mode: "deploy" | "reload" | "redeploy",
+): string {
+  return `${API_BASE}/api/services/${encodeURIComponent(serviceId)}/deploy/stream?mode=${encodeURIComponent(mode)}`;
+}
+
+function parseDeploySsePayload(raw: string): {
+  chunk?: string;
+  data?: string;
+  done?: boolean;
+  success?: boolean;
+  output?: string;
+} | null {
+  const t = raw.trim();
+  if (!t) return null;
+  try {
+    return JSON.parse(t) as {
+      chunk?: string;
+      data?: string;
+      done?: boolean;
+      success?: boolean;
+      output?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Streams deploy output (local `docker` or remote SSH) like container log streaming.
+ */
+export async function streamServiceDeploy(
+  serviceId: string,
+  mode: "deploy" | "reload" | "redeploy",
+  onChunk: (text: string) => void,
+  signal?: AbortSignal,
+): Promise<{ success: boolean; output: string }> {
+  const url = serviceDeployStreamUrl(serviceId, mode);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+      mode: "cors",
+      credentials: typeof window !== "undefined" ? "include" : undefined,
+      signal,
+    });
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : String(e));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(nestErrorMessage(text, `HTTP ${res.status}`));
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new Error("No response body from deploy stream.");
+  }
+  const decoder = new TextDecoder();
+  let lineBuffer = "";
+  let finalOut: { success: boolean; output: string } | null = null;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lineBuffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = lineBuffer.indexOf("\n")) >= 0) {
+        const line = lineBuffer.slice(0, nl);
+        lineBuffer = lineBuffer.slice(nl + 1);
+        const trimmed = line.replace(/\r$/, "");
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trimStart();
+        if (!payload || payload === "[DONE]") continue;
+        const parsed = parseDeploySsePayload(payload);
+        if (!parsed) continue;
+        if (parsed.done === true) {
+          finalOut = {
+            success: parsed.success !== false,
+            output: typeof parsed.output === "string" ? parsed.output : "",
+          };
+          continue;
+        }
+        const piece =
+          typeof parsed.data === "string"
+            ? parsed.data
+            : typeof parsed.chunk === "string"
+              ? parsed.chunk
+              : "";
+        if (piece) onChunk(piece);
+      }
+    }
+    if (lineBuffer.length) {
+      const trimmed = lineBuffer.replace(/\r$/, "");
+      if (trimmed.startsWith("data:")) {
+        const payload = trimmed.slice(5).trimStart();
+        const parsed = parseDeploySsePayload(payload);
+        if (parsed?.done === true) {
+          finalOut = {
+            success: parsed.success !== false,
+            output: typeof parsed.output === "string" ? parsed.output : "",
+          };
+        }
+      }
+    }
+  } catch (e) {
+    if ((e as Error).name === "AbortError") throw e;
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+  if (!finalOut) {
+    throw new Error("Deploy stream ended without a result.");
+  }
+  return finalOut;
 }
 
 export async function runServiceBackupNowApi(
@@ -665,7 +784,7 @@ export async function uploadApplicationArchiveApi(
     containerPort?: number;
     publishPort?: number;
     replicas?: number;
-    variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    variables?: Array<{ key: string; value: string }>;
     /** Applied with the upload; avoids a separate PATCH to `/application/networks`. */
     networks?: { external: string[]; stack: string[] };
   },
@@ -680,7 +799,7 @@ export async function uploadApplicationArchiveApi(
   if (options?.publishPort != null) fd.append("publishPort", String(options.publishPort));
   if (options?.replicas != null) fd.append("replicas", String(options.replicas));
   // Always send when the caller passes `variables` (even `[]`) so the API can drop removed keys
-  // and prune Docker secrets; omitting the field would skip cleanup on empty env lists.
+  // and prune obsolete managed Swarm secrets; omitting the field would skip cleanup on empty env lists.
   if (options?.variables !== undefined) {
     fd.append("variablesJson", JSON.stringify(options.variables));
   }
@@ -745,7 +864,7 @@ export async function generateApplicationFromSourceApi(
     containerPort?: number;
     publishPort?: number;
     replicas?: number;
-    variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    variables?: Array<{ key: string; value: string }>;
     networks?: { external: string[]; stack: string[] };
   },
 ): Promise<Service> {
@@ -790,7 +909,7 @@ export async function uploadApplicationGitCloneApi(
     containerPort?: number;
     publishPort?: number;
     replicas?: number;
-    variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    variables?: Array<{ key: string; value: string }>;
     networks?: { external: string[]; stack: string[] };
   },
 ): Promise<Service> {
@@ -834,7 +953,7 @@ export async function patchApplicationImageDeployApi(
     containerPort?: number;
     publishPort?: number;
     replicas?: number;
-    variables?: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    variables?: Array<{ key: string; value: string }>;
     networks?: { external: string[]; stack: string[] };
   },
 ): Promise<Service> {

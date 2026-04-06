@@ -23,7 +23,7 @@ export default async function ConsoleServerLayout({
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm">
-        <span className="text-muted-foreground">WeeDocker · </span>
+        <span className="text-muted-foreground">Weehawk · </span>
         <span className="font-medium text-foreground">{label}</span>
       </div>
       {children}

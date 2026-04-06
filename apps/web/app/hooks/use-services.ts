@@ -15,6 +15,12 @@ import {
   patchApplicationNetworksApi,
   type ServicesPageResponse,
 } from "@/lib/services-api";
+import {
+  invalidateProjectDetailQueries,
+  invalidateProjectServicesQueries,
+  invalidateServiceScopedQueries,
+  scheduleServiceRuntimeRefetchBurst,
+} from "@/lib/invalidate-service-queries";
 
 /** All services in project (`all=1`); use when the full list is required. */
 export function useServices(
@@ -94,7 +100,8 @@ export function useServiceRuntime(
     enabled: !!id,
     initialDataUpdatedAt: hasInitial ? 0 : undefined,
     staleTime: hasInitial ? Infinity : 5_000,
-    refetchInterval: hasInitial ? false : 10_000,
+    /** Polling + post-mutation bursts; keep interval moderate to avoid API noise. */
+    refetchInterval: 5_000,
     refetchOnMount: hasInitial ? false : undefined,
     initialData: options?.initialData,
   });
@@ -116,9 +123,9 @@ export function useCreateService() {
   return useMutation({
     mutationFn: (data: CreateServiceInput) => createServiceApi(data),
     onSuccess: (_, v) => {
-      qc.invalidateQueries({ queryKey: ["services", v.projectId] });
+      void invalidateProjectServicesQueries(qc, v.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });
-      qc.invalidateQueries({ queryKey: ["projects", v.projectId] });
+      void invalidateProjectDetailQueries(qc, v.projectId);
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -144,19 +151,18 @@ export function useUpdateService() {
           | "traefikRoutes"
           | "remoteServerId"
           | "buildRemoteServerId"
+          | "buildOnLocalDockerHost"
           | "registryPushImage"
         >
       >;
     }) => updateServiceApi(id, patch),
     onSuccess: (data) => {
-      // Keep ["service", id] in sync immediately so UI (e.g. remote host selects) does not revert
-      // after navigation; invalidate alone can race or be skipped with staleTime: Infinity + no refetchOnMount.
+      // Keep ["service", ownerKey, id] in sync; invalidate uses predicate so it matches that key shape.
       qc.setQueryData(["service", user?.userId ?? "none", String(data.id)], data);
-      qc.invalidateQueries({ queryKey: ["services", data.projectId] });
+      void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });
-      qc.invalidateQueries({ queryKey: ["service", data.id] });
-      qc.invalidateQueries({ queryKey: ["service-volumes", String(data.id)] });
-      qc.invalidateQueries({ queryKey: ["projects", data.projectId] });
+      void invalidateServiceScopedQueries(qc, String(data.id), user?.userId ?? "none");
+      void invalidateProjectDetailQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -164,6 +170,7 @@ export function useUpdateService() {
 
 export function usePatchApplicationNetworks() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: ({
       id,
@@ -175,20 +182,21 @@ export function usePatchApplicationNetworks() {
       stack: string[];
     }) => patchApplicationNetworksApi(id, { external, stack }),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["services", data.projectId] });
+      void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });
-      qc.invalidateQueries({ queryKey: ["service", data.id] });
+      void invalidateServiceScopedQueries(qc, String(data.id), user?.userId ?? "none");
     },
   });
 }
 
 export function useDeleteService() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: (id: string) => deleteServiceApi(id),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["services"] });
-      qc.invalidateQueries({ queryKey: ["service", id] });
+      void invalidateServiceScopedQueries(qc, String(id), user?.userId ?? "none");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -196,12 +204,13 @@ export function useDeleteService() {
 
 export function useShutdownService() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: (id: string) => shutdownServiceApi(id),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["services"] });
-      qc.invalidateQueries({ queryKey: ["service", id] });
-      qc.invalidateQueries({ queryKey: ["service-runtime", id] });
+      void invalidateServiceScopedQueries(qc, String(id), user?.userId ?? "none");
+      scheduleServiceRuntimeRefetchBurst(qc, String(id), user?.userId ?? "none");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -209,12 +218,13 @@ export function useShutdownService() {
 
 export function useStartService() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: (id: string) => startServiceApi(id),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["services"] });
-      qc.invalidateQueries({ queryKey: ["service", id] });
-      qc.invalidateQueries({ queryKey: ["service-runtime", id] });
+      void invalidateServiceScopedQueries(qc, String(id), user?.userId ?? "none");
+      scheduleServiceRuntimeRefetchBurst(qc, String(id), user?.userId ?? "none");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -222,14 +232,15 @@ export function useStartService() {
 
 export function useToggleService() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
       updateServiceApi(id, { isActive }),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["services", data.projectId] });
+      void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });
-      qc.invalidateQueries({ queryKey: ["service", data.id] });
-      qc.invalidateQueries({ queryKey: ["projects", data.projectId] });
+      void invalidateServiceScopedQueries(qc, String(data.id), user?.userId ?? "none");
+      void invalidateProjectDetailQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });

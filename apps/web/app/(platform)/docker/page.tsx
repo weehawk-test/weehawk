@@ -5,5 +5,5 @@ export default function DockerIndexPage() {
   if (isCloudEdition()) {
     redirect("/remote-server");
   }
-  redirect("/console/local/containers");
+  redirect("/console/local/images");
 }

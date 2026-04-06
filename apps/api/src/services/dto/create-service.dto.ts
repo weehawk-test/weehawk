@@ -90,6 +90,16 @@ export class CreateServiceDto {
 
     @ApiProperty({
         required: false,
+        default: false,
+        description:
+            'Swarm application: when true, build on this server’s Docker (API host) even if deploy uses a remote host. Requires registry.pushImage / registry image so the remote can pull.',
+    })
+    @IsOptional()
+    @IsBoolean()
+    buildOnLocalDockerHost?: boolean;
+
+    @ApiProperty({
+        required: false,
         nullable: true,
         description:
             'Swarm application: full image ref for build+push (e.g. docker.io/myorg/app:latest). Requires `docker login` on the API host (Registry page). Stack deploy then pulls on the deploy host.',

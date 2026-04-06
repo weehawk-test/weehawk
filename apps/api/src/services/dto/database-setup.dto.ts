@@ -28,10 +28,6 @@ export class DatabaseSetupDto {
   @IsString()
   @MaxLength(256)
   pass?: string;
-  @ApiPropertyOptional({ example: 'secret', enum: ['env', 'secret'] })
-  @IsOptional()
-  @Matches(/^(env|secret)$/)
-  storePass?: 'env' | 'secret';
 
   @ApiPropertyOptional({ example: 'root' })
   @IsOptional()
@@ -44,35 +40,12 @@ export class DatabaseSetupDto {
   @IsString()
   @MaxLength(256)
   rootPass?: string;
-  @ApiPropertyOptional({ example: 'secret', enum: ['env', 'secret'] })
-  @IsOptional()
-  @Matches(/^(env|secret)$/)
-  storeRootPass?: 'env' | 'secret';
 
   @ApiPropertyOptional({ example: 'secret' })
   @IsOptional()
   @IsString()
   @MaxLength(256)
   password?: string;
-  @ApiPropertyOptional({ example: 'secret', enum: ['env', 'secret'] })
-  @IsOptional()
-  @Matches(/^(env|secret)$/)
-  storePassword?: 'env' | 'secret';
-
-  @ApiPropertyOptional({ example: 'env', enum: ['env', 'secret'] })
-  @IsOptional()
-  @Matches(/^(env|secret)$/)
-  storeDbName?: 'env' | 'secret';
-
-  @ApiPropertyOptional({ example: 'env', enum: ['env', 'secret'] })
-  @IsOptional()
-  @Matches(/^(env|secret)$/)
-  storeUser?: 'env' | 'secret';
-
-  @ApiPropertyOptional({ example: 'env', enum: ['env', 'secret'] })
-  @IsOptional()
-  @Matches(/^(env|secret)$/)
-  storeRootUser?: 'env' | 'secret';
 
   @ApiPropertyOptional({ example: 1, default: 1 })
   @IsOptional()

@@ -36,6 +36,7 @@ import { RunServiceBackupDto } from './dto/run-service-backup.dto';
 import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s3.dto';
 import type { DatabaseEngine } from './database-generator.service';
 import { ApiBearerAuth, ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { EventEmitter } from 'events';
 import { Observable, map } from 'rxjs';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -158,6 +159,55 @@ export class ServicesController {
       m === 'reload' ? 'reload' : m === 'redeploy' ? 'redeploy' : 'deploy';
     return this.servicesService.executeDeployment(+id, mode, {
       actingUserId: this.uid(req!),
+    });
+  }
+
+  /**
+   * Same deploy as `POST :id/execute`, but streams stdout/stderr chunks over SSE (like local `docker` on the API host).
+   * Query: `mode` = deploy | reload | redeploy (default deploy).
+   */
+  @Sse(':id/deploy/stream')
+  @ApiOperation({
+    summary:
+      'Deploy with streamed log output (SSE). Chunks use `{ data: string }`; final message `{ done, success, output }`.',
+  })
+  streamDeploy(
+    @Param('id') id: string,
+    @Query('mode') modeRaw: string | undefined,
+    @Req() req: { user?: { userId: number } },
+  ): Observable<MessageEvent> {
+    const mode =
+      modeRaw === 'reload' ? 'reload' : modeRaw === 'redeploy' ? 'redeploy' : 'deploy';
+    return new Observable((observer) => {
+      const emitter = new EventEmitter();
+      emitter.on('data', (chunk: string) => {
+        observer.next({ data: JSON.stringify({ data: chunk }) } as MessageEvent);
+      });
+      void this.servicesService
+        .executeDeployment(+id, mode, {
+          actingUserId: this.uid(req),
+          deployLogEmitter: emitter,
+        })
+        .then((result) => {
+          observer.next({
+            data: JSON.stringify({
+              done: true,
+              success: result.success,
+              output: result.output ?? '',
+            }),
+          } as MessageEvent);
+          observer.complete();
+        })
+        .catch((e: Error) => {
+          observer.next({
+            data: JSON.stringify({
+              done: true,
+              success: false,
+              output: e?.message ?? String(e),
+            }),
+          } as MessageEvent);
+          observer.complete();
+        });
     });
   }
 

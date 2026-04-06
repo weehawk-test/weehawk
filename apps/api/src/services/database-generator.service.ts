@@ -85,52 +85,20 @@ export class DatabaseGeneratorService {
       : '';
   }
 
-  private buildEnvSectionHybrid(
+  /** Stack `environment:` uses `${VAR}` placeholders; values come from the service env on deploy. */
+  private buildEnvSection(
     engine: DatabaseEngine,
     plainEnvKeys: string[],
-    secretRefs: Record<string, string>,
   ): string {
     const lines: string[] = [];
     for (const key of plainEnvKeys) {
       lines.push(`      ${key}: \${${key}}`);
     }
-    for (const [k, secretName] of Object.entries(secretRefs)) {
-      if (this.supportsFileSecret(engine, k)) {
-        lines.push(`      ${k}_FILE: /run/secrets/${secretName}`);
-      }
-    }
     if (!lines.length) return '';
     return `    environment:\n${lines.join('\n')}\n`;
   }
 
-  private supportsFileSecret(engine: DatabaseEngine, key: string): boolean {
-    if (engine === 'redis') return false;
-    void key;
-    return true;
-  }
-
-  private buildServiceSecretsSection(secretRefs: Record<string, string>): string {
-    const names = Object.values(secretRefs);
-    if (!names.length) return '';
-    const lines = names.map((n) => `      - ${n}`).join('\n');
-    return `    secrets:\n${lines}\n`;
-  }
-
-  private buildRootSecretsSection(secretRefs: Record<string, string>): string {
-    const names = Object.values(secretRefs);
-    if (!names.length) return '';
-    const lines = names.map((n) => `  ${n}:\n    external: true`).join('\n');
-    return `secrets:\n${lines}\n`;
-  }
-
-  private buildRedisCommand(
-    secretRefs: Record<string, string>,
-    plainEnvKeys: string[],
-  ): string {
-    const n = secretRefs['REDIS_PASSWORD'];
-    if (n) {
-      return `    command: ["sh", "-c", "redis-server --appendonly yes --requirepass $$(cat /run/secrets/${n})"]\n`;
-    }
+  private buildRedisCommand(plainEnvKeys: string[]): string {
     if (plainEnvKeys.includes('REDIS_PASSWORD')) {
       return `    command: ["sh", "-c", "redis-server --appendonly yes --requirepass $$REDIS_PASSWORD"]\n`;
     }
@@ -152,19 +120,15 @@ export class DatabaseGeneratorService {
     publishPort?: number | null,
     volumePath?: string,
     plainEnvKeys?: string[],
-    secretRefs?: Record<string, string>,
   ): string {
     const safe = this.sanitizeDbName(dbName);
     const rep = Math.min(10, Math.max(1, Math.floor(replicas)));
     const image = imageRefNormalized ?? this.defaultImage(engine);
     const expose = this.buildPortExpose(publishPort, this.containerPort(engine));
     const envKeys = plainEnvKeys ?? [];
-    const refs = secretRefs ?? {};
-    const env = this.buildEnvSectionHybrid(engine, plainEnvKeys ?? [], refs);
+    const env = this.buildEnvSection(engine, envKeys);
     const mount = (volumePath ?? '').trim() || this.defaultDataMount(engine);
-    const serviceSecrets = this.buildServiceSecretsSection(refs);
-    const rootSecrets = this.buildRootSecretsSection(refs);
-    const redisCmd = this.buildRedisCommand(refs, envKeys);
+    const redisCmd = this.buildRedisCommand(envKeys);
     const commandSection = redisCmd;
 
     return `
@@ -182,7 +146,7 @@ ${expose}    deploy:
           - node.role == manager
 ${commandSection}${env}    volumes:
       - ${safe}-data:${mount}
-${serviceSecrets}    networks:
+    networks:
       - ${safe}-network
 
 volumes:
@@ -194,7 +158,6 @@ networks:
     driver: overlay
     internal: true
     attachable: true
-${rootSecrets}
 `.trim();
   }
 
@@ -203,21 +166,13 @@ ${rootSecrets}
     imageForComment: string,
     dbName: string,
     volumePath: string,
-    storageMap: Record<string, 'env' | 'secret'>,
-    secretRefs: Record<string, string>,
   ): string {
-    const secretLines = Object.entries(secretRefs)
-      .map(([k, v]) => `# secret.${k}: ${v}`)
-      .join('\n');
-    const storeLines = Object.entries(storageMap)
-      .map(([k, v]) => `# store.${k}: ${v}`)
-      .join('\n');
     return `# weehawk database service
 # engine: ${engine}
 # image: ${imageForComment}
 # dbName: ${dbName}
 # volumePath: ${volumePath}
-${storeLines ? `${storeLines}\n` : ''}${secretLines ? `${secretLines}\n` : ''}`;
+`;
   }
 
   buildDatabaseDockerConfig(
@@ -228,15 +183,11 @@ ${storeLines ? `${storeLines}\n` : ''}${secretLines ? `${secretLines}\n` : ''}`;
     imageRef?: string | null,
     volumePath?: string | null,
     plainEnvKeys?: string[],
-    storageMap?: Record<string, 'env' | 'secret'>,
-    secretRefs?: Record<string, string>,
   ): string {
     const img = this.normalizeImage(engine, imageRef);
     const mount = (volumePath ?? '').trim() || this.defaultDataMount(engine);
-    const store = storageMap ?? {};
-    const refs = secretRefs ?? {};
     return (
-      this.buildDatabaseHeader(engine, img, dbName, mount, store, refs) +
+      this.buildDatabaseHeader(engine, img, dbName, mount) +
       this.generateDatabaseCompose(
         engine,
         dbName,
@@ -245,7 +196,6 @@ ${storeLines ? `${storeLines}\n` : ''}${secretLines ? `${secretLines}\n` : ''}`;
         publishPort,
         mount,
         plainEnvKeys,
-        refs,
       )
     );
   }
@@ -264,7 +214,6 @@ ${storeLines ? `${storeLines}\n` : ''}${secretLines ? `${secretLines}\n` : ''}`;
     publishPort?: number | null,
     volumePath?: string | null,
     plainEnvKeys?: string[],
-    secretRefs?: Record<string, string>,
   ): string {
     return this.generateDatabaseCompose(
       'postgres',
@@ -274,7 +223,6 @@ ${storeLines ? `${storeLines}\n` : ''}${secretLines ? `${secretLines}\n` : ''}`;
       publishPort,
       volumePath ?? undefined,
       plainEnvKeys,
-      secretRefs,
     );
   }
   buildPostgresDockerConfig(
@@ -284,8 +232,6 @@ ${storeLines ? `${storeLines}\n` : ''}${secretLines ? `${secretLines}\n` : ''}`;
     imageRef?: string | null,
     volumePath?: string | null,
     plainEnvKeys?: string[],
-    storageMap?: Record<string, 'env' | 'secret'>,
-    secretRefs?: Record<string, string>,
   ): string {
     return this.buildDatabaseDockerConfig(
       'postgres',
@@ -295,8 +241,6 @@ ${storeLines ? `${storeLines}\n` : ''}${secretLines ? `${secretLines}\n` : ''}`;
       imageRef,
       volumePath,
       plainEnvKeys,
-      storageMap,
-      secretRefs,
     );
   }
 }

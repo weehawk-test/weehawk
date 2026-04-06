@@ -1,7 +1,13 @@
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { DeployLog, deployLogSchema } from "@/lib/schema";
 import { z } from "zod";
-import { executeServiceDeploymentApi } from "@/lib/services-api";
+import { streamServiceDeploy } from "@/lib/services-api";
+import {
+  invalidateServiceScopedQueries,
+  scheduleServiceRowRefetchBurst,
+  scheduleServiceRuntimeRefetchBurst,
+} from "@/lib/invalidate-service-queries";
+import { useAuth } from "@/contexts/auth-context";
 
 const STORAGE_KEY = "deploy_logs_data";
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -39,22 +45,28 @@ export function useDeployLogs(serviceId?: string) {
 /** Runs `POST /services/:id/execute` on the API; persists verbatim output for the Deployments tab. */
 export function useDeploy() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   return useMutation({
     mutationFn: async ({
       serviceId,
       serviceName,
       mode = "deploy",
+      onStreamChunk,
     }: {
       serviceId: string;
       serviceName: string;
       serviceType: string;
       mode?: "deploy" | "reload" | "redeploy";
+      /** Live stdout/stderr (same as local `docker` on the API host, or remote SSH). */
+      onStreamChunk?: (chunk: string) => void;
     }) => {
       const id = crypto.randomUUID();
       const startedAt = new Date().toISOString();
 
       try {
-        const result = await executeServiceDeploymentApi(serviceId, mode);
+        const result = await streamServiceDeploy(serviceId, mode, (chunk) => {
+          onStreamChunk?.(chunk);
+        });
         const finishedAt = new Date().toISOString();
         const rawOutput = (result.output ?? "").replace(/\r\n/g, "\n");
 
@@ -91,11 +103,12 @@ export function useDeploy() {
       }
     },
     onSuccess: (log) => {
+      const owner = user?.userId ?? "none";
       qc.invalidateQueries({ queryKey: ["deploy-logs", log.serviceId] });
-      qc.invalidateQueries({ queryKey: ["service", log.serviceId] });
-      qc.invalidateQueries({ queryKey: ["service-runtime", log.serviceId] });
-      qc.invalidateQueries({ queryKey: ["service-volumes", log.serviceId] });
+      void invalidateServiceScopedQueries(qc, log.serviceId, owner);
       qc.invalidateQueries({ queryKey: ["services"] });
+      scheduleServiceRuntimeRefetchBurst(qc, log.serviceId, owner);
+      scheduleServiceRowRefetchBurst(qc, log.serviceId, owner);
     },
   });
 }

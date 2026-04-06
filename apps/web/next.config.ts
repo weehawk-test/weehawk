@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
       { source: "/docker/traefik", destination: "/traefik", permanent: true },
       {
         source: "/docker",
-        destination: cloudEdition ? "/remote-server" : "/console/local/containers",
+        destination: cloudEdition ? "/remote-server" : "/console/local/images",
         permanent: true,
       },
       {

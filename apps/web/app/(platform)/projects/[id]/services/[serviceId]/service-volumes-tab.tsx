@@ -5,6 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { HardDrive, Loader2, AlertCircle, RefreshCw, FolderOpen, Lock, Archive } from "lucide-react";
 import { motion } from "framer-motion";
 import { useServiceVolumes } from "@/hooks/use-services";
+import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
+import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { isCloudEdition } from "@/lib/weehawk-edition";
 
@@ -27,6 +29,7 @@ function rowSupportsBackup(mountType: string): boolean {
 export function ServiceVolumesTab({ serviceId, enabled }: Props) {
   const showLocalDockerVolumesLink = !isCloudEdition();
   const qc = useQueryClient();
+  const { user } = useAuth();
   const { toast } = useToast();
   const { data, isLoading, isFetching, refetch } = useServiceVolumes(serviceId, enabled);
 
@@ -39,7 +42,7 @@ export function ServiceVolumesTab({ serviceId, enabled }: Props) {
 
   const refresh = () => {
     void refetch();
-    void qc.invalidateQueries({ queryKey: ["service-volumes", serviceId] });
+    void invalidateServiceScopedQueries(qc, serviceId, user?.userId ?? "none");
   };
 
   if (!enabled) return null;

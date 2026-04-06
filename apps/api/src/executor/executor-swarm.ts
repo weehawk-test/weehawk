@@ -1,7 +1,9 @@
 import { exec } from 'child_process';
+import type { EventEmitter } from 'events';
 import { promisify } from 'util';
 import { Service } from '../services/entities/service.entity';
 import { composeType } from '../services/entities/composeType.enum';
+import { spawnDockerSubcommand } from './executor-docker';
 
 const execAsync = promisify(exec);
 
@@ -27,14 +29,15 @@ function execEnv(
 export async function forceRollingRestartStackServices(
   stackName: string,
   dockerEnv?: NodeJS.ProcessEnv,
+  deployLogEmitter?: EventEmitter,
 ): Promise<{
   output: string;
   stderr: string;
 }> {
-  const envOpts = execEnv(dockerEnv);
-  const { stdout } = await execAsync(
-    `docker stack services ${stackName} --format "{{.Name}}"`,
-    envOpts,
+  const mergedEnv = dockerEnv ? { ...process.env, ...dockerEnv } : process.env;
+  const { stdout } = await spawnDockerSubcommand(
+    ['stack', 'services', stackName, '--format', '{{.Name}}'],
+    { env: mergedEnv, deployLogEmitter },
   );
   const names = stdout
     .split(/\r?\n/)
@@ -43,9 +46,9 @@ export async function forceRollingRestartStackServices(
   const chunks: string[] = [];
   let combinedStderr = '';
   for (const name of names) {
-    const { stdout: uo, stderr: ue } = await execAsync(
-      `docker service update --force ${name}`,
-      { maxBuffer: 10 * 1024 * 1024, ...envOpts },
+    const { stdout: uo, stderr: ue } = await spawnDockerSubcommand(
+      ['service', 'update', '--force', name],
+      { env: mergedEnv, deployLogEmitter },
     );
     chunks.push([uo, ue].filter((s) => s && String(s).trim()).join('\n'));
     combinedStderr += ue ?? '';

@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -8,8 +16,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { formatDistanceToNow } from "date-fns";
 import {
   Container, Layers, Copy, Trash2, FileCode,
-  Info, Hash, FolderKanban, CheckCircle, XCircle,
-  Download, Edit3, Save, X, Calendar, Tag, Plus,
+  FolderKanban, CheckCircle,
+  Download, Edit3, Save, X, Calendar, Plus,
   Terminal, Rocket, RefreshCw, Square, Play, RotateCw, Activity, Loader2,
   Shield, Variable, Globe, ExternalLink, Link2, ScrollText, Archive, Server, ChevronDown, ChevronRight,
   Database, Eye, EyeOff, Lock, HardDrive, AlertCircle, Upload, Cloud,
@@ -100,6 +108,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { listDatabaseBackupOptions } from "@/lib/database-backup-from-service";
 import {
   resolveBackupFormat,
@@ -109,6 +118,7 @@ import {
 } from "@/lib/database-backup-preview";
 import { buildDatabaseInternalConnectionUrl, DB_URL_PASSWORD_PLACEHOLDER } from "@/lib/database-internal-url";
 import { listS3ProfilesApi, type S3BucketListResponse, type S3ProfilePublic } from "@/lib/s3-api";
+import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
 
 /** Deterministic on server + client (avoids hydration mismatch from `format()` using local TZ). */
@@ -136,24 +146,10 @@ const SERVICE_TYPE_CONFIG = {
 services:
   app:
     image: nginx:latest
-    container_name: my-app
     ports:
       - "80:80"
-      - "443:443"
-    environment:
-      - NODE_ENV=production
-      - PORT=80
-    volumes:
-      - ./data:/data
-      - ./logs:/var/log/nginx
     networks:
       - app-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
 networks:
   app-network:
@@ -171,25 +167,10 @@ services:
     image: nginx:latest
     ports:
       - "80:80"
-    networks:
-      - overlay-net
     deploy:
       replicas: 2
-      update_config:
-        parallelism: 1
-        delay: 10s
-        order: start-first
-      rollback_config:
-        parallelism: 1
-        delay: 5s
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-      resources:
-        limits:
-          cpus: '0.50'
-          memory: 512M
+    networks:
+      - overlay-net
 
 networks:
   overlay-net:
@@ -212,7 +193,6 @@ networks:
 };
 
 type Tab =
-  | "overview"
   | "dbdetails"
   | "config"
   | "appconf"
@@ -260,6 +240,355 @@ function renderYamlValue(v: string) {
   return <span className="text-zinc-200">{v}</span>;
 }
 
+const YAML_INDENT = "  ";
+
+/** Common Docker Compose file v3 + Swarm `deploy:` keys (flat list for simple prefix match). */
+const COMPOSE_STACK_SUGGESTIONS: readonly string[] = [
+  "- ",
+  "attachable:",
+  "build:",
+  "cap_add:",
+  "cap_drop:",
+  "command:",
+  "condition:",
+  "configs:",
+  "container_name:",
+  "context:",
+  "cpus:",
+  "delay:",
+  "depends_on:",
+  "deploy:",
+  "devices:",
+  "dns:",
+  "dockerfile:",
+  "driver:",
+  "endpoint_mode:",
+  "entrypoint:",
+  "env_file:",
+  "environment:",
+  "expose:",
+  "external:",
+  "extra_hosts:",
+  "failure_action:",
+  "global:",
+  "healthcheck:",
+  "hostname:",
+  "image:",
+  "init:",
+  "interval:",
+  "ipc:",
+  "ipam:",
+  "labels:",
+  "limits:",
+  "logging:",
+  "max_attempts:",
+  "max_failure_ratio:",
+  "memory:",
+  "mode:",
+  "monitor:",
+  "name:",
+  "network_mode:",
+  "networks:",
+  "order:",
+  "parallelism:",
+  "pid:",
+  "placement:",
+  "ports:",
+  "privileged:",
+  "read_only:",
+  "replicas:",
+  "replicated:",
+  "reservations:",
+  "resources:",
+  "restart:",
+  "restart_policy:",
+  "retries:",
+  "rollback_config:",
+  "scale:",
+  "secrets:",
+  "security_opt:",
+  "services:",
+  "start_period:",
+  "stdin_open:",
+  "stop_grace_period:",
+  "stop_signal:",
+  "sysctls:",
+  "test:",
+  "timeout:",
+  "tmpfs:",
+  "tty:",
+  "ulimits:",
+  "update_config:",
+  "user:",
+  "version:",
+  "volumes:",
+  "working_dir:",
+]
+  .filter((v, i, a) => a.indexOf(v) === i)
+  .sort((a, b) => a.localeCompare(b));
+
+function wordPrefixAtCursor(value: string, caret: number): { wordStart: number; prefix: string } {
+  const c = Math.max(0, Math.min(caret, value.length));
+  const lineStart = value.lastIndexOf("\n", c - 1) + 1;
+  const before = value.slice(lineStart, c);
+  const m = before.match(/[^\s]*$/);
+  const prefix = m ? m[0] : "";
+  const wordStart = c - prefix.length;
+  return { wordStart, prefix };
+}
+
+function filterComposeSuggestions(prefix: string): string[] {
+  const q = prefix.trim().toLowerCase();
+  const list = COMPOSE_STACK_SUGGESTIONS;
+  if (!q) return [...list].slice(0, 55);
+  const starts = list.filter((s) => s.toLowerCase().startsWith(q));
+  const rest = list.filter((s) => !s.toLowerCase().startsWith(q) && s.toLowerCase().includes(q));
+  return [...starts, ...rest].slice(0, 45);
+}
+
+/** First list entry that extends the typed prefix — used for inline ghost + Tab completion. */
+function pickGhostCompletion(prefix: string): { full: string; suffix: string } | null {
+  if (prefix.length < 1) return null;
+  const list = filterComposeSuggestions(prefix);
+  const pl = prefix.length;
+  for (const c of list) {
+    if (c.length > pl && c.toLowerCase().startsWith(prefix.toLowerCase())) {
+      return { full: c, suffix: c.slice(pl) };
+    }
+  }
+  return null;
+}
+
+function lineIndexAtPos(s: string, pos: number): number {
+  const p = Math.max(0, Math.min(pos, s.length));
+  let n = 0;
+  for (let i = 0; i < p; i++) if (s[i] === "\n") n += 1;
+  return n;
+}
+
+function lineStartOffset(s: string, lineIdx: number): number {
+  const lines = s.split("\n");
+  if (lineIdx <= 0) return 0;
+  if (lineIdx >= lines.length) return s.length;
+  let o = 0;
+  for (let i = 0; i < lineIdx; i++) o += lines[i].length + 1;
+  return o;
+}
+
+/** Tab / Shift+Tab on full logical lines; 2 spaces like default YAML in VS Code. */
+function applyYamlTab(
+  value: string,
+  start: number,
+  end: number,
+  shift: boolean,
+): { next: string; selStart: number; selEnd: number } | null {
+  if (shift) {
+    if (start === end) {
+      const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const nl = value.indexOf("\n", lineStart);
+      const lineEnd = nl === -1 ? value.length : nl;
+      const lineText = value.slice(lineStart, lineEnd);
+      let newLine = lineText;
+      if (lineText.startsWith(YAML_INDENT)) newLine = lineText.slice(YAML_INDENT.length);
+      else if (lineText.startsWith("\t")) newLine = lineText.slice(1);
+      else return null;
+      const removed = lineText.length - newLine.length;
+      const next = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+      const caret = Math.max(lineStart, start - removed);
+      return { next, selStart: caret, selEnd: caret };
+    }
+    const liStart = lineIndexAtPos(value, start);
+    const liEnd = lineIndexAtPos(value, Math.max(0, end - 1));
+    const lines = value.split("\n");
+    const out = lines.map((line, i) => {
+      if (i < liStart || i > liEnd) return line;
+      if (line.startsWith(YAML_INDENT)) return line.slice(YAML_INDENT.length);
+      if (line.startsWith("\t")) return line.slice(1);
+      return line;
+    });
+    const next = out.join("\n");
+    const selStart = lineStartOffset(next, liStart);
+    const selEnd = liEnd + 1 >= out.length ? next.length : lineStartOffset(next, liEnd + 1);
+    return { next, selStart, selEnd };
+  }
+
+  if (start === end) {
+    const next = value.slice(0, start) + YAML_INDENT + value.slice(end);
+    const pos = start + YAML_INDENT.length;
+    return { next, selStart: pos, selEnd: pos };
+  }
+  const liStart = lineIndexAtPos(value, start);
+  const liEnd = lineIndexAtPos(value, Math.max(0, end - 1));
+  const lines = value.split("\n");
+  const out = lines.map((line, i) => (i >= liStart && i <= liEnd ? YAML_INDENT + line : line));
+  const next = out.join("\n");
+  const selStart = lineStartOffset(next, liStart);
+  const selEnd = liEnd + 1 >= out.length ? next.length : lineStartOffset(next, liEnd + 1);
+  return { next, selStart, selEnd };
+}
+
+/** Compose / stack YAML editor: gutter stays aligned with textarea scroll (shared line height). */
+function ConfigYamlTextareaWithGutter({
+  value,
+  onChange,
+  placeholder,
+  onSave,
+  saveDisabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  /** Ctrl+S / Cmd+S */
+  onSave?: () => void;
+  saveDisabled?: boolean;
+}) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const [caretPos, setCaretPos] = useState(0);
+  const [scrollOff, setScrollOff] = useState({ top: 0, left: 0 });
+
+  const lineCount = Math.max(value.split("\n").length, 1);
+  const gutterDigits = Math.max(2, String(lineCount).length);
+
+  const ghost = useMemo(() => {
+    const { prefix } = wordPrefixAtCursor(value, caretPos);
+    return pickGhostCompletion(prefix);
+  }, [value, caretPos]);
+
+  const syncScroll = () => {
+    const g = gutterRef.current;
+    const t = taRef.current;
+    if (g && t) g.scrollTop = t.scrollTop;
+  };
+
+  useEffect(() => {
+    syncScroll();
+  }, [value]);
+
+  const applySelection = (next: string, selStart: number, selEnd: number) => {
+    onChange(next);
+    queueMicrotask(() => {
+      const el = taRef.current;
+      if (!el) return;
+      const a = Math.max(0, Math.min(selStart, next.length));
+      const b = Math.max(0, Math.min(selEnd, next.length));
+      el.setSelectionRange(a, b);
+      el.focus();
+    });
+  };
+
+  const applySuggestion = useCallback(
+    (suggestion: string) => {
+      const ta = taRef.current;
+      const caret = ta?.selectionStart ?? 0;
+      const { wordStart } = wordPrefixAtCursor(value, caret);
+      const next = value.slice(0, wordStart) + suggestion + value.slice(caret);
+      const pos = wordStart + suggestion.length;
+      onChange(next);
+      setCaretPos(pos);
+      queueMicrotask(() => {
+        const el = taRef.current;
+        if (!el) return;
+        el.setSelectionRange(pos, pos);
+        el.focus();
+      });
+    },
+    [value, onChange],
+  );
+
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const ta = e.currentTarget;
+    setCaretPos(ta.selectionStart);
+
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      if (!saveDisabled && onSave) onSave();
+      return;
+    }
+
+    if (e.key === "Tab") {
+      const { prefix } = wordPrefixAtCursor(value, ta.selectionStart);
+      const g = pickGhostCompletion(prefix);
+      if (g && ta.selectionStart === ta.selectionEnd && !e.shiftKey) {
+        e.preventDefault();
+        applySuggestion(g.full);
+        return;
+      }
+      e.preventDefault();
+      const result = applyYamlTab(value, ta.selectionStart, ta.selectionEnd, e.shiftKey);
+      if (result) applySelection(result.next, result.selStart, result.selEnd);
+      return;
+    }
+  };
+
+  /** Same font + fixed line-height as textarea so each gutter row matches one editor line. */
+  const lineClass =
+    "font-mono text-xs tabular-nums leading-[1.625rem] text-zinc-500 dark:text-zinc-500/90 select-none";
+
+  const onEditorScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    syncScroll();
+    const t = e.currentTarget;
+    setScrollOff({ top: t.scrollTop, left: t.scrollLeft });
+  };
+
+  return (
+    <div className="flex min-h-[420px] items-stretch">
+      <div
+        ref={gutterRef}
+        className="shrink-0 overflow-y-auto overflow-x-hidden border-r border-border/70 bg-zinc-200/95 dark:bg-zinc-950/75 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        style={{ width: `calc(${gutterDigits}ch + 1.75rem)` }}
+        aria-hidden
+      >
+        <div className={`pt-2 pb-5 pr-3 pl-5 text-right ${lineClass}`}>
+          {Array.from({ length: lineCount }, (_, i) => (
+            <div key={i} className="block h-[1.625rem] leading-[1.625rem]">
+              {i + 1}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="relative min-h-[420px] min-w-0 flex-1 bg-zinc-100 dark:bg-black/70">
+        <div
+          className="pointer-events-none absolute inset-0 z-0 overflow-hidden pt-2 pb-5 pl-3 pr-5 font-mono text-xs leading-[1.625rem]"
+          aria-hidden
+        >
+          <div
+            className="inline-block w-max min-w-full whitespace-pre text-zinc-900 dark:text-emerald-200"
+            style={{
+              transform: `translate(${-scrollOff.left}px, ${-scrollOff.top}px)`,
+            }}
+          >
+            {value.slice(0, caretPos)}
+            {ghost ? (
+              <span className="text-zinc-400/55 dark:text-zinc-500/55">{ghost.suffix}</span>
+            ) : null}
+            {value.slice(caretPos)}
+          </div>
+        </div>
+        <textarea
+          ref={taRef}
+          value={value}
+          onChange={(e) => {
+            setCaretPos(e.target.selectionStart);
+            onChange(e.target.value);
+          }}
+          onSelect={(e) => setCaretPos(e.currentTarget.selectionStart)}
+          onClick={(e) => setCaretPos(e.currentTarget.selectionStart)}
+          onKeyUp={(e) => setCaretPos(e.currentTarget.selectionStart)}
+          onKeyDown={onKeyDown}
+          onScroll={onEditorScroll}
+          placeholder={placeholder}
+          wrap="off"
+          className="relative z-10 m-0 min-h-[420px] w-full resize-y overflow-x-auto overflow-y-auto border-0 bg-transparent pt-2 pb-5 pl-3 pr-5 font-mono text-xs leading-[1.625rem] text-transparent caret-zinc-900 outline-none ring-0 selection:bg-primary/25 selection:text-zinc-900 placeholder:text-muted-foreground dark:caret-emerald-400 dark:selection:bg-primary/30 dark:selection:text-emerald-200"
+          style={{ lineHeight: "1.625rem" }}
+          spellCheck={false}
+          aria-autocomplete="inline"
+        />
+      </div>
+    </div>
+  );
+}
+
 /** Non-empty, non-comment lines that look like KEY=value (used for tab badge / overview). */
 function countEnvEntries(text: string) {
   return text.split("\n").filter((l) => {
@@ -285,6 +614,24 @@ function defaultTraefikRouterName(appName?: string): string {
   if (!s) s = "app";
   if (!/^[a-z]/.test(s)) s = `a${s}`;
   return s.slice(0, 63);
+}
+
+/** Traefik labels use `traefik.http.routers.<name>…`; names must be unique or labels overwrite each other. */
+function nextUniqueRouterDraft(service: Service, routes: TraefikRouteRule[]): string {
+  const taken = new Set(
+    routes.map((r) => r.router.trim().toLowerCase()).filter(Boolean),
+  );
+  if (routes.length === 0) {
+    const base = defaultTraefikRouterName(service.appName);
+    if (!taken.has(base.toLowerCase())) return base;
+  }
+  let n = routes.length + 1;
+  let candidate = `r${n}`;
+  while (taken.has(candidate.toLowerCase())) {
+    n += 1;
+    candidate = `r${n}`;
+  }
+  return candidate;
 }
 
 /** One hostname per route (Traefik router rule). */
@@ -365,14 +712,18 @@ export default function ServiceDetails({
   const { id: projectId, serviceId } = useParams<{ id: string; serviceId: string }>();
   const router = useRouter();
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState<Tab>("config");
   const [editingConfig, setEditingConfig] = useState(false);
   const [configDraft, setConfigDraft] = useState("");
   const [liveLogText, setLiveLogText] = useState("");
   const [liveLogError, setLiveLogError] = useState<string | null>(null);
   /** True until the first SSE chunk for this connection (spinner); Clear does not reset this. */
   const [liveLogAwaitingFirstChunk, setLiveLogAwaitingFirstChunk] = useState(true);
+  /** Live deploy stream (GET …/deploy/stream); same chunks as API host `docker` / remote SSH. */
+  const [deployStreamText, setDeployStreamText] = useState("");
   const liveLogScrollRef = useRef<HTMLDivElement>(null);
+  const deployLogScrollRef = useRef<HTMLDivElement>(null);
 
   const { data: service, isLoading } = useService(serviceId!, {
     initialData: initialService ?? undefined,
@@ -387,15 +738,15 @@ export default function ServiceDetails({
 
   useEffect(() => {
     if (initialProject && projectId) {
-      qc.setQueryData(["projects", projectId], initialProject);
+      qc.setQueryData(["projects", user?.userId ?? "none", projectId], initialProject);
     }
-  }, [initialProject, projectId, qc]);
+  }, [initialProject, projectId, qc, user?.userId]);
 
   useEffect(() => {
     if (initialService && serviceId) {
-      qc.setQueryData(["service", serviceId], initialService);
+      qc.setQueryData(["service", user?.userId ?? "none", serviceId], initialService);
     }
-  }, [initialService, serviceId, qc]);
+  }, [initialService, serviceId, qc, user?.userId]);
 
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(1, "", {
     initialData: initialSecretsPaged ?? undefined,
@@ -420,11 +771,10 @@ export default function ServiceDetails({
   const actionBusy = deploy.isPending || startService.isPending || shutdownService.isPending;
 
   const tabs = useMemo(() => {
-    type TabDef = { id: Tab; label: string; icon: typeof Info; count?: number };
+    type TabDef = { id: Tab; label: string; icon: typeof FileCode; count?: number };
     const dbEngineForTabs =
       service?.type === "databases" ? parseDatabaseEngineFromConfig(service.config ?? "") : undefined;
     const head: TabDef[] = [
-      { id: "overview", label: "Overview", icon: Info },
       ...(dbEngineForTabs ? [{ id: "dbdetails" as Tab, label: "Database", icon: Database }] : []),
       { id: "config", label: "Configuration", icon: FileCode },
     ];
@@ -473,7 +823,7 @@ export default function ServiceDetails({
 
   useEffect(() => {
     const allowed = new Set(tabs.map((t) => t.id));
-    if (!allowed.has(activeTab)) setActiveTab("overview");
+    if (!allowed.has(activeTab)) setActiveTab(tabs[0]?.id ?? "config");
   }, [tabs, activeTab]);
 
   useEffect(() => {
@@ -513,17 +863,26 @@ export default function ServiceDetails({
     const el = liveLogScrollRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [liveLogText, activeTab]);
+  }, [liveLogText, deployStreamText, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "logs") return;
+    const el = deployLogScrollRef.current;
+    if (!el || !deployStreamText) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [deployStreamText, activeTab]);
 
   // ── Config actions ──
-  const handleSaveConfig = () => {
+  const handleSaveConfig = (opts?: { exitEdit?: boolean }) => {
     if (!service) return;
+    if (updateService.isPending) return;
+    const exitEdit = opts?.exitEdit === true;
     updateService.mutate(
       { id: service.id, patch: { config: configDraft } },
       {
         onSuccess: () => {
           toast({ title: "Saved", description: "Configuration updated." });
-          setEditingConfig(false);
+          if (exitEdit) setEditingConfig(false);
         },
         onError: (e: Error) =>
           toast({ title: "Could not save", description: e.message, variant: "destructive" }),
@@ -551,10 +910,23 @@ export default function ServiceDetails({
       return;
     }
     setActiveTab("logs");
+    setDeployStreamText("");
     deploy.mutate(
-      { serviceId: service.id, serviceName: service.name, serviceType: service.type, mode },
+      {
+        serviceId: service.id,
+        serviceName: service.name,
+        serviceType: service.type,
+        mode,
+        onStreamChunk: (chunk) => {
+          setDeployStreamText((prev) => {
+            const next = prev + chunk;
+            return next.length > MAX_LIVE_LOG_CHARS ? next.slice(-MAX_LIVE_LOG_CHARS) : next;
+          });
+        },
+      },
       {
         onSuccess: (log) => {
+          setDeployStreamText("");
           const isDb = service.type === "databases";
           if (log.status === "success") {
             toast({
@@ -579,6 +951,7 @@ export default function ServiceDetails({
           });
         },
         onError: (e: Error) => {
+          setDeployStreamText("");
           toast({
             title: mode === "redeploy" ? "Redeploy failed" : "Deploy failed",
             description: e.message,
@@ -813,7 +1186,7 @@ export default function ServiceDetails({
                 </>
               ) : (
                 <p className="text-xs text-muted-foreground max-w-md leading-relaxed border border-sky-500/20 rounded-xl px-4 py-2.5 bg-sky-500/5">
-                  Fill the <span className="text-foreground font-medium">Postgres</span> form in Overview to save the stack YAML, then use Deploy (<span className="font-mono text-[11px]">docker stack deploy</span>).
+                  Fill the <span className="text-foreground font-medium">Postgres</span> form in the <span className="text-foreground font-medium">Database</span> tab to save the stack YAML, then use Deploy (<span className="font-mono text-[11px]">docker stack deploy</span>).
                 </p>
               )}
               <button
@@ -860,97 +1233,6 @@ export default function ServiceDetails({
 
         {/* ── Tab Content ── */}
         <AnimatePresence mode="wait">
-
-          {/* ── OVERVIEW ── */}
-          {activeTab === "overview" && (
-            <motion.div key="overview" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <InfoCard icon={<Hash className="w-4 h-4 text-primary" />} label="Service ID" value={service.id} mono copyable
-                onCopy={() => { navigator.clipboard.writeText(service.id); toast({ title: "Copied", description: "Service ID copied." }); }} />
-              <InfoCard
-                icon={
-                  dbEngineLogoSrc && dbEngineId ? (
-                    <span className="relative flex h-8 w-8 items-center justify-center shrink-0">
-                      <Image
-                        src={dbEngineLogoSrc}
-                        alt=""
-                        width={32}
-                        height={32}
-                        className={`object-contain max-h-8 w-auto max-w-[2rem] ${databaseLogoBlendClass(dbEngineId)}`}
-                        sizes="32px"
-                      />
-                    </span>
-                  ) : (
-                    <TypeIcon className="w-4 h-4 text-primary" />
-                  )
-                }
-                label="Service Type"
-                value={dbEngineId ? `${typeConf.label} · ${getDatabaseEngineById(dbEngineId)?.name ?? dbEngineId}` : typeConf.label}
-                badge={typeConf.color}
-              />
-              <InfoCard icon={<FolderKanban className="w-4 h-4 text-primary" />} label="Project" value={project?.name ?? "—"} link={`/projects/${projectId}`} />
-              {!isDatabaseService && (
-                <>
-                  <InfoCard
-                    icon={
-                      runtimeLoading ? (
-                        <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
-                      ) : runningOnHost ? (
-                        <CheckCircle className="w-4 h-4 text-emerald-400" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-zinc-400" />
-                      )
-                    }
-                    label="Status"
-                    value={runtimeLoading ? "Checking Docker…" : runningOnHost ? "Running" : "Stopped"}
-                    badge={
-                      runtimeLoading
-                        ? "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
-                        : runningOnHost
-                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                          : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"
-                    }
-                  />
-                  <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
-                    value={formatServiceDateUtc(service.createdAt)} />
-                  <InfoCard
-                    icon={<Rocket className="w-4 h-4 text-primary" />}
-                    label="Docker on host"
-                    value={
-                      runtimeLoading
-                        ? "Checking…"
-                        : `${runningOnHost ? "Running" : "Stopped"} · ${
-                            service.lastDeployedAt
-                              ? `last deploy ${formatDistanceToNow(new Date(service.lastDeployedAt), { addSuffix: true })}`
-                              : "never deployed"
-                          }`
-                    }
-                  />
-                </>
-              )}
-              {isDatabaseService && (
-                <InfoCard icon={<Calendar className="w-4 h-4 text-primary" />} label="Created At"
-                  value={formatServiceDateUtc(service.createdAt)} />
-              )}
-              {!isApplicationService && (
-                <>
-                  <InfoCard icon={<Tag className="w-4 h-4 text-primary" />} label="Configuration"
-                    value={
-                      isDatabaseService
-                        ? "Use engine cards above (YAML provisioning later)"
-                        : service.config
-                          ? `${service.config.split("\n").length} lines`
-                          : "Not configured"
-                    }
-                  />
-                  <InfoCard icon={<Variable className="w-4 h-4 text-primary" />} label="Environment (.env)"
-                    value={envEntryCount > 0 ? `${envEntryCount} variable${envEntryCount !== 1 ? "s" : ""}` : "Not set"} />
-                </>
-              )}
-              </div>
-            </motion.div>
-          )}
 
           {/* ── Database (credentials, replicas, port, internal URL) — databases + engine in compose only ── */}
           {activeTab === "dbdetails" && isDatabaseService && dbEngineId && (
@@ -1011,7 +1293,7 @@ export default function ServiceDetails({
                         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors">
                         <X className="w-3.5 h-3.5" />Cancel
                       </button>
-                      <button onClick={handleSaveConfig}
+                      <button onClick={() => handleSaveConfig({ exitEdit: true })}
                         className="flex items-center gap-1.5 text-xs text-emerald-400 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors">
                         <Save className="w-3.5 h-3.5" />Save
                       </button>
@@ -1038,21 +1320,28 @@ export default function ServiceDetails({
               </div>
 
               {editingConfig ? (
-                <textarea
+                <ConfigYamlTextareaWithGutter
                   value={configDraft}
-                  onChange={(e) => setConfigDraft(e.target.value)}
+                  onChange={setConfigDraft}
                   placeholder={typeConf.placeholder}
-                  className="w-full bg-zinc-100 text-zinc-900 dark:bg-black/70 dark:text-emerald-200 font-mono text-xs p-5 min-h-[420px] resize-y outline-none border-none leading-relaxed placeholder:text-muted-foreground"
-                  spellCheck={false}
+                  onSave={() => handleSaveConfig({ exitEdit: false })}
+                  saveDisabled={updateService.isPending}
                 />
               ) : service.config ? (
                 <div className="bg-zinc-100 dark:bg-black/70 overflow-x-auto">
-                  <table className="w-full border-collapse text-xs font-mono leading-relaxed">
+                  <table className="w-full border-collapse font-mono text-xs leading-[1.625rem]">
                     <tbody>
                       {service.config.split("\n").map((line, i) => (
-                        <tr key={i} className="hover:bg-accent/40 transition-colors">
-                          <td className="select-none text-right pr-4 pl-4 py-0.5 text-zinc-600 border-r border-border/60 min-w-[3rem] w-10">{i + 1}</td>
-                          <td className="pl-5 pr-5 py-0.5 whitespace-pre">{colorizeYaml(line)}</td>
+                        <tr key={i} className="group/line hover:bg-accent/35 transition-colors">
+                          <td
+                            className="sticky left-0 z-[1] w-0 min-w-[3.25rem] max-w-[5rem] select-none border-r border-border/60 bg-zinc-200/95 py-0 pl-4 pr-3 text-right align-top tabular-nums leading-[1.625rem] text-zinc-500 dark:bg-zinc-950/80 dark:text-zinc-500"
+                            title={`Line ${i + 1}`}
+                          >
+                            {i + 1}
+                          </td>
+                          <td className="min-w-0 py-0 pl-4 pr-5 align-top leading-[1.625rem] whitespace-pre">
+                            {colorizeYaml(line)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1137,16 +1426,17 @@ export default function ServiceDetails({
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                        Switch between live container output and the last deploy run.{" "}
                         {isDatabaseService ? (
                           <>
-                            Live stream from{" "}
-                            <code className="text-[11px] bg-muted px-1 rounded">docker service logs -f</code> on the Swarm manager (stack services).
+                            Live uses{" "}
+                            <code className="text-[11px] bg-muted px-1 rounded">docker service logs -f</code> on the Swarm manager.
                           </>
                         ) : (
                           <>
-                            Live stream from{" "}
+                            Live uses{" "}
                             <code className="text-[11px] bg-muted px-1 rounded">docker compose logs -f</code> /{" "}
-                            <code className="text-[11px] bg-muted px-1 rounded">docker service logs -f</code> on the server host.
+                            <code className="text-[11px] bg-muted px-1 rounded">docker service logs -f</code> on the host.
                           </>
                         )}
                       </p>
@@ -1168,107 +1458,177 @@ export default function ServiceDetails({
                   <div className="px-5 py-2.5 border-b border-amber-500/25 bg-amber-500/10 shrink-0 flex items-start gap-2 text-xs text-amber-100/95 leading-snug">
                     <Loader2 className="w-4 h-4 animate-spin shrink-0 mt-0.5" />
                     <span>
-                      Deployment running (build, registry push, stack deploy). This can take several minutes. Output
-                      appears in <span className="font-medium">Last deployment</span> when the run finishes.
+                      Deployment running — output streams live under{" "}
+                      <span className="font-medium">Last deployment</span> and{" "}
+                      <span className="font-medium">Live container</span> (same as Docker on the host or remote SSH).
                     </span>
                   </div>
                 ) : null}
 
-                {deployLogQuery.data?.[0] ? (
-                  <div className="px-5 py-3 border-b border-border/40 bg-muted/25 shrink-0 space-y-2">
-                    <div className="flex flex-wrap items-baseline gap-2 justify-between gap-y-1">
-                      <span className="text-xs font-semibold text-foreground">Last deployment</span>
-                      <span
-                        className={
-                          deployLogQuery.data[0].status === "success"
-                            ? "text-xs text-emerald-600 dark:text-emerald-400"
-                            : deployLogQuery.data[0].status === "failed"
-                              ? "text-xs text-destructive"
-                              : "text-xs text-muted-foreground"
-                        }
-                      >
-                        {deployLogQuery.data[0].status === "success"
-                          ? "Success"
-                          : deployLogQuery.data[0].status === "failed"
-                            ? "Failed"
-                            : deployLogQuery.data[0].status}
-                        {deployLogQuery.data[0].finishedAt ? (
-                          <span className="text-muted-foreground font-normal">
-                            {" "}
-                            ·{" "}
-                            {formatDistanceToNow(new Date(deployLogQuery.data[0].finishedAt), {
-                              addSuffix: true,
-                            })}
-                          </span>
+                <Tabs defaultValue="live" className="flex flex-col flex-1 min-h-0">
+                  <div className="px-5 pt-3 pb-2 border-b border-border/40 shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <TabsList className="h-9 w-full sm:w-auto justify-start">
+                      <TabsTrigger value="live" className="text-xs sm:text-sm">
+                        Live container
+                      </TabsTrigger>
+                      <TabsTrigger value="deploy" className="text-xs sm:text-sm gap-1.5">
+                        Last deployment
+                        {deployLogQuery.data?.[0]?.status === "failed" ? (
+                          <span
+                            className="inline-block w-1.5 h-1.5 rounded-full bg-destructive shrink-0"
+                            aria-hidden
+                          />
                         ) : null}
-                      </span>
-                    </div>
-                    <pre className="text-[11px] font-mono text-zinc-200 whitespace-pre-wrap break-all max-h-[min(40vh,360px)] overflow-auto rounded-md bg-zinc-950/90 p-3 border border-border/50">
-                      {getDeployLogText(deployLogQuery.data[0]).trim() || "—"}
-                    </pre>
+                      </TabsTrigger>
+                    </TabsList>
                   </div>
-                ) : null}
 
-                <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 bg-muted/20 shrink-0 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => setLiveLogText("")}
-                    className="btn-secondary text-xs py-1.5 h-8 flex items-center gap-1.5"
+                  <TabsContent
+                    value="live"
+                    className="mt-0 flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden data-[state=inactive]:hidden"
                   >
-                    Clear
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(liveLogText);
-                      toast({ title: "Copied", description: "Logs copied to clipboard." });
-                    }}
-                    className="btn-secondary text-xs py-1.5 h-8 flex items-center gap-1.5"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    Copy
-                  </button>
-                </div>
+                    <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 bg-muted/20 shrink-0 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setLiveLogText("")}
+                        className="btn-secondary text-xs py-1.5 h-8 flex items-center gap-1.5"
+                      >
+                        Clear
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(liveLogText);
+                          toast({ title: "Copied", description: "Live logs copied to clipboard." });
+                        }}
+                        className="btn-secondary text-xs py-1.5 h-8 flex items-center gap-1.5"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        Copy
+                      </button>
+                    </div>
+                    <div
+                      ref={liveLogScrollRef}
+                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950/80"
+                    >
+                      {isDatabaseService && !hasDatabaseCompose ? (
+                        <p className="text-sm text-muted-foreground text-center py-16 px-4 leading-relaxed max-w-md mx-auto">
+                          Save the Postgres stack in the <span className="text-foreground font-medium">Database</span> tab, then deploy. Live logs stream here once the Swarm stack is running.
+                        </p>
+                      ) : liveLogError ? (
+                        <div className="text-sm text-destructive whitespace-pre-wrap">{liveLogError}</div>
+                      ) : deploy.isPending && deployStreamText ? (
+                        <pre className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                          {deployStreamText}
+                        </pre>
+                      ) : deploy.isPending ? (
+                        <div className="flex flex-col items-center justify-center gap-3 py-14 text-muted-foreground px-4 text-center">
+                          <Loader2 className="w-8 h-8 animate-spin" />
+                          <p className="text-sm">Waiting for the server to finish deployment…</p>
+                          <p className="text-xs max-w-md text-muted-foreground/90">
+                            Use the <span className="text-foreground font-medium">Last deployment</span> tab for build and push output when the run completes.
+                          </p>
+                        </div>
+                      ) : liveLogAwaitingFirstChunk && !liveLogText ? (
+                        <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground px-4 text-center">
+                          <Loader2 className="w-8 h-8 animate-spin" />
+                          <p className="text-sm">Waiting for container log lines…</p>
+                          <p className="text-xs max-w-md">
+                            If nothing appears, the service may not be running yet. Build and deploy output is under the{" "}
+                            <span className="text-foreground font-medium">Last deployment</span> tab.
+                          </p>
+                        </div>
+                      ) : (
+                        <pre className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                          {liveLogText}
+                        </pre>
+                      )}
+                    </div>
+                  </TabsContent>
 
-                <div
-                  ref={liveLogScrollRef}
-                  className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950/80"
-                >
-                  {isDatabaseService && !hasDatabaseCompose ? (
-                    <p className="text-sm text-muted-foreground text-center py-16 px-4 leading-relaxed max-w-md mx-auto">
-                      Save the Postgres stack in <span className="text-foreground font-medium">Overview</span>, then deploy. Live logs stream here once the Swarm stack is running.
-                    </p>
-                  ) : liveLogError ? (
-                    <div className="text-sm text-destructive whitespace-pre-wrap">{liveLogError}</div>
-                  ) : deploy.isPending ? (
-                    <div className="flex flex-col items-center justify-center gap-3 py-14 text-muted-foreground px-4 text-center">
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                      <p className="text-sm">Waiting for the server to finish deployment…</p>
-                      <p className="text-xs max-w-md text-muted-foreground/90">
-                        Registry push and stack deploy run on the host. If this stays empty, check{" "}
-                        <span className="text-foreground font-medium">Last deployment</span> above after the run
-                        completes.
-                      </p>
+                  <TabsContent
+                    value="deploy"
+                    className="mt-0 flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden data-[state=inactive]:hidden"
+                  >
+                    <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 bg-muted/20 shrink-0 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const t =
+                            deploy.isPending && deployStreamText
+                              ? deployStreamText
+                              : deployLogQuery.data?.[0]
+                                ? getDeployLogText(deployLogQuery.data[0]).trim()
+                                : "";
+                          void navigator.clipboard.writeText(t);
+                          toast({ title: "Copied", description: "Deployment log copied to clipboard." });
+                        }}
+                        disabled={!deployLogQuery.data?.[0] && !(deploy.isPending && deployStreamText)}
+                        className="btn-secondary text-xs py-1.5 h-8 flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        Copy
+                      </button>
                     </div>
-                  ) : liveLogAwaitingFirstChunk && !liveLogText ? (
-                    <div className="flex flex-col items-center justify-center gap-2 py-16 text-muted-foreground px-4 text-center">
-                      <Loader2 className="w-8 h-8 animate-spin" />
-                      <p className="text-sm">Waiting for container log lines…</p>
-                      <p className="text-xs max-w-md">
-                        If nothing appears, the service may not be running yet or logging may be disabled. Deploy output
-                        (build / push errors) is shown under Last deployment.
-                      </p>
+                    <div
+                      ref={deployLogScrollRef}
+                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950/80"
+                    >
+                      {deploy.isPending && deployStreamText ? (
+                        <>
+                          <div className="flex flex-wrap items-baseline gap-2 justify-between gap-y-1 mb-3">
+                            <span className="text-xs font-medium text-muted-foreground">Status</span>
+                            <span className="text-xs text-amber-500/95">Running…</span>
+                          </div>
+                          <pre className="text-[11px] font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                            {deployStreamText}
+                          </pre>
+                        </>
+                      ) : deployLogQuery.data?.[0] ? (
+                        <>
+                          <div className="flex flex-wrap items-baseline gap-2 justify-between gap-y-1 mb-3">
+                            <span className="text-xs font-medium text-muted-foreground">Status</span>
+                            <span
+                              className={
+                                deployLogQuery.data[0].status === "success"
+                                  ? "text-xs text-emerald-600 dark:text-emerald-400"
+                                  : deployLogQuery.data[0].status === "failed"
+                                    ? "text-xs text-destructive"
+                                    : "text-xs text-muted-foreground"
+                              }
+                            >
+                              {deployLogQuery.data[0].status === "success"
+                                ? "Success"
+                                : deployLogQuery.data[0].status === "failed"
+                                  ? "Failed"
+                                  : deployLogQuery.data[0].status}
+                              {deployLogQuery.data[0].finishedAt ? (
+                                <span className="text-muted-foreground font-normal">
+                                  {" "}
+                                  ·{" "}
+                                  {formatDistanceToNow(new Date(deployLogQuery.data[0].finishedAt), {
+                                    addSuffix: true,
+                                  })}
+                                </span>
+                              ) : null}
+                            </span>
+                          </div>
+                          <pre className="text-[11px] font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                            {getDeployLogText(deployLogQuery.data[0]).trim() || "—"}
+                          </pre>
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground text-center py-16 px-4">
+                          No deployment output yet. Deploy the service to see build and stack logs here.
+                        </p>
+                      )}
                     </div>
-                  ) : (
-                    <pre className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
-                      {liveLogText}
-                    </pre>
-                  )}
-                </div>
+                  </TabsContent>
+                </Tabs>
 
                 <div className="px-5 py-3 border-t border-border/60 shrink-0">
                   <p className="text-[11px] text-muted-foreground">
-                    Timestamps come from Docker when available. Clear only clears the view; new lines keep streaming. The stream stops when you leave this tab.
+                    Live: timestamps come from Docker when available; Clear only clears the view. The stream stops when you leave this tab.
                   </p>
                 </div>
               </div>
@@ -2082,7 +2442,7 @@ function ServiceBackupPanel({
   );
 }
 
-// ─── Database setup (overview cards + one-time legacy form) ──
+// ─── Database setup (engine cards + one-time legacy form) ──
 
 function dbPortByEngine(engine: DatabaseEngineId): number {
   if (engine === "postgres") return 5432;
@@ -2113,6 +2473,7 @@ function DatabaseSetupPanel({ service, engine }: { serviceId: string; service: S
 function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; engine: DatabaseEngineId }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user: authUser } = useAuth();
   const env = parseServiceEnvLines(service.env ?? "");
   const hasStack = Boolean(service.config?.includes("services:"));
   const replicas = parseYamlReplicas(service.config ?? "") ?? 1;
@@ -2171,7 +2532,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
       await updateDatabaseStackApi(service.id, engine, {
         publishPort: t === "" ? null : parseInt(t, 10),
       });
-      await queryClient.invalidateQueries({ queryKey: ["service", service.id] });
+      await invalidateServiceScopedQueries(queryClient, service.id, authUser?.userId ?? "none");
       setEditingHostPort(false);
       toast({
         title: "Stack updated",
@@ -2201,7 +2562,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
     setReplicasSaving(true);
     try {
       await updateDatabaseStackApi(service.id, engine, { replicas: n });
-      await queryClient.invalidateQueries({ queryKey: ["service", service.id] });
+      await invalidateServiceScopedQueries(queryClient, service.id, authUser?.userId ?? "none");
       setEditingReplicas(false);
       toast({
         title: "Stack updated",
@@ -2233,9 +2594,8 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
               </span>
             </h3>
             <p className="text-sm text-muted-foreground mt-2 max-w-xl leading-relaxed">
-              Values may live in <span className="text-foreground/90">Environment</span> or{" "}
-              <span className="text-foreground/90">Docker Secrets</span> (secrets are not shown). After changing replicas or
-              port, redeploy the stack.
+              Credentials are stored in the service <span className="text-foreground/90">Environment</span> and injected on
+              deploy. After changing replicas or port, redeploy the stack.
             </p>
           </div>
         </div>
@@ -2250,7 +2610,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
           </div>
           {!hasStack ? (
             <p className="text-xs text-amber-300/95 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 sm:max-w-xs shrink-0">
-              No stack YAML saved yet — generate the stack from Overview to deploy.
+              No stack YAML saved yet — generate the stack from the Database tab to deploy.
             </p>
           ) : null}
         </div>
@@ -2554,18 +2914,13 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
 function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: DatabaseEngineId }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user: authUser } = useAuth();
   const [dbName, setDbName] = useState("");
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
-  const [storeDbName, setStoreDbName] = useState<"env" | "secret">("env");
-  const [storeUser, setStoreUser] = useState<"env" | "secret">("env");
-  const [storePass, setStorePass] = useState<"env" | "secret">("secret");
   const [rootUser, setRootUser] = useState("");
   const [rootPass, setRootPass] = useState("");
-  const [storeRootUser, setStoreRootUser] = useState<"env" | "secret">("env");
-  const [storeRootPass, setStoreRootPass] = useState<"env" | "secret">("secret");
   const [password, setPassword] = useState("");
-  const [storePassword, setStorePassword] = useState<"env" | "secret">("secret");
   const [replicas, setReplicas] = useState(1);
   const [publishPort, setPublishPort] = useState("");
   const [image, setImage] = useState(defaultDatabaseImage(engine));
@@ -2656,17 +3011,12 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
         ...(needMongoRoot ? { rootUser: rootUser.trim(), rootPass } : {}),
         ...(needRootPass ? { rootPass } : {}),
         ...(needRedisPassword ? { password } : {}),
-        ...(dbRequired ? { storeDbName } : {}),
-        ...(needUserPass ? { storeUser, storePass } : {}),
-        ...(needMongoRoot ? { storeRootUser, storeRootPass } : {}),
-        ...(needRootPass ? { storeRootPass } : {}),
-        ...(needRedisPassword ? { storePassword } : {}),
         ...(volumePath.trim() ? { volumePath: volumePath.trim() } : {}),
         replicas: Math.min(10, Math.max(1, Math.floor(replicas) || 1)),
         ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
         ...(img ? { image: img } : {}),
       });
-      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       toast({
         title: "Stack YAML saved",
         description:
@@ -2743,10 +3093,6 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
               placeholder="myapp-db"
               autoComplete="off"
             />
-            <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeDbName} onChange={(e) => setStoreDbName(e.target.value as "env" | "secret")}>
-              <option value="env">Store in Environment</option>
-              <option value="secret">Store in Docker Secret</option>
-            </select>
           </div>
         )}
         {(engine === "postgres" || engine === "mysql" || engine === "mariadb") && (
@@ -2760,10 +3106,6 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
                 placeholder="appuser"
                 autoComplete="off"
               />
-              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeUser} onChange={(e) => setStoreUser(e.target.value as "env" | "secret")}>
-                <option value="env">Store in Environment</option>
-                <option value="secret">Store in Docker Secret</option>
-              </select>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">Password</label>
@@ -2775,10 +3117,6 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
                 placeholder="••••••••"
                 autoComplete="new-password"
               />
-              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storePass} onChange={(e) => setStorePass(e.target.value as "env" | "secret")}>
-                <option value="secret">Store in Docker Secret</option>
-                <option value="env">Store in Environment</option>
-              </select>
             </div>
           </>
         )}
@@ -2793,10 +3131,6 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
               placeholder="••••••••"
               autoComplete="new-password"
             />
-            <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeRootPass} onChange={(e) => setStoreRootPass(e.target.value as "env" | "secret")}>
-              <option value="secret">Store in Docker Secret</option>
-              <option value="env">Store in Environment</option>
-            </select>
           </div>
         )}
         {engine === "mongodb" && (
@@ -2810,10 +3144,6 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
                 placeholder="root"
                 autoComplete="off"
               />
-              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeRootUser} onChange={(e) => setStoreRootUser(e.target.value as "env" | "secret")}>
-                <option value="env">Store in Environment</option>
-                <option value="secret">Store in Docker Secret</option>
-              </select>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">Root password</label>
@@ -2825,10 +3155,6 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
                 placeholder="••••••••"
                 autoComplete="new-password"
               />
-              <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storeRootPass} onChange={(e) => setStoreRootPass(e.target.value as "env" | "secret")}>
-                <option value="secret">Store in Docker Secret</option>
-                <option value="env">Store in Environment</option>
-              </select>
             </div>
           </>
         )}
@@ -2843,10 +3169,6 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
               placeholder="••••••••"
               autoComplete="new-password"
             />
-            <select className="input-field mt-1.5 w-full max-w-[12rem] text-xs" value={storePassword} onChange={(e) => setStorePassword(e.target.value as "env" | "secret")}>
-              <option value="secret">Store in Docker Secret</option>
-              <option value="env">Store in Environment</option>
-            </select>
           </div>
         )}
         <div>
@@ -2901,7 +3223,7 @@ function ApplicationArchivePanel({
   service: Service;
 }) {
   const queryClient = useQueryClient();
-  const { accessToken } = useAuth();
+  const { accessToken, user: authUser } = useAuth();
   const { toast } = useToast();
   const { data: serviceRow } = useService(serviceId);
   const { data: gitSettings, isLoading: gitSettingsLoading } = useQuery({
@@ -2933,12 +3255,11 @@ function ApplicationArchivePanel({
   type AppEnvVarRow = {
     key: string;
     value: string;
-    store: "env" | "secret";
-    /** True when this row was loaded from saved stack for a Docker Secret (value not readable from API). */
-    unreadableDockerSecret?: boolean;
+    /** Legacy stack had this key only as a Swarm secret; not in service env until re-saved. */
+    unreadableLegacySecret?: boolean;
   };
   const [variables, setVariables] = useState<AppEnvVarRow[]>([]);
-  /** Show/hide value for Environment and editable Docker Secret rows (default hidden). Hidden after generate for unreadable secrets. */
+  /** Show/hide value (default hidden). */
   const [valueVisibleByRow, setValueVisibleByRow] = useState<Record<number, boolean>>({});
   const [showEnvPaste, setShowEnvPaste] = useState(false);
   const zipInputRef = useRef<HTMLInputElement>(null);
@@ -3068,10 +3389,9 @@ function ApplicationArchivePanel({
     setVariables(
       keys.map((key) => ({
         key,
-        // Secret values are not readable back from Docker; keep blank in UI.
-        value: stores[key] === "env" ? (envMap[key] ?? "") : "",
-        store: stores[key],
-        unreadableDockerSecret: stores[key] === "secret",
+        value: envMap[key] ?? "",
+        unreadableLegacySecret:
+          stores[key] === "secret" && !(envMap[key] ?? "").trim(),
       })),
     );
     setValueVisibleByRow({});
@@ -3124,16 +3444,13 @@ function ApplicationArchivePanel({
         if (i !== idx) return v;
         const next = { ...v, ...patch };
         if (patch.value !== undefined && patch.value.trim() !== "") {
-          next.unreadableDockerSecret = false;
-        }
-        if (patch.store !== undefined && patch.store !== "secret") {
-          next.unreadableDockerSecret = false;
+          next.unreadableLegacySecret = false;
         }
         return next;
       }),
     );
   };
-  const addVariable = () => setVariables((prev) => [...prev, { key: "", value: "", store: "secret" }]);
+  const addVariable = () => setVariables((prev) => [...prev, { key: "", value: "" }]);
   const removeVariable = (idx: number) => {
     setVariables((prev) => prev.filter((_, i) => i !== idx));
     setValueVisibleByRow((prev) => {
@@ -3156,13 +3473,13 @@ function ApplicationArchivePanel({
       if (eq <= 0) continue;
       const key = line.slice(0, eq).trim();
       const value = line.slice(eq + 1);
-      parsed.push({ key, value, store: "secret" });
+      parsed.push({ key, value });
     }
     setVariables(parsed);
     setValueVisibleByRow({});
     toast({
       title: "Variables loaded",
-      description: `${parsed.length} variable(s) parsed. Default store is Docker Secret.`,
+      description: `${parsed.length} variable(s) parsed. Values are saved to the service environment.`,
     });
   };
 
@@ -3187,11 +3504,11 @@ function ApplicationArchivePanel({
     cp: number;
     rp: number | undefined;
     rep: number;
-    cleanVars: Array<{ key: string; value: string; store: "env" | "secret" }>;
+    cleanVars: Array<{ key: string; value: string }>;
     stk: string[];
   } | null => {
     const cleanVars = variables
-      .map((v) => ({ key: v.key.trim(), value: v.value, store: v.store }))
+      .map((v) => ({ key: v.key.trim(), value: v.value }))
       .filter((v) => v.key.length > 0);
     for (const v of cleanVars) {
       if (!/^[A-Z_][A-Z0-9_]*$/i.test(v.key)) {
@@ -3262,7 +3579,7 @@ function ApplicationArchivePanel({
         httpUrlToRepo: byProject ? undefined : opts.httpUrlToRepo!.trim(),
         branch: gitlabBranchOverride.trim() || undefined,
       });
-      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       setGitSourceStaged(true);
       setGithubStagedRepoKeys(new Set());
       setGithubManualUrlStaged(false);
@@ -3340,7 +3657,7 @@ function ApplicationArchivePanel({
         httpUrlToRepo: byPick ? undefined : opts.httpUrlToRepo!.trim(),
         branch: githubBranchOverride.trim() || undefined,
       });
-      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       setGitSourceStaged(true);
       setGitlabStagedProjectIds(new Set());
       setGitlabManualUrlStaged(false);
@@ -3390,7 +3707,7 @@ function ApplicationArchivePanel({
         variables: cleanVars,
         networks: { external: connectionExternal, stack: stk },
       });
-      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       toast({
         title: "Stack generated",
         description: "Deploy from the header to build the image and run the stack.",
@@ -3484,7 +3801,7 @@ function ApplicationArchivePanel({
         variables: cleanVars,
         networks: { external: connectionExternal, stack: stk },
       });
-      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       toast({
         title: "Application source uploaded",
         description: "Stack config is generated. Deploy to build image and run the stack.",
@@ -3518,7 +3835,7 @@ function ApplicationArchivePanel({
     const rp: number | undefined = undefined;
     const rep = parseInt(replicas || "1", 10);
     const cleanVars = variables
-      .map((v) => ({ key: v.key.trim(), value: v.value, store: v.store }))
+      .map((v) => ({ key: v.key.trim(), value: v.value }))
       .filter((v) => v.key.length > 0);
     for (const v of cleanVars) {
       if (!/^[A-Z_][A-Z0-9_]*$/i.test(v.key)) {
@@ -3563,7 +3880,7 @@ function ApplicationArchivePanel({
         variables: cleanVars,
         networks: { external: connectionExternal, stack: stk },
       });
-      await queryClient.invalidateQueries({ queryKey: ["service", serviceId] });
+      await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       toast({
         title: "Image stack saved",
         description: "Deploy to pull the image and run the stack (no source build on the host).",
@@ -4294,7 +4611,7 @@ function ApplicationArchivePanel({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-100">Environment and secrets</h3>
+                  <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-100">Environment</h3>
                   {filledEnvVarCount > 0 && (
                     <span className="rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
                       {filledEnvVarCount}
@@ -4302,7 +4619,7 @@ function ApplicationArchivePanel({
                   )}
                 </div>
                 <p className="text-[11px] text-zinc-600 dark:text-muted-foreground mt-0.5 leading-snug">
-                  Keys & values — Docker Secret or env; applied when you save the stack.
+                  Keys & values — saved to the service environment and applied when you generate or save the stack.
                 </p>
               </div>
               <ChevronDown
@@ -4328,15 +4645,15 @@ function ApplicationArchivePanel({
                     onChange={(e) => updateVariable(idx, { key: e.target.value })}
                     placeholder="DATABASE_URL"
                   />
-                  {row.store === "secret" && row.unreadableDockerSecret && !row.value.trim() ? (
-                    <div className="input-field col-span-5 flex min-h-[2.5rem] items-center px-3 font-mono text-xs text-muted-foreground">
-                      Not readable (Docker Secrets)
+                  {row.unreadableLegacySecret && !row.value.trim() ? (
+                    <div className="input-field col-span-7 flex min-h-[2.5rem] items-center px-3 font-mono text-xs text-muted-foreground">
+                      Not in environment (re-save after migrating from Docker Secret)
                     </div>
                   ) : (
                     <>
                       <input
                         type={valueVisibleByRow[idx] ? "text" : "password"}
-                        className="input-field font-mono text-sm col-span-4"
+                        className="input-field font-mono text-sm col-span-6"
                         value={row.value}
                         onChange={(e) => updateVariable(idx, { value: e.target.value })}
                         placeholder="value"
@@ -4359,22 +4676,6 @@ function ApplicationArchivePanel({
                       </button>
                     </>
                   )}
-                  <select
-                    className="input-field text-sm col-span-2"
-                    value={row.store}
-                    onChange={(e) => {
-                      const nextStore = e.target.value as "env" | "secret";
-                      updateVariable(idx, { store: nextStore });
-                      setValueVisibleByRow((prev) => {
-                        const next = { ...prev };
-                        delete next[idx];
-                        return next;
-                      });
-                    }}
-                  >
-                    <option value="secret">Docker Secret</option>
-                    <option value="env">Environment</option>
-                  </select>
                   <button
                     type="button"
                     className="btn-secondary text-xs col-span-1"
@@ -4480,38 +4781,6 @@ function ApplicationArchivePanel({
         </div>
       </div>
     </div>
-  );
-}
-
-// ─── InfoCard ─────────────────────────────────────────────────────────────────
-
-function InfoCard({ icon, label, value, mono = false, copyable = false, onCopy, badge, link }:
-  { icon: React.ReactNode; label: string; value: string; mono?: boolean; copyable?: boolean; onCopy?: () => void; badge?: string; link?: string }) {
-  return (
-    <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
-      className="glass-panel rounded-xl p-5 group">
-      <div className="flex items-center gap-2 mb-2.5">
-        {icon}
-        <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">{label}</span>
-      </div>
-      <div className="flex items-center justify-between gap-2">
-        {badge ? (
-          <span className={`text-xs border rounded-full px-2.5 py-1 font-semibold ${badge}`}>{value}</span>
-        ) : link ? (
-          <Link href={link}>
-            <span className={`font-medium text-sm text-primary hover:underline cursor-pointer ${mono ? "font-mono text-xs break-all" : ""}`}>{value}</span>
-          </Link>
-        ) : (
-          <span className={`font-medium text-sm text-foreground ${mono ? "font-mono text-xs break-all" : ""}`}>{value}</span>
-        )}
-        {copyable && onCopy && (
-          <button onClick={onCopy}
-            className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-accent/70 text-muted-foreground hover:text-foreground flex-shrink-0">
-            <Copy className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-    </motion.div>
   );
 }
 
@@ -4655,7 +4924,7 @@ function MagicHostDice({
       return rollMagicTraefikMeApi(service.id, { publicIpv4: ip });
     },
     onSuccess: (data) => {
-      void qc.invalidateQueries({ queryKey: ["service", user?.userId ?? "none", service.id] });
+      void invalidateServiceScopedQueries(qc, service.id, user?.userId ?? "none");
       onRolled(data);
       toast({
         title: "Hostname generated",
@@ -4669,7 +4938,7 @@ function MagicHostDice({
   const clearMagicMut = useMutation({
     mutationFn: () => clearMagicTraefikMeApi(service.id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["service", user?.userId ?? "none", service.id] });
+      void invalidateServiceScopedQueries(qc, service.id, user?.userId ?? "none");
       toast({ title: "Magic domain removed", description: "Redeploy the stack to apply." });
     },
     onError: (e: Error) =>
@@ -4722,9 +4991,7 @@ function DomainsPanel({ service }: { service: Service }) {
   const [draftPort, setDraftPort] = useState("");
   const [draftHttps, setDraftHttps] = useState(true);
 
-  const showMagicDice =
-    isApplication &&
-    (editingIndex === 0 || (editingIndex === null && routes.length === 0));
+  const showMagicDice = isApplication;
 
   const resetDraft = () => {
     setDraftRouter("");
@@ -4737,8 +5004,7 @@ function DomainsPanel({ service }: { service: Service }) {
 
   const openAddDialog = () => {
     setEditingIndex(null);
-    const n = routes.length;
-    setDraftRouter(n === 0 ? defaultTraefikRouterName(service.appName) : `r${n + 1}`);
+    setDraftRouter(nextUniqueRouterDraft(service, routes));
     setDraftPath("");
     setDraftHost("");
     setDraftPort("");
@@ -4816,6 +5082,19 @@ function DomainsPanel({ service }: { service: Service }) {
       toast({
         title: "Hostname required",
         description: "Enter a domain or use the dice.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const dup = routes.some((r, i) => {
+      if (editingIndex !== null && i === editingIndex) return false;
+      return r.router.trim().toLowerCase() === router;
+    });
+    if (dup) {
+      toast({
+        title: "Duplicate router name",
+        description:
+          "Each route needs a unique router name (Traefik labels share the same key per name). Change the router field.",
         variant: "destructive",
       });
       return;
@@ -4978,8 +5257,8 @@ function DomainsPanel({ service }: { service: Service }) {
           <DialogHeader>
             <DialogTitle>{editingIndex === null ? "Add domain" : "Edit domain"}</DialogTitle>
             <DialogDescription>
-              Set router, hostname, HTTPS (TLS), and optional path or port. The dice generates a random traefik.me
-              hostname for the primary domain only.
+              Set router, hostname, HTTPS (TLS), and optional path or port. The dice rolls the service&apos;s
+              traefik.me hostname (same URL for every route; split traffic with path prefixes).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">

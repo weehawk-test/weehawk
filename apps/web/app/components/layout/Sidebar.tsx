@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, FolderKanban, KeyRound, UserCircle, ChevronUp, ChevronLeft, ChevronRight,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, RadioTower, Server, CreditCard,
+  GitBranch, Globe, Server, CreditCard, BookOpen, LifeBuoy,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useMemo, useState } from "react";
@@ -20,23 +20,28 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
-function buildDockerNavItems(
-  base: string,
-  includeSecrets: boolean,
-): { href: string; label: string; icon: LucideIcon }[] {
+function buildDockerNavItems(base: string): { href: string; label: string; icon: LucideIcon }[] {
   return [
     { href: `${base}/images`, label: "Images", icon: ImageIcon },
     { href: `${base}/containers`, label: "Containers", icon: Box },
     { href: `${base}/services`, label: "Services", icon: Boxes },
     { href: `${base}/networks`, label: "Networks", icon: Network },
-    ...(includeSecrets ? [{ href: "/secrets", label: "Secrets", icon: KeyRound }] : []),
+    { href: `${base}/secrets`, label: "Secrets", icon: KeyRound },
     { href: `${base}/volumes`, label: "Volumes", icon: Database },
   ];
 }
 
+type MainNavItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  /** Opens in a new tab (docs, support, etc.). */
+  external?: boolean;
+};
+
 type MainNavSection = {
   label: string;
-  items: { href: string; label: string; icon: LucideIcon }[];
+  items: MainNavItem[];
 };
 
 function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
@@ -66,8 +71,22 @@ function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
       ],
     },
     {
-      label: "More",
-      items: [{ href: "/traefik", label: "Traefik", icon: RadioTower }],
+      label: "Domains",
+      items: [
+        { href: "/traefik", label: "Domains", icon: Globe },
+        {
+          href: "https://docs.weehawk.io",
+          label: "Documentation",
+          icon: BookOpen,
+          external: true,
+        },
+        {
+          href: "https://docs.weehawk.io/support",
+          label: "Support",
+          icon: LifeBuoy,
+          external: true,
+        },
+      ],
     },
   ];
 }
@@ -79,6 +98,7 @@ function NavRow({
   active,
   icon: Icon,
   activeLayoutId,
+  external,
 }: {
   collapsed: boolean;
   href: string;
@@ -86,18 +106,17 @@ function NavRow({
   active: boolean;
   icon: LucideIcon;
   activeLayoutId: string;
+  external?: boolean;
 }) {
-  const link = (
-    <Link
-      href={href}
-      scroll={false}
-      className={cn(
-        "relative flex items-center rounded-xl transition-colors duration-200 group",
-        collapsed ? "justify-center px-2 py-2" : "gap-3 px-4 py-2",
-        active ? "text-primary" : "text-foreground/90 hover:text-foreground hover:bg-accent/70",
-      )}
-    >
-      {active && (
+  const className = cn(
+    "relative flex items-center rounded-xl transition-colors duration-200 group",
+    collapsed ? "justify-center px-2 py-2" : "gap-3 px-4 py-2",
+    active ? "text-primary" : "text-foreground/90 hover:text-foreground hover:bg-accent/70",
+  );
+
+  const inner = (
+    <>
+      {active && !external && (
         <motion.div
           layoutId={activeLayoutId}
           className="absolute inset-0 bg-primary/10 rounded-xl border border-primary/20"
@@ -112,8 +131,24 @@ function NavRow({
         )}
       />
       {!collapsed && <span className="font-medium relative z-10 text-sm">{label}</span>}
-    </Link>
+    </>
   );
+
+  const link =
+    external ? (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={className}
+      >
+        {inner}
+      </a>
+    ) : (
+      <Link href={href} scroll={false} className={className}>
+        {inner}
+      </Link>
+    );
 
   if (collapsed) {
     return (
@@ -121,6 +156,7 @@ function NavRow({
         <TooltipTrigger asChild>{link}</TooltipTrigger>
         <TooltipContent side="right" sideOffset={8}>
           {label}
+          {external ? <span className="block text-[10px] text-muted-foreground mt-0.5">Opens in new tab</span> : null}
         </TooltipContent>
       </Tooltip>
     );
@@ -129,7 +165,7 @@ function NavRow({
   return link;
 }
 
-export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
+export function Sidebar() {
   const { collapsed, toggle } = useSidebarLayout();
   const location = usePathname();
   const router = useRouter();
@@ -142,8 +178,8 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
     gcTime: 0,
   });
   const editionTag = setupQuery.data?.edition ?? editionFromEnv();
-  const layoutGroupId = variant === "docker" ? "sidebar-nav-docker" : "sidebar-nav-main";
-  const activeLayoutId = variant === "docker" ? "active-nav-docker" : "active-nav-main";
+  const layoutGroupId = "sidebar-nav-main";
+  const activeLayoutId = "active-nav-main";
 
   const displayName = user
     ? `${user.firstName} ${user.lastName}`.trim() || user.email
@@ -163,10 +199,18 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
       : onSecretsShell && !cloudUi
         ? "/console/local"
         : null;
-  const dockerNavIncludeSecrets =
-    (consoleMatch?.[1] === "local" && !cloudUi) || onSecretsShell;
   const dockerNavDynamic =
-    consoleNavBase != null ? buildDockerNavItems(consoleNavBase, dockerNavIncludeSecrets) : [];
+    consoleNavBase != null ? buildDockerNavItems(consoleNavBase) : [];
+
+  const dockerShell =
+    /^\/console\/[^/]+/.test(location) ||
+    location === "/secrets" ||
+    location.startsWith("/secrets/");
+
+  /** Under `/console/:id/...` show only Docker nav for that server (not General / Integrations / …). */
+  const isConsoleServerSidebar = /^\/console\/[^/]+/.test(location);
+  const consoleLogoHref =
+    consoleNavBase != null ? `${consoleNavBase}/images` : "/";
 
   const isActive = (href: string) => {
     if (href === "/") return location === "/";
@@ -190,15 +234,17 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
     if (href === "/subscription") {
       return location === "/subscription" || location.startsWith("/subscription/");
     }
+    if (href.includes("/secrets")) {
+      if (location === href || location.startsWith(`${href}/`)) return true;
+      if (
+        href === "/console/local/secrets" &&
+        (location === "/secrets" || location.startsWith("/secrets/"))
+      )
+        return true;
+      return false;
+    }
     return location.startsWith(href);
   };
-
-  const logoHref =
-    variant === "docker"
-      ? consoleNavBase != null
-        ? `${consoleNavBase}/containers`
-        : "/remote-server"
-      : "/";
 
   return (
     <aside
@@ -212,33 +258,22 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
         {!collapsed ? (
           <div className="flex items-start gap-2">
             <Link
-              href={logoHref}
+              href={isConsoleServerSidebar ? consoleLogoHref : "/"}
               scroll={false}
               className="flex items-start gap-3 flex-1 min-w-0 rounded-xl -mx-1 px-1 py-0.5 hover:bg-accent/60 transition-colors"
             >
-              <div
-                className={cn(
-                  "relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm flex-shrink-0 ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5",
-                  variant === "docker" ? "bg-zinc-950" : "",
-                )}
-              >
+              <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm flex-shrink-0 ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
                 <Image
-                  src={variant === "docker" ? "/weedocker-logo.png" : "/weehawk-logo.png"}
-                  alt={variant === "docker" ? "Weedocker" : "Weehawk"}
+                  src="/weehawk-logo.png"
+                  alt="Weehawk"
                   width={40}
                   height={40}
-                  className={
-                    variant === "docker"
-                      ? "object-contain size-10"
-                      : "logo-adaptive object-cover size-10"
-                  }
+                  className="logo-adaptive object-cover size-10"
                   priority
                 />
               </div>
               <div className="min-w-0 flex-1 pt-0.5">
-                <h1 className="font-bold text-lg text-foreground tracking-tight leading-none">
-                  {variant === "docker" ? "Weedocker" : "Weehawk"}
-                </h1>
+                <h1 className="font-bold text-lg text-foreground tracking-tight leading-none">Weehawk</h1>
                 <p className="text-[10px] text-muted-foreground tracking-widest uppercase font-mono mt-1">
                   {editionTag}
                 </p>
@@ -259,26 +294,17 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
         ) : (
           <div className="flex flex-col items-center gap-2.5">
             <Link
-              href={logoHref}
+              href={isConsoleServerSidebar ? consoleLogoHref : "/"}
               scroll={false}
               className="flex justify-center rounded-xl p-1 hover:bg-accent/60 transition-colors"
             >
-              <div
-                className={cn(
-                  "relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5",
-                  variant === "docker" ? "bg-zinc-950" : "",
-                )}
-              >
+              <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
                 <Image
-                  src={variant === "docker" ? "/weedocker-logo.png" : "/weehawk-logo.png"}
-                  alt={variant === "docker" ? "Weedocker" : "Weehawk"}
+                  src="/weehawk-logo.png"
+                  alt="Weehawk"
                   width={40}
                   height={40}
-                  className={
-                    variant === "docker"
-                      ? "object-contain size-10"
-                      : "logo-adaptive object-cover size-10"
-                  }
+                  className="logo-adaptive object-cover size-10"
                   priority
                 />
               </div>
@@ -306,39 +332,31 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
       {/* Scrollable nav */}
       <nav className={cn("flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-3", collapsed ? "px-2" : "px-4")}>
         <LayoutGroup id={layoutGroupId}>
-          {variant === "docker" ? (
-            <div className="mb-1.5">
-              {!collapsed && (
-                <p className="text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 mt-0.5">
-                  Docker Manager
-                </p>
-              )}
-              {consoleNavBase == null ? (
-                collapsed ? (
-                  <Tooltip delayDuration={0}>
-                    <TooltipTrigger asChild>
-                      <Link
-                        href="/remote-server"
-                        className="flex justify-center p-2.5 rounded-xl text-primary hover:bg-accent/70"
-                        aria-label="Add a remote server"
-                      >
-                        <Server className="w-5 h-5" />
-                      </Link>
-                    </TooltipTrigger>
-                    <TooltipContent side="right" sideOffset={8} className="max-w-[220px]">
-                      Add an SSH host under Remote servers to open WeeDocker for that machine.
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  <p className="px-4 py-1.5 text-xs text-foreground/90 leading-relaxed">
-                    Add an SSH host under{" "}
-                    <Link href="/remote-server" className="text-primary hover:underline">
-                      Remote servers
-                    </Link>{" "}
-                    to open WeeDocker for that machine.
+          {isConsoleServerSidebar ? (
+            <>
+              <div className={cn("mb-1.5", collapsed && "mt-4")}>
+                {!collapsed && (
+                  <p className="text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 mt-4">
+                    General
                   </p>
-                )
-              ) : (
+                )}
+                <div className="space-y-px">
+                  <NavRow
+                    collapsed={collapsed}
+                    href="/remote-server"
+                    label="Servers"
+                    active={isActive("/remote-server")}
+                    icon={Server}
+                    activeLayoutId={activeLayoutId}
+                  />
+                </div>
+              </div>
+              <div className="mb-1.5">
+                {!collapsed && (
+                  <p className="text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 mt-3">
+                    Docker
+                  </p>
+                )}
                 <div className="space-y-px">
                   {dockerNavDynamic.map((item) => {
                     const active = isActive(item.href);
@@ -355,8 +373,8 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
                     );
                   })}
                 </div>
-              )}
-            </div>
+              </div>
+            </>
           ) : (
             <>
               {mainNavSections.map((section, sectionIndex) => (
@@ -379,6 +397,33 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
                   )}
                   <div className="space-y-px">
                     {section.items.map((item) => {
+                      const active = item.external ? false : isActive(item.href);
+                      return (
+                        <NavRow
+                          key={item.href}
+                          collapsed={collapsed}
+                          href={item.href}
+                          label={item.label}
+                          active={active}
+                          icon={item.icon}
+                          activeLayoutId={activeLayoutId}
+                          external={item.external}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              {dockerNavDynamic.length > 0 ? (
+                <div className="mb-1.5">
+                  {!collapsed && (
+                    <p className="text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 mt-3">
+                      Docker
+                    </p>
+                  )}
+                  <div className="space-y-px">
+                    {dockerNavDynamic.map((item) => {
                       const active = isActive(item.href);
                       return (
                         <NavRow
@@ -394,7 +439,34 @@ export function Sidebar({ variant = "main" }: { variant?: "main" | "docker" }) {
                     })}
                   </div>
                 </div>
-              ))}
+              ) : dockerShell && consoleNavBase == null ? (
+                <div className="mb-1.5">
+                  {collapsed ? (
+                    <Tooltip delayDuration={0}>
+                      <TooltipTrigger asChild>
+                        <Link
+                          href="/remote-server"
+                          className="flex justify-center p-2.5 rounded-xl text-primary hover:bg-accent/70"
+                          aria-label="Add a remote server"
+                        >
+                          <Server className="w-5 h-5" />
+                        </Link>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" sideOffset={8} className="max-w-[220px]">
+                        Add an SSH host under Remote servers to open the Docker console for that machine.
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <p className="px-4 py-1.5 text-xs text-foreground/90 leading-relaxed">
+                      Add an SSH host under{" "}
+                      <Link href="/remote-server" className="text-primary hover:underline">
+                        Remote servers
+                      </Link>{" "}
+                      to open the Docker console for that machine.
+                    </p>
+                  )}
+                </div>
+              ) : null}
             </>
           )}
         </LayoutGroup>

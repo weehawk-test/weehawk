@@ -8,5 +8,5 @@ export default async function ConsoleServerIndexPage({
 }) {
   const { serverId } = await params;
   if (parseConsoleServerSlug(serverId) == null) notFound();
-  redirect(`/console/${serverId}/containers`);
+  redirect(`/console/${serverId}/images`);
 }

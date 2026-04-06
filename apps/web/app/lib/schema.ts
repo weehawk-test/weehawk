@@ -71,6 +71,8 @@ export const serviceSchema = z.object({
     })
     .nullable()
     .optional(),
+  /** When true, build runs on the API host’s Docker even if deploy uses a remote host (requires registry image). */
+  buildOnLocalDockerHost: z.boolean().optional().default(false),
   /** Swarm app: full image ref for build+push; stored in compose header `registry.pushImage`. */
   registryPushImage: z.string().nullable().optional(),
   /** Auto-generated traefik.me quick access URL (API-computed; requires public IPv4). */
@@ -88,12 +90,6 @@ const postgresCreateFieldsSchema = z.object({
   rootUser: z.string().default(""),
   rootPass: z.string().default(""),
   password: z.string().default(""),
-  storeDbName: z.enum(["env", "secret"]).default("env"),
-  storeUser: z.enum(["env", "secret"]).default("env"),
-  storePass: z.enum(["env", "secret"]).default("secret"),
-  storeRootUser: z.enum(["env", "secret"]).default("env"),
-  storeRootPass: z.enum(["env", "secret"]).default("secret"),
-  storePassword: z.enum(["env", "secret"]).default("secret"),
   volumePath: z.string().default(""),
   replicas: z.coerce.number().int().min(1).max(10).default(1),
   /** Empty = do not publish a host port */

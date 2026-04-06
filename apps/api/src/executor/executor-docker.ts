@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import type { EventEmitter } from 'events';
+import type { SpawnOptionsWithoutStdio } from 'child_process';
 import * as path from 'path';
 
 export function stderrIndicatesDockerFailure(stderr: string): boolean {
@@ -61,9 +62,54 @@ export function normalizeHostPathForDockerBind(absPath: string): string {
   return resolved;
 }
 
-function emitDeployLog(emitter: EventEmitter | undefined, chunk: string): void {
+/** Emits one chunk for {@link ServicesService.executeDeployment} SSE (`deploy/stream`). */
+export function emitDeployLog(emitter: EventEmitter | undefined, chunk: string): void {
   if (!emitter || !chunk) return;
   emitter.emit('data', chunk);
+}
+
+/**
+ * `docker <args>` with streamed stdout/stderr (same as local `docker build` / compose on the API host).
+ */
+export async function spawnDockerSubcommand(
+  args: string[],
+  options: {
+    env?: NodeJS.ProcessEnv;
+    cwd?: string;
+    deployLogEmitter?: EventEmitter;
+  } & Pick<SpawnOptionsWithoutStdio, 'windowsHide'>,
+): Promise<{ stdout: string; stderr: string }> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn('docker', args, {
+      env: options.env,
+      cwd: options.cwd,
+      windowsHide: options.windowsHide ?? true,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (buf: Buffer) => {
+      const s = buf.toString();
+      stdout += s;
+      emitDeployLog(options.deployLogEmitter, s);
+    });
+    child.stderr?.on('data', (buf: Buffer) => {
+      const s = buf.toString();
+      stderr += s;
+      emitDeployLog(options.deployLogEmitter, s);
+    });
+    child.on('error', (err) => reject(err));
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(
+          new Error(
+            `docker exited with code ${code}${stderr ? `: ${stderr.slice(-4000)}` : ''}`,
+          ),
+        );
+      }
+    });
+  });
 }
 
 /**

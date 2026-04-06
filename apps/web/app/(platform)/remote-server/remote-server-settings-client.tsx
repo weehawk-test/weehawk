@@ -412,10 +412,10 @@ export function RemoteServerSettingsClient() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <Link
-                    href="/console/local/containers"
+                    href="/console/local/images"
                     scroll={false}
                     className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
-                    title="Open WeeDocker console for this host"
+                    title="Open Docker console for this host"
                   >
                     <Terminal className="size-3.5" />
                     Console
@@ -623,7 +623,7 @@ export function RemoteServerSettingsClient() {
                       </p>
                       {row.publicIpv4 ? (
                         <p className="text-[11px] text-muted-foreground font-mono mt-1">
-                          Public IPv4 (Magic): {row.publicIpv4}
+                          Public IPv4: {row.publicIpv4}
                         </p>
                       ) : null}
                       {row.authMode === "file" && row.privateKeyPath ? (
@@ -637,10 +637,10 @@ export function RemoteServerSettingsClient() {
                     <div className="flex items-center gap-2 shrink-0">
                       {row.hasPrivateKey ? (
                         <Link
-                          href={`/console/${row.id}/containers`}
+                          href={`/console/${row.id}/images`}
                           scroll={false}
                           className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
-                          title="Open WeeDocker console for this host (full Docker UI)"
+                          title="Open Docker console for this host (full Docker UI)"
                         >
                           <Terminal className="size-3.5" />
                           Console
@@ -673,7 +673,7 @@ export function RemoteServerSettingsClient() {
                         disabled={testMut.isPending || !row.hasPrivateKey}
                         onClick={() => testMut.mutate(row.id)}
                         className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
-                        title="Remote Docker API via Dockerode over SSH (same path as WeeDocker console)"
+                        title="Remote Docker API via Dockerode over SSH (same path as the Docker console)"
                       >
                         {testMut.isPending ? (
                           <Loader2 className="size-3.5 animate-spin" />

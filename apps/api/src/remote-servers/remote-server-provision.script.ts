@@ -242,6 +242,26 @@ else
   echo "Overlay $OVERLAY_NET created."
 fi
 
+if $SUDO_CMD docker service ls --format '{{.Name}}' 2>/dev/null | grep -qx "traefik-weehawk"; then
+  echo "Swarm service traefik-weehawk already exists."
+else
+  $SUDO_CMD docker service create \\
+    --name traefik-weehawk \\
+    --publish published=80,target=80 \\
+    --publish published=443,target=443 \\
+    --network "$OVERLAY_NET" \\
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \\
+    --constraint "node.role == manager" \\
+    traefik:v2.11 \\
+    --providers.docker=true \\
+    --providers.docker.swarmMode=true \\
+    --providers.docker.exposedByDefault=false \\
+    --providers.docker.network="$OVERLAY_NET" \\
+    --entrypoints.web.address=:80 \\
+    --entrypoints.websecure.address=:443
+  echo "Traefik traefik-weehawk created."
+fi
+
 if [ -n "$SUDO_CMD" ] && ! groups "$CURRENT_USER" | grep -qw docker; then
   $SUDO_CMD usermod -aG docker "$CURRENT_USER" || true
 fi

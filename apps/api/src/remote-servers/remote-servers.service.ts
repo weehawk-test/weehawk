@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { randomBytes } from 'crypto';
 import Dockerode from 'dockerode';
 import { Client } from 'ssh2';
 import { RemoteServer } from './entities/remote-server.entity';
@@ -40,6 +41,20 @@ import {
 } from './remote-docker-console.helper';
 import { decryptPrivateKey, encryptPrivateKey } from './ssh-key-crypto';
 import { generateEd25519SshKeyPair } from './ssh-ed25519-generate';
+
+/**
+ * Bash-safe `export VAR='…'` lines so `docker stack deploy` can substitute `${VAR}` in the compose
+ * file on the remote host (matches local deploy where service.env is merged into the process env).
+ */
+function bashExportBlockForStackDeploy(env: Record<string, string>): string {
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(env)) {
+    if (!k || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
+    const quoted = `'${String(v ?? '').replace(/'/g, `'\\''`)}'`;
+    lines.push(`export ${k}=${quoted}`);
+  }
+  return lines.join('\n');
+}
 
 /**
  * Maps common Node/ssh2/Dockerode errors to clearer copy; keeps the original for debugging.
@@ -282,6 +297,219 @@ export class RemoteServersService {
   }
 
   /**
+   * Run `docker` on the remote host over ssh2 (no local `DOCKER_HOST=ssh://…`).
+   * Matches remote image build (Dockerode-over-SSH): avoids broken Docker CLI dial-stdio on Windows API hosts.
+   */
+  async execDockerCliOnRemoteViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    bashScriptBody: string,
+    onChunk?: (s: string) => void,
+  ): Promise<{ stdout: string; stderr: string }> {
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const script = `set -eu\n${bashScriptBody}`;
+    return await this.execSshBashScriptCollectOutput(p, script, onChunk);
+  }
+
+  /**
+   * `docker stack deploy` on the remote Swarm manager: uploads compose (+ optional isolated DOCKER_CONFIG)
+   * and runs the CLI there — same registry auth pattern as local `mergePushEnvForImageRef`.
+   */
+  async stackDeployViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    params: {
+      composeYaml: string;
+      stackName: string;
+      /** When set, upload `config.json` and set DOCKER_CONFIG for `--with-registry-auth`. */
+      localDockerConfigDir?: string;
+      /** Stream remote `docker` stdout/stderr (e.g. {@link emitDeployLog} for SSE). */
+      onChunk?: (s: string) => void;
+      /**
+       * Service environment (same as Weehawk `service.env`) for compose `${VAR}` substitution
+       * during `docker stack deploy` on the remote host. Without this, DB stacks see empty
+       * `POSTGRES_PASSWORD` etc.
+       */
+      deployEnv?: Record<string, string>;
+    },
+  ): Promise<{ stdout: string; stderr: string }> {
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const remoteDir = `/tmp/weehawk_sd_${randomBytes(12).toString('hex')}`;
+    const stackQ = params.stackName.replace(/'/g, `'\\''`);
+
+    let configJson: string | undefined;
+    if (params.localDockerConfigDir?.trim()) {
+      const cfgPath = path.join(params.localDockerConfigDir.trim(), 'config.json');
+      try {
+        configJson = await fs.readFile(cfgPath, 'utf8');
+      } catch {
+        configJson = undefined;
+      }
+    }
+
+    const onChunk = params.onChunk;
+    return await this.withSshClient(p, async (client) => {
+      try {
+        await this.sshExecCollectOutput(client, `mkdir -p '${remoteDir}/docker-config'`, onChunk);
+        onChunk?.('Uploading compose to remote host…\n');
+        await this.sftpWriteRemoteFile(client, `${remoteDir}/docker-compose.yml`, params.composeYaml);
+        if (configJson != null) {
+          await this.sftpWriteRemoteFile(client, `${remoteDir}/docker-config/config.json`, configJson);
+        }
+        const envExports = bashExportBlockForStackDeploy(params.deployEnv ?? {});
+        const deployScript = `set -euo pipefail
+${envExports}
+cd '${remoteDir}'
+if [ -f docker-config/config.json ]; then
+  export DOCKER_CONFIG='${remoteDir}/docker-config'
+  docker stack deploy -c docker-compose.yml --with-registry-auth '${stackQ}'
+else
+  docker stack deploy -c docker-compose.yml --with-registry-auth '${stackQ}'
+fi
+`;
+        return await this.execSshBashScriptCollectOutputOnClient(client, deployScript, onChunk);
+      } finally {
+        await this.sshExecIgnoreFailure(client, `rm -rf '${remoteDir}'`);
+      }
+    });
+  }
+
+  /** Rolling restart each service in a stack (`docker service update --force`) on the remote host. */
+  async forceRollingRestartStackViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    stackName: string,
+    onChunk?: (s: string) => void,
+  ): Promise<{ output: string; stderr: string }> {
+    const stackQ = stackName.replace(/'/g, `'\\''`);
+    const body = `SERVICES=$(docker stack services '${stackQ}' --format "{{.Name}}" 2>/dev/null || true)
+for svc in $SERVICES; do
+  [ -n "$svc" ] && docker service update --force "$svc" || true
+done
+`;
+    const r = await this.execDockerCliOnRemoteViaSsh(remoteServerId, projectUserId, body, onChunk);
+    return { output: [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n'), stderr: r.stderr };
+  }
+
+  /** `docker stack rm` on the remote host. */
+  async stackRmViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    stackName: string,
+  ): Promise<void> {
+    const stackQ = stackName.replace(/'/g, `'\\''`);
+    await this.execDockerCliOnRemoteViaSsh(
+      remoteServerId,
+      projectUserId,
+      `docker stack rm '${stackQ}'`,
+    );
+  }
+
+  /** Scale every service in the stack to 0 on the remote host. */
+  async scaleAllStackServicesToZeroViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    stackName: string,
+  ): Promise<void> {
+    const stackQ = stackName.replace(/'/g, `'\\''`);
+    const body = `SERVICES=$(docker stack services '${stackQ}' --format "{{.Name}}" 2>/dev/null || true)
+for svc in $SERVICES; do
+  [ -n "$svc" ] && docker service scale "$svc=0" || true
+done
+`;
+    await this.execDockerCliOnRemoteViaSsh(remoteServerId, projectUserId, body);
+  }
+
+  /**
+   * Creates a Swarm secret on the remote manager (required when stack YAML uses `secrets:` + `*_FILE`).
+   * Local {@link DockerSecretsService} targets the API host — remote deploy must create secrets on the deploy host.
+   */
+  async ensureDockerSecretOnRemoteViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    secretName: string,
+    secretValue: string,
+  ): Promise<void> {
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    return await this.withSshClient(p, async (client) => {
+      const exists = await this.sshExecExitCode(client, `docker secret inspect ${JSON.stringify(secretName)} >/dev/null 2>&1`);
+      if (exists === 0) {
+        return;
+      }
+      await this.sshExecDockerSecretCreateStdin(client, secretName, secretValue);
+    });
+  }
+
+  /** Returns process exit code (0–255). */
+  private async sshExecExitCode(client: Client, command: string): Promise<number> {
+    return await new Promise((resolve, reject) => {
+      client.exec(command, (err, stream) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        stream.on('close', (code: number) => {
+          resolve(code ?? 0);
+        });
+        stream.resume();
+        stream.stderr?.resume();
+      });
+    });
+  }
+
+  private async sshExecDockerSecretCreateStdin(
+    client: Client,
+    secretName: string,
+    secretValue: string,
+  ): Promise<void> {
+    const cmd = `docker secret create ${JSON.stringify(secretName)} -`;
+    return await new Promise((resolve, reject) => {
+      client.exec(cmd, (err, stream) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        let stderr = '';
+        stream.stderr.on('data', (d: Buffer) => {
+          stderr += d.toString();
+        });
+        stream.on('close', (code: number) => {
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(
+              new InternalServerErrorException(
+                stderr.trim()
+                  ? `Remote docker secret create failed: ${stderr.trim().slice(0, 2000)}`
+                  : `Remote docker secret create failed (exit ${code})`,
+              ),
+            );
+          }
+        });
+        stream.end(Buffer.from(secretValue, 'utf8'));
+      });
+    });
+  }
+
+  /**
    * Dockerode-over-SSH (ssh2), same approach as Dokploy — avoids spawning `docker` + system `ssh`
    * so Windows hosts are not blocked by DOCKER_SSH_OPTS / interactive host-key prompts.
    */
@@ -295,7 +523,7 @@ export class RemoteServersService {
       sshOptions: {
         privateKey: p.privateKey,
         readyTimeout: 60_000,
-        // Match non-interactive “first connect” UX; deploy still uses Docker CLI + OpenSSH.
+        // Match non-interactive “first connect” UX; Swarm deploy uses SSH exec on the remote host instead of local DOCKER_HOST=ssh:// when a deploy server is set.
         hostVerifier: () => true,
         ...(p.family != null ? { family: p.family } : {}),
       },
@@ -304,6 +532,8 @@ export class RemoteServersService {
 
   /**
    * Docker CLI uses DOCKER_HOST=ssh://user@host[:port] and DOCKER_SSH_OPTS for identity / options.
+   * Swarm stack deploy / stack ops when `remoteServerId` is set are implemented via {@link stackDeployViaSsh}
+   * and {@link execDockerCliOnRemoteViaSsh} so the API host does not rely on `docker` + dial-stdio (e.g. Windows).
    */
   async dockerHostEnvForServer(rs: RemoteServer): Promise<Record<string, string>> {
     const identityPath = await this.resolveIdentityFilePath(rs);
@@ -376,6 +606,7 @@ export class RemoteServersService {
         buildRemoteServerId:
           service.buildRemoteServerId ?? service.buildRemoteServer?.id ?? null,
         remoteServerId: service.remoteServerId ?? service.remoteServer?.id ?? null,
+        buildOnLocalDockerHost: service.buildOnLocalDockerHost === true,
       },
       await this.resolveProjectUserId(service),
     );
@@ -384,7 +615,11 @@ export class RemoteServersService {
   /** Same as {@link mergeDockerHostEnvForBuild} but uses FK columns read from `services` (reliable during deploy). */
   async mergeDockerHostEnvForBuildIds(
     base: NodeJS.ProcessEnv,
-    ids: { buildRemoteServerId: number | null; remoteServerId: number | null },
+    ids: {
+      buildRemoteServerId: number | null;
+      remoteServerId: number | null;
+      buildOnLocalDockerHost?: boolean;
+    },
     projectUserId: number | null,
   ): Promise<NodeJS.ProcessEnv> {
     const toCheck = new Set<number>();
@@ -393,6 +628,9 @@ export class RemoteServersService {
     for (const rid of toCheck) {
       const row = await this.remoteServerRepository.findOne({ where: { id: rid } });
       this.assertRemoteServerMatchesProject(row, projectUserId);
+    }
+    if (ids.buildOnLocalDockerHost === true) {
+      return base;
     }
     const id = ids.buildRemoteServerId ?? ids.remoteServerId;
     if (id == null) {
@@ -1038,6 +1276,200 @@ export class RemoteServersService {
           hostVerifier: () => true,
           ...(p.family != null ? { family: p.family } : {}),
         });
+    });
+  }
+
+  private async withSshClient<T>(
+    p: {
+      host: string;
+      port: number;
+      username: string;
+      privateKey: Buffer;
+      family?: number;
+    },
+    fn: (client: Client) => Promise<T>,
+  ): Promise<T> {
+    const client = new Client();
+    return await new Promise<T>((resolve, reject) => {
+      client
+        .once('ready', () => {
+          void fn(client)
+            .then((v) => {
+              client.end();
+              resolve(v);
+            })
+            .catch((e) => {
+              client.end();
+              reject(e);
+            });
+        })
+        .on('error', (err: Error & { level?: string }) => {
+          client.end();
+          if (err.level === 'client-authentication') {
+            reject(
+              new BadRequestException(
+                'SSH authentication failed — check the private key matches authorized_keys on the server.',
+              ),
+            );
+          } else {
+            reject(err);
+          }
+        })
+        .connect({
+          host: p.host,
+          port: p.port,
+          username: p.username,
+          privateKey: p.privateKey,
+          readyTimeout: 120_000,
+          hostVerifier: () => true,
+          ...(p.family != null ? { family: p.family } : {}),
+        });
+    });
+  }
+
+  private async execSshBashScriptCollectOutput(
+    p: {
+      host: string;
+      port: number;
+      username: string;
+      privateKey: Buffer;
+      family?: number;
+    },
+    script: string,
+    onChunk?: (s: string) => void,
+  ): Promise<{ stdout: string; stderr: string }> {
+    return await this.withSshClient(p, (client) =>
+      this.execSshBashScriptCollectOutputOnClient(client, script, onChunk),
+    );
+  }
+
+  private async execSshBashScriptCollectOutputOnClient(
+    client: Client,
+    script: string,
+    onChunk?: (s: string) => void,
+  ): Promise<{ stdout: string; stderr: string }> {
+    return await new Promise((resolve, reject) => {
+      client.exec('bash -s', (err, stream) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        let stdout = '';
+        let stderr = '';
+        stream.on('close', (code: number) => {
+          if (code === 0) {
+            resolve({ stdout, stderr });
+          } else {
+            reject(
+              new InternalServerErrorException(
+                stderr.trim()
+                  ? `Remote command failed (exit ${code}): ${stderr.trim().slice(0, 4000)}`
+                  : `Remote command exited with code ${code}`,
+              ),
+            );
+          }
+        });
+        stream.on('data', (d: Buffer) => {
+          const s = d.toString();
+          stdout += s;
+          onChunk?.(s);
+        });
+        stream.stderr.on('data', (d: Buffer) => {
+          const s = d.toString();
+          stderr += s;
+          onChunk?.(s);
+        });
+        stream.write(script);
+        stream.end();
+      });
+    });
+  }
+
+  private async sshExecCollectOutput(
+    client: Client,
+    command: string,
+    onChunk?: (s: string) => void,
+  ): Promise<{ stdout: string; stderr: string }> {
+    return await new Promise((resolve, reject) => {
+      client.exec(command, (err, stream) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        let stdout = '';
+        let stderr = '';
+        stream.on('close', (code: number) => {
+          if (code === 0) {
+            resolve({ stdout, stderr });
+          } else {
+            reject(
+              new InternalServerErrorException(
+                stderr.trim()
+                  ? `Remote command failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
+                  : `Remote command exited with code ${code}`,
+              ),
+            );
+          }
+        });
+        stream.on('data', (d: Buffer) => {
+          const s = d.toString();
+          stdout += s;
+          onChunk?.(s);
+        });
+        stream.stderr.on('data', (d: Buffer) => {
+          const s = d.toString();
+          stderr += s;
+          onChunk?.(s);
+        });
+      });
+    });
+  }
+
+  private async sshExecIgnoreFailure(client: Client, command: string): Promise<void> {
+    await new Promise<void>((resolve) => {
+      client.exec(command, (err, stream) => {
+        if (err) {
+          resolve();
+          return;
+        }
+        stream.on('close', () => resolve());
+        stream.resume();
+        stream.stderr?.resume();
+      });
+    });
+  }
+
+  private async sftpWriteRemoteFile(
+    client: Client,
+    remotePath: string,
+    content: string,
+  ): Promise<void> {
+    const buf = Buffer.from(content, 'utf8');
+    return await new Promise((resolve, reject) => {
+      client.sftp((err, sftp) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        const ws = sftp.createWriteStream(remotePath);
+        ws.on('error', (e) => {
+          try {
+            sftp.end();
+          } catch {
+            /* ignore */
+          }
+          reject(e);
+        });
+        ws.on('close', () => {
+          try {
+            sftp.end();
+          } catch {
+            /* ignore */
+          }
+          resolve();
+        });
+        ws.end(buf);
+      });
     });
   }
 

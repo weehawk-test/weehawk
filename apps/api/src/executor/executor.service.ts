@@ -30,7 +30,9 @@ import {
 } from './executor-compose-parse';
 import { removeDeploymentFolder } from './executor-deployment-fs';
 import {
+  emitDeployLog,
   formatExecError,
+  spawnDockerSubcommand,
   stderrIndicatesDockerFailure,
 } from './executor-docker';
 import type { ExecuteDeployOptions } from './executor-types';
@@ -117,6 +119,7 @@ export class ExecutorService {
   ) {
     const service = await this.servicesService.findOne(id);
     const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId = service.project?.userId ?? null;
     const cloudEdition =
       (this.configService.get<string>('WEEHAWK_EDITION') ?? 'selfhosted').toLowerCase() ===
       'cloud';
@@ -154,6 +157,7 @@ export class ExecutorService {
       env: await this.getProcessEnvForService(service),
     };
     const deployLogEmitter = options?.deployLogEmitter;
+    const emitChunk = (chunk: string) => emitDeployLog(deployLogEmitter, chunk);
     const buildImages = getApplicationBuildRuntimeImages(this.configService);
 
     try {
@@ -196,7 +200,11 @@ export class ExecutorService {
             const projectUserId = service.project?.userId ?? null;
             const buildEnv = await this.remoteServersService.mergeDockerHostEnvForBuildIds(
               buildBase,
-              sshIds,
+              {
+                buildRemoteServerId: sshIds.buildRemoteServerId,
+                remoteServerId: sshIds.remoteServerId,
+                buildOnLocalDockerHost: sshIds.buildOnLocalDockerHost,
+              },
               projectUserId,
             );
             const useRemoteDockerBuild = Boolean(pickDockerSshEnv(buildEnv));
@@ -322,14 +330,72 @@ export class ExecutorService {
           stackDeployEnv = merged.env;
           stackRegistryCleanup = merged.cleanup;
         }
-        const stackEsc = service.appName.replace(/"/g, '\\"');
-        const composeEsc = composeFile.replace(/"/g, '\\"');
-        const command = `docker stack deploy -c "${composeEsc}" --with-registry-auth "${stackEsc}"`;
+        const remoteDeployId = sshTargets.remoteServerId;
+        if (remoteDeployId != null) {
+          let localDockerConfigDir: string | undefined;
+          const dockerCfg = stackDeployEnv.DOCKER_CONFIG;
+          if (typeof dockerCfg === 'string' && dockerCfg.trim().length > 0) {
+            localDockerConfigDir = dockerCfg.trim();
+          }
+          try {
+            const r = await this.remoteServersService.stackDeployViaSsh(
+              remoteDeployId,
+              projectUserId,
+              {
+                composeYaml: finalConfig,
+                stackName: service.appName,
+                localDockerConfigDir,
+                onChunk: deployLogEmitter ? emitChunk : undefined,
+                deployEnv: parseEnv(service.env || ''),
+              },
+            );
+            let out = [buildLogPrefix, r.stdout, r.stderr].filter((s) => s && s.trim()).join('\n');
+            let err = [buildLogPrefix, r.stderr]
+              .filter((s) => s && String(s).trim())
+              .join('\n');
+
+            if (mode === 'redeploy') {
+              const forced = await this.remoteServersService.forceRollingRestartStackViaSsh(
+                remoteDeployId,
+                projectUserId,
+                service.appName,
+                deployLogEmitter ? emitChunk : undefined,
+              );
+              out = [out, forced.output].filter(Boolean).join('\n');
+              err += forced.stderr;
+            }
+
+            const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
+            const success = !stderrIndicatesFailure;
+            if (success) {
+              await maybeRemoveApplicationSourceAfterDeploy(
+                service,
+                deployDir,
+                this.configService,
+              );
+            }
+            return { success, output: out };
+          } finally {
+            await stackRegistryCleanup?.();
+          }
+        }
+
         try {
-          const { stdout, stderr } = await execAsync(command, {
-            cwd: execOpts.cwd,
-            env: stackDeployEnv,
-          });
+          const { stdout, stderr } = await spawnDockerSubcommand(
+            [
+              'stack',
+              'deploy',
+              '-c',
+              composeFile,
+              '--with-registry-auth',
+              service.appName,
+            ],
+            {
+              cwd: execOpts.cwd,
+              env: stackDeployEnv,
+              deployLogEmitter,
+            },
+          );
           let out = [buildLogPrefix, stdout, stderr].filter((s) => s && s.trim()).join('\n');
           let err = [buildLogPrefix, stderr]
             .filter((s) => s && String(s).trim())
@@ -339,6 +405,7 @@ export class ExecutorService {
             const forced = await forceRollingRestartStackServices(
               service.appName,
               pickDockerSshEnv(execOpts.env),
+              deployLogEmitter,
             );
             out = [out, forced.output].filter(Boolean).join('\n');
             err += forced.stderr;
@@ -359,22 +426,25 @@ export class ExecutorService {
         }
       }
 
-      const base = `docker compose -f "${composeFile}" -p ${service.appName}`;
-      let command: string;
       if (mode === 'redeploy') {
         try {
-          await execAsync(`${base} stop`, execOpts);
+          await spawnDockerSubcommand(
+            ['compose', '-f', composeFile, '-p', service.appName, 'stop'],
+            { ...execOpts, deployLogEmitter },
+          );
         } catch {
           /* already stopped or nothing to stop */
         }
-        command = `${base} up -d --build`;
-      } else if (mode === 'deploy') {
-        command = `${base} up -d --build`;
-      } else {
-        command = `${base} up -d --no-build`;
       }
+      const composeUpArgs =
+        mode === 'deploy' || mode === 'redeploy'
+          ? (['compose', '-f', composeFile, '-p', service.appName, 'up', '-d', '--build'] as const)
+          : (['compose', '-f', composeFile, '-p', service.appName, 'up', '-d', '--no-build'] as const);
 
-      const { stdout, stderr } = await execAsync(command, execOpts);
+      const { stdout, stderr } = await spawnDockerSubcommand([...composeUpArgs], {
+        ...execOpts,
+        deployLogEmitter,
+      });
       const out = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
       const err = stderr ?? '';
       const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
@@ -448,6 +518,8 @@ export class ExecutorService {
   async getRuntimeStatus(id: number): Promise<{ running: boolean }> {
     const service = await this.servicesService.findOne(id);
     const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId = service.project?.userId ?? null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -456,10 +528,26 @@ export class ExecutorService {
 
     try {
       if (isSwarmStackService(service)) {
-        const { stdout } = await execAsync(
-          `docker stack services ${service.appName} --format "{{.Replicas}}"`,
-          { env: procEnv },
-        );
+        let stdout: string;
+        if (sshIds.remoteServerId != null) {
+          const stackQ = service.appName.replace(/'/g, `'\\''`);
+          try {
+            const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+              sshIds.remoteServerId,
+              projectUserId,
+              `docker stack services '${stackQ}' --format "{{.Replicas}}" 2>/dev/null || true`,
+            );
+            stdout = r.stdout;
+          } catch {
+            return { running: false };
+          }
+        } else {
+          const r = await execAsync(
+            `docker stack services ${service.appName} --format "{{.Replicas}}"`,
+            { env: procEnv },
+          );
+          stdout = r.stdout;
+        }
         const running = stdout.split(/\r?\n/).some((line) => {
           const m = line.trim().match(/^(\d+)\//);
           return m !== null && parseInt(m[1], 10) > 0;
@@ -508,6 +596,8 @@ export class ExecutorService {
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
     const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId = service.project?.userId ?? null;
     let key: string;
     if (composeServiceKey !== undefined && composeServiceKey.trim() !== '') {
       try {
@@ -521,10 +611,27 @@ export class ExecutorService {
 
     try {
       if (isSwarmStackService(service)) {
-        const { stdout } = await execAsync(
-          `docker ps -q -f "name=${service.appName}_${key}" -f "status=running"`,
-          { env: procEnv },
-        );
+        let stdout: string;
+        if (sshIds.remoteServerId != null) {
+          const nameFilter = `${service.appName}_${key}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          try {
+            const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+              sshIds.remoteServerId,
+              projectUserId,
+              `docker ps -q -f "name=${nameFilter}" -f "status=running" 2>/dev/null || true`,
+            );
+            stdout = r.stdout;
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return { error: msg || 'Could not resolve container.' };
+          }
+        } else {
+          const r = await execAsync(
+            `docker ps -q -f "name=${service.appName}_${key}" -f "status=running"`,
+            { env: procEnv },
+          );
+          stdout = r.stdout;
+        }
         const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
         if (!cid) {
           return {
@@ -567,6 +674,8 @@ export class ExecutorService {
   async stopAndRemove(id: number) {
     const service = await this.servicesService.findOne(id);
     const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId = service.project?.userId ?? null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -575,7 +684,15 @@ export class ExecutorService {
 
     try {
       if (isSwarmStackService(service)) {
-        await execAsync(`docker stack rm ${service.appName}`, { env: procEnv });
+        if (sshIds.remoteServerId != null) {
+          await this.remoteServersService.stackRmViaSsh(
+            sshIds.remoteServerId,
+            projectUserId,
+            service.appName,
+          );
+        } else {
+          await execAsync(`docker stack rm ${service.appName}`, { env: procEnv });
+        }
         console.log(`Stack ${service.appName} removed from Swarm.`);
       } else {
         const fileExists = await fs
@@ -876,6 +993,8 @@ export class ExecutorService {
   async shutdown(id: number) {
     const service = await this.servicesService.findOne(id);
     const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId = service.project?.userId ?? null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -883,10 +1002,18 @@ export class ExecutorService {
 
     try {
       if (isSwarmStackService(service)) {
-        await scaleAllStackServicesToZero(
-          service.appName,
-          pickDockerSshEnv(procEnv),
-        );
+        if (sshIds.remoteServerId != null) {
+          await this.remoteServersService.scaleAllStackServicesToZeroViaSsh(
+            sshIds.remoteServerId,
+            projectUserId,
+            service.appName,
+          );
+        } else {
+          await scaleAllStackServicesToZero(
+            service.appName,
+            pickDockerSshEnv(procEnv),
+          );
+        }
         return { success: true, message: 'Stack services scaled to 0 (Stopped)' };
       } else {
         const composeFile = path.join(deployDir, 'docker-compose.yml');

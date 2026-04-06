@@ -90,6 +90,13 @@ export class Service {
   @RelationId((s: Service) => s.buildRemoteServer)
   buildRemoteServerId?: number | null;
 
+  /**
+   * When true, `docker build` runs on the API host’s local daemon (no DOCKER_HOST), even if deploy uses a remote SSH host.
+   * Requires a registry image so the remote can pull after push.
+   */
+  @Column({ type: 'boolean', default: false })
+  buildOnLocalDockerHost!: boolean;
+
   @CreateDateColumn()
   createdAt!: Date;
 
