@@ -25,6 +25,7 @@ import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { DatabaseEnginePicker } from "@/components/database-engine-picker";
 import {
   databaseLogoBlendClass,
+  databaseLogoSizeClass,
   getDatabaseEngineById,
   parseDatabaseEngineFromConfig,
   POSTGRES_DOCKER_IMAGE,
@@ -871,7 +872,7 @@ export default function ProjectsIdClient({
                               alt=""
                               width={28}
                               height={28}
-                              className={`object-contain max-h-7 w-auto ${databaseLogoBlendClass(dbEngineId)}`}
+                              className={`object-contain max-h-7 w-auto ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                               sizes="36px"
                             />
                           ) : (

@@ -41,6 +41,9 @@ export class CronJob {
   @Column({ name: 'service_id', type: 'int', nullable: true })
   serviceId: number | null = null;
 
+  @Column({ name: 'remote_server_id', type: 'int', nullable: true })
+  remoteServerId: number | null = null;
+
   @Column({
     name: 'service_action',
     type: 'varchar',

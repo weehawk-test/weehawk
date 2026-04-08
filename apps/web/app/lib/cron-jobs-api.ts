@@ -13,6 +13,7 @@ export type CronJobListItem = {
   cronExpression: string;
   targetMode: WebhookTargetMode;
   serviceId: number | null;
+  remoteServerId: number | null;
   serviceAction: WebhookServiceAction | null;
   notifyOnTrigger: boolean;
   notifyMessage?: string | null;
@@ -36,6 +37,7 @@ export type CreateCronJobBody = {
   cronExpression: string;
   targetMode: WebhookTargetMode;
   serviceId?: number;
+  remoteServerId?: number;
   serviceAction?: WebhookServiceAction;
   volumeSource?: string;
   dockerCommand?: string;
@@ -50,6 +52,8 @@ export type UpdateCronJobBody = {
   description?: string;
   cronExpression?: string;
   isActive?: boolean;
+  remoteServerId?: number | null;
+  dockerCommand?: string | null;
   notifyChannelId?: string | null;
   notifyMessage?: string | null;
   backupS3ProfileName?: string | null;

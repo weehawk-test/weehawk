@@ -21,6 +21,7 @@ import { RemoteServersService } from './remote-servers.service';
 import { RemoteServerProvisionService } from './remote-server-provision.service';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
 import { UpdateRemoteServerDto } from './dto/update-remote-server.dto';
+import { RunRemoteTerminalDto } from './dto/run-remote-terminal.dto';
 
 @ApiTags('Remote servers')
 @ApiBearerAuth()
@@ -385,5 +386,16 @@ export class RemoteServersController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.remoteServersService.testSshOnly(id, this.uid(req));
+  }
+
+  @Post(':id/terminal')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({ summary: 'Run an SSH command on remote server and return output' })
+  terminal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RunRemoteTerminalDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.remoteServersService.runTerminalCommand(id, this.uid(req), dto.command);
   }
 }

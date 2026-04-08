@@ -20,11 +20,13 @@ export type WebhookListItem = {
   cronExpression: null;
   targetMode: WebhookTargetMode;
   serviceId: number | null;
+  remoteServerId: number | null;
   serviceAction: WebhookServiceAction | null;
   notifyOnTrigger: boolean;
   notifyMessage?: string | null;
   createdAt: string;
   summary: string;
+  secretToken: string;
 };
 
 export type WebhookDetail = WebhookListItem & {
@@ -43,6 +45,7 @@ export type CreateWebhookBody = {
   description?: string;
   targetMode: WebhookTargetMode;
   serviceId?: number;
+  remoteServerId?: number;
   serviceAction?: WebhookServiceAction;
   volumeSource?: string;
   dockerCommand?: string;
@@ -56,6 +59,8 @@ export type UpdateWebhookBody = {
   name?: string;
   description?: string;
   isActive?: boolean;
+  remoteServerId?: number | null;
+  dockerCommand?: string | null;
   notifyChannelId?: string | null;
   notifyMessage?: string | null;
   backupS3ProfileName?: string | null;

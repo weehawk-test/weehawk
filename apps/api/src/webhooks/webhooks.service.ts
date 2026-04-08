@@ -29,10 +29,12 @@ export type WebhookListRow = {
   isActive: boolean;
   targetMode: string;
   serviceId: number | null;
+  remoteServerId: number | null;
   serviceAction: string | null;
   notifyOnTrigger: boolean;
   createdAt: string;
   summary: string;
+  secretToken: string;
 };
 
 export type WebhookDetailRow = WebhookListRow & {
@@ -65,9 +67,11 @@ export class WebhooksService {
         );
       }
       if (dto.serviceAction !== 'no_action' && dto.serviceId == null) {
-        throw new BadRequestException(
-          'serviceId is required unless action is no_action.',
-        );
+        if (dto.serviceAction !== 'docker_command') {
+          throw new BadRequestException(
+            'serviceId is required unless action is no_action.',
+          );
+        }
       }
       if (dto.serviceAction === 'volume_backup' && !dto.volumeSource?.trim()) {
         throw new BadRequestException(
@@ -138,10 +142,12 @@ export class WebhooksService {
       isActive: w.isActive,
       targetMode: w.targetMode,
       serviceId: w.serviceId,
+      remoteServerId: w.remoteServerId,
       serviceAction: w.serviceAction,
       notifyOnTrigger: w.notifyOnTrigger,
       createdAt: w.createdAt.toISOString(),
       summary: this.summaryLabel(w),
+      secretToken: w.secretToken,
     };
   }
 
@@ -232,8 +238,16 @@ export class WebhooksService {
       isActive: true,
       targetMode: dto.targetMode,
       serviceId:
-        dto.targetMode === 'service' && dto.serviceAction !== 'no_action'
+        dto.targetMode === 'service' &&
+        dto.serviceAction !== 'no_action' &&
+        dto.serviceAction !== 'docker_command'
           ? dto.serviceId
+          : null,
+      remoteServerId:
+        dto.targetMode === 'service' &&
+        dto.serviceAction === 'docker_command' &&
+        dto.remoteServerId != null
+          ? dto.remoteServerId
           : null,
       serviceAction: dto.targetMode === 'service' ? dto.serviceAction : null,
       volumeSource:
@@ -324,6 +338,18 @@ export class WebhooksService {
         w.databaseBackupConfig =
           dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
         w.dockerCommand = null;
+      }
+    }
+    if (dto.dockerCommand !== undefined) {
+      if (w.serviceAction === 'docker_command') {
+        w.dockerCommand = dto.dockerCommand?.trim() || null;
+      }
+    }
+    if (dto.remoteServerId !== undefined) {
+      if (w.serviceAction === 'docker_command') {
+        w.remoteServerId = dto.remoteServerId ?? null;
+      } else {
+        w.remoteServerId = null;
       }
     }
     if (w.notifyChannelId && w.notifyMessage) {
@@ -469,13 +495,13 @@ export class WebhooksService {
           }
         } else if (
           w.serviceAction === 'docker_command' &&
-          w.dockerCommand &&
-          w.serviceId != null
+          w.dockerCommand
         ) {
           action = 'docker_command';
-          const r = await this.executorService.runWebhookDockerCommand(
-            w.serviceId,
+          const r = await this.executorService.runSystemScript(
             w.dockerCommand,
+            w.remoteServerId,
+            w.userId,
           );
           success = r.success;
           output = r.output;
@@ -489,10 +515,12 @@ export class WebhooksService {
       output = e instanceof Error ? e.message : String(e);
     }
 
+    const actionLabel = action === 'docker_command' ? 'bash_script' : action;
+
     const payload = {
       ok: success,
       webhook: w.name,
-      action,
+      action: actionLabel,
       output: output.slice(0, 8000),
     };
 

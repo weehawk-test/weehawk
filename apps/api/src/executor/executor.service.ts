@@ -8,7 +8,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { gzipSync } from 'zlib';
 import * as fs from 'fs/promises';
@@ -949,45 +949,128 @@ export class ExecutorService {
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
     );
     await fs.mkdir(deployDir, { recursive: true });
-    let cmd = rawInput.trim().replace(/\s+/g, ' ');
-    const lower = cmd.toLowerCase();
-    if (!lower.startsWith('docker')) {
-      cmd = `docker ${cmd}`;
-    } else if (!lower.startsWith('docker ')) {
-      cmd = `docker ${cmd.slice(6).trim()}`;
-    }
-    if (!/^docker\s+/i.test(cmd)) {
-      return {
-        success: false,
-        output:
-          'Command must be a docker CLI invocation (e.g. docker ps, docker compose …).',
-      };
-    }
-    if (/[;&|`$\n\r]/.test(cmd)) {
-      return {
-        success: false,
-        output:
-          'Forbidden characters: use one docker command without ; | & ` $ or newlines.',
-      };
+    const script = rawInput.trim();
+    if (!script) {
+      return { success: false, output: 'Script is empty.' };
     }
     const procEnv = await this.getProcessEnvForService(service);
     try {
-      const { stdout, stderr } = await execAsync(cmd, {
+      const out = await this.runBashScriptFromStdin(script, {
         cwd: deployDir,
         env: procEnv,
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 180_000,
+        timeoutMs: 180_000,
+        maxOutputBytes: 10 * 1024 * 1024,
       });
-      const out = [stdout, stderr]
-        .filter((s) => s && String(s).trim())
-        .join('\n');
-      const err = stderr ?? '';
-      const failed = stderrIndicatesDockerFailure(err);
-      return { success: !failed, output: out || '(no output)' };
+      return { success: true, output: out || '(no output)' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return { success: false, output: msg };
     }
+  }
+
+  async runSystemScript(
+    rawInput: string,
+    remoteServerId?: number | null,
+    projectUserId?: number | null,
+  ): Promise<{ success: boolean; output: string }> {
+    const script = rawInput.trim();
+    if (!script) {
+      return { success: false, output: 'Script is empty.' };
+    }
+    if (remoteServerId != null) {
+      try {
+        const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+          remoteServerId,
+          projectUserId ?? null,
+          script,
+        );
+        const out = [r.stdout, r.stderr]
+          .filter((s) => s && String(s).trim())
+          .join('\n');
+        return { success: true, output: out || '(no output)' };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, output: msg };
+      }
+    }
+    const workDir = this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR') || process.cwd();
+    try {
+      const out = await this.runBashScriptFromStdin(script, {
+        cwd: workDir,
+        env: process.env,
+        timeoutMs: 180_000,
+        maxOutputBytes: 10 * 1024 * 1024,
+      });
+      return { success: true, output: out || '(no output)' };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { success: false, output: msg };
+    }
+  }
+
+  private async runBashScriptFromStdin(
+    script: string,
+    opts: {
+      cwd: string;
+      env: NodeJS.ProcessEnv;
+      timeoutMs: number;
+      maxOutputBytes: number;
+    },
+  ): Promise<string> {
+    return await new Promise((resolve, reject) => {
+      const child = spawn('bash', ['-s'], {
+        cwd: opts.cwd,
+        env: opts.env,
+      });
+      let stdout = '';
+      let stderr = '';
+      let done = false;
+      let totalBytes = 0;
+
+      const finish = (err?: Error, output?: string) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        if (err) reject(err);
+        else resolve(output ?? '');
+      };
+
+      const appendChunk = (chunk: Buffer, target: 'stdout' | 'stderr') => {
+        totalBytes += chunk.length;
+        if (totalBytes > opts.maxOutputBytes) {
+          child.kill('SIGKILL');
+          finish(new Error('Script output exceeded limit.'));
+          return;
+        }
+        const text = chunk.toString();
+        if (target === 'stdout') stdout += text;
+        else stderr += text;
+      };
+
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL');
+        finish(new Error('Script execution timed out.'));
+      }, opts.timeoutMs);
+
+      child.stdout.on('data', (d: Buffer) => appendChunk(d, 'stdout'));
+      child.stderr.on('data', (d: Buffer) => appendChunk(d, 'stderr'));
+      child.on('error', (e) => finish(e));
+      child.on('close', (code) => {
+        if (code !== 0) {
+          finish(new Error((stderr || `Script exited with code ${code}`).trim()));
+          return;
+        }
+        finish(undefined, [stdout, stderr].filter((s) => s && s.trim()).join('\n'));
+      });
+
+      child.stdin.write(script, 'utf8', (err) => {
+        if (err) {
+          finish(err);
+          return;
+        }
+        child.stdin.end();
+      });
+    });
   }
 
   async shutdown(id: number) {

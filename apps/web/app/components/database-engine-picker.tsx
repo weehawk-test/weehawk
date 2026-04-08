@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
-import { DATABASE_ENGINES, databaseLogoBlendClass, type DatabaseEngineId } from "@/lib/database-engines";
+import { DATABASE_ENGINES, databaseLogoBlendClass, databaseLogoSizeClass, type DatabaseEngineId } from "@/lib/database-engines";
 
 type DatabaseEnginePickerProps = {
   open: boolean;
@@ -83,7 +83,7 @@ export function DatabaseEnginePicker({
                             alt=""
                             width={112}
                             height={56}
-                            className={`object-contain max-h-12 w-auto max-w-[7rem] ${databaseLogoBlendClass(eng.id)}`}
+                            className={`object-contain max-h-12 w-auto max-w-[7rem] ${databaseLogoBlendClass(eng.id)} ${databaseLogoSizeClass(eng.id)}`}
                             sizes="112px"
                           />
                         </span>

@@ -111,7 +111,7 @@ export default function GitLabGitSettingsPage() {
       <div className="flex items-start gap-4">
         <div className="rounded-2xl border border-orange-500/20 bg-gradient-to-br from-orange-500/10 to-transparent p-3 shadow-lg shrink-0">
           <Image
-            src="/deployment-sources/gitlab.png"
+            src="/deployment-sources/gitlab.svg"
             alt=""
             width={56}
             height={56}

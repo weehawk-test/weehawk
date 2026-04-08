@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUpdateWebhook } from "@/hooks/use-webhooks";
 import type { WebhookDetail } from "@/lib/webhooks-api";
 import type { NotificationChannel } from "@/lib/notifications-api";
+import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { Service } from "@/lib/schema";
-import { X } from "lucide-react";
+import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
@@ -18,6 +20,18 @@ import {
   type DatabaseBackupFormValues,
 } from "@/lib/database-backup-preview";
 import type { DatabaseBackupConfig } from "@/lib/webhooks-api";
+
+function renderHighlightedScript(script: string) {
+  const lines = (script || "").split("\n");
+  return lines.map((line, index) => {
+    const isComment = /^\s*#/.test(line);
+    return (
+      <div key={`line-${index}`}>
+        <span className={isComment ? "text-emerald-400" : "text-foreground"}>{line || " "}</span>
+      </div>
+    );
+  });
+}
 
 function backupConfigToForm(cfg: DatabaseBackupConfig | null): DatabaseBackupFormValues {
   return {
@@ -35,6 +49,7 @@ type Props = {
   initialChannels: NotificationChannel[];
   initialS3Profiles: S3ProfilePublic[];
   initialServices: Service[];
+  initialRemoteServers: RemoteServerRow[];
 };
 
 export function EditWebhookClient({
@@ -43,6 +58,7 @@ export function EditWebhookClient({
   initialChannels,
   initialS3Profiles,
   initialServices,
+  initialRemoteServers,
 }: Props) {
   const router = useRouter();
   const { toast } = useToast();
@@ -50,8 +66,21 @@ export function EditWebhookClient({
 
   const [name, setName] = useState(initialWebhook.name);
   const [description, setDescription] = useState(initialWebhook.description ?? "");
+  const [bashScript, setBashScript] = useState(initialWebhook.dockerCommand ?? "");
+  const scriptLines = Math.max(1, bashScript.split("\n").length);
+  const SCRIPT_MIN_HEIGHT = 180;
+  const SCRIPT_MAX_HEIGHT = 520;
+  const [scriptEditorHeight, setScriptEditorHeight] = useState(SCRIPT_MIN_HEIGHT);
+  const scriptHighlightRef = useRef<HTMLPreElement | null>(null);
+  const scriptLineNumbersRef = useRef<HTMLDivElement | null>(null);
   const [notifyChannelId, setNotifyChannelId] = useState(initialWebhook.notifyChannelId ?? "");
   const [notifyMessage, setNotifyMessage] = useState(initialWebhook.notifyMessage ?? "");
+  const [notificationEnabled, setNotificationEnabled] = useState(
+    Boolean(initialWebhook.notifyChannelId && initialWebhook.notifyMessage),
+  );
+  const [remoteServerId, setRemoteServerId] = useState(
+    initialWebhook.remoteServerId != null ? String(initialWebhook.remoteServerId) : "",
+  );
   const [backupS3ProfileName, setBackupS3ProfileName] = useState(
     initialWebhook.backupS3ProfileName ?? "",
   );
@@ -64,14 +93,18 @@ export function EditWebhookClient({
     if (sid == null) return null;
     return initialServices.find((s) => Number(s.id) === sid) ?? null;
   }, [initialServices, initialWebhook.serviceId]);
+  const deployServers = useMemo(
+    () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
+    [initialRemoteServers],
+  );
 
   const submit = () => {
     if (!name.trim()) {
       toast({ title: "Name required", variant: "destructive" });
       return;
     }
-    const hasNotifyChannel = Boolean(notifyChannelId.trim());
-    const hasNotifyMessage = Boolean(notifyMessage.trim());
+    const hasNotifyChannel = notificationEnabled && Boolean(notifyChannelId.trim());
+    const hasNotifyMessage = notificationEnabled && Boolean(notifyMessage.trim());
     if (hasNotifyChannel !== hasNotifyMessage) {
       toast({ title: "Choose channel and message together", variant: "destructive" });
       return;
@@ -103,6 +136,15 @@ export function EditWebhookClient({
         return;
       }
     }
+    const parsedRemoteServerId = remoteServerId ? Number(remoteServerId) : null;
+    if (
+      initialWebhook.serviceAction === "docker_command" &&
+      parsedRemoteServerId != null &&
+      (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1)
+    ) {
+      toast({ title: "Select a valid server", variant: "destructive" });
+      return;
+    }
 
     updateMutation.mutate(
       {
@@ -129,6 +171,12 @@ export function EditWebhookClient({
               },
             }
           : {}),
+        ...(initialWebhook.serviceAction === "docker_command"
+          ? {
+              dockerCommand: bashScript.trim() || null,
+              remoteServerId: parsedRemoteServerId,
+            }
+          : {}),
       },
       {
         onSuccess: () => router.push(`/webhooks/${id}`),
@@ -138,30 +186,138 @@ export function EditWebhookClient({
     );
   };
 
-  return (
-    <>
-      <div className="max-w-2xl mx-auto">
-        <div className="glass-panel p-6 md:p-8 rounded-2xl relative">
-          <button
-            type="button"
-            onClick={() => router.push("/webhooks")}
-            className="absolute top-4 right-4 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
-          <h1 className="text-2xl font-bold text-foreground mb-6 pr-12">Edit webhook</h1>
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Name</label>
+  const handleScriptResizeStart = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = scriptEditorHeight;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientY - startY;
+      const nextHeight = Math.min(SCRIPT_MAX_HEIGHT, Math.max(SCRIPT_MIN_HEIGHT, startHeight + delta));
+      setScriptEditorHeight(nextHeight);
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+      <div
+        className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-start justify-center px-4 py-6 md:px-6 md:py-8"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        <div className="w-full max-w-2xl">
+          <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
+          <div className="mb-6 flex items-center justify-between gap-3">
+            <h1 className="text-2xl font-bold text-foreground">Edit webhook</h1>
+            <Link href="/webhooks" aria-label="Close">
+              <button
+                type="button"
+                aria-label="Close"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </Link>
+          </div>
+          <div className="space-y-6 relative z-10">
+            <div className="space-y-4">
+              <div>
+              <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-1.5">
+                <Type className="w-4 h-4 text-primary" /> Name
+              </label>
               <input className="input-field" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div>
+              <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-1.5">
+                <AlignLeft className="w-4 h-4 text-primary" /> Description <span className="text-muted-foreground font-normal">(optional)</span>
+              </label>
+              <textarea className="input-field min-h-[72px] resize-none" value={description} onChange={(e) => setDescription(e.target.value)} />
+              </div>
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Description</label>
-              <textarea className="input-field min-h-[80px] resize-y" value={description} onChange={(e) => setDescription(e.target.value)} />
-            </div>
+            {initialWebhook.serviceAction === "docker_command" && (
+              <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
+                <label className="text-xs text-muted-foreground mb-1 block">Server</label>
+                <select
+                  className="input-field mb-3"
+                  value={remoteServerId}
+                  onChange={(e) => setRemoteServerId(e.target.value)}
+                >
+                  <option value="">Local Server</option>
+                  {deployServers.map((srv) => (
+                    <option key={srv.id} value={srv.id}>
+                      {srv.name} ({srv.host})
+                    </option>
+                  ))}
+                </select>
+                <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
+                <div className="relative overflow-hidden rounded-xl border border-border bg-black/50">
+                  <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>
+                    <div
+                      ref={scriptLineNumbersRef}
+                      className="h-full w-12 shrink-0 overflow-hidden border-r border-white/10 bg-black/40 px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
+                    >
+                      {Array.from({ length: scriptLines }, (_, i) => (
+                        <div key={`ln-${i}`} className="leading-6">
+                          {i + 1}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="relative flex-1">
+                      <pre
+                        ref={scriptHighlightRef}
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 overflow-auto p-3 font-mono text-sm leading-6 whitespace-pre-wrap break-words"
+                      >
+                        {renderHighlightedScript(bashScript)}
+                      </pre>
+                      <textarea
+                        className="relative z-10 h-full w-full resize-none bg-transparent p-3 font-mono text-sm leading-6 text-transparent caret-white placeholder:text-slate-400/80 selection:text-white selection:bg-primary/45 focus:outline-none"
+                        value={bashScript}
+                        onChange={(e) => setBashScript(e.target.value)}
+                        onScroll={(e) => {
+                          const top = e.currentTarget.scrollTop;
+                          const left = e.currentTarget.scrollLeft;
+                          if (scriptHighlightRef.current) {
+                            scriptHighlightRef.current.scrollTop = top;
+                            scriptHighlightRef.current.scrollLeft = left;
+                          }
+                          if (scriptLineNumbersRef.current) {
+                            scriptLineNumbersRef.current.scrollTop = top;
+                          }
+                        }}
+                        spellCheck={false}
+                        placeholder={`#!/usr/bin/env bash
+echo "Webhook done"`}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onMouseDown={handleScriptResizeStart}
+                    className="h-6 w-full border-t border-white/10 bg-black/40 hover:bg-black/55 cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
+                    aria-label="Resize script editor"
+                    title="Drag to resize"
+                  >
+                    <span className="inline-flex items-center rounded-full border border-white/15 bg-white/5 p-1 text-white/70">
+                      <ChevronsUpDown className="h-3 w-3" />
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
             {initialWebhook.serviceAction === "database_backup" && (
-              <div className="rounded-xl border border-white/10 p-4 space-y-3">
+              <div className="rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4 space-y-3">
                 <p className="text-sm font-medium">Backup options</p>
                 {!initialWebhook.databaseBackupConfig && (
                   <p className="text-xs text-amber-400/90">
@@ -181,7 +337,7 @@ export function EditWebhookClient({
             )}
             {(initialWebhook.serviceAction === "volume_backup" ||
               initialWebhook.serviceAction === "database_backup") && (
-              <div className="rounded-xl border border-white/10 p-4 space-y-3">
+              <div className="rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4 space-y-3">
                 {initialWebhook.serviceAction === "volume_backup" && (
                   <VolumeBackupDbWarning className="mb-1" />
                 )}
@@ -212,31 +368,51 @@ export function EditWebhookClient({
               </div>
             )}
 
-            <div className="rounded-xl border border-white/10 p-4 space-y-3">
-              <p className="text-sm font-medium">Optional notification</p>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Notification channel</label>
-                <select className="input-field" value={notifyChannelId} onChange={(e) => setNotifyChannelId(e.target.value)}>
-                  <option value="">No notification</option>
-                  {initialChannels.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
+            <div className="rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium">Notification (optional)</p>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs px-3 py-1.5"
+                  onClick={() => {
+                    if (notificationEnabled) {
+                      setNotifyChannelId("");
+                      setNotifyMessage("");
+                    }
+                    setNotificationEnabled((prev) => !prev);
+                  }}
+                >
+                  {notificationEnabled ? "Disable" : "Enable"}
+                </button>
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Message content</label>
-                <textarea className="input-field min-h-[80px] resize-y" value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} />
-              </div>
+              {notificationEnabled && (
+                <>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Notification channel</label>
+                    <select className="input-field" value={notifyChannelId} onChange={(e) => setNotifyChannelId(e.target.value)}>
+                      <option value="">No notification</option>
+                      {initialChannels.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Message content</label>
+                    <textarea className="input-field min-h-[80px] resize-y" value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} />
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex justify-end gap-3 pt-2">
               <Link href="/webhooks"><button type="button" className="btn-secondary">Cancel</button></Link>
-              <button type="button" onClick={submit} disabled={updateMutation.isPending} className="btn-primary">
-                {updateMutation.isPending ? "Saving..." : "Save changes"}
+              <button type="button" onClick={submit} disabled={updateMutation.isPending} className="btn-primary flex items-center gap-2">
+                {updateMutation.isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : "Save changes"}
               </button>
             </div>
           </div>
         </div>
       </div>
-    </>
+    </div>,
+    document.body,
   );
 }

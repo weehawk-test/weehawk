@@ -695,6 +695,25 @@ done
     return { server, privateKeyPem };
   }
 
+  /** For WebSocket remote terminal. */
+  async getSshTerminalContext(id: number): Promise<{
+    connect: {
+      host: string;
+      port: number;
+      username: string;
+      privateKey: Buffer;
+      family?: number;
+    };
+  }> {
+    const rs = await this.remoteServerRepository.findOne({ where: { id } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${id} not found`);
+    }
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    return { connect: p };
+  }
+
   private async findEntityOrFail(id: number, userId: number): Promise<RemoteServer> {
     const rs = await this.remoteServerRepository.findOne({ where: { id } });
     if (!rs) {
@@ -1206,6 +1225,30 @@ done
         (s) => s.length > 0,
       );
       return { success: true, output: lines.join('\n') };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { success: false, output: humanizeRemoteTestError(msg, 'ssh') };
+    }
+  }
+
+  async runTerminalCommand(
+    id: number,
+    userId: number,
+    command: string,
+  ): Promise<{ success: boolean; output: string }> {
+    const trimmed = command.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Command is required.');
+    }
+    const rs = await this.findEntityOrFail(id, userId);
+    try {
+      const pem = await this.resolvePrivateKeyPem(rs);
+      const p = this.getSshConnectParams(rs, pem);
+      const r = await this.execSshBashScriptCollectOutput(p, `${trimmed}\n`);
+      const out = [r.stdout, r.stderr]
+        .filter((s) => s && String(s).trim())
+        .join('\n');
+      return { success: true, output: out || '(no output)' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return { success: false, output: humanizeRemoteTestError(msg, 'ssh') };

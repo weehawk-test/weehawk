@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import {
+  fetchRemoteServersSSR,
   fetchNotificationChannelsSSR,
   fetchS3ProfilesSSR,
   fetchServicesSSR,
@@ -13,11 +14,12 @@ type PageProps = {
 
 export default async function EditWebhookPage({ params }: PageProps) {
   const { id } = await params;
-  const [webhook, initialChannels, initialS3Profiles, initialServices] = await Promise.all([
+  const [webhook, initialChannels, initialS3Profiles, initialServices, initialRemoteServers] = await Promise.all([
     fetchWebhookSSR(id),
     fetchNotificationChannelsSSR(),
     fetchS3ProfilesSSR(),
     fetchServicesSSR(),
+    fetchRemoteServersSSR(),
   ]);
   if (!webhook) notFound();
   return (
@@ -27,6 +29,7 @@ export default async function EditWebhookPage({ params }: PageProps) {
       initialChannels={initialChannels}
       initialS3Profiles={initialS3Profiles}
       initialServices={initialServices}
+      initialRemoteServers={initialRemoteServers}
     />
   );
 }

@@ -3,8 +3,8 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Clock3, Plus, Search, Trash2, ChevronRight, Clock, Pencil, Loader2 } from "lucide-react";
-import { useDeleteCronJob } from "@/hooks/use-cron-jobs";
+import { Clock3, Plus, Search, Trash2, ChevronRight, Clock, Pencil, Loader2, Power } from "lucide-react";
+import { useDeleteCronJob, useUpdateCronJob } from "@/hooks/use-cron-jobs";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import type { CronJobListItem } from "@/lib/cron-jobs-api";
@@ -26,6 +26,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
   const [search, setSearch] = useState("");
   const jobs = initialJobs;
   const deleteCronJob = useDeleteCronJob();
+  const updateCronJob = useUpdateCronJob();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -80,6 +81,29 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
     } finally {
       setIsBulkDeleting(false);
     }
+  };
+
+  const handleToggleActive = (id: string, name: string, currentIsActive: boolean) => {
+    updateCronJob.mutate(
+      { id, isActive: !currentIsActive },
+      {
+        onSuccess: (updated) => {
+          toast({
+            title: updated.isActive ? "Activated" : "Deactivated",
+            description: updated.isActive
+              ? `"${name}" is now active.`
+              : `"${name}" is now inactive.`,
+          });
+          router.refresh();
+        },
+        onError: (e: Error) =>
+          toast({
+            title: "Could not update cron job",
+            description: e.message,
+            variant: "destructive",
+          }),
+      },
+    );
   };
 
   return (
@@ -152,28 +176,48 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
           {filtered.map((j) => (
             <div
               key={j.id}
-              className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col group interactive-card"
+              className="glass-panel backdrop-blur-none rounded-2xl p-5 flex flex-col gap-3 group interactive-card border border-white/10 hover:border-primary/30 transition-colors"
             >
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-3 min-w-0">
+                <div className="flex justify-between items-start gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className={`p-2 rounded-lg flex-shrink-0 ${j.isActive ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
                       <Clock3 className="w-5 h-5" />
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-lg leading-tight truncate" title={j.name}>
-                        {j.name}
-                      </h3>
-                      <p className="text-xs text-muted-foreground mt-1 truncate" title={j.summary}>
-                        {j.summary}
-                      </p>
-                      <p className="text-[11px] text-primary mt-1 font-mono">{j.cronExpression}</p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <h3 className="font-semibold text-lg leading-tight truncate" title={j.name}>
+                          {j.name}
+                        </h3>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium flex-shrink-0 ${
+                            j.isActive
+                              ? "bg-primary/10 text-primary border border-primary/20"
+                              : "bg-muted text-muted-foreground border border-white/10"
+                          }`}
+                        >
+                          {j.isActive ? "Active" : "Inactive"}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleActive(j.id, j.name, j.isActive)}
+                      disabled={isBulkDeleting || deleteCronJob.isPending || updateCronJob.isPending}
+                      className={`p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100 ${
+                        j.isActive
+                          ? "hover:bg-amber-500/20 text-amber-400"
+                          : "hover:bg-emerald-500/20 text-emerald-400"
+                      }`}
+                      title={j.isActive ? "Deactivate" : "Activate"}
+                    >
+                      <Power className="w-4 h-4" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleDelete(j.id, j.name)}
-                      disabled={isBulkDeleting || deleteCronJob.isPending}
+                      disabled={isBulkDeleting || deleteCronJob.isPending || updateCronJob.isPending}
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete"
                     >
@@ -194,8 +238,15 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                 </div>
 
                 {j.description && (
-                  <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{j.description}</p>
+                  <p className="text-sm text-muted-foreground line-clamp-2">{j.description}</p>
                 )}
+
+                <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
+                  <p className="text-[11px] text-muted-foreground mb-1.5">Cron schedule</p>
+                  <p className="text-xs text-foreground/90 truncate font-mono" title={j.cronExpression}>
+                    {j.cronExpression}
+                  </p>
+                </div>
 
                 <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1">

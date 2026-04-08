@@ -44,11 +44,22 @@ export class CreateCronJobDto {
   @ApiPropertyOptional()
   @ValidateIf(
     (o: CreateCronJobDto) =>
-      o.targetMode === 'service' && o.serviceAction !== 'no_action',
+      o.targetMode === 'service' &&
+      o.serviceAction !== 'no_action' &&
+      o.serviceAction !== 'docker_command',
   )
   @IsInt()
   @Min(1)
   serviceId?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional remote server id for docker_command. When omitted, script runs on API host.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  remoteServerId?: number;
 
   @ApiPropertyOptional({
     enum: ['redeploy', 'volume_backup', 'database_backup', 'docker_command', 'no_action'],

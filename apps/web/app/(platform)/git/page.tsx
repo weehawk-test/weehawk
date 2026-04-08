@@ -27,11 +27,11 @@ export default function GitLandingPage() {
           <div className="flex items-start gap-3 min-w-0 mb-4">
             <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 p-2">
               <Image
-                src="/deployment-sources/github.png"
+                src="/deployment-sources/github.svg"
                 alt=""
                 width={48}
                 height={48}
-                className="h-8 w-8 object-contain"
+                className="h-8 w-8 object-contain dark:invert"
               />
             </div>
             <div className="min-w-0">
@@ -59,7 +59,7 @@ export default function GitLandingPage() {
           <div className="flex items-start gap-3 min-w-0 mb-4">
             <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 p-2">
               <Image
-                src="/deployment-sources/gitlab.png"
+                src="/deployment-sources/gitlab.svg"
                 alt=""
                 width={48}
                 height={48}

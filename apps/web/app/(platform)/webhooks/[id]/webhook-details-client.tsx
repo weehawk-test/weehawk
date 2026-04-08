@@ -17,6 +17,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -79,9 +80,17 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
     );
   };
 
-  return (
-    <>
-      <div className="max-w-3xl mx-auto relative">
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-start justify-center px-4 py-6 md:px-6 md:py-8"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      <div className="w-full max-w-3xl mx-auto relative">
         <button
           type="button"
           onClick={() => router.push("/webhooks")}
@@ -155,32 +164,30 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div className="glass-panel p-5 rounded-2xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="p-2 bg-primary/10 rounded-lg">
-                <Terminal className="w-5 h-5 text-primary" />
+          <div className="glass-panel p-4 rounded-2xl max-h-[62vh] overflow-y-auto">
+            {webhook.serviceAction !== "docker_command" && (
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Terminal className="w-5 h-5 text-primary" />
+                </div>
+                <h3 className="font-semibold text-base">Target</h3>
               </div>
-              <h3 className="font-semibold text-base">Target</h3>
-            </div>
-            <div className="space-y-3 text-sm">
-              <div>
-                <p className="text-muted-foreground text-xs mb-1">Mode</p>
-                <p className="font-medium text-foreground">Service (Docker)</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground text-xs mb-1">Trigger type</p>
-                <p className="font-medium text-foreground">Webhook URL</p>
-              </div>
+            )}
+            <div className="space-y-2.5 text-sm">
               {webhook.targetMode === "service" && (
                 <>
-                  <div>
-                    <p className="text-muted-foreground text-xs mb-1">Service ID</p>
-                    <p className="font-mono text-foreground">{webhook.serviceId ?? "—"}</p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground text-xs mb-1">Action</p>
-                    <p className="font-medium text-foreground">{webhook.serviceAction ?? "—"}</p>
-                  </div>
+                  {webhook.serviceAction !== "docker_command" && (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-1">Service ID</p>
+                      <p className="font-mono text-foreground">{webhook.serviceId ?? "—"}</p>
+                    </div>
+                  )}
+                  {webhook.serviceAction !== "docker_command" && (
+                    <div>
+                      <p className="text-muted-foreground text-xs mb-1">Action</p>
+                      <p className="font-medium text-foreground">{webhook.serviceAction ?? "—"}</p>
+                    </div>
+                  )}
                   {webhook.volumeSource && (
                     <div>
                       <p className="text-muted-foreground text-xs mb-1">Volume</p>
@@ -202,10 +209,18 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
                     (webhook.serviceAction === "docker_command" ||
                       (webhook.serviceAction === "database_backup" && !webhook.databaseBackupConfig)) && (
                       <div>
-                        <p className="text-muted-foreground text-xs mb-1">
-                          {webhook.serviceAction === "database_backup" ? "Legacy command" : "Docker command"}
-                        </p>
-                        <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                        {webhook.serviceAction === "docker_command" && (
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="p-2 bg-primary/10 rounded-lg">
+                              <Terminal className="w-5 h-5 text-primary" />
+                            </div>
+                            <h3 className="font-semibold text-base">Bash Script</h3>
+                          </div>
+                        )}
+                        {webhook.serviceAction === "database_backup" && (
+                          <p className="text-muted-foreground text-xs mb-1">Legacy command</p>
+                        )}
+                        <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all min-h-[220px] max-h-[46vh] overflow-y-auto">
                           {webhook.dockerCommand}
                         </pre>
                       </div>
@@ -224,14 +239,14 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
             </div>
           </div>
 
-          <div className="glass-panel p-5 rounded-2xl">
+          <div className="glass-panel p-4 rounded-2xl max-h-[62vh] overflow-y-auto">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 bg-primary/10 rounded-lg">
                 <Bell className="w-5 h-5 text-primary" />
               </div>
               <h3 className="font-semibold text-base">Notifications</h3>
             </div>
-            <div className="space-y-3 text-sm">
+            <div className="space-y-2.5 text-sm">
               <div>
                 <p className="text-muted-foreground text-xs mb-1">Notification on trigger</p>
                 <p className="font-medium text-foreground">
@@ -247,7 +262,7 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
               {webhook.notifyMessage && (
                 <div>
                   <p className="text-muted-foreground text-xs mb-1">Message</p>
-                  <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                  <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-28 overflow-y-auto">
                     {webhook.notifyMessage}
                   </pre>
                 </div>
@@ -259,7 +274,7 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
               </div>
               <h3 className="font-semibold text-base">Meta</h3>
             </div>
-            <div className="space-y-3 text-sm mt-4">
+            <div className="space-y-2.5 text-sm mt-4">
               <div>
                 <p className="text-muted-foreground text-xs mb-1 flex items-center gap-1.5">
                   <Hash className="w-3.5 h-3.5" /> ID
@@ -281,14 +296,14 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
         <div className="mt-8 p-5 border border-destructive/20 bg-destructive/5 rounded-2xl">
           <h3 className="font-bold text-destructive text-base mb-1.5">Danger zone</h3>
           <p className="text-sm text-muted-foreground mb-5">
-            Deleting invalidates the trigger immediately.
+            Deleting invalidates the webhook immediately.
           </p>
           <button
             type="button"
             onClick={async () => {
               const ok = await confirm({
-                title: "Delete this trigger?",
-                description: "This trigger will stop running immediately.",
+                title: "Delete this webhook?",
+                description: "This webhook will stop running immediately.",
                 confirmLabel: "Delete",
                 variant: "destructive",
               });
@@ -302,10 +317,11 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
             disabled={deleteMutation.isPending}
             className="px-4 py-2.5 bg-destructive/20 text-destructive hover:bg-destructive hover:text-destructive-foreground font-medium rounded-lg transition-colors flex items-center gap-2"
           >
-            <Trash2 className="w-4 h-4" /> Delete trigger
+            <Trash2 className="w-4 h-4" /> Delete webhook
           </button>
         </div>
       </div>
-    </>
+    </div>,
+    document.body,
   );
 }

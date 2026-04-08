@@ -6,6 +6,8 @@ import { RemoteServerProvisionJob } from './entities/remote-server-provision-job
 import { RemoteServersController } from './remote-servers.controller';
 import { RemoteServersService } from './remote-servers.service';
 import { RemoteServerProvisionService } from './remote-server-provision.service';
+import { RemoteTerminalGateway } from './remote-terminal.gateway';
+import { LocalTerminalGateway } from './local-terminal.gateway';
 
 @Module({
   imports: [
@@ -13,7 +15,12 @@ import { RemoteServerProvisionService } from './remote-server-provision.service'
     AuthModule,
   ],
   controllers: [RemoteServersController],
-  providers: [RemoteServersService, RemoteServerProvisionService],
+  providers: [
+    RemoteServersService,
+    RemoteServerProvisionService,
+    RemoteTerminalGateway,
+    LocalTerminalGateway,
+  ],
   exports: [RemoteServersService, RemoteServerProvisionService],
 })
 export class RemoteServersModule {}

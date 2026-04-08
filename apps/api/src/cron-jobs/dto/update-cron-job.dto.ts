@@ -2,6 +2,8 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsInt,
+  Min,
   IsOptional,
   IsString,
   IsUUID,
@@ -35,6 +37,15 @@ export class UpdateCronJobDto {
   @IsBoolean()
   isActive?: boolean;
 
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Optional remote server id for docker_command. Null runs on API host.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  remoteServerId?: number | null;
+
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @ValidateIf((_, v) => v != null && v !== '')
@@ -62,4 +73,10 @@ export class UpdateCronJobDto {
   @ValidateNested()
   @Type(() => DatabaseBackupConfigDto)
   databaseBackupConfig?: DatabaseBackupConfigDto | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Bash script to execute for docker_command action.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  dockerCommand?: string | null;
 }

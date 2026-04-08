@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import {
   fetchCronJobSSR,
   fetchNotificationChannelsSSR,
+  fetchRemoteServersSSR,
   fetchS3ProfilesSSR,
   fetchServicesSSR,
 } from "@/lib/server-fetch";
@@ -13,11 +14,12 @@ type PageProps = {
 
 export default async function EditCronJobPage({ params }: PageProps) {
   const { id } = await params;
-  const [cronJob, initialChannels, initialS3Profiles, initialServices] = await Promise.all([
+  const [cronJob, initialChannels, initialS3Profiles, initialServices, initialRemoteServers] = await Promise.all([
     fetchCronJobSSR(id),
     fetchNotificationChannelsSSR(),
     fetchS3ProfilesSSR(),
     fetchServicesSSR(),
+    fetchRemoteServersSSR(),
   ]);
   if (!cronJob) notFound();
   return (
@@ -27,6 +29,7 @@ export default async function EditCronJobPage({ params }: PageProps) {
       initialChannels={initialChannels}
       initialS3Profiles={initialS3Profiles}
       initialServices={initialServices}
+      initialRemoteServers={initialRemoteServers}
     />
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Loader2, Plus, Server, Terminal, Trash2, PlugZap } from "lucide-react";
+import { KeyRound, Loader2, Plus, Server, Terminal, Trash2, PlugZap, FlaskConical, X } from "lucide-react";
 import { PublicKeyCopyBlock } from "@/components/remote-server/public-key-copy-block";
 import { RemoteServerInstallBlock } from "@/components/remote-server/remote-server-install-block";
 import { useAuth } from "@/contexts/auth-context";
@@ -11,7 +12,9 @@ import {
   createRemoteServerApi,
   deleteRemoteServerApi,
   fetchRemoteServers,
+  localTerminalWsUrl,
   generateRemoteSshKeypairApi,
+  remoteTerminalWsUrl,
   testRemoteServerApi,
   testRemoteServerSshApi,
   updateRemoteServerApi,
@@ -75,6 +78,13 @@ export function RemoteServerSettingsClient() {
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft>(emptyEditDraft);
+  const [testModalRow, setTestModalRow] = useState<RemoteServerRow | null>(null);
+  const [terminalModalRow, setTerminalModalRow] = useState<RemoteServerRow | null>(null);
+  const [localTerminalOpen, setLocalTerminalOpen] = useState(false);
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
+  const terminalFailureNotifiedRef = useRef(false);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [terminalConnecting, setTerminalConnecting] = useState(false);
 
   useEffect(() => {
     if (editingId != null && list.data) {
@@ -198,6 +208,140 @@ export function RemoteServerSettingsClient() {
     onError: (e: Error) =>
       toast({ title: "SSH test failed", description: e.message, variant: "destructive" }),
   });
+  useEffect(() => {
+    const row = terminalModalRow;
+    const open = localTerminalOpen || row != null;
+    const el = terminalContainerRef.current;
+    if (!open || !el) return;
+
+    let disposed = false;
+    let ws: WebSocket | null = null;
+    let term: import("@xterm/xterm").Terminal | null = null;
+    let fit: import("@xterm/addon-fit").FitAddon | null = null;
+    let ro: ResizeObserver | null = null;
+    const textEnc = new TextEncoder();
+
+    const pushResize = () => {
+      if (disposed || !ws || ws.readyState !== WebSocket.OPEN || !term) return;
+      try {
+        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      } catch {
+        /* ignore */
+      }
+    };
+    const onResize = () => {
+      try {
+        fit?.fit();
+        pushResize();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    void (async () => {
+      terminalFailureNotifiedRef.current = false;
+      setTerminalError(null);
+      setTerminalConnecting(true);
+      el.innerHTML = "";
+      const { Terminal: XTerm } = await import("@xterm/xterm");
+      const { FitAddon } = await import("@xterm/addon-fit");
+      await import("@xterm/xterm/css/xterm.css");
+      if (disposed) return;
+
+      const t = new XTerm({
+        cursorBlink: true,
+        fontSize: 13,
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        theme: { background: "#09090b", foreground: "#e4e4e7" },
+      });
+      const fa = new FitAddon();
+      t.loadAddon(fa);
+      t.open(el);
+      fa.fit();
+      term = t;
+      fit = fa;
+
+      window.addEventListener("resize", onResize);
+      ro = new ResizeObserver(onResize);
+      ro.observe(el);
+
+      ws = new WebSocket(row ? remoteTerminalWsUrl(row.id) : localTerminalWsUrl());
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        if (disposed) return;
+        setTerminalConnecting(false);
+        fa.fit();
+        pushResize();
+        t.focus();
+      };
+      ws.onmessage = (ev: MessageEvent<string | ArrayBuffer>) => {
+        if (disposed) return;
+        if (typeof ev.data === "string") {
+          try {
+            const j = JSON.parse(ev.data) as { type?: string; message?: string };
+            if (j.type === "error" && j.message) {
+              setTerminalError(j.message);
+              if (!terminalFailureNotifiedRef.current) {
+                terminalFailureNotifiedRef.current = true;
+                toast({
+                  title: "Terminal connection failed",
+                  description: j.message,
+                  variant: "destructive",
+                });
+              }
+              return;
+            }
+          } catch {
+            t.write(ev.data);
+          }
+          return;
+        }
+        t.write(new Uint8Array(ev.data as ArrayBuffer));
+      };
+      ws.onerror = () => {
+        if (disposed) return;
+        setTerminalConnecting(false);
+        const message = "WebSocket connection failed.";
+        setTerminalError(message);
+        if (!terminalFailureNotifiedRef.current) {
+          terminalFailureNotifiedRef.current = true;
+          toast({
+            title: "Terminal connection failed",
+            description: message,
+            variant: "destructive",
+          });
+        }
+      };
+      ws.onclose = (ev) => {
+        if (disposed) return;
+        setTerminalConnecting(false);
+        if (ev.code !== 1000) {
+          const message = ev.reason || `Connection closed (code ${ev.code}).`;
+          setTerminalError((prev) => prev ?? message);
+          if (!terminalFailureNotifiedRef.current) {
+            terminalFailureNotifiedRef.current = true;
+            toast({
+              title: "Terminal session closed",
+              description: message,
+              variant: "destructive",
+            });
+          }
+        }
+      };
+
+      t.onData((data) => {
+        if (ws?.readyState === WebSocket.OPEN) ws.send(textEnc.encode(data));
+      });
+    })();
+
+    return () => {
+      disposed = true;
+      window.removeEventListener("resize", onResize);
+      ro?.disconnect();
+      ws?.close();
+      term?.dispose();
+    };
+  }, [terminalModalRow, localTerminalOpen, toast]);
 
   if (!accessToken) {
     return (
@@ -234,7 +378,7 @@ export function RemoteServerSettingsClient() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Remote servers</h1>
             <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
-              Connect and manage remote hosts via encrypted SSH keys. Assign each server a specific role,{" "}
+              Connect and manage remote hosts via SSH keys. Assign each server a specific role,{" "}
               <strong>Deploy</strong> for running containers and stacks, or <strong>Build</strong> to handle heavy Docker
               builds externally.
             </p>
@@ -401,13 +545,13 @@ export function RemoteServerSettingsClient() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="font-medium text-sm truncate">Local Docker</p>
+                    <p className="font-medium text-sm truncate">Local Server</p>
                     <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
-                      Host
+                      Local
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Docker engine on this machine (same console as remote hosts, no SSH).
+                    Run jobs and scripts directly on this local server (no SSH needed).
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -418,8 +562,20 @@ export function RemoteServerSettingsClient() {
                     title="Open Docker console for this host"
                   >
                     <Terminal className="size-3.5" />
-                    Console
+                    Docker Manager
                   </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTerminalModalRow(null);
+                      setLocalTerminalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
+                    title="Open local terminal"
+                  >
+                    <Terminal className="size-3.5" />
+                    Terminal
+                  </button>
                 </div>
               </div>
             </div>
@@ -643,7 +799,7 @@ export function RemoteServerSettingsClient() {
                           title="Open Docker console for this host (full Docker UI)"
                         >
                           <Terminal className="size-3.5" />
-                          Console
+                          Docker Manager
                         </Link>
                       ) : (
                         <span
@@ -651,36 +807,31 @@ export function RemoteServerSettingsClient() {
                           title="Configure a private key first"
                         >
                           <Terminal className="size-3.5" />
-                          Console
+                          Docker Manager
                         </span>
                       )}
                       <button
                         type="button"
-                        disabled={testSshMut.isPending || !row.hasPrivateKey}
-                        onClick={() => testSshMut.mutate(row.id)}
+                        disabled={!row.hasPrivateKey}
+                        onClick={() => setTestModalRow(row)}
                         className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
-                        title="SSH only: ssh2 + shell (echo + uname). Does not use Docker."
+                        title="Open test options"
                       >
-                        {testSshMut.isPending ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <KeyRound className="size-3.5" />
-                        )}
-                        SSH
+                        <FlaskConical className="size-3.5" />
+                        Test
                       </button>
                       <button
                         type="button"
-                        disabled={testMut.isPending || !row.hasPrivateKey}
-                        onClick={() => testMut.mutate(row.id)}
+                        disabled={!row.hasPrivateKey}
+                        onClick={() => {
+                          setTerminalModalRow(row);
+                          setLocalTerminalOpen(false);
+                        }}
                         className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
-                        title="Remote Docker API via Dockerode over SSH (same path as the Docker console)"
+                        title="Open remote SSH terminal"
                       >
-                        {testMut.isPending ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <PlugZap className="size-3.5" />
-                        )}
-                        Docker
+                        <Terminal className="size-3.5" />
+                        Terminal
                       </button>
                       <button
                         type="button"
@@ -721,6 +872,117 @@ export function RemoteServerSettingsClient() {
         </div>
 
       </div>
+      {typeof document !== "undefined" && testModalRow
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[120] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4"
+              onClick={() => setTestModalRow(null)}
+            >
+              <div
+                className="w-full max-w-md rounded-2xl glass-panel p-5 space-y-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold">Test connection</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {testModalRow.name} ({testModalRow.sshUser}@{testModalRow.host})
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTestModalRow(null)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                    aria-label="Close test dialog"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    disabled={testSshMut.isPending || testMut.isPending}
+                    onClick={() => testSshMut.mutate(testModalRow.id)}
+                    className="w-full inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                    title="SSH only: ssh2 + shell (echo + uname). Does not use Docker."
+                  >
+                    {testSshMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
+                    SSH
+                  </button>
+                  <button
+                    type="button"
+                    disabled={testMut.isPending || testSshMut.isPending}
+                    onClick={() => testMut.mutate(testModalRow.id)}
+                    className="w-full inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                    title="Remote Docker API via Dockerode over SSH (same path as the Docker Manager)"
+                  >
+                    {testMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
+                    Docker
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {typeof document !== "undefined" && (terminalModalRow || localTerminalOpen)
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[120] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4"
+              onClick={() => {
+                setTerminalModalRow(null);
+                setLocalTerminalOpen(false);
+              }}
+            >
+              <div
+                className="w-full max-w-4xl rounded-2xl glass-panel p-5 space-y-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold">Remote Terminal</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {terminalModalRow
+                        ? `${terminalModalRow.sshUser}@${terminalModalRow.host}${terminalModalRow.port !== 22 ? `:${terminalModalRow.port}` : ""}`
+                        : "Local Server"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTerminalModalRow(null);
+                      setLocalTerminalOpen(false);
+                    }}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                    aria-label="Close terminal dialog"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  {terminalError && (
+                    <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      {terminalError}
+                    </div>
+                  )}
+                  {terminalConnecting && !terminalError && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      Connecting terminal…
+                    </div>
+                  )}
+                  <div
+                    ref={terminalContainerRef}
+                    className="h-[62vh] min-h-[360px] w-full rounded-lg overflow-hidden border border-border/50 bg-zinc-950"
+                  />
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

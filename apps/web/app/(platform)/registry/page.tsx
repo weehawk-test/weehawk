@@ -14,6 +14,7 @@ import {
   Trash2,
   LogOut,
   X,
+  Globe2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -36,6 +37,22 @@ type ProviderPreset = {
   hint: string;
 };
 
+const REGISTRY_ICON_PICKER_WRAP =
+  "inline-flex size-7 shrink-0 items-center justify-center align-middle [&_svg]:h-full [&_svg]:w-full [&_svg]:max-h-7 [&_svg]:max-w-7";
+const REGISTRY_ICON_PICKER_INNER = "h-full w-full min-h-0 min-w-0";
+
+function DockerHubLogoIcon({ className }: { className?: string }) {
+  return <img src="/registry/docker-hub.svg" alt="" className={className} aria-hidden />;
+}
+
+function GitHubLogoIcon({ className }: { className?: string }) {
+  return <img src="/deployment-sources/github.svg" alt="" className={`${className} dark:invert`} aria-hidden />;
+}
+
+function GitLabLogoIcon({ className }: { className?: string }) {
+  return <img src="/deployment-sources/gitlab.svg" alt="" className={className} aria-hidden />;
+}
+
 const PRESETS: ProviderPreset[] = [
   {
     id: "dockerhub",
@@ -45,7 +62,7 @@ const PRESETS: ProviderPreset[] = [
   },
   {
     id: "ghcr",
-    name: "GitHub Container Registry",
+    name: "GitHub Registry",
     providerUrl: "ghcr.io",
     hint: "Use GitHub username + personal access token.",
   },
@@ -449,20 +466,35 @@ export default function RegistryPage() {
 
               <div className="mb-4">
                 <label className="text-sm font-medium mb-1.5 block">Registry Type</label>
-                <select
-                  value={presetId}
-                  onChange={(e) => {
-                    const selected = PRESETS.find((p) => p.id === e.target.value);
-                    if (selected) applyPreset(selected);
-                  }}
-                  className="input-field"
-                >
-                  {PRESETS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="rounded-lg border border-border bg-muted/60 p-2.5 dark:border-white/10 dark:bg-white/[0.03]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                    {PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => applyPreset(preset)}
+                        className={`flex h-full min-h-[4.25rem] w-full min-w-0 flex-col items-center justify-center gap-1 text-center rounded-md border px-1 py-2 text-[0.7rem] leading-tight transition-colors sm:text-xs ${
+                          presetId === preset.id
+                            ? "border-primary/50 bg-primary/10 text-foreground dark:border-primary/60 dark:bg-primary/15"
+                            : "border-border bg-background/80 text-muted-foreground hover:bg-muted hover:text-foreground dark:border-white/10 dark:bg-white/[0.02] dark:hover:bg-white/[0.06]"
+                        }`}
+                      >
+                        <span className={REGISTRY_ICON_PICKER_WRAP}>
+                          {preset.id === "dockerhub" ? (
+                            <DockerHubLogoIcon className={REGISTRY_ICON_PICKER_INNER} />
+                          ) : preset.id === "ghcr" ? (
+                            <GitHubLogoIcon className={REGISTRY_ICON_PICKER_INNER} />
+                          ) : preset.id === "gitlab" ? (
+                            <GitLabLogoIcon className={REGISTRY_ICON_PICKER_INNER} />
+                          ) : (
+                            <Globe2 className={`${REGISTRY_ICON_PICKER_INNER} text-sky-500`} />
+                          )}
+                        </span>
+                        <span className="line-clamp-2 w-full px-0.5">{preset.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <p className="text-xs text-muted-foreground mt-1.5">{PRESETS.find((p) => p.id === presetId)?.hint}</p>
               </div>
 

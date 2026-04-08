@@ -29,6 +29,7 @@ export type CronJobListRow = {
   cronExpression: string;
   targetMode: string;
   serviceId: number | null;
+  remoteServerId: number | null;
   serviceAction: string | null;
   notifyOnTrigger: boolean;
   createdAt: string;
@@ -126,9 +127,13 @@ export class CronJobsService {
         );
       }
       if (dto.serviceAction !== 'no_action' && dto.serviceId == null) {
+        if (dto.serviceAction === 'docker_command') {
+          // Docker command cron jobs run as system scripts and may not target a service.
+        } else {
         throw new BadRequestException(
           'serviceId is required unless action is no_action.',
         );
+        }
       }
       if (dto.serviceAction === 'volume_backup' && !dto.volumeSource?.trim()) {
         throw new BadRequestException('volumeSource is required for volume backup.');
@@ -209,6 +214,7 @@ export class CronJobsService {
       cronExpression: w.cronExpression,
       targetMode: w.targetMode,
       serviceId: w.serviceId,
+      remoteServerId: w.remoteServerId,
       serviceAction: w.serviceAction,
       notifyOnTrigger: w.notifyOnTrigger,
       createdAt: w.createdAt.toISOString(),
@@ -299,7 +305,14 @@ export class CronJobsService {
       targetMode: dto.targetMode,
       serviceId:
         dto.targetMode === 'service' && dto.serviceAction !== 'no_action'
+          && dto.serviceAction !== 'docker_command'
           ? dto.serviceId
+          : null,
+      remoteServerId:
+        dto.targetMode === 'service' &&
+        dto.serviceAction === 'docker_command' &&
+        dto.remoteServerId != null
+          ? dto.remoteServerId
           : null,
       serviceAction: dto.targetMode === 'service' ? dto.serviceAction : null,
       volumeSource:
@@ -395,6 +408,18 @@ export class CronJobsService {
         job.databaseBackupConfig =
           dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
         job.dockerCommand = null;
+      }
+    }
+    if (dto.dockerCommand !== undefined) {
+      if (job.serviceAction === 'docker_command') {
+        job.dockerCommand = dto.dockerCommand?.trim() || null;
+      }
+    }
+    if (dto.remoteServerId !== undefined) {
+      if (job.serviceAction === 'docker_command') {
+        job.remoteServerId = dto.remoteServerId ?? null;
+      } else {
+        job.remoteServerId = null;
       }
     }
     if (job.notifyChannelId && job.notifyMessage) {
@@ -534,13 +559,13 @@ export class CronJobsService {
           }
         } else if (
           job.serviceAction === 'docker_command' &&
-          job.dockerCommand &&
-          job.serviceId != null
+          job.dockerCommand
         ) {
           action = 'docker_command';
-          const r = await this.executorService.runWebhookDockerCommand(
-            job.serviceId,
+          const r = await this.executorService.runSystemScript(
             job.dockerCommand,
+            job.remoteServerId,
+            job.userId,
           );
           success = r.success;
           output = r.output;

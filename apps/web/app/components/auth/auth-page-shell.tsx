@@ -34,11 +34,11 @@ export function AuthPageShell({
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-primary/20 ring-1 ring-border/60 dark:ring-white/5">
             <Image
-              src="/weehawk-logo.png"
+              src="/weehawk-logo.svg"
               alt="Weehawk"
               width={48}
               height={48}
-              className="logo-adaptive object-cover size-12"
+              className="logo-adaptive object-contain size-12 p-0.5 scale-90"
               priority
             />
           </div>

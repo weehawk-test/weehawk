@@ -189,6 +189,35 @@ export async function testRemoteServerSshApi(
   return JSON.parse(text) as { success: boolean; output: string };
 }
 
+export async function runRemoteServerTerminalCommandApi(
+  accessToken: string,
+  id: number,
+  command: string,
+): Promise<{ success: boolean; output: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}/terminal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return JSON.parse(text) as { success: boolean; output: string };
+}
+
+/** WebSocket: `GET /ws/remote-terminal?serverId=` — interactive SSH shell. */
+export function remoteTerminalWsUrl(serverId: number): string {
+  const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+  return `${wsBase}/ws/remote-terminal?serverId=${encodeURIComponent(String(serverId))}`;
+}
+
+/** WebSocket: `GET /ws/local-terminal` — interactive local shell. */
+export function localTerminalWsUrl(): string {
+  const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+  return `${wsBase}/ws/local-terminal`;
+}
+
 export async function fetchDockerPurgeScriptApi(
   accessToken: string,
 ): Promise<{ script: string }> {

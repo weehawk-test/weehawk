@@ -65,11 +65,11 @@ export default function GitHubGitSettingsPage() {
       <div className="flex items-start gap-4">
         <div className="rounded-2xl border border-white/10 bg-black/40 p-3 shadow-lg shrink-0">
           <Image
-            src="/deployment-sources/github.png"
+            src="/deployment-sources/github.svg"
             alt=""
             width={56}
             height={56}
-            className="h-14 w-14 object-contain"
+            className="h-14 w-14 object-contain dark:invert"
           />
         </div>
         <div className="min-w-0">
@@ -101,7 +101,7 @@ export default function GitHubGitSettingsPage() {
           </a>
           <p className="text-[11px] text-muted-foreground/90 leading-relaxed border-t border-white/5 pt-4">
             GitHub must be able to fetch your manifest URL:{" "}
-            <code className="rounded bg-black/40 px-1.5 py-0.5 text-[10px] text-primary/90">
+            <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-foreground dark:bg-black/40 dark:text-primary/90">
               {API_BASE}/api/git/github/manifest
             </code>
             . For local development, use a tunnel (e.g. ngrok) for both the API and the web app, and

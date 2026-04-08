@@ -44,6 +44,7 @@ import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import type { Project, Service, TraefikRouteRule } from "@/lib/schema";
 import {
   databaseLogoBlendClass,
+  databaseLogoSizeClass,
   parseDatabaseEngineFromConfig,
   getDatabaseEngineById,
   defaultDatabaseImage,
@@ -1080,7 +1081,7 @@ export default function ServiceDetails({
                     alt=""
                     width={56}
                     height={56}
-                    className={`object-contain max-h-12 w-auto max-w-[3.5rem] ${databaseLogoBlendClass(dbEngineId)}`}
+                    className={`object-contain max-h-12 w-auto max-w-[3.5rem] ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                     sizes="64px"
                   />
                 ) : (
@@ -2044,8 +2045,8 @@ function ServiceBackupPanel({
 
   if (s3Profiles.length === 0) {
     return (
-      <div className="relative max-w-lg mx-auto">
-        <div className="rounded-2xl border border-border overflow-hidden p-8 md:p-10 text-center shadow-[0_24px_48px_-28px_rgba(0,0,0,0.45)]">
+      <div className="relative w-full">
+        <div className="glass-panel rounded-xl border border-border/60 overflow-hidden p-8 md:p-10 text-center">
           <div className="relative">
             <h3 className="text-lg font-semibold tracking-tight text-foreground mb-2">S3 destination required</h3>
             <p className="text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto mb-7">
@@ -2104,7 +2105,7 @@ function ServiceBackupPanel({
             </div>
             {engineMeta?.logoSrc ? (
               <div className="relative h-10 w-10 shrink-0 opacity-90">
-                <Image src={engineMeta.logoSrc} alt="" fill className="object-contain" sizes="40px" />
+                <Image src={engineMeta.logoSrc} alt="" fill className={`object-contain ${databaseLogoSizeClass(engineMeta.id)}`} sizes="40px" />
               </div>
             ) : null}
           </div>
@@ -3943,14 +3944,6 @@ function ApplicationArchivePanel({
         <div className="sm:col-span-2 space-y-3">
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1.5">Source</label>
-            <p className="text-[11px] text-muted-foreground/90 mb-2 max-w-xl">
-              Register the{" "}
-              <Link href="/git/github" className="text-primary hover:underline">
-                GitHub App
-              </Link>{" "}
-              under Git → GitHub, then open the GitHub card here to list repos your app can access (installations). Same workflow as GitLab: Fetch → set port/env → Generate. Use{" "}
-              <span className="text-foreground/90">Registry &amp; Git</span> in the sidebar for the full integrations list.
-            </p>
           </div>
           <div className="grid gap-2 sm:grid-cols-3 sm:items-stretch">
             <button
@@ -3965,11 +3958,11 @@ function ApplicationArchivePanel({
               }`}
             >
               <Image
-                src="/deployment-sources/github.png"
+                src="/deployment-sources/github.svg"
                 alt=""
                 width={32}
                 height={32}
-                className="h-8 w-8 object-contain"
+                className="h-8 w-8 object-contain dark:invert"
               />
               <span className="text-xs font-medium text-foreground">GitHub</span>
               <span
@@ -3995,7 +3988,7 @@ function ApplicationArchivePanel({
               }`}
             >
               <Image
-                src="/deployment-sources/gitlab.png"
+                src="/deployment-sources/gitlab.svg"
                 alt=""
                 width={32}
                 height={32}
@@ -4061,7 +4054,7 @@ function ApplicationArchivePanel({
               >
                 <span className="relative flex h-9 w-9 shrink-0 items-center justify-center">
                   <Image
-                    src="/deployment-sources/upload-cloud.png"
+                    src="/deployment-sources/upload-cloud.svg"
                     alt=""
                     width={36}
                     height={36}
@@ -4259,11 +4252,11 @@ function ApplicationArchivePanel({
 
             <div className="flex items-start gap-2">
               <Image
-                src="/deployment-sources/github.png"
+                src="/deployment-sources/github.svg"
                 alt=""
                 width={28}
                 height={28}
-                className="h-7 w-7 shrink-0 object-contain mt-0.5"
+                className="h-7 w-7 shrink-0 object-contain mt-0.5 dark:invert"
               />
               <div className="min-w-0 space-y-1">
                 <p className="text-xs font-medium text-foreground">Or paste GitHub HTTPS URL</p>
@@ -4480,7 +4473,7 @@ function ApplicationArchivePanel({
 
             <div className="flex items-start gap-2">
               <Image
-                src="/deployment-sources/gitlab.png"
+                src="/deployment-sources/gitlab.svg"
                 alt=""
                 width={28}
                 height={28}
@@ -4989,7 +4982,7 @@ function DomainsPanel({ service }: { service: Service }) {
   const [draftPath, setDraftPath] = useState("");
   const [draftHost, setDraftHost] = useState("");
   const [draftPort, setDraftPort] = useState("");
-  const [draftHttps, setDraftHttps] = useState(true);
+  const [draftHttps, setDraftHttps] = useState(false);
 
   const showMagicDice = isApplication;
 
@@ -4998,7 +4991,7 @@ function DomainsPanel({ service }: { service: Service }) {
     setDraftPath("");
     setDraftHost("");
     setDraftPort("");
-    setDraftHttps(true);
+    setDraftHttps(false);
     setEditingIndex(null);
   };
 
@@ -5008,7 +5001,7 @@ function DomainsPanel({ service }: { service: Service }) {
     setDraftPath("");
     setDraftHost("");
     setDraftPort("");
-    setDraftHttps(true);
+    setDraftHttps(false);
     setDialogOpen(true);
   };
 
@@ -5099,15 +5092,20 @@ function DomainsPanel({ service }: { service: Service }) {
       });
       return;
     }
-    let port: number | null = null;
-    if (draftPort.trim()) {
-      const n = Math.floor(Number(draftPort));
-      if (!Number.isFinite(n) || n < 1 || n > 65535) {
-        toast({ title: "Invalid port", variant: "destructive" });
-        return;
-      }
-      port = n;
+    if (!draftPort.trim()) {
+      toast({
+        title: "Port required",
+        description: "Enter a container port between 1 and 65535.",
+        variant: "destructive",
+      });
+      return;
     }
+    const n = Math.floor(Number(draftPort));
+    if (!Number.isFinite(n) || n < 1 || n > 65535) {
+      toast({ title: "Invalid port", variant: "destructive" });
+      return;
+    }
+    const port = n;
     let pathPrefix = draftPath.trim() || null;
     if (pathPrefix && !pathPrefix.startsWith("/")) pathPrefix = `/${pathPrefix}`;
 
@@ -5307,9 +5305,6 @@ function DomainsPanel({ service }: { service: Service }) {
                 <Label htmlFor="domain-https" className="text-sm font-medium text-foreground cursor-pointer">
                   HTTPS
                 </Label>
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  On: TLS + ACME (<span className="font-mono">websecure</span>). Off: HTTP only (<span className="font-mono">web</span>).
-                </p>
               </div>
               <Switch
                 id="domain-https"
@@ -5319,15 +5314,16 @@ function DomainsPanel({ service }: { service: Service }) {
               />
             </div>
             <label className="block space-y-1.5">
-              <span className="text-[11px] text-muted-foreground">Container port (optional)</span>
+              <span className="text-[11px] text-muted-foreground">Container port</span>
               <input
                 type="number"
                 min={1}
                 max={65535}
                 className="input-field w-full font-mono text-sm"
-                placeholder="Default from stack"
+                placeholder="Enter container port"
                 value={draftPort}
                 onChange={(e) => setDraftPort(e.target.value)}
+                required
               />
             </label>
           </div>

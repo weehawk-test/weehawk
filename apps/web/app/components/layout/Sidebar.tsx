@@ -213,7 +213,9 @@ export function Sidebar() {
     consoleNavBase != null ? `${consoleNavBase}/images` : "/";
 
   const isActive = (href: string) => {
-    if (href === "/") return location === "/";
+    if (href === "/") {
+      return location === "/" || location === "/projects" || location.startsWith("/projects/");
+    }
     if (href === "/notifications/channels") return location.startsWith("/notifications");
     if (href === "/registry") {
       return location === "/registry" || location.startsWith("/registry/saved");
@@ -264,11 +266,11 @@ export function Sidebar() {
             >
               <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm flex-shrink-0 ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
                 <Image
-                  src="/weehawk-logo.png"
+                  src="/weehawk-logo.svg"
                   alt="Weehawk"
                   width={40}
                   height={40}
-                  className="logo-adaptive object-cover size-10"
+                  className="logo-adaptive object-contain size-10 p-0.5 scale-90"
                   priority
                 />
               </div>
@@ -300,11 +302,11 @@ export function Sidebar() {
             >
               <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
                 <Image
-                  src="/weehawk-logo.png"
+                  src="/weehawk-logo.svg"
                   alt="Weehawk"
                   width={40}
                   height={40}
-                  className="logo-adaptive object-cover size-10"
+                  className="logo-adaptive object-contain size-10 p-0.5 scale-90"
                   priority
                 />
               </div>

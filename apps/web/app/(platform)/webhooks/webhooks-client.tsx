@@ -3,11 +3,12 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Webhook, Plus, Search, Trash2, ChevronRight, Clock, Pencil, Loader2 } from "lucide-react";
-import { useDeleteWebhook } from "@/hooks/use-webhooks";
+import { Webhook, Plus, Search, Trash2, ChevronRight, Clock, Pencil, Loader2, Copy, Check, Power } from "lucide-react";
+import { useDeleteWebhook, useUpdateWebhook } from "@/hooks/use-webhooks";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import type { WebhookListItem } from "@/lib/webhooks-api";
+import { publicWebhookTriggerUrl } from "@/lib/webhooks-api";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 
@@ -26,9 +27,11 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
   const [search, setSearch] = useState("");
   const webhooks = initialWebhooks;
   const deleteWebhook = useDeleteWebhook();
+  const updateWebhook = useUpdateWebhook();
   const { toast } = useToast();
   const confirm = useConfirm();
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [copiedWebhookId, setCopiedWebhookId] = useState<string | null>(null);
 
   const filtered =
     (webhooks ?? []).filter(
@@ -80,6 +83,41 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
     } finally {
       setIsBulkDeleting(false);
     }
+  };
+
+  const handleCopyWebhookUrl = async (id: string, secretToken: string) => {
+    const webhookUrl = publicWebhookTriggerUrl(secretToken);
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopiedWebhookId(id);
+      window.setTimeout(() => setCopiedWebhookId((current) => (current === id ? null : current)), 1500);
+      toast({ title: "Copied", description: "Webhook URL copied to clipboard." });
+    } catch {
+      toast({ title: "Copy failed", description: "Could not copy webhook URL.", variant: "destructive" });
+    }
+  };
+
+  const handleToggleActive = (id: string, name: string, currentIsActive: boolean) => {
+    updateWebhook.mutate(
+      { id, isActive: !currentIsActive },
+      {
+        onSuccess: (updated) => {
+          toast({
+            title: updated.isActive ? "Activated" : "Deactivated",
+            description: updated.isActive
+              ? `"${name}" is now active.`
+              : `"${name}" is now inactive.`,
+          });
+          router.refresh();
+        },
+        onError: (e: Error) =>
+          toast({
+            title: "Could not update webhook",
+            description: e.message,
+            variant: "destructive",
+          }),
+      },
+    );
   };
 
   return (
@@ -152,10 +190,10 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
           {filtered.map((w) => (
             <div
               key={w.id}
-              className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col group interactive-card"
+              className="glass-panel backdrop-blur-none rounded-2xl p-5 flex flex-col gap-3 group interactive-card border border-white/10 hover:border-primary/30 transition-colors"
             >
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-3 min-w-0">
+                <div className="flex justify-between items-start gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div
                       className={`p-2 rounded-lg flex-shrink-0 ${
                         w.isActive ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
@@ -163,20 +201,41 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                     >
                       <Webhook className="w-5 h-5" />
                     </div>
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-lg leading-tight truncate" title={w.name}>
-                        {w.name}
-                      </h3>
-                      <p className="text-xs text-muted-foreground mt-1 truncate" title={w.summary}>
-                        {w.summary}
-                      </p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <h3 className="font-semibold text-lg leading-tight truncate" title={w.name}>
+                          {w.name}
+                        </h3>
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium flex-shrink-0 ${
+                            w.isActive
+                              ? "bg-primary/10 text-primary border border-primary/20"
+                              : "bg-muted text-muted-foreground border border-white/10"
+                          }`}
+                        >
+                          {w.isActive ? "Active" : "Inactive"}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleActive(w.id, w.name, w.isActive)}
+                      disabled={isBulkDeleting || deleteWebhook.isPending || updateWebhook.isPending}
+                      className={`p-2 rounded-md transition-colors opacity-0 group-hover:opacity-100 ${
+                        w.isActive
+                          ? "hover:bg-amber-500/20 text-amber-400"
+                          : "hover:bg-emerald-500/20 text-emerald-400"
+                      }`}
+                      title={w.isActive ? "Deactivate" : "Activate"}
+                    >
+                      <Power className="w-4 h-4" />
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleDelete(w.id, w.name)}
-                      disabled={isBulkDeleting || deleteWebhook.isPending}
+                      disabled={isBulkDeleting || deleteWebhook.isPending || updateWebhook.isPending}
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete"
                     >
@@ -197,8 +256,26 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                 </div>
 
                 {w.description && (
-                  <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{w.description}</p>
+                  <p className="text-sm text-muted-foreground line-clamp-2">{w.description}</p>
                 )}
+
+                <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
+                  <p className="text-[11px] text-muted-foreground mb-1.5">Webhook URL</p>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <p className="text-xs text-foreground/90 truncate font-mono" title={publicWebhookTriggerUrl(w.secretToken)}>
+                      {publicWebhookTriggerUrl(w.secretToken)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyWebhookUrl(w.id, w.secretToken)}
+                      className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                      title="Copy webhook URL"
+                      aria-label={`Copy webhook URL for ${w.name}`}
+                    >
+                      {copiedWebhookId === w.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
 
                 <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1">

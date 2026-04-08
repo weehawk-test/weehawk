@@ -4,6 +4,7 @@ import type { CronJobDetail, CronJobListItem } from "./cron-jobs-api";
 import type { Project, Service } from "./schema";
 import type { NotificationChannel } from "./notifications-api";
 import type { S3ProfilePublic, S3BucketListResponse, S3PrefixSummaryResponse } from "./s3-api";
+import type { RemoteServerRow } from "./remote-servers-api";
 import {
   mapApiServiceToService,
   parseServicesPageResponse,
@@ -180,6 +181,17 @@ export async function fetchS3ProfilesSSR(): Promise<S3ProfilePublic[]> {
   const data = (await res.json()) as unknown;
   if (!Array.isArray(data)) return [];
   return data as S3ProfilePublic[];
+}
+
+export async function fetchRemoteServersSSR(): Promise<RemoteServerRow[]> {
+  const res = await fetch(`${apiBase()}/api/remote-servers`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data as RemoteServerRow[];
 }
 
 /** Server-only: bucket listing at root prefix (no client Network tab on first paint). */

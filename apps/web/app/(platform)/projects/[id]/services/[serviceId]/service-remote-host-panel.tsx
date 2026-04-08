@@ -271,12 +271,12 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                   {isPrebuiltImageMode ? (
                     <div
                       role="alert"
-                      className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2.5 text-xs text-red-200/95 leading-relaxed flex gap-2.5"
+                      className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2.5 text-xs text-red-800 dark:text-red-200/95 leading-relaxed flex gap-2.5"
                     >
                       <AlertTriangle className="size-4 shrink-0 text-red-400 mt-0.5" aria-hidden />
                       <span>
-                        <strong className="text-red-100">Pre-built image mode</strong> — deploy pulls your image and does
-                        not run <code className="text-red-100/90 font-mono text-[11px]">docker build</code>. Build host
+                        <strong className="text-red-900 dark:text-red-100">Pre-built image mode</strong> — deploy pulls your image and does
+                        not run <code className="text-red-900/90 dark:text-red-100/90 font-mono text-[11px]">docker build</code>. Build host
                         choices are ignored until you switch back to building from source.
                       </span>
                     </div>
