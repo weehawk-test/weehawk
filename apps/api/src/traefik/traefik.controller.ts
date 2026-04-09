@@ -1,12 +1,12 @@
 import { Body, Controller, Get, Put, UseGuards, UsePipes, ValidationPipe } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { TraefikService } from './traefik.service';
 import { UpdateTraefikSettingsDto } from './dto/update-traefik-settings.dto';
 
 @ApiTags('Traefik')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(LocalSessionGuard)
 @Controller('api/traefik')
 export class TraefikController {
   constructor(private readonly traefikService: TraefikService) {}

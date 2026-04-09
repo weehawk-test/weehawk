@@ -8,22 +8,21 @@ import {
   Patch,
   Post,
   Req,
-  UnauthorizedException,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
 import { WebhooksService } from './webhooks.service';
 
-type AuthedReq = { user?: { userId: number; email: string } };
+type AuthedReq = { user?: { email: string } };
 
 @ApiTags('Triggers')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(LocalSessionGuard)
 @UsePipes(
   new ValidationPipe({
     whitelist: true,
@@ -35,25 +34,23 @@ type AuthedReq = { user?: { userId: number; email: string } };
 export class WebhooksController {
   constructor(private readonly webhooksService: WebhooksService) {}
 
-  private uid(req: AuthedReq): number {
-    const id = req.user?.userId;
-    if (id == null) throw new UnauthorizedException();
-    return id;
+  private uid(_req?: unknown): number {
+    return 1;
   }
 
   @Post()
   create(@Req() req: AuthedReq, @Body() dto: CreateWebhookDto) {
-    return this.webhooksService.create(this.uid(req), dto);
+    return this.webhooksService.create(this.uid(), dto);
   }
 
   @Get()
   list(@Req() req: AuthedReq) {
-    return this.webhooksService.list(this.uid(req));
+    return this.webhooksService.list(this.uid());
   }
 
   @Get(':id')
   findOne(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
-    return this.webhooksService.findOne(this.uid(req), id);
+    return this.webhooksService.findOne(this.uid(), id);
   }
 
   @Patch(':id')
@@ -62,12 +59,12 @@ export class WebhooksController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateWebhookDto,
   ) {
-    return this.webhooksService.update(this.uid(req), id, dto);
+    return this.webhooksService.update(this.uid(), id, dto);
   }
 
   @Delete(':id')
   async remove(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
-    await this.webhooksService.remove(this.uid(req), id);
+    await this.webhooksService.remove(this.uid(), id);
     return { ok: true };
   }
 }

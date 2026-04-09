@@ -283,7 +283,7 @@ export class S3Service implements OnModuleInit {
       );
       return {
         success: true,
-        message: 'S3 connection verified (ListObjectsV2)',
+        message: 'S3 connection verified',
       };
     } catch (error) {
       const msg =

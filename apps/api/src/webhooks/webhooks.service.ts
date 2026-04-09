@@ -231,7 +231,6 @@ export class WebhooksService {
 
     const secretToken = randomBytes(32).toString('hex');
     const w = this.webhookRepo.create({
-      userId,
       secretToken,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
@@ -281,14 +280,13 @@ export class WebhooksService {
 
   async list(userId: number): Promise<WebhookListRow[]> {
     const list = await this.webhookRepo.find({
-      where: { userId },
       order: { createdAt: 'DESC' },
     });
     return list.map((w) => this.toListRow(w));
   }
 
   async findOne(userId: number, id: string): Promise<WebhookDetailRow> {
-    const w = await this.webhookRepo.findOne({ where: { id, userId } });
+    const w = await this.webhookRepo.findOne({ where: { id } });
     if (!w) throw new NotFoundException('Webhook not found');
     return this.toDetailRow(w);
   }
@@ -298,7 +296,7 @@ export class WebhooksService {
     id: string,
     dto: UpdateWebhookDto,
   ): Promise<WebhookDetailRow> {
-    const w = await this.webhookRepo.findOne({ where: { id, userId } });
+    const w = await this.webhookRepo.findOne({ where: { id } });
     if (!w) throw new NotFoundException('Webhook not found');
 
     if (dto.name !== undefined) w.name = dto.name.trim();
@@ -368,7 +366,7 @@ export class WebhooksService {
   }
 
   async remove(userId: number, id: string): Promise<void> {
-    const res = await this.webhookRepo.delete({ id, userId });
+    const res = await this.webhookRepo.delete({ id });
     if (!res.affected) throw new NotFoundException('Webhook not found');
   }
 
@@ -393,7 +391,7 @@ export class WebhooksService {
           const r = await this.servicesService.executeDeployment(
             w.serviceId,
             'redeploy',
-            { actingUserId: w.userId },
+            { actingUserId: 1 },
           );
           success = Boolean(r.success);
           output = String(r.output ?? '');
@@ -416,7 +414,7 @@ export class WebhooksService {
                 destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                w.userId,
+                1,
                 w.id,
                 w.backupS3ProfileName,
                 destDir,
@@ -448,7 +446,7 @@ export class WebhooksService {
                 destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                w.userId,
+                1,
                 w.id,
                 w.backupS3ProfileName,
                 destDir,
@@ -473,7 +471,7 @@ export class WebhooksService {
                 destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                w.userId,
+                1,
                 w.id,
                 w.backupS3ProfileName,
                 destDir,
@@ -501,7 +499,7 @@ export class WebhooksService {
           const r = await this.executorService.runSystemScript(
             w.dockerCommand,
             w.remoteServerId,
-            w.userId,
+            1,
           );
           success = r.success;
           output = r.output;
@@ -527,7 +525,7 @@ export class WebhooksService {
     if (w.notifyOnTrigger && w.notifyChannelId && w.notifyMessage) {
       try {
         await this.notificationsService.sendMessage(
-          w.userId,
+          1,
           w.notifyChannelId,
           w.notifyMessage,
         );

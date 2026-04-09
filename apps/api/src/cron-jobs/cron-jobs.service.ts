@@ -61,13 +61,24 @@ export class CronJobsService {
   ) {}
 
   private validateCronField(value: string, min: number, max: number): boolean {
-    if (value === '*') return true;
-    if (/^\*\/\d+$/.test(value)) {
-      const step = Number(value.slice(2));
+    const v = value.trim();
+    if (v === '*') return true;
+    if (/^\*\/\d+$/.test(v)) {
+      const step = Number(v.slice(2));
       return step >= 1 && step <= max;
     }
-    if (/^\d+$/.test(value)) {
-      const n = Number(value);
+    if (v.includes(',')) {
+      return v.split(',').every((part) => this.validateCronField(part.trim(), min, max));
+    }
+    const rangeMatch = /^(\d+)-(\d+)$/.exec(v);
+    if (rangeMatch) {
+      const a = Number(rangeMatch[1]);
+      const b = Number(rangeMatch[2]);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a > b) return false;
+      return a >= min && b <= max;
+    }
+    if (/^\d+$/.test(v)) {
+      const n = Number(v);
       return n >= min && n <= max;
     }
     return false;
@@ -86,12 +97,25 @@ export class CronJobsService {
   }
 
   private matchesCronField(field: string, current: number): boolean {
-    if (field === '*') return true;
-    if (field.startsWith('*/')) {
-      const step = Number(field.slice(2));
+    const f = field.trim();
+    if (f === '*') return true;
+    if (f.startsWith('*/')) {
+      const step = Number(f.slice(2));
       return step > 0 && current % step === 0;
     }
-    return Number(field) === current;
+    if (f.includes(',')) {
+      return f.split(',').some((part) => this.matchesCronField(part.trim(), current));
+    }
+    const rangeMatch = /^(\d+)-(\d+)$/.exec(f);
+    if (rangeMatch) {
+      const a = Number(rangeMatch[1]);
+      const b = Number(rangeMatch[2]);
+      return current >= a && current <= b;
+    }
+    if (/^\d+$/.test(f)) {
+      return Number(f) === current;
+    }
+    return false;
   }
 
   private matchesCron(expr: string, now: Date): boolean {
@@ -297,7 +321,6 @@ export class CronJobsService {
     }
 
     const job = this.cronJobRepo.create({
-      userId,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
       isActive: true,
@@ -346,14 +369,13 @@ export class CronJobsService {
 
   async list(userId: number): Promise<CronJobListRow[]> {
     const list = await this.cronJobRepo.find({
-      where: { userId },
       order: { createdAt: 'DESC' },
     });
     return list.map((w) => this.toListRow(w));
   }
 
   async findOne(userId: number, id: string): Promise<CronJobDetailRow> {
-    const job = await this.cronJobRepo.findOne({ where: { id, userId } });
+    const job = await this.cronJobRepo.findOne({ where: { id } });
     if (!job) throw new NotFoundException('Cron job not found');
     return this.toDetailRow(job);
   }
@@ -363,7 +385,7 @@ export class CronJobsService {
     id: string,
     dto: UpdateCronJobDto,
   ): Promise<CronJobDetailRow> {
-    const job = await this.cronJobRepo.findOne({ where: { id, userId } });
+    const job = await this.cronJobRepo.findOne({ where: { id } });
     if (!job) throw new NotFoundException('Cron job not found');
 
     if (dto.name !== undefined) job.name = dto.name.trim();
@@ -438,7 +460,7 @@ export class CronJobsService {
   }
 
   async remove(userId: number, id: string): Promise<void> {
-    const res = await this.cronJobRepo.delete({ id, userId });
+    const res = await this.cronJobRepo.delete({ id });
     if (!res.affected) throw new NotFoundException('Cron job not found');
   }
 
@@ -457,7 +479,7 @@ export class CronJobsService {
           const r = await this.servicesService.executeDeployment(
             job.serviceId,
             'redeploy',
-            { actingUserId: job.userId },
+            { actingUserId: 1 },
           );
           success = Boolean(r.success);
           output = String(r.output ?? '');
@@ -480,7 +502,7 @@ export class CronJobsService {
                 destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                job.userId,
+                1,
                 job.id,
                 job.backupS3ProfileName,
                 destDir,
@@ -512,7 +534,7 @@ export class CronJobsService {
                 destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                job.userId,
+                1,
                 job.id,
                 job.backupS3ProfileName,
                 destDir,
@@ -537,7 +559,7 @@ export class CronJobsService {
                 destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                job.userId,
+                1,
                 job.id,
                 job.backupS3ProfileName,
                 destDir,
@@ -565,7 +587,7 @@ export class CronJobsService {
           const r = await this.executorService.runSystemScript(
             job.dockerCommand,
             job.remoteServerId,
-            job.userId,
+            1,
           );
           success = r.success;
           output = r.output;
@@ -582,7 +604,7 @@ export class CronJobsService {
     if (job.notifyOnTrigger && job.notifyChannelId && job.notifyMessage) {
       try {
         await this.notificationsService.sendMessage(
-          job.userId,
+          1,
           job.notifyChannelId,
           this.normalizeNotificationMessage(job.notifyMessage),
         );

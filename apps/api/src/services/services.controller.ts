@@ -10,7 +10,6 @@ import {
   Patch,
   Query,
   BadRequestException,
-  UnauthorizedException,
   UseGuards,
   UsePipes,
   ValidationPipe,
@@ -38,19 +37,17 @@ import type { DatabaseEngine } from './database-generator.service';
 import { ApiBearerAuth, ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { EventEmitter } from 'events';
 import { Observable, map } from 'rxjs';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LocalSessionGuard } from '../common/guards/local-session.guard';
 
 @ApiTags('Services')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(LocalSessionGuard)
 @Controller('api/services')
 export class ServicesController {
   constructor(private readonly servicesService: ServicesService) {}
 
-  private uid(req: { user?: { userId: number } }): number {
-    const id = req.user?.userId;
-    if (id == null) throw new UnauthorizedException();
-    return id;
+  private uid(_req?: unknown): number {
+    return 1;
   }
 
   private parseEngineOrThrow(engine: string): DatabaseEngine {

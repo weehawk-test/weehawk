@@ -7,7 +7,6 @@ export type UserProfile = {
   lastName: string;
   email: string;
   emailVerified: boolean;
-  authProvider: string;
   imageUrl: string | null;
   createdAt: string;
   lastLogin: string | null;
@@ -68,44 +67,6 @@ export async function changePassword(
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await errorBody(res));
-  return res.json();
-}
-
-export async function requestEmailChange(
-  accessToken: string,
-  newEmail: string,
-): Promise<{ message: string }> {
-  const res = await authFetch(
-    accessToken,
-    `${API_BASE}/api/user/email/change-request`,
-    {
-      method: "POST",
-      headers: {
-        ...authHeaders(accessToken),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ newEmail: newEmail.trim().toLowerCase() }),
-    },
-  );
-  if (!res.ok) throw new Error(await errorBody(res));
-  return res.json();
-}
-
-export async function resendConfirmationEmail(
-  accessToken: string,
-): Promise<{ message: string }> {
-  const res = await authFetch(
-    accessToken,
-    `${API_BASE}/api/user/email/resend-confirmation`,
-    {
-      method: "POST",
-      headers: {
-        ...authHeaders(accessToken),
-        Accept: "application/json",
-      },
-    },
-  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }

@@ -10,13 +10,12 @@ import {
   Post,
   Query,
   Req,
-  UnauthorizedException,
   UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { RemoteServersService } from './remote-servers.service';
 import { RemoteServerProvisionService } from './remote-server-provision.service';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
@@ -25,7 +24,7 @@ import { RunRemoteTerminalDto } from './dto/run-remote-terminal.dto';
 
 @ApiTags('Remote servers')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(LocalSessionGuard)
 @Controller('api/remote-servers')
 export class RemoteServersController {
   constructor(
@@ -33,10 +32,8 @@ export class RemoteServersController {
     private readonly remoteServerProvisionService: RemoteServerProvisionService,
   ) {}
 
-  private uid(req: { user?: { userId: number } }): number {
-    const id = req.user?.userId;
-    if (id == null) throw new UnauthorizedException();
-    return id;
+  private uid(_req?: unknown): number {
+    return 1;
   }
 
   @Get()

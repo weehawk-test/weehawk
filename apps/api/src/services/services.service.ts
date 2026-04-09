@@ -2,7 +2,6 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ForbiddenException,
   forwardRef,
   Inject,
 } from '@nestjs/common';
@@ -71,10 +70,10 @@ export class ServicesService {
     private readonly traefikService: TraefikService,
   ) {}
 
-  /** Ensures the service exists and its project belongs to the given user (REST / cron / webhooks). */
+  /** Ensures the service exists. */
   async assertServiceOwnedByUser(
     serviceId: number,
-    userId: number,
+    _userId: number,
   ): Promise<Service> {
     const service = await this.serviceRepository.findOne({
       where: { id: serviceId },
@@ -83,32 +82,18 @@ export class ServicesService {
     if (!service) {
       throw new NotFoundException(`Service #${serviceId} not found`);
     }
-    const puid = service.project?.userId;
-    if (puid == null || puid !== userId) {
-      throw new ForbiddenException();
-    }
     return service;
   }
 
   private async assertProjectOwnedByUser(
     projectId: number,
-    userId: number,
+    _userId: number,
   ): Promise<Project> {
     const project = await this.projectRepository.findOneBy({ id: projectId });
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    if (project.userId == null || project.userId !== userId) {
-      throw new ForbiddenException();
-    }
     return project;
-  }
-
-  private isCloudEdition(): boolean {
-    return (
-      (this.configService.get<string>('WEEHAWK_EDITION') ?? 'selfhosted').toLowerCase() ===
-      'cloud'
-    );
   }
 
   async create(createServiceDto: CreateServiceDto, userId: number) {
@@ -129,10 +114,10 @@ export class ServicesService {
     }
 
     if (remoteServerId != null) {
-      await this.assertDeployRemoteServer(remoteServerId, project.userId);
+      await this.assertDeployRemoteServer(remoteServerId, null);
     }
     if (buildRemoteServerId != null) {
-      await this.assertBuildRemoteServer(buildRemoteServerId, project.userId);
+      await this.assertBuildRemoteServer(buildRemoteServerId, null);
     }
 
     const uniqueAppName = `${appName}-${randomBytes(2).toString('hex')}`;
@@ -2107,9 +2092,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     return await this.executorService.getServiceVolumeMounts(id);
   }
 
-  async findAll(userId: number) {
+  async findAll(_userId: number) {
     const rows = await this.serviceRepository.find({
-      where: { project: { userId } },
       relations: ['project', 'remoteServer'],
       order: { createdAt: 'DESC' },
     });
@@ -2141,8 +2125,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const countQb = this.serviceRepository
       .createQueryBuilder('service')
       .innerJoin('service.project', 'project')
-      .where('project.id = :projectId', { projectId })
-      .andWhere('project.userId = :userId', { userId });
+      .where('project.id = :projectId', { projectId });
 
     if (trimmed) {
       countQb.andWhere(
@@ -2156,8 +2139,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       .createQueryBuilder('service')
       .leftJoinAndSelect('service.project', 'project')
       .leftJoinAndSelect('service.remoteServer', 'remoteServer')
-      .where('project.id = :projectId', { projectId })
-      .andWhere('project.userId = :userId', { userId });
+      .where('project.id = :projectId', { projectId });
 
     if (trimmed) {
       dataQb.andWhere(
@@ -2218,24 +2200,10 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
   /** Same rules as {@link RemoteServersService.assertRemoteServerMatchesProject} but user-facing BadRequest for form/API. */
   private assertRemoteServerBelongsToProjectOwner(
-    rs: RemoteServer,
-    projectUserId: number | null,
+    _rs: RemoteServer,
+    _projectUserId: number | null,
   ): void {
-    const ru = rs.userId ?? null;
-    const pu = projectUserId ?? null;
-    if (ru != null && pu != null && ru !== pu) {
-      throw new BadRequestException('That remote server belongs to another account.');
-    }
-    if (ru == null && pu != null) {
-      throw new BadRequestException(
-        'That remote server is not linked to an account. Recreate it under Remote servers.',
-      );
-    }
-    if (ru != null && pu == null) {
-      throw new BadRequestException(
-        'This project has no owner; assign a user before linking a remote host.',
-      );
-    }
+    return;
   }
 
   async findOne(id: number) {
@@ -2297,11 +2265,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       if (updateServiceDto.remoteServerId !== null) {
         await this.assertDeployRemoteServer(
           updateServiceDto.remoteServerId,
-          service.project.userId,
-        );
-      } else if (this.isCloudEdition()) {
-        throw new BadRequestException(
-          'Weehawk Cloud does not allow clearing the deploy host; workloads must run on an SSH-connected server.',
+          null,
         );
       }
     }
@@ -2318,7 +2282,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       if (updateServiceDto.buildRemoteServerId !== null) {
         await this.assertBuildRemoteServer(
           updateServiceDto.buildRemoteServerId,
-          service.project.userId,
+          null,
         );
       }
     }

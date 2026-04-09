@@ -153,14 +153,13 @@ export class NotificationService {
     message: string,
   ): Promise<{ notificationId: string; logs: NotificationLogRow[] }> {
     const notification = this.notificationRepo.create({
-      userId,
       title: title.trim() || 'Notification',
       message,
     });
     const savedNotification = await this.notificationRepo.save(notification);
 
     const channels = await this.channelRepo.find({
-      where: { userId, isActive: true },
+      where: { isActive: true },
       order: { createdAt: 'ASC' },
     });
 
@@ -217,12 +216,11 @@ export class NotificationService {
     message: string,
   ): Promise<NotificationLogRow> {
     const channel = await this.channelRepo.findOne({
-      where: { id: channelId, userId },
+      where: { id: channelId },
     });
     if (!channel) throw new NotFoundException('Channel not found');
 
     const notification = this.notificationRepo.create({
-      userId,
       title: 'Notification',
       message,
     });
@@ -255,7 +253,6 @@ export class NotificationService {
 
   async listChannels(userId: number): Promise<NotificationChannelRow[]> {
     const list = await this.channelRepo.find({
-      where: { userId },
       order: { createdAt: 'DESC' },
     });
     const rows: NotificationChannelRow[] = [];
@@ -282,8 +279,7 @@ export class NotificationService {
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * take;
     const qb = this.channelRepo
-      .createQueryBuilder('c')
-      .where('c.userId = :userId', { userId });
+      .createQueryBuilder('c');
     const term = (q ?? '').trim();
     if (term) {
       qb.andWhere('(c.name ILIKE :term OR c.type::text ILIKE :term)', {
@@ -315,7 +311,6 @@ export class NotificationService {
     );
     const config = provider.normalizeConfig(dto.config ?? {});
     const ch = this.channelRepo.create({
-      userId,
       name: dto.name.trim(),
       type: dto.type as NotificationChannelType,
       isActive: true,
@@ -331,7 +326,7 @@ export class NotificationService {
     id: string,
     dto: UpdateNotificationChannelDto,
   ): Promise<NotificationChannelRow> {
-    const ch = await this.channelRepo.findOne({ where: { id, userId } });
+    const ch = await this.channelRepo.findOne({ where: { id } });
     if (!ch) throw new NotFoundException('Channel not found');
     if (dto.name !== undefined) ch.name = dto.name.trim();
     if (dto.isActive !== undefined) ch.isActive = dto.isActive;
@@ -348,7 +343,7 @@ export class NotificationService {
   }
 
   async deleteChannel(userId: number, id: string): Promise<void> {
-    const res = await this.channelRepo.delete({ id, userId });
+    const res = await this.channelRepo.delete({ id });
     if (!res.affected) throw new NotFoundException('Channel not found');
   }
 
@@ -361,8 +356,7 @@ export class NotificationService {
       .createQueryBuilder()
       .delete()
       .from(NotificationChannel)
-      .where('user_id = :userId', { userId })
-      .andWhere('id = ANY(:ids)', { ids })
+      .where('id = ANY(:ids)', { ids })
       .execute();
     return { removed: res.affected ?? 0 };
   }
@@ -372,7 +366,6 @@ export class NotificationService {
       .createQueryBuilder('d')
       .innerJoinAndSelect('d.notification', 'n')
       .leftJoinAndSelect('d.channel', 'c')
-      .where('n.userId = :userId', { userId })
       .orderBy('d.sentAt', 'DESC', 'NULLS LAST')
       .addOrderBy('d.createdAt', 'DESC')
       .take(500)
@@ -396,8 +389,7 @@ export class NotificationService {
     const qb = this.deliveryRepo
       .createQueryBuilder('d')
       .innerJoinAndSelect('d.notification', 'n')
-      .leftJoinAndSelect('d.channel', 'c')
-      .where('n.userId = :userId', { userId });
+      .leftJoinAndSelect('d.channel', 'c');
     const term = (q ?? '').trim();
     if (term) {
       qb.andWhere(
@@ -424,10 +416,6 @@ export class NotificationService {
       .delete()
       .from(NotificationDelivery)
       .where('id = :id', { id })
-      .andWhere(
-        `notification_id IN (SELECT n.id FROM notifications n WHERE n.user_id = :userId)`,
-        { userId },
-      )
       .execute();
   }
 
@@ -441,10 +429,6 @@ export class NotificationService {
       .delete()
       .from(NotificationDelivery)
       .where('id IN (:...ids)', { ids })
-      .andWhere(
-        `notification_id IN (SELECT n.id FROM notifications n WHERE n.user_id = :userId)`,
-        { userId },
-      )
       .execute();
     return { removed: res.affected ?? 0 };
   }
@@ -458,7 +442,6 @@ export class NotificationService {
     errorDetail: string | null,
   ): Promise<NotificationLogRow> {
     const notification = this.notificationRepo.create({
-      userId,
       title,
       message,
     });
@@ -514,12 +497,11 @@ export class NotificationService {
     channelId: string,
   ): Promise<NotificationLogRow> {
     const channel = await this.channelRepo.findOne({
-      where: { id: channelId, userId },
+      where: { id: channelId },
     });
     if (!channel) throw new NotFoundException('Channel not found');
 
     const notification = this.notificationRepo.create({
-      userId,
       title: 'Test',
       message: NOTIFICATION_TEST_MESSAGE,
     });

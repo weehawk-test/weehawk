@@ -100,7 +100,7 @@ export class ExecutorService {
   ): Promise<NodeJS.ProcessEnv> {
     const base = await this.getBaseProcessEnvForService(service);
     const ids = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     return this.remoteServersService.mergeDockerHostEnvForDeployIds(
       base,
       ids.remoteServerId,
@@ -119,15 +119,7 @@ export class ExecutorService {
   ) {
     const service = await this.servicesService.findOne(id);
     const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId = service.project?.userId ?? null;
-    const cloudEdition =
-      (this.configService.get<string>('WEEHAWK_EDITION') ?? 'selfhosted').toLowerCase() ===
-      'cloud';
-    if (cloudEdition && sshTargets.remoteServerId == null) {
-      throw new BadRequestException(
-        'Weehawk Cloud requires a remote deploy host. Open the service, set Remote Docker host, and save before deploying.',
-      );
-    }
+    const projectUserId: number | null = null;
     const rawConfig = (service.dockerConfig || '').trim();
     if (!rawConfig) {
       if (service.composeType === composeType.DATABASES) {
@@ -197,7 +189,7 @@ export class ExecutorService {
             });
             const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
             const buildBase = await this.getBaseProcessEnvForService(service);
-            const projectUserId = service.project?.userId ?? null;
+            const projectUserId: number | null = null;
             const buildEnv = await this.remoteServersService.mergeDockerHostEnvForBuildIds(
               buildBase,
               {
@@ -519,7 +511,7 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(id);
     const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -597,7 +589,7 @@ export class ExecutorService {
     const composeFile = path.join(deployDir, 'docker-compose.yml');
     const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     let key: string;
     if (composeServiceKey !== undefined && composeServiceKey.trim() !== '') {
       try {
@@ -675,7 +667,7 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(id);
     const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -1077,7 +1069,7 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(id);
     const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),

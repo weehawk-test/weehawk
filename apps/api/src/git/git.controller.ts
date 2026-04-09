@@ -11,7 +11,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { GitService } from './git.service';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
 import { ExchangeGithubManifestDto } from './dto/exchange-github-manifest.dto';
@@ -41,7 +41,7 @@ export class GitController {
   }
 
   @Get('settings')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(LocalSessionGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Get Git integration settings (secrets returned as booleans only)',
@@ -51,7 +51,7 @@ export class GitController {
   }
 
   @Get('gitlab/projects')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(LocalSessionGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary:
@@ -70,7 +70,7 @@ export class GitController {
   }
 
   @Get('github/repositories')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(LocalSessionGuard)
   @ApiBearerAuth()
   @ApiOperation({
     summary:
@@ -89,7 +89,7 @@ export class GitController {
   }
 
   @Put('settings')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(LocalSessionGuard)
   @ApiOperation({
     summary:
       'Update GitHub App / GitLab settings (partial). Send empty string to clear a secret.',
@@ -106,7 +106,7 @@ export class GitController {
   }
 
   @Post('github/exchange')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(LocalSessionGuard)
   @ApiOperation({
     summary:
       'Exchange GitHub App manifest temporary code for credentials and save to platform settings',

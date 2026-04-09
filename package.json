@@ -2,7 +2,8 @@
   "name": "weehawk",
   "private": true,
   "scripts": {
-    "dev": "pnpm -r --parallel dev",
+    "dev": "pnpm -r --parallel --filter=!desktop dev",
+    "dev:desktop": "pnpm --filter desktop dev",
     "dev:cron-worker": "pnpm --filter cron-worker dev",
     "dev:provision-worker": "pnpm --filter provision-worker dev",
     "devcontainer": "pnpm -r --parallel devcontainer",
@@ -12,5 +13,18 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/multer": "^2.1.0"
+  },
+  "dependencies": {
+    "framer-motion": "^12.38.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron"
+    ],
+    "overrides": {
+      "lodash": "^4.18.0",
+      "path-to-regexp": "^8.4.0"
+    }
   }
 }

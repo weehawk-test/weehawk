@@ -62,7 +62,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
       void qc.invalidateQueries({ queryKey: ["provision-job"] });
       toast({
         title: "Install queued",
-        description: "The provision worker will connect over SSH. You can follow the log below.",
+        description: "Connecting over SSH. Watch the log below.",
       });
     },
     onError: (e: Error) =>
@@ -76,7 +76,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
       void qc.invalidateQueries({ queryKey: ["provision-job"] });
       toast({
         title: "Docker purge queued",
-        description: "The provision worker will run the removal script over SSH. Follow the log below.",
+        description: "Removal runs over SSH. Follow the log below.",
       });
     },
     onError: (e: Error) =>
@@ -96,14 +96,21 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
         <span className="inline-block rotate-0 transition-transform [[open]_&]:rotate-90 text-[10px] opacity-60">
           ▸
         </span>
-        Host install script &amp; Install
+        Server setup &amp; install
       </summary>
       <div className="px-5 pb-4 space-y-3">
         <p className="text-[11px] text-muted-foreground leading-relaxed">
-          This is the same bash the{" "}
-          <span className="text-foreground/90">provision-worker</span> runs over SSH. Review it, then opt in with the
-          checkbox and <strong className="text-foreground/90">Install</strong>. Requires root or passwordless sudo on
-          the server. Deploy hosts also initialize Swarm and the <code className="text-[10px]">weehawk</code> overlay.
+          {row.serverRole === "build" ? (
+            <>
+              Installs Docker if it is missing, starts it, and lets your SSH user run Docker — so this server can build
+              container images for you.
+            </>
+          ) : (
+            <>
+              When needed, it installs Docker, switches on Swarm, creates a shared network for your services, and opens
+              the public web ports (80 and 443) so your deployments on this server are reachable.
+            </>
+          )}
         </p>
         {scriptQ.isLoading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -160,12 +167,9 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
       </summary>
       <div className="px-5 pb-4 space-y-3">
         <p className="text-[11px] text-red-400/90 leading-relaxed border border-red-500/25 rounded-lg bg-red-500/5 p-2.5">
-          <strong className="text-red-300">Destructive.</strong> Use only when apt or Docker is in a bad state (mixed
-          versions, failed upgrades, downgrade errors). This stops containers, purges Docker packages on Debian/Ubuntu,
-          deletes <code className="text-[10px]">/var/lib/docker</code>, <code className="text-[10px]">/var/lib/containerd</code>,{" "}
-          <code className="text-[10px]">/etc/docker</code>, and your user&apos;s{" "}
-          <code className="text-[10px]">~/.docker</code>. After it succeeds, use <strong>Install</strong> above for a clean
-          engine. Requires root or passwordless sudo.
+          <strong className="text-red-300">Danger:</strong> removes Docker and all images and containers on this server.
+          Use only if Docker is broken. Then use <strong className="text-red-200">Install</strong> above for a fresh setup.
+          Needs admin (sudo) access.
         </p>
         {purgeScriptQ.isLoading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">

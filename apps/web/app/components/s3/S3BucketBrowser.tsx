@@ -723,12 +723,6 @@ export function S3BucketBrowser({
           </div>
         ) : null}
       </div>
-
-      <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
-        Folders show total size and latest change for all objects under that prefix (recursive). A “+” on size means the
-        listing was capped (very large prefixes). Deleting a folder removes every object whose key starts with that
-        prefix.
-      </p>
     </div>
   );
 }

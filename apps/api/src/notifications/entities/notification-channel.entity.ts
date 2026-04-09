@@ -2,12 +2,9 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { User } from '../../auth/entities/user.entity';
 import { NotificationChannelType } from './notification-channel-type.enum';
 
 @Entity({ name: 'notification_channels' })
@@ -15,21 +12,14 @@ export class NotificationChannel {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ name: 'user_id' })
-  userId!: number;
-
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_id' })
-  user!: User;
-
   @Column({ type: 'varchar', length: 200 })
   name!: string;
 
-  @Column({ type: 'enum', enum: NotificationChannelType })
+  @Column({ type: 'simple-enum', enum: NotificationChannelType })
   type!: NotificationChannelType;
 
   /** Provider-specific credentials and targets (token, webhook URL, SMTP settings, etc.). */
-  @Column({ type: 'jsonb', nullable: true })
+  @Column({ type: 'simple-json', nullable: true })
   config!: Record<string, unknown> | null;
 
   @Column({ name: 'is_active', default: true })

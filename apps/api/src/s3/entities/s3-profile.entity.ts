@@ -31,9 +31,9 @@ export class S3Profile {
   @Column({ type: 'boolean', default: false })
   forcePathStyle!: boolean;
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @CreateDateColumn({ type: 'datetime' })
   createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'timestamptz' })
+  @UpdateDateColumn({ type: 'datetime' })
   updatedAt!: Date;
 }

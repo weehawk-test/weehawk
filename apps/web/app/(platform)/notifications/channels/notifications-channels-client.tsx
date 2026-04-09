@@ -341,8 +341,6 @@ const CHANNEL_TYPE_OPTIONS = [
   { value: "slack", label: "Slack", icon: MessagesSquare, iconClass: "text-purple-400" },
   { value: "lark", label: "Lark", icon: Bird, iconClass: "text-cyan-400" },
   { value: "microsoft-teams", label: "Microsoft Teams", icon: Users, iconClass: "text-blue-400" },
-  { value: "email", label: "Email", icon: Mail, iconClass: "text-blue-600 dark:text-blue-400" },
-  { value: "resend", label: "Resend", icon: SendHorizontal, iconClass: "text-black dark:text-white" },
   { value: "gotify", label: "Gotify", icon: BellRing, iconClass: "text-lime-400" },
   { value: "ntfy", label: "ntfy", icon: Bell, iconClass: "text-black dark:text-white" },
   { value: "pushover", label: "Pushover", icon: ShieldAlert, iconClass: "text-rose-400" },
@@ -671,6 +669,17 @@ export function NotificationsChannelsClient({
     });
     if (!ok) return;
     bulkDeleteChannelsMutation.mutate(ids);
+  };
+
+  const handleDeleteChannel = async (id: string, name: string) => {
+    const ok = await confirm({
+      title: "Delete channel?",
+      description: `“${name}” will be removed and can no longer receive notifications.`,
+      confirmLabel: "Delete channel",
+      variant: "destructive",
+    });
+    if (!ok) return;
+    deleteMutation.mutate(id);
   };
   const setChannelsPageUrl = (next: number) => {
     const n = Math.max(1, next);
@@ -1033,11 +1042,22 @@ export function NotificationsChannelsClient({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
+              onClick={() => {
+                if (testMutation.isPending || sendMutation.isPending) return;
+                setShowChannelAction(false);
+                setActionMessage("");
+              }}
             >
-            <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.98 }} className="w-full max-w-xl glass-panel rounded-2xl border border-primary/25 p-5">
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.98 }}
+              className="w-full max-w-xl glass-panel rounded-2xl border border-primary/25 p-5"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold">Channel Actions</h3>
+                  <h3 className="text-lg font-semibold">Send a notification</h3>
                   <p className="text-sm text-muted-foreground mt-1">{actionChannel.name}</p>
                 </div>
                 <button
@@ -1046,9 +1066,11 @@ export function NotificationsChannelsClient({
                     setShowChannelAction(false);
                     setActionMessage("");
                   }}
-                  className="btn-secondary text-sm"
+                  disabled={testMutation.isPending || sendMutation.isPending}
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
+                  aria-label="Close"
                 >
-                  Close
+                  <X className="h-4 w-4" />
                 </button>
               </div>
 
@@ -1210,7 +1232,7 @@ export function NotificationsChannelsClient({
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                     <button
                       type="button"
-                      onClick={() => deleteMutation.mutate(ch.id)}
+                      onClick={() => handleDeleteChannel(ch.id, ch.name)}
                       disabled={deleteMutation.isPending || bulkDeleteChannelsMutation.isPending}
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete"

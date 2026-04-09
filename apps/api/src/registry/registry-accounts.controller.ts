@@ -9,13 +9,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { RegistryService } from './registry.service';
 import { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
 
 @ApiTags('Registry')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(LocalSessionGuard)
 @Controller('api/registry/accounts')
 export class RegistryAccountsController {
   constructor(private readonly registryService: RegistryService) {}

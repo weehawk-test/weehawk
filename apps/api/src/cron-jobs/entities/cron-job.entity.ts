@@ -2,12 +2,9 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { User } from '../../auth/entities/user.entity';
 import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
 import type { WebhookServiceAction, WebhookTargetMode } from '../../webhooks/entities/webhook.entity';
 
@@ -15,13 +12,6 @@ import type { WebhookServiceAction, WebhookTargetMode } from '../../webhooks/ent
 export class CronJob {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
-
-  @Column({ name: 'user_id' })
-  userId!: number;
-
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_id' })
-  user!: User;
 
   @Column({ type: 'varchar', length: 200 })
   name!: string;
@@ -67,7 +57,7 @@ export class CronJob {
   @Column({ name: 'notify_on_trigger', default: false })
   notifyOnTrigger!: boolean;
 
-  @Column({ name: 'notify_channel_id', type: 'uuid', nullable: true })
+  @Column({ name: 'notify_channel_id', type: 'varchar', length: 36, nullable: true })
   notifyChannelId: string | null = null;
 
   @Column({ name: 'notify_message', type: 'text', nullable: true })

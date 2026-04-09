@@ -7,7 +7,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Plus, Trash2, ChevronRight, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff } from "lucide-react";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
@@ -270,12 +270,22 @@ function CreateServiceModal({
             </div>
             <div>
               <label className="text-sm font-medium text-foreground mb-1.5 block">Type</label>
-              <select {...register("type")} className="input-field appearance-none">
-                <option value="docker-compose" className="bg-card">Docker Compose</option>
-                <option value="stack" className="bg-card">Stack</option>
-                <option value="application" className="bg-card">Application</option>
-                <option value="databases" className="bg-card">Databases</option>
-              </select>
+              <div className="relative">
+                <select
+                  {...register("type")}
+                  className="input-field w-full appearance-none pr-10"
+                  aria-label="Service type"
+                >
+                  <option value="docker-compose" className="bg-card">Docker Compose</option>
+                  <option value="stack" className="bg-card">Stack</option>
+                  <option value="application" className="bg-card">Application</option>
+                  <option value="databases" className="bg-card">Databases</option>
+                </select>
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+              </div>
               {type === "databases" && databaseEngine && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">Engine:</span>

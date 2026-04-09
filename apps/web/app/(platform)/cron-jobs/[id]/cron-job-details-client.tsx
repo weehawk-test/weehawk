@@ -27,15 +27,17 @@ export function CronJobDetailsClient({ id, initialCronJob }: Props) {
 
   if (typeof document === "undefined") return null;
 
+  const closeModal = () => {
+    if (updateMutation.isPending || deleteMutation.isPending) return;
+    router.push("/cron-jobs");
+  };
+
   return createPortal(
     <div
       className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-start justify-center px-4 py-6 md:px-6 md:py-8"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
+      onClick={closeModal}
     >
-      <div className="w-full max-w-3xl mx-auto relative">
+      <div className="w-full max-w-3xl mx-auto relative" onClick={(e) => e.stopPropagation()}>
         <button
           type="button"
           onClick={() => router.push("/cron-jobs")}

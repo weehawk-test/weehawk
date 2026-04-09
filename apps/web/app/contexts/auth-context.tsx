@@ -4,17 +4,20 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { logoutApi, type AuthResponse } from "@/lib/auth-api";
-import { AUTH_CHANGE_EVENT } from "@/lib/auth-fetch";
-import { getProfile } from "@/lib/user-api";
 
 export type AuthUser = {
+  userId: number;
+  email: string;
+  firstName: string;
+  lastName: string;
+  emailVerified?: boolean;
+};
+
+type LocalSessionResponse = {
   userId: number;
   email: string;
   firstName: string;
@@ -26,7 +29,7 @@ type AuthContextValue = {
   accessToken: string | null;
   user: AuthUser | null;
   isReady: boolean;
-  setSession: (res: AuthResponse) => void;
+  setSession: (res: LocalSessionResponse) => void;
   /** Refetch profile from the API (cookies) and update local user state. */
   refreshSession: () => Promise<void>;
   updateUser: (
@@ -45,37 +48,26 @@ export function AuthProvider({
   /** From RootLayout SSR (`/api/user/profile`) — avoids a client-side profile fetch on load. */
   initialUser: AuthUser | null;
 }) {
-  const [accessToken, setAccessToken] = useState<string | null>(() =>
-    initialUser ? "cookie-session" : null,
+  const localUser = useMemo<AuthUser>(
+    () =>
+      initialUser ?? {
+        userId: 1,
+        email: "desktop@local.weehawk",
+        firstName: "Desktop",
+        lastName: "User",
+        emailVerified: true,
+      },
+    [initialUser],
   );
-  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  const [accessToken] = useState<string | null>("desktop-local-session");
+  const [user, setUser] = useState<AuthUser | null>(localUser);
   const [isReady] = useState(true);
 
   const refreshSession = useCallback(async () => {
-    try {
-      const profile = await getProfile("cookie-session");
-      setAccessToken("cookie-session");
-      setUser({
-        userId: profile.userId,
-        email: profile.email,
-        firstName: profile.firstName,
-        lastName: profile.lastName,
-        emailVerified: profile.emailVerified ?? false,
-      });
-    } catch {
-      setAccessToken(null);
-      setUser(null);
-    }
+    setUser((prev) => prev ?? localUser);
   }, []);
 
-  useEffect(() => {
-    const onLocal = () => void refreshSession();
-    window.addEventListener(AUTH_CHANGE_EVENT, onLocal);
-    return () => window.removeEventListener(AUTH_CHANGE_EVENT, onLocal);
-  }, [refreshSession]);
-
-  const setSession = useCallback((res: AuthResponse) => {
-    setAccessToken("cookie-session");
+  const setSession = useCallback((res: LocalSessionResponse) => {
     setUser({
       userId: res.userId,
       email: res.email,
@@ -83,7 +75,6 @@ export function AuthProvider({
       lastName: res.lastName,
       emailVerified: res.emailVerified ?? false,
     });
-    window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
   }, []);
 
   const updateUser = useCallback(
@@ -98,17 +89,8 @@ export function AuthProvider({
   );
 
   const logout = useCallback(async () => {
-    const email = user?.email;
-    try {
-      await logoutApi(email);
-    } catch {
-      /* ignore */
-    } finally {
-      setAccessToken(null);
-      setUser(null);
-      window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
-    }
-  }, [user?.email]);
+    setUser(localUser);
+  }, [localUser]);
 
   const value = useMemo(
     () => ({
@@ -141,14 +123,5 @@ export function useAuth(): AuthContextValue {
  */
 export function useRequireAuth() {
   const { accessToken, isReady } = useAuth();
-  const router = useRouter();
-  const pathname = usePathname();
-
-  useEffect(() => {
-    if (pathname === "/" || pathname === "/register") return;
-    if (!isReady) return;
-    if (!accessToken) router.replace("/");
-  }, [accessToken, isReady, pathname, router]);
-
-  return { accessToken, isReady, allowed: Boolean(accessToken) };
+  return { accessToken, isReady, allowed: true };
 }

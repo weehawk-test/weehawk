@@ -2,7 +2,6 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { exec } from 'child_process';
@@ -30,10 +29,9 @@ export class ProjectsService {
     private readonly dockerSecrets: DockerSecretsService,
   ) {}
 
-  async create(createProjectDto: CreateProjectDto, userId: number) {
+  async create(createProjectDto: CreateProjectDto, _userId: number) {
     const existing = await this.projectRepository.findOneBy({
       name: createProjectDto.name,
-      userId,
     });
     if (existing) {
       throw new ConflictException('Project name already exists');
@@ -41,7 +39,6 @@ export class ProjectsService {
 
     const project = this.projectRepository.create({
       ...createProjectDto,
-      userId,
     });
     return await this.projectRepository.save(project);
   }
@@ -50,15 +47,14 @@ export class ProjectsService {
     page: number,
     limit: number,
     q: string | undefined,
-    userId: number,
+    _userId: number,
   ) {
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 9));
     const trimmed = (q ?? '').trim().toLowerCase();
 
     const countQb = this.projectRepository
-      .createQueryBuilder('project')
-      .where('project.userId = :userId', { userId });
+      .createQueryBuilder('project');
     if (trimmed) {
       countQb.andWhere(
         '(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, \'\')) LIKE :q)',
@@ -69,8 +65,7 @@ export class ProjectsService {
 
     const dataQb = this.projectRepository
       .createQueryBuilder('project')
-      .loadRelationCountAndMap('project.serviceCount', 'project.services')
-      .where('project.userId = :userId', { userId });
+      .loadRelationCountAndMap('project.serviceCount', 'project.services');
 
     if (trimmed) {
       dataQb.andWhere(
@@ -93,7 +88,7 @@ export class ProjectsService {
     };
   }
 
-  async findOne(id: number, userId: number) {
+  async findOne(id: number, _userId: number) {
     const project = await this.projectRepository.findOne({
       where: { id },
       relations: ['services'],
@@ -102,10 +97,6 @@ export class ProjectsService {
     if (!project) {
       throw new NotFoundException(`Project with ID ${id} not found`);
     }
-    if (project.userId == null || project.userId !== userId) {
-      throw new ForbiddenException();
-    }
-
     return project;
   }
 

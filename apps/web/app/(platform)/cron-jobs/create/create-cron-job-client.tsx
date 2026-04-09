@@ -1,6 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -30,7 +36,7 @@ type CronPreset =
   | "every_15_minutes"
   | "every_weekday_midnight";
 
-function renderHighlightedScript(script: string): JSX.Element[] {
+function renderHighlightedScript(script: string): ReactNode[] {
   const lines = (script || "").split("\n");
   return lines.map((line, index) => {
     const isComment = /^\s*#/.test(line);
@@ -143,10 +149,15 @@ export function CreateCronJobClient({
     window.addEventListener("mouseup", onMouseUp);
   };
 
+  const closeModal = () => {
+    if (createMutation.isPending) return;
+    router.push("/cron-jobs");
+  };
+
   return createPortal(
-    <div className="fixed inset-0 z-[80] overflow-y-auto modal-scrim">
+    <div className="fixed inset-0 z-[80] overflow-y-auto modal-scrim" onClick={closeModal}>
       <div className="flex min-h-full items-center justify-center p-4">
-        <div className="max-w-2xl w-full py-8">
+        <div className="max-w-2xl w-full py-8" onClick={(e) => e.stopPropagation()}>
           <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
           <div className="mb-6 flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-foreground">Create cron job</h1>

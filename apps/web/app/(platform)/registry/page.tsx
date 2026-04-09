@@ -12,23 +12,27 @@ import {
   Plus,
   Search,
   Trash2,
-  LogOut,
   X,
   Globe2,
+  Clock,
+  Pencil,
 } from "lucide-react";
+import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
 import {
-  registryLogoutApi,
   registryVerifyApi,
   fetchRegistryAccounts,
   createRegistryAccountApi,
   deleteRegistryAccountApi,
   type RegistryLoginPayload,
+  type RegistryAccountRow,
 } from "@/lib/registry-api";
+
+type RegistryModalState = null | { type: "add" } | { type: "edit"; account: RegistryAccountRow };
 
 type ProviderPreset = {
   id: string;
@@ -80,13 +84,21 @@ const PRESETS: ProviderPreset[] = [
   },
 ];
 
+function presetMatchForSavedUrl(providerUrl: string): { presetId: string; url: string } {
+  const u = providerUrl.trim().toLowerCase();
+  const hit = PRESETS.find((p) => p.id !== "custom" && p.providerUrl.toLowerCase() === u);
+  if (hit) return { presetId: hit.id, url: hit.providerUrl };
+  return { presetId: "custom", url: providerUrl.trim() };
+}
+
 export default function RegistryPage() {
   const { toast } = useToast();
   const confirm = useConfirm();
   const { accessToken } = useAuth();
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
-  const [showAdd, setShowAdd] = useState(false);
+  const [registryModal, setRegistryModal] = useState<RegistryModalState>(null);
+  const [registryDisplayName, setRegistryDisplayName] = useState("");
   const [portalReady, setPortalReady] = useState(false);
   useEffect(() => {
     setPortalReady(true);
@@ -104,7 +116,6 @@ export default function RegistryPage() {
   const [password, setPassword] = useState<string>("");
   const [isVerifying, setIsVerifying] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [logoutProvider, setLogoutProvider] = useState<string | null>(null);
   const [isBulkRemoving, setIsBulkRemoving] = useState(false);
 
   const canAuth = providerUrl.trim() && username.trim() && password.trim();
@@ -120,7 +131,36 @@ export default function RegistryPage() {
   const savedKeys = useMemo(() => filtered.map((s) => String(s.id)), [filtered]);
   const savedBulk = useBulkSelection(savedKeys);
 
+  const resetRegistryForm = () => {
+    setPresetId("dockerhub");
+    setProviderUrl("docker.io");
+    setUsername("");
+    setPassword("");
+    setRegistryDisplayName("");
+  };
+
+  const closeRegistryModal = () => {
+    setRegistryModal(null);
+    resetRegistryForm();
+  };
+
+  const openAddRegistryModal = () => {
+    resetRegistryForm();
+    setRegistryModal({ type: "add" });
+  };
+
+  const openEditRegistry = (account: RegistryAccountRow) => {
+    const { presetId: pid, url } = presetMatchForSavedUrl(account.providerUrl);
+    setPresetId(pid);
+    setProviderUrl(url);
+    setUsername(account.username);
+    setPassword("");
+    setRegistryDisplayName(account.name);
+    setRegistryModal({ type: "edit", account });
+  };
+
   const applyPreset = (preset: ProviderPreset) => {
+    if (registryModal?.type === "edit") return;
     setPresetId(preset.id);
     setProviderUrl(preset.providerUrl);
   };
@@ -173,9 +213,11 @@ export default function RegistryPage() {
       const provider = providerUrl.trim();
       const preset = PRESETS.find((p) => p.id === presetId);
       const name =
-        presetId === "custom"
-          ? provider || "Custom registry"
-          : (preset?.name ?? provider);
+        registryModal?.type === "edit"
+          ? registryDisplayName.trim() || registryModal.account.name
+          : presetId === "custom"
+            ? provider || "Custom registry"
+            : (preset?.name ?? provider);
       await createRegistryAccountApi(accessToken, {
         name,
         providerUrl: provider,
@@ -184,14 +226,10 @@ export default function RegistryPage() {
       });
       await qc.invalidateQueries({ queryKey: ["registry-accounts"] });
       toast({
-        title: "Registry saved",
+        title: registryModal?.type === "edit" ? "Registry updated" : "Registry saved",
         description: `Verified and stored on the server (encrypted). Used automatically for image push.`,
       });
-      setShowAdd(false);
-      setPresetId("dockerhub");
-      setProviderUrl("docker.io");
-      setUsername("");
-      setPassword("");
+      closeRegistryModal();
     } catch (e) {
       toast({
         title: "Save failed",
@@ -200,25 +238,6 @@ export default function RegistryPage() {
       });
     } finally {
       setIsLoggingIn(false);
-    }
-  };
-
-  const logoutSaved = async (providerUrlValue: string) => {
-    setLogoutProvider(providerUrlValue);
-    try {
-      await registryLogoutApi({ providerUrl: providerUrlValue });
-      toast({
-        title: "Logged out",
-        description: `Session removed for ${providerUrlValue}.`,
-      });
-    } catch (e) {
-      toast({
-        title: "Logout failed",
-        description: e instanceof Error ? e.message : String(e),
-        variant: "destructive",
-      });
-    } finally {
-      setLogoutProvider(null);
     }
   };
 
@@ -293,7 +312,7 @@ export default function RegistryPage() {
               });
               return;
             }
-            setShowAdd(true);
+            openAddRegistryModal();
           }}
           className="btn-primary flex items-center justify-center gap-2 shrink-0"
         >
@@ -367,7 +386,7 @@ export default function RegistryPage() {
             {search ? "No registries match your search." : "Add a registry to verify and save credentials on the server."}
           </p>
           {!search && (
-            <button type="button" onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
+            <button type="button" onClick={() => openAddRegistryModal()} className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> Add registry
             </button>
           )}
@@ -377,7 +396,7 @@ export default function RegistryPage() {
           {filtered.map((item) => (
             <div
               key={item.id}
-              className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col min-h-[180px] group interactive-card"
+              className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col group interactive-card"
             >
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3 min-w-0">
@@ -419,16 +438,24 @@ export default function RegistryPage() {
                   </div>
                 </div>
               </div>
-              <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-end">
-                <button
-                  type="button"
-                  onClick={() => void logoutSaved(item.providerUrl)}
-                  disabled={logoutProvider === item.providerUrl}
-                  className="btn-secondary text-sm flex items-center gap-2 disabled:opacity-50"
-                >
-                  {logoutProvider === item.providerUrl ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
-                  Logout
-                </button>
+              <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between gap-2 text-xs text-muted-foreground flex-wrap">
+                <div className="flex items-center gap-1 min-w-0">
+                  <Clock className="w-3 h-3 shrink-0" />
+                  <span className="truncate" title={item.lastVerifiedAt ?? undefined}>
+                    {item.lastVerifiedAt
+                      ? format(new Date(item.lastVerifiedAt), "MMM d, yyyy · HH:mm")
+                      : "Not verified yet"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap justify-end">
+                  <button
+                    type="button"
+                    onClick={() => openEditRegistry(item)}
+                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
+                  >
+                    Edit <Pencil className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -438,14 +465,17 @@ export default function RegistryPage() {
       {portalReady &&
         createPortal(
         <AnimatePresence>
-          {showAdd && (
+          {registryModal && (registryModal.type === "add" || registryModal.type === "edit") && (
           <motion.div
-            key="registry-add"
+            key="registry-form"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4"
-            onClick={() => setShowAdd(false)}
+            onClick={() => {
+              if (isLoggingIn || isVerifying) return;
+              closeRegistryModal();
+            }}
           >
             <motion.div
               initial={{ opacity: 0, y: 14, scale: 0.98 }}
@@ -456,23 +486,54 @@ export default function RegistryPage() {
             >
               <div className="flex items-start justify-between gap-4 mb-5">
                 <div>
-                  <h3 className="text-base font-semibold">Add Registry</h3>
-                  <p className="text-xs text-muted-foreground mt-1">Verify credentials, then save to the server (encrypted).</p>
+                  <h3 className="text-base font-semibold">
+                    {registryModal.type === "edit" ? "Edit registry" : "Add Registry"}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {registryModal.type === "edit"
+                      ? "Re-enter your password or token to verify, then save."
+                      : "Verify credentials, then save to the server (encrypted)."}
+                  </p>
                 </div>
-                <button type="button" onClick={() => setShowAdd(false)} className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isLoggingIn || isVerifying) return;
+                    closeRegistryModal();
+                  }}
+                  className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+                >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
+              {registryModal.type === "edit" ? (
+                <div className="mb-4">
+                  <label className="text-sm font-medium mb-1.5 block">Display name</label>
+                  <input
+                    className="input-field"
+                    value={registryDisplayName}
+                    onChange={(e) => setRegistryDisplayName(e.target.value)}
+                    placeholder="Profile name"
+                    autoComplete="off"
+                  />
+                </div>
+              ) : null}
+
               <div className="mb-4">
                 <label className="text-sm font-medium mb-1.5 block">Registry Type</label>
-                <div className="rounded-lg border border-border bg-muted/60 p-2.5 dark:border-white/10 dark:bg-white/[0.03]">
+                <div
+                  className={`rounded-lg border border-border bg-muted/60 p-2.5 dark:border-white/10 dark:bg-white/[0.03] ${
+                    registryModal.type === "edit" ? "opacity-60 pointer-events-none" : ""
+                  }`}
+                >
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                     {PRESETS.map((preset) => (
                       <button
                         key={preset.id}
                         type="button"
                         onClick={() => applyPreset(preset)}
+                        disabled={registryModal.type === "edit"}
                         className={`flex h-full min-h-[4.25rem] w-full min-w-0 flex-col items-center justify-center gap-1 text-center rounded-md border px-1 py-2 text-[0.7rem] leading-tight transition-colors sm:text-xs ${
                           presetId === preset.id
                             ? "border-primary/50 bg-primary/10 text-foreground dark:border-primary/60 dark:bg-primary/15"
@@ -501,7 +562,14 @@ export default function RegistryPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Registry URL</label>
-                  <input className="input-field font-mono" value={providerUrl} onChange={(e) => setProviderUrl(e.target.value)} placeholder="docker.io or registry.example.com" autoComplete="off" />
+                  <input
+                    className={`input-field font-mono ${registryModal.type === "edit" ? "opacity-80 cursor-not-allowed" : ""}`}
+                    value={providerUrl}
+                    onChange={(e) => setProviderUrl(e.target.value)}
+                    placeholder="docker.io or registry.example.com"
+                    autoComplete="off"
+                    readOnly={registryModal.type === "edit"}
+                  />
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Username</label>
@@ -524,7 +592,16 @@ export default function RegistryPage() {
                   Verify
                 </button>
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => setShowAdd(false)} className="btn-secondary text-sm">Cancel</button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isLoggingIn || isVerifying) return;
+                      closeRegistryModal();
+                    }}
+                    className="btn-secondary text-sm"
+                  >
+                    Cancel
+                  </button>
                   <button
                     type="button"
                     onClick={login}
@@ -532,7 +609,7 @@ export default function RegistryPage() {
                     className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50"
                   >
                     {isLoggingIn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogIn className="w-3.5 h-3.5" />}
-                    Save
+                    {registryModal.type === "edit" ? "Save changes" : "Save"}
                   </button>
                 </div>
               </div>

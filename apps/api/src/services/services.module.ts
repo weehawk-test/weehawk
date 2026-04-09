@@ -13,11 +13,9 @@ import { DockerfileGeneratorModule } from '../dockerfile-generator/dockerfile-ge
 import { S3Module } from '../s3/s3.module';
 import { GitModule } from '../git/git.module';
 import { TraefikModule } from '../traefik/traefik.module';
-import { AuthModule } from '../auth/auth.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Service, RemoteServer]),
-    AuthModule,
     ProjectsModule,
     DockersecretsModule,
     DockerfileGeneratorModule,

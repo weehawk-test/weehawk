@@ -214,15 +214,17 @@ export function EditCronJobClient({
 
   if (typeof document === "undefined") return null;
 
+  const closeModal = () => {
+    if (updateMutation.isPending) return;
+    router.push("/cron-jobs");
+  };
+
   return createPortal(
       <div
         className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-start justify-center px-4 py-6 md:px-6 md:py-8"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-        }}
+        onClick={closeModal}
       >
-        <div className="w-full max-w-2xl">
+        <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
           <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
           <div className="mb-6 flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-foreground">Edit cron job</h1>

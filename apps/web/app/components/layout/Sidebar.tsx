@@ -10,11 +10,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
-import { fetchSetupStatus } from "@/lib/auth-api";
-import { editionFromEnv, isCloudEdition } from "@/lib/weehawk-edition";
+import { isCloudEdition } from "@/lib/weehawk-edition";
 import type { LucideIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -171,13 +169,6 @@ export function Sidebar() {
   const router = useRouter();
   const { user, logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
-  const setupQuery = useQuery({
-    queryKey: ["auth", "setup-status"],
-    queryFn: fetchSetupStatus,
-    staleTime: 0,
-    gcTime: 0,
-  });
-  const editionTag = setupQuery.data?.edition ?? editionFromEnv();
   const layoutGroupId = "sidebar-nav-main";
   const activeLayoutId = "active-nav-main";
 
@@ -277,7 +268,7 @@ export function Sidebar() {
               <div className="min-w-0 flex-1 pt-0.5">
                 <h1 className="font-bold text-lg text-foreground tracking-tight leading-none">Weehawk</h1>
                 <p className="text-[10px] text-muted-foreground tracking-widest uppercase font-mono mt-1">
-                  {editionTag}
+                  DESKTOP
                 </p>
               </div>
             </Link>

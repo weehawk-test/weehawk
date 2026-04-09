@@ -4,7 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Loader2, Plus, Server, Terminal, Trash2, PlugZap, FlaskConical, X } from "lucide-react";
+import {
+  Container,
+  KeyRound,
+  Loader2,
+  Plus,
+  Server,
+  Terminal,
+  Trash2,
+  PlugZap,
+  FlaskConical,
+  X,
+} from "lucide-react";
 import { PublicKeyCopyBlock } from "@/components/remote-server/public-key-copy-block";
 import { RemoteServerInstallBlock } from "@/components/remote-server/remote-server-install-block";
 import { useAuth } from "@/contexts/auth-context";
@@ -103,6 +114,14 @@ export function RemoteServerSettingsClient() {
     }
   }, [editingId, list.data]);
 
+  useEffect(() => {
+    if (editingId == null || list.data == null) return;
+    if (!list.data.some((r) => r.id === editingId)) {
+      setEditingId(null);
+      setGeneratedPublicKey(null);
+    }
+  }, [editingId, list.data]);
+
   const generateMut = useMutation({
     mutationFn: (target: "create" | "edit") => generateRemoteSshKeypairApi(accessToken ?? ""),
     onSuccess: (data, target) => {
@@ -181,6 +200,17 @@ export function RemoteServerSettingsClient() {
     onError: (e: Error) =>
       toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
   });
+
+  function dismissCreateHostModal() {
+    setCreating(false);
+    setForm(emptyForm());
+    setGeneratedPublicKey(null);
+  }
+
+  function dismissEditHostModal() {
+    setEditingId(null);
+    setGeneratedPublicKey(null);
+  }
 
   const testMut = useMutation({
     mutationFn: (id: number) => testRemoteServerApi(accessToken ?? "", id),
@@ -368,6 +398,9 @@ export function RemoteServerSettingsClient() {
     );
   }
 
+  const editingRow =
+    editingId != null ? (list.data ?? []).find((r) => r.id === editingId) ?? null : null;
+
   return (
     <div className="space-y-8 max-w-4xl">
       <header className="space-y-2">
@@ -401,144 +434,6 @@ export function RemoteServerSettingsClient() {
           )}
         </div>
 
-        {creating && (
-          <div className="glass-panel rounded-xl p-5 space-y-3 border border-border">
-            <p className="text-xs text-muted-foreground">New remote Docker host</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={generateMut.isPending}
-                onClick={() => generateMut.mutate("create")}
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15 disabled:opacity-50"
-              >
-                {generateMut.isPending ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <KeyRound className="size-3.5" />
-                )}
-                Generate key pair
-              </button>
-            </div>
-            {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
-            <div className="space-y-2">
-              <span className="text-xs text-muted-foreground">Server role</span>
-              <div className="flex flex-wrap gap-2">
-                {(
-                  [
-                    {
-                      value: "deploy" as const,
-                      title: "Deploy",
-                      hint: "Run docker stack / compose on this host",
-                    },
-                    {
-                      value: "build" as const,
-                      title: "Build",
-                      hint: "Image builds only; pick a deploy host for running containers",
-                    },
-                  ] as const
-                ).map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setForm((f) => ({ ...f, serverRole: opt.value }))}
-                    className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
-                      form.serverRole === opt.value
-                        ? "border-primary/40 bg-primary/10 text-foreground"
-                        : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
-                    }`}
-                  >
-                    <span className="text-xs font-medium block">{opt.title}</span>
-                    <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">{opt.hint}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="space-y-1 block">
-                <span className="text-xs text-muted-foreground">Label</span>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                  placeholder="Production"
-                />
-              </label>
-              <label className="space-y-1 block">
-                <span className="text-xs text-muted-foreground">Host / IP</span>
-                <input
-                  value={form.host}
-                  onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                  placeholder="203.0.113.10"
-                />
-              </label>
-              <label className="space-y-1 block">
-                <span className="text-xs text-muted-foreground">SSH port</span>
-                <input
-                  value={form.port}
-                  onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
-                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                  placeholder="22"
-                />
-              </label>
-              <label className="space-y-1 block">
-                <span className="text-xs text-muted-foreground">SSH user</span>
-                <input
-                  value={form.sshUser}
-                  onChange={(e) => setForm((f) => ({ ...f, sshUser: e.target.value }))}
-                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                  placeholder="deploy"
-                />
-              </label>
-              <label className="space-y-1 block sm:col-span-2">
-                <span className="text-xs text-muted-foreground">Public IPv4 (optional, Magic traefik.me)</span>
-                <input
-                  value={form.publicIpv4}
-                  onChange={(e) => setForm((f) => ({ ...f, publicIpv4: e.target.value }))}
-                  className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
-                  placeholder="203.0.113.10"
-                  autoComplete="off"
-                />
-              </label>
-              <label className="space-y-1 block sm:col-span-2">
-                <span className="text-xs text-muted-foreground">Private key (PEM)</span>
-                <textarea
-                  value={form.privateKey}
-                  onChange={(e) => {
-                    setForm((f) => ({ ...f, privateKey: e.target.value }));
-                    setGeneratedPublicKey(null);
-                  }}
-                  className="w-full min-h-[140px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-xs font-mono"
-                  placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-              </label>
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                disabled={createMut.isPending}
-                onClick={() => createMut.mutate()}
-                className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400"
-              >
-                {createMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreating(false);
-                  setForm(emptyForm());
-                  setGeneratedPublicKey(null);
-                }}
-                className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
         <div className="space-y-2">
           {!hideLocalDockerHost ? (
             <div className="glass-panel rounded-xl border border-border overflow-hidden">
@@ -561,7 +456,7 @@ export function RemoteServerSettingsClient() {
                     className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
                     title="Open Docker console for this host"
                   >
-                    <Terminal className="size-3.5" />
+                    <Container className="size-3.5" />
                     Docker Manager
                   </Link>
                   <button
@@ -592,162 +487,14 @@ export function RemoteServerSettingsClient() {
                 key={row.id}
                 className="glass-panel rounded-xl border border-border overflow-hidden"
               >
-                {editingId === row.id ? (
-                  <div className="p-5 space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={generateMut.isPending}
-                        onClick={() => generateMut.mutate("edit")}
-                        className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15 disabled:opacity-50"
-                      >
-                        {generateMut.isPending ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <KeyRound className="size-3.5" />
-                        )}
-                        Generate new key pair
-                      </button>
-                      <span className="text-[11px] text-muted-foreground">
-                        Fills “replace” below; save to store the new private key
-                      </span>
-                    </div>
-                    {generatedPublicKey && editingId === row.id ? (
-                      <PublicKeyCopyBlock publicKey={generatedPublicKey} />
-                    ) : null}
-                    <div className="space-y-2">
-                      <span className="text-xs text-muted-foreground">Server role</span>
-                      <div className="flex flex-wrap gap-2">
-                        {(
-                          [
-                            {
-                              value: "deploy" as const,
-                              title: "Deploy",
-                              hint: "Runs containers / stack deploy",
-                            },
-                            {
-                              value: "build" as const,
-                              title: "Build",
-                              hint: "Dedicated docker build host",
-                            },
-                          ] as const
-                        ).map((opt) => (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() =>
-                              setEditDraft((d) => ({ ...d, serverRole: opt.value }))
-                            }
-                            className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
-                              editDraft.serverRole === opt.value
-                                ? "border-primary/40 bg-primary/10 text-foreground"
-                                : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
-                            }`}
-                          >
-                            <span className="text-xs font-medium block">{opt.title}</span>
-                            <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">
-                              {opt.hint}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="space-y-1 block">
-                        <span className="text-xs text-muted-foreground">Label</span>
-                        <input
-                          value={editDraft.name}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
-                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 block">
-                        <span className="text-xs text-muted-foreground">Host</span>
-                        <input
-                          value={editDraft.host}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, host: e.target.value }))}
-                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 block">
-                        <span className="text-xs text-muted-foreground">SSH port</span>
-                        <input
-                          value={editDraft.port}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, port: e.target.value }))}
-                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 block">
-                        <span className="text-xs text-muted-foreground">SSH user</span>
-                        <input
-                          value={editDraft.sshUser}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, sshUser: e.target.value }))}
-                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 block sm:col-span-2">
-                        <span className="text-xs text-muted-foreground">Public IPv4 (optional, Magic traefik.me)</span>
-                        <input
-                          value={editDraft.publicIpv4}
-                          onChange={(e) => setEditDraft((d) => ({ ...d, publicIpv4: e.target.value }))}
-                          className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
-                          placeholder="203.0.113.10"
-                          autoComplete="off"
-                        />
-                      </label>
-                      {row.authMode === "file" ? (
-                        <p className="text-xs text-muted-foreground sm:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                          Legacy: key file on API host at{" "}
-                          <code className="text-[11px] break-all">{row.privateKeyPath}</code>. Paste a new private key below
-                          to migrate to encrypted storage.
-                        </p>
-                      ) : null}
-                      <label className="space-y-1 block sm:col-span-2">
-                        <span className="text-xs text-muted-foreground">
-                          Replace private key (optional PEM)
-                        </span>
-                        <textarea
-                          value={editDraft.privateKeyReplace}
-                          onChange={(e) => {
-                            setEditDraft((d) => ({ ...d, privateKeyReplace: e.target.value }));
-                            if (!e.target.value.trim()) {
-                              setGeneratedPublicKey(null);
-                            }
-                          }}
-                          className="w-full min-h-[100px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 font-mono text-xs"
-                          placeholder="Leave empty to keep current key, or paste / generate a new one"
-                          spellCheck={false}
-                          autoComplete="off"
-                        />
-                      </label>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        disabled={updateMut.isPending}
-                        onClick={() => updateMut.mutate(row)}
-                        className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400"
-                      >
-                        {updateMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingId(null);
-                          setGeneratedPublicKey(null);
-                        }}
-                        className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
+                <>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium text-sm truncate">{row.name}</p>
+                        <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
+                          Remote
+                        </span>
                         <span
                           className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border ${
                             row.serverRole === "build"
@@ -757,21 +504,17 @@ export function RemoteServerSettingsClient() {
                         >
                           {row.serverRole === "build" ? "Build" : "Deploy"}
                         </span>
-                        <span
-                          className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border ${
-                            row.authMode === "stored"
-                              ? "border-emerald-500/30 text-emerald-400/90 bg-emerald-500/10"
-                              : row.authMode === "file"
+                        {row.authMode !== "stored" ? (
+                          <span
+                            className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border ${
+                              row.authMode === "file"
                                 ? "border-zinc-500/30 text-zinc-400 bg-zinc-500/10"
                                 : "border-amber-500/30 text-amber-400/90 bg-amber-500/10"
-                          }`}
-                        >
-                          {row.authMode === "stored"
-                            ? "DB encrypted"
-                            : row.authMode === "file"
-                              ? "Legacy file"
-                              : "No key"}
-                        </span>
+                            }`}
+                          >
+                            {row.authMode === "file" ? "Legacy file" : "No key"}
+                          </span>
+                        ) : null}
                       </div>
                       <p className="text-xs text-muted-foreground font-mono mt-1 truncate">
                         {row.sshUser}@{row.host}
@@ -798,7 +541,7 @@ export function RemoteServerSettingsClient() {
                           className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
                           title="Open Docker console for this host (full Docker UI)"
                         >
-                          <Terminal className="size-3.5" />
+                          <Container className="size-3.5" />
                           Docker Manager
                         </Link>
                       ) : (
@@ -806,7 +549,7 @@ export function RemoteServerSettingsClient() {
                           className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border opacity-40 cursor-not-allowed"
                           title="Configure a private key first"
                         >
-                          <Terminal className="size-3.5" />
+                          <Container className="size-3.5" />
                           Docker Manager
                         </span>
                       )}
@@ -865,13 +608,356 @@ export function RemoteServerSettingsClient() {
                     </div>
                   </div>
                   <RemoteServerInstallBlock accessToken={accessToken} row={row} />
-                  </>
-                )}
+                </>
               </div>
             ))}
         </div>
 
       </div>
+      {typeof document !== "undefined" && creating
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[120] overflow-y-auto flex min-h-full items-center justify-center p-4 bg-black/40 backdrop-blur-xl dark:bg-black/55"
+              onClick={() => {
+                if (createMut.isPending) return;
+                dismissCreateHostModal();
+              }}
+            >
+              <div
+                className="w-full max-w-2xl rounded-2xl glass-panel p-5 space-y-3 max-h-[90vh] overflow-y-auto shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-base font-semibold">Add host</h3>
+                    <p className="text-xs text-muted-foreground mt-1">New remote Docker host</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={createMut.isPending}
+                    onClick={dismissCreateHostModal}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40"
+                    aria-label="Close add host dialog"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={generateMut.isPending || createMut.isPending}
+                    onClick={() => generateMut.mutate("create")}
+                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15 disabled:opacity-50"
+                  >
+                    {generateMut.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <KeyRound className="size-3.5" />
+                    )}
+                    Generate key pair
+                  </button>
+                </div>
+                {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
+                <div className="space-y-2">
+                  <span className="text-xs text-muted-foreground">Server role</span>
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        {
+                          value: "deploy" as const,
+                          title: "Deploy",
+                          hint: "Run docker stack / compose on this host",
+                        },
+                        {
+                          value: "build" as const,
+                          title: "Build",
+                          hint: "Image builds only; pick a deploy host for running containers",
+                        },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, serverRole: opt.value }))}
+                        className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
+                          form.serverRole === opt.value
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
+                        }`}
+                      >
+                        <span className="text-xs font-medium block">{opt.title}</span>
+                        <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">
+                          {opt.hint}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">Label</span>
+                    <input
+                      value={form.name}
+                      onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      placeholder="Production"
+                    />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">Host / IP</span>
+                    <input
+                      value={form.host}
+                      onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      placeholder="203.0.113.10"
+                    />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">SSH port</span>
+                    <input
+                      value={form.port}
+                      onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      placeholder="22"
+                    />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">SSH user</span>
+                    <input
+                      value={form.sshUser}
+                      onChange={(e) => setForm((f) => ({ ...f, sshUser: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      placeholder="deploy"
+                    />
+                  </label>
+                  <label className="space-y-1 block sm:col-span-2">
+                    <span className="text-xs text-muted-foreground">Public IPv4 (optional, traefik.me)</span>
+                    <input
+                      value={form.publicIpv4}
+                      onChange={(e) => setForm((f) => ({ ...f, publicIpv4: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
+                      placeholder="203.0.113.10"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="space-y-1 block sm:col-span-2">
+                    <span className="text-xs text-muted-foreground">Private key (PEM)</span>
+                    <textarea
+                      value={form.privateKey}
+                      onChange={(e) => {
+                        setForm((f) => ({ ...f, privateKey: e.target.value }));
+                        setGeneratedPublicKey(null);
+                      }}
+                      className="w-full min-h-[140px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-xs font-mono"
+                      placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  </label>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={createMut.isPending}
+                    onClick={() => createMut.mutate()}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400"
+                  >
+                    {createMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={createMut.isPending}
+                    onClick={dismissCreateHostModal}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {typeof document !== "undefined" && editingRow
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[120] overflow-y-auto flex min-h-full items-center justify-center p-4 bg-black/40 backdrop-blur-xl dark:bg-black/55"
+              onClick={() => {
+                if (updateMut.isPending) return;
+                dismissEditHostModal();
+              }}
+            >
+              <div
+                className="w-full max-w-2xl rounded-2xl glass-panel p-5 space-y-3 max-h-[90vh] overflow-y-auto shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold">Edit host</h3>
+                    <p className="text-xs text-muted-foreground mt-1 truncate">
+                      {editingRow.name} · {editingRow.sshUser}@{editingRow.host}
+                      {editingRow.port !== 22 ? `:${editingRow.port}` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={updateMut.isPending}
+                    onClick={dismissEditHostModal}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40"
+                    aria-label="Close edit host dialog"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
+                    Remote
+                  </span>
+                  <button
+                    type="button"
+                    disabled={generateMut.isPending || updateMut.isPending}
+                    onClick={() => generateMut.mutate("edit")}
+                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15 disabled:opacity-50"
+                  >
+                    {generateMut.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <KeyRound className="size-3.5" />
+                    )}
+                    Generate new key pair
+                  </button>
+                  <span className="text-[11px] text-muted-foreground">
+                    Fills “replace” below; save to store the new private key
+                  </span>
+                </div>
+                {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
+                <div className="space-y-2">
+                  <span className="text-xs text-muted-foreground">Server role</span>
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        {
+                          value: "deploy" as const,
+                          title: "Deploy",
+                          hint: "Runs containers / stack deploy",
+                        },
+                        {
+                          value: "build" as const,
+                          title: "Build",
+                          hint: "Dedicated docker build host",
+                        },
+                      ] as const
+                    ).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setEditDraft((d) => ({ ...d, serverRole: opt.value }))}
+                        className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
+                          editDraft.serverRole === opt.value
+                            ? "border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
+                        }`}
+                      >
+                        <span className="text-xs font-medium block">{opt.title}</span>
+                        <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">
+                          {opt.hint}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">Label</span>
+                    <input
+                      value={editDraft.name}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">Host</span>
+                    <input
+                      value={editDraft.host}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, host: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">SSH port</span>
+                    <input
+                      value={editDraft.port}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, port: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="space-y-1 block">
+                    <span className="text-xs text-muted-foreground">SSH user</span>
+                    <input
+                      value={editDraft.sshUser}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, sshUser: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="space-y-1 block sm:col-span-2">
+                    <span className="text-xs text-muted-foreground">Public IPv4 (optional, traefik.me)</span>
+                    <input
+                      value={editDraft.publicIpv4}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, publicIpv4: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
+                      placeholder="203.0.113.10"
+                      autoComplete="off"
+                    />
+                  </label>
+                  {editingRow.authMode === "file" ? (
+                    <p className="text-xs text-muted-foreground sm:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                      Legacy: key file on API host at{" "}
+                      <code className="text-[11px] break-all">{editingRow.privateKeyPath}</code>. Paste a new private key
+                      below to migrate to encrypted storage.
+                    </p>
+                  ) : null}
+                  <label className="space-y-1 block sm:col-span-2">
+                    <span className="text-xs text-muted-foreground">Replace private key (optional PEM)</span>
+                    <textarea
+                      value={editDraft.privateKeyReplace}
+                      onChange={(e) => {
+                        setEditDraft((d) => ({ ...d, privateKeyReplace: e.target.value }));
+                        if (!e.target.value.trim()) {
+                          setGeneratedPublicKey(null);
+                        }
+                      }}
+                      className="w-full min-h-[100px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 font-mono text-xs"
+                      placeholder="Leave empty to keep current key, or paste / generate a new one"
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  </label>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={updateMut.isPending}
+                    onClick={() => updateMut.mutate(editingRow)}
+                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400"
+                  >
+                    {updateMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={updateMut.isPending}
+                    onClick={dismissEditHostModal}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
       {typeof document !== "undefined" && testModalRow
         ? createPortal(
             <div

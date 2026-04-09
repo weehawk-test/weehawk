@@ -8,27 +8,24 @@ import {
   Delete,
   Query,
   Req,
-  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ApiBearerAuth, ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LocalSessionGuard } from '../common/guards/local-session.guard';
 
 @ApiTags('Projects')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(LocalSessionGuard)
 /** `/api/projects` matches other controllers (`/api/user`, …) and typical `/api` ingress to this service. */
 @Controller('api/projects')
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
-  private uid(req: { user?: { userId: number } }): number {
-    const id = req.user?.userId;
-    if (id == null) throw new UnauthorizedException();
-    return id;
+  private uid(_req?: unknown): number {
+    return 1;
   }
 
   @Post()
@@ -37,7 +34,7 @@ export class ProjectsController {
     @Body() createProjectDto: CreateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.create(createProjectDto, this.uid(req));
+    return this.projectsService.create(createProjectDto, this.uid());
   }
 
   @Get()
@@ -61,7 +58,7 @@ export class ProjectsController {
       page,
       limit,
       q ?? '',
-      this.uid(req!),
+      this.uid(),
     );
   }
 
@@ -71,7 +68,7 @@ export class ProjectsController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.findOne(+id, this.uid(req));
+    return this.projectsService.findOne(+id, this.uid());
   }
 
   @Patch(':id')
@@ -81,12 +78,12 @@ export class ProjectsController {
     @Body() updateProjectDto: UpdateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.update(+id, updateProjectDto, this.uid(req));
+    return this.projectsService.update(+id, updateProjectDto, this.uid());
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'delete project' })
   remove(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
-    return this.projectsService.remove(+id, this.uid(req));
+    return this.projectsService.remove(+id, this.uid());
   }
 }

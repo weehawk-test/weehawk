@@ -2,12 +2,9 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { User } from '../../auth/entities/user.entity';
 import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
 
 /** service = run Docker action on a service */
@@ -25,13 +22,6 @@ export type WebhookServiceAction =
 export class Webhook {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
-
-  @Column({ name: 'user_id' })
-  userId!: number;
-
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_id' })
-  user!: User;
 
   /** Secret segment in public URL */
   @Column({ name: 'secret_token', type: 'varchar', length: 96, unique: true })
@@ -87,7 +77,7 @@ export class Webhook {
   @Column({ name: 'notify_on_trigger', default: false })
   notifyOnTrigger!: boolean;
 
-  @Column({ name: 'notify_channel_id', type: 'uuid', nullable: true })
+  @Column({ name: 'notify_channel_id', type: 'varchar', length: 36, nullable: true })
   notifyChannelId: string | null = null;
 
   @Column({ name: 'notify_message', type: 'text', nullable: true })

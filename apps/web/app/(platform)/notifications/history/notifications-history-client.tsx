@@ -178,12 +178,12 @@ export function NotificationsHistoryClient({
       </div>
 
       {!loading && !listError && logs.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-12 text-center">
-          <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Clock className="w-8 h-8 text-muted-foreground" />
+        <div className="glass-panel backdrop-blur-none p-12 rounded-2xl flex flex-col items-center justify-center text-center">
+          <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
+            <Clock className="w-10 h-10 text-muted-foreground" />
           </div>
-          <h3 className="font-semibold mb-1">No notifications sent yet</h3>
-          <p className="text-muted-foreground text-sm">Your notification history will appear here.</p>
+          <h3 className="text-xl font-bold mb-2">No notifications sent yet</h3>
+          <p className="text-muted-foreground max-w-md">Your notification history will appear here.</p>
         </div>
       ) : (
         <>

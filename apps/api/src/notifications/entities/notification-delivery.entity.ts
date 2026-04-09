@@ -15,7 +15,7 @@ export class NotificationDelivery {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ name: 'notification_id', type: 'uuid' })
+  @Column({ name: 'notification_id', type: 'varchar', length: 36 })
   notificationId!: string;
 
   @ManyToOne(() => Notification, (n) => n.deliveries, {
@@ -25,7 +25,7 @@ export class NotificationDelivery {
   notification!: Notification;
 
   /** Nullable for draft credential tests that are not tied to a saved channel. */
-  @Column({ name: 'channel_id', type: 'uuid', nullable: true })
+  @Column({ name: 'channel_id', type: 'varchar', length: 36, nullable: true })
   channelId!: string | null;
 
   @ManyToOne(() => NotificationChannel, {
@@ -36,7 +36,7 @@ export class NotificationDelivery {
   channel!: NotificationChannel | null;
 
   @Column({
-    type: 'enum',
+    type: 'simple-enum',
     enum: NotificationDeliveryStatus,
   })
   status!: NotificationDeliveryStatus;
@@ -45,7 +45,7 @@ export class NotificationDelivery {
   @Column({ type: 'text', nullable: true })
   response!: string | null;
 
-  @Column({ name: 'sent_at', type: 'timestamptz', nullable: true })
+  @Column({ name: 'sent_at', type: 'datetime', nullable: true })
   sentAt!: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })

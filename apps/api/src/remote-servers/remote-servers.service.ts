@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -154,37 +153,16 @@ export class RemoteServersService {
    */
   assertRemoteServerMatchesProject(
     rs: RemoteServer | null | undefined,
-    projectUserId: number | null,
+    _projectUserId: number | null,
   ): void {
     if (!rs) {
       throw new NotFoundException('Remote server not found');
     }
-    const ru = rs.userId ?? null;
-    const pu = projectUserId ?? null;
-    if (ru != null && pu != null && ru !== pu) {
-      throw new ForbiddenException(
-        'Remote server does not belong to this project owner.',
-      );
-    }
-    if (ru == null && pu != null) {
-      throw new ForbiddenException(
-        'This remote server is not linked to an account. Recreate it under Remote servers.',
-      );
-    }
-    if (ru != null && pu == null) {
-      throw new ForbiddenException(
-        'This project has no owner; assign a user before deploying.',
-      );
-    }
+    return;
   }
 
   private async resolveProjectUserId(service: Service): Promise<number | null> {
-    const u = service.project?.userId;
-    if (u != null) return u;
-    const row = await this.remoteServerRepository.manager
-      .getRepository(Service)
-      .findOne({ where: { id: service.id }, relations: ['project'] });
-    return row?.project?.userId ?? null;
+    return null;
   }
 
   private getEncryptionSecret(): string {
@@ -672,7 +650,6 @@ done
 
   async findAll(userId: number): Promise<RemoteServerSafe[]> {
     const rows = await this.remoteServerRepository.find({
-      where: { userId },
       order: { name: 'ASC' },
     });
     return rows.map((r) => this.toSafe(r));
@@ -719,9 +696,6 @@ done
     if (!rs) {
       throw new NotFoundException(`Remote server #${id} not found`);
     }
-    if (rs.userId == null || rs.userId !== userId) {
-      throw new ForbiddenException();
-    }
     return rs;
   }
 
@@ -730,7 +704,6 @@ done
     const privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
 
     const entity = this.remoteServerRepository.create({
-      userId,
       name: dto.name.trim(),
       host: dto.host.trim(),
       port: dto.port ?? 22,

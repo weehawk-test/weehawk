@@ -325,7 +325,9 @@ export function S3Client({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
         <div>
           <h1 className="text-3xl font-bold text-foreground mb-2">S3 Destinations</h1>
-          <p className="text-muted-foreground">Manage saved S3 destinations and credentials.</p>
+          <p className="text-muted-foreground">
+            Link your cloud storage buckets so backups and uploads know where to send data.
+          </p>
         </div>
         <button type="button" onClick={() => setModal({ type: "add" })} className="btn-primary flex items-center justify-center gap-2">
           <Plus className="w-5 h-5" /> Add destination
@@ -659,14 +661,6 @@ export function S3Client({
                 <div className="md:col-span-2">
                   <label className="text-sm font-medium mb-1.5 block">Endpoint</label>
                   <input className="input-field font-mono" value={form.endpoint} onChange={(e) => setForm((p) => ({ ...p, endpoint: e.target.value }))} placeholder="https://s3.amazonaws.com" />
-                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                    Addressing:{" "}
-                    <span className="text-foreground font-medium">
-                      {inferS3ForcePathStyle(form.endpoint) ? "Path-style" : "Virtual-hosted"}
-                    </span>
-                    {" — "}
-                    detected from the endpoint (no manual setting).
-                  </p>
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1.5 block">Bucket</label>

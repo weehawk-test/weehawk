@@ -24,7 +24,7 @@ export class Service {
   @Column({ type: 'varchar', length: 100 })
   appName!: string;
 
-  @Column({ type: 'enum', enum: composeType, default: composeType.COMPOSE })
+  @Column({ type: 'simple-enum', enum: composeType, default: composeType.COMPOSE })
   composeType!: composeType;
 
   @Column({ type: 'text', nullable: true })
@@ -60,7 +60,7 @@ export class Service {
   isActive!: boolean;
 
   /** Set when `POST .../execute` completes successfully (Docker deploy ran). */
-  @Column({ type: 'timestamptz', nullable: true })
+  @Column({ type: 'datetime', nullable: true })
   lastDeployedAt?: Date | null;
 
   @ManyToOne(() => Project, (project) => project.services, {

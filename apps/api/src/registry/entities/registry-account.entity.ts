@@ -26,7 +26,7 @@ export class RegistryAccount {
   @Column({ type: 'text', name: 'password_encrypted' })
   passwordEncrypted!: string;
 
-  @Column({ type: 'timestamptz', nullable: true, name: 'last_verified_at' })
+  @Column({ type: 'datetime', nullable: true, name: 'last_verified_at' })
   lastVerifiedAt!: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })

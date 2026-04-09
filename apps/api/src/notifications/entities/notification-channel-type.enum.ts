@@ -4,8 +4,6 @@ export enum NotificationChannelType {
   DISCORD = 'discord',
   LARK = 'lark',
   MICROSOFT_TEAMS = 'microsoft-teams',
-  EMAIL = 'email',
-  RESEND = 'resend',
   GOTIFY = 'gotify',
   NTFY = 'ntfy',
   PUSHOVER = 'pushover',

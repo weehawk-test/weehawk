@@ -42,9 +42,9 @@ export class GitIntegrationSettings {
   @Column({ type: 'text', nullable: true })
   gitlabGroupAccessToken!: string | null;
 
-  @CreateDateColumn({ type: 'timestamptz' })
+  @CreateDateColumn({ type: 'datetime' })
   createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'timestamptz' })
+  @UpdateDateColumn({ type: 'datetime' })
   updatedAt!: Date;
 }
