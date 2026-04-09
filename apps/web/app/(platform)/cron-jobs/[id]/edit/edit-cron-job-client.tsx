@@ -80,7 +80,11 @@ export function EditCronJobClient({
     Boolean(initialCronJob.notifyChannelId && initialCronJob.notifyMessage),
   );
   const [remoteServerId, setRemoteServerId] = useState(
-    initialCronJob.remoteServerId != null ? String(initialCronJob.remoteServerId) : "",
+    initialCronJob.remoteServerId != null
+      ? String(initialCronJob.remoteServerId)
+      : initialRemoteServers.find((s) => s.serverRole === "deploy")
+        ? String(initialRemoteServers.find((s) => s.serverRole === "deploy")!.id)
+        : "",
   );
   const [backupS3ProfileName, setBackupS3ProfileName] = useState(
     initialCronJob.backupS3ProfileName ?? "",
@@ -141,13 +145,12 @@ export function EditCronJobClient({
         return;
       }
     }
-    const parsedRemoteServerId = remoteServerId ? Number(remoteServerId) : null;
+    const parsedRemoteServerId = Number(remoteServerId);
     if (
       initialCronJob.serviceAction === "docker_command" &&
-      parsedRemoteServerId != null &&
       (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1)
     ) {
-      toast({ title: "Select a valid server", variant: "destructive" });
+      toast({ title: "Select a deploy server", variant: "destructive" });
       return;
     }
 
@@ -264,8 +267,9 @@ export function EditCronJobClient({
                   className="input-field mb-3"
                   value={remoteServerId}
                   onChange={(e) => setRemoteServerId(e.target.value)}
+                  disabled={deployServers.length === 0}
                 >
-                  <option value="">Local Server</option>
+                  {deployServers.length === 0 && <option value="">No deploy servers available</option>}
                   {deployServers.map((srv) => (
                     <option key={srv.id} value={srv.id}>
                       {srv.name} ({srv.host})

@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 import { NotificationService } from '../notifications/notification.service';
+import { NotificationChannelType } from '../notifications/entities/notification-channel-type.enum';
 import {
   createBackupTempDir,
   removeBackupTempDir,
@@ -14,6 +15,7 @@ import {
 import { ExecutorService } from '../executor/executor.service';
 import { S3Service } from '../s3/s3.service';
 import { ServicesService } from '../services/services.service';
+import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { getErrorMessage } from '../utils/error-message';
 import type { DatabaseBackupConfig } from '../backup/database-backup.types';
 import { describeDatabaseBackupPreview } from '../backup/database-backup.types';
@@ -58,7 +60,295 @@ export class CronJobsService {
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
     private readonly s3Service: S3Service,
+    private readonly remoteServersService: RemoteServersService,
   ) {}
+
+  private shQuote(value: string): string {
+    return `'${value.replace(/'/g, `'\\''`)}'`;
+  }
+
+  private cronMarker(jobId: string): string {
+    return `WEEHAWK_CRON_JOB:${jobId}`;
+  }
+
+  private scriptDirRemote(): string {
+    return '/opt/weehawk-scripts';
+  }
+
+  private scriptPathRemote(jobId: string): string {
+    return `${this.scriptDirRemote()}/${jobId}.sh`;
+  }
+
+  private envPathRemote(jobId: string): string {
+    return `${this.scriptDirRemote()}/${jobId}.env`;
+  }
+
+  private envQuote(value: string): string {
+    return `'${value.replace(/'/g, `'\\''`)}'`;
+  }
+
+  private readConfigString(cfg: Record<string, unknown>, key: string): string {
+    const v = cfg[key];
+    return typeof v === 'string' ? v : '';
+  }
+
+  private buildRemoteCrontabLine(job: CronJob): string {
+    if (job.serviceAction !== 'docker_command' || !job.dockerCommand?.trim()) {
+      throw new BadRequestException(
+        'Only docker_command cron jobs are supported for direct Linux crontab execution.',
+      );
+    }
+    const scriptPath = this.scriptPathRemote(job.id);
+    const marker = this.cronMarker(job.id);
+    return `${job.cronExpression.trim()} /bin/bash ${this.shQuote(scriptPath)} >/dev/null 2>&1 # ${marker}`;
+  }
+
+  private async buildNotificationEnvForJob(job: CronJob): Promise<string[]> {
+    if (!job.notifyOnTrigger || !job.notifyChannelId || !job.notifyMessage) {
+      return ['WEEHAWK_NOTIFY_ENABLED=0'];
+    }
+    const channel = await this.notificationsService.getChannelRuntimeConfig(
+      1,
+      job.notifyChannelId,
+    );
+    const lines: string[] = [
+      'WEEHAWK_NOTIFY_ENABLED=1',
+      `WEEHAWK_NOTIFY_TYPE=${this.envQuote(channel.type)}`,
+      `WEEHAWK_NOTIFY_MESSAGE=${this.envQuote(this.normalizeNotificationMessage(job.notifyMessage))}`,
+      `WEEHAWK_NOTIFY_CHANNEL_NAME=${this.envQuote(channel.name)}`,
+    ];
+    const cfg = channel.config;
+    switch (channel.type) {
+      case NotificationChannelType.TELEGRAM:
+        lines.push(
+          `WEEHAWK_NOTIFY_TOKEN=${this.envQuote(this.readConfigString(cfg, 'token'))}`,
+          `WEEHAWK_NOTIFY_TARGET=${this.envQuote(this.readConfigString(cfg, 'target'))}`,
+        );
+        break;
+      case NotificationChannelType.SLACK:
+      case NotificationChannelType.DISCORD:
+      case NotificationChannelType.LARK:
+      case NotificationChannelType.MICROSOFT_TEAMS:
+        lines.push(
+          `WEEHAWK_NOTIFY_WEBHOOK_URL=${this.envQuote(this.readConfigString(cfg, 'webhookUrl'))}`,
+        );
+        break;
+      case NotificationChannelType.GOTIFY:
+        lines.push(
+          `WEEHAWK_NOTIFY_SERVER_URL=${this.envQuote(this.readConfigString(cfg, 'serverUrl'))}`,
+          `WEEHAWK_NOTIFY_APP_TOKEN=${this.envQuote(this.readConfigString(cfg, 'appToken'))}`,
+          `WEEHAWK_NOTIFY_PRIORITY=${this.envQuote(this.readConfigString(cfg, 'priority') || '5')}`,
+        );
+        break;
+      case NotificationChannelType.NTFY:
+        lines.push(
+          `WEEHAWK_NOTIFY_SERVER_URL=${this.envQuote(this.readConfigString(cfg, 'serverUrl'))}`,
+          `WEEHAWK_NOTIFY_TOPIC=${this.envQuote(this.readConfigString(cfg, 'topic'))}`,
+          `WEEHAWK_NOTIFY_TOKEN=${this.envQuote(this.readConfigString(cfg, 'token'))}`,
+        );
+        break;
+      case NotificationChannelType.PUSHOVER:
+        lines.push(
+          `WEEHAWK_NOTIFY_APP_TOKEN=${this.envQuote(this.readConfigString(cfg, 'appToken'))}`,
+          `WEEHAWK_NOTIFY_USER_KEY=${this.envQuote(this.readConfigString(cfg, 'userKey'))}`,
+          `WEEHAWK_NOTIFY_DEVICE=${this.envQuote(this.readConfigString(cfg, 'device'))}`,
+        );
+        break;
+      default:
+        lines.push('WEEHAWK_NOTIFY_ENABLED=0');
+        break;
+    }
+    return lines;
+  }
+
+  private async resolveCronRemoteServerId(job: CronJob): Promise<number> {
+    if (job.remoteServerId != null) {
+      await this.remoteServersService.assertDeployServerById(job.remoteServerId, null);
+      return job.remoteServerId;
+    }
+    if (job.serviceId != null) {
+      const ids = await this.servicesService.getDockerSshTargetIds(job.serviceId);
+      if (ids.remoteServerId != null) {
+        await this.remoteServersService.assertDeployServerById(ids.remoteServerId, null);
+        return ids.remoteServerId;
+      }
+    }
+    throw new BadRequestException(
+      `Cron job "${job.name}" needs a remote deploy server to install Linux crontab via SSH.`,
+    );
+  }
+
+  private async tryResolveCronRemoteServerId(job: CronJob): Promise<number | null> {
+    try {
+      return await this.resolveCronRemoteServerId(job);
+    } catch {
+      return null;
+    }
+  }
+
+  private async removeCrontabEntryForRemote(
+    remoteServerId: number,
+    jobId: string,
+  ): Promise<void> {
+    const marker = this.cronMarker(jobId);
+    const script = [
+      'tmp="$(mktemp)"',
+      `( crontab -l 2>/dev/null || true ) | grep -F -v ${this.shQuote(marker)} > "$tmp" || true`,
+      'crontab "$tmp"',
+      'rm -f "$tmp"',
+    ].join('\n');
+    const r = await this.executorService.runSystemScript(script, remoteServerId, 1);
+    if (!r.success) {
+      throw new BadRequestException(
+        `Failed to remove crontab entry for cron job ${jobId}: ${r.output}`,
+      );
+    }
+  }
+
+  private async writeRemoteScriptFile(
+    remoteServerId: number,
+    jobId: string,
+    scriptBody: string,
+    envLines: string[],
+  ): Promise<void> {
+    const scriptPath = this.scriptPathRemote(jobId);
+    const envPath = this.envPathRemote(jobId);
+    const installScript = [
+      'set -eu',
+      'umask 077',
+      `mkdir -p ${this.shQuote(this.scriptDirRemote())}`,
+      `cat > ${this.shQuote(envPath)} <<'WEEHAWK_ENV'`,
+      ...envLines,
+      'WEEHAWK_ENV',
+      `chmod 600 ${this.shQuote(envPath)}`,
+      `cat > ${this.shQuote(scriptPath)} <<'WEEHAWK_EOF'`,
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `ENV_FILE=${this.shQuote(envPath)}`,
+      'if [ -f "$ENV_FILE" ]; then',
+      '  set -a',
+      '  # shellcheck disable=SC1090',
+      '  . "$ENV_FILE"',
+      '  set +a',
+      'fi',
+      'json_escape() {',
+      "  printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g; s/\r/\\\\r/g; s/\n/\\\\n/g'",
+      '}',
+      'send_notification() {',
+      '  if [ "${WEEHAWK_NOTIFY_ENABLED:-0}" != "1" ]; then return 0; fi',
+      '  local msg="$1"',
+      '  local t="${WEEHAWK_NOTIFY_TYPE:-}"',
+      '  case "$t" in',
+      '    telegram)',
+      '      [ -n "${WEEHAWK_NOTIFY_TOKEN:-}" ] && [ -n "${WEEHAWK_NOTIFY_TARGET:-}" ] || return 0',
+      '      curl -fsS -X POST "https://api.telegram.org/bot${WEEHAWK_NOTIFY_TOKEN}/sendMessage" --data-urlencode "chat_id=${WEEHAWK_NOTIFY_TARGET}" --data-urlencode "text=${msg}" >/dev/null 2>&1 || true',
+      '      ;;',
+      '    slack|microsoft-teams)',
+      '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || return 0',
+      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"text\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null 2>&1 || true',
+      '      ;;',
+      '    discord)',
+      '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || return 0',
+      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"content\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null 2>&1 || true',
+      '      ;;',
+      '    lark)',
+      '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || return 0',
+      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$(json_escape "$msg")\"}}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null 2>&1 || true',
+      '      ;;',
+      '    gotify)',
+      '      [ -n "${WEEHAWK_NOTIFY_SERVER_URL:-}" ] && [ -n "${WEEHAWK_NOTIFY_APP_TOKEN:-}" ] || return 0',
+      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\",\"priority\":${WEEHAWK_NOTIFY_PRIORITY:-5}}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/message?token=${WEEHAWK_NOTIFY_APP_TOKEN}" >/dev/null 2>&1 || true',
+      '      ;;',
+      '    ntfy)',
+      '      [ -n "${WEEHAWK_NOTIFY_SERVER_URL:-}" ] && [ -n "${WEEHAWK_NOTIFY_TOPIC:-}" ] || return 0',
+      '      if [ -n "${WEEHAWK_NOTIFY_TOKEN:-}" ]; then',
+      '        curl -fsS -X POST -H "Authorization: Bearer ${WEEHAWK_NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "{\"topic\":\"$(json_escape "${WEEHAWK_NOTIFY_TOPIC}")\",\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/${WEEHAWK_NOTIFY_TOPIC}" >/dev/null 2>&1 || true',
+      '      else',
+      '        curl -fsS -X POST -H "Content-Type: application/json" -d "{\"topic\":\"$(json_escape "${WEEHAWK_NOTIFY_TOPIC}")\",\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/${WEEHAWK_NOTIFY_TOPIC}" >/dev/null 2>&1 || true',
+      '      fi',
+      '      ;;',
+      '    pushover)',
+      '      [ -n "${WEEHAWK_NOTIFY_APP_TOKEN:-}" ] && [ -n "${WEEHAWK_NOTIFY_USER_KEY:-}" ] || return 0',
+      '      if [ -n "${WEEHAWK_NOTIFY_DEVICE:-}" ]; then',
+      '        curl -fsS -X POST "https://api.pushover.net/1/messages.json" --data-urlencode "token=${WEEHAWK_NOTIFY_APP_TOKEN}" --data-urlencode "user=${WEEHAWK_NOTIFY_USER_KEY}" --data-urlencode "device=${WEEHAWK_NOTIFY_DEVICE}" --data-urlencode "title=${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}" --data-urlencode "message=${msg}" >/dev/null 2>&1 || true',
+      '      else',
+      '        curl -fsS -X POST "https://api.pushover.net/1/messages.json" --data-urlencode "token=${WEEHAWK_NOTIFY_APP_TOKEN}" --data-urlencode "user=${WEEHAWK_NOTIFY_USER_KEY}" --data-urlencode "title=${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}" --data-urlencode "message=${msg}" >/dev/null 2>&1 || true',
+      '      fi',
+      '      ;;',
+      '  esac',
+      '}',
+      'trap \'exit_code=$?; if [ "${WEEHAWK_NOTIFY_ENABLED:-0}" = "1" ]; then if [ "$exit_code" -eq 0 ]; then send_notification "${WEEHAWK_NOTIFY_MESSAGE:-Cron job completed}"; else send_notification "${WEEHAWK_NOTIFY_MESSAGE:-Cron job failed} (exit $exit_code)"; fi; fi; exit "$exit_code"\' EXIT',
+      scriptBody.trim(),
+      'WEEHAWK_EOF',
+      `chmod 700 ${this.shQuote(scriptPath)}`,
+    ].join('\n');
+    const r = await this.executorService.runSystemScript(installScript, remoteServerId, 1);
+    if (!r.success) {
+      throw new BadRequestException(
+        `Failed to write cron script for job ${jobId}: ${r.output}`,
+      );
+    }
+  }
+
+  private async removeRemoteScriptFile(
+    remoteServerId: number,
+    jobId: string,
+  ): Promise<void> {
+    const scriptPath = this.scriptPathRemote(jobId);
+    const envPath = this.envPathRemote(jobId);
+    const r = await this.executorService.runSystemScript(
+      `rm -f ${this.shQuote(scriptPath)} ${this.shQuote(envPath)} || true`,
+      remoteServerId,
+      1,
+    );
+    if (!r.success) {
+      throw new BadRequestException(
+        `Failed to remove cron script for job ${jobId}: ${r.output}`,
+      );
+    }
+  }
+
+  private async removeCrontabEntry(job: CronJob): Promise<void> {
+    const remoteServerId = await this.tryResolveCronRemoteServerId(job);
+    if (remoteServerId == null) return;
+    await this.removeCrontabEntryForRemote(remoteServerId, job.id);
+    await this.removeRemoteScriptFile(remoteServerId, job.id);
+  }
+
+  private async upsertCrontabEntry(job: CronJob): Promise<void> {
+    if (!job.isActive) {
+      await this.removeCrontabEntry(job);
+      return;
+    }
+    const remoteServerId = await this.resolveCronRemoteServerId(job);
+    if (job.serviceAction !== 'docker_command' || !job.dockerCommand?.trim()) {
+      throw new BadRequestException(
+        'Cron over SSH currently supports docker_command only. Set action to docker_command and provide a script.',
+      );
+    }
+    const envLines = await this.buildNotificationEnvForJob(job);
+    await this.writeRemoteScriptFile(
+      remoteServerId,
+      job.id,
+      job.dockerCommand,
+      envLines,
+    );
+    const line = this.buildRemoteCrontabLine(job);
+    const marker = this.cronMarker(job.id);
+    const script = [
+      'tmp="$(mktemp)"',
+      `( crontab -l 2>/dev/null || true ) | grep -F -v ${this.shQuote(marker)} > "$tmp" || true`,
+      `printf '%s\n' ${this.shQuote(line)} >> "$tmp"`,
+      'crontab "$tmp"',
+      'rm -f "$tmp"',
+    ].join('\n');
+    const r = await this.executorService.runSystemScript(script, remoteServerId, 1);
+    if (!r.success) {
+      throw new BadRequestException(
+        `Failed to install crontab entry for cron job "${job.name}": ${r.output}`,
+      );
+    }
+  }
 
   private validateCronField(value: string, min: number, max: number): boolean {
     const v = value.trim();
@@ -364,6 +654,14 @@ export class CronJobsService {
       notifyMessage: dto.notifyMessage?.trim() || null,
     });
     const saved = await this.cronJobRepo.save(job);
+    try {
+      await this.upsertCrontabEntry(saved);
+    } catch (e) {
+      await this.cronJobRepo.delete({ id: saved.id }).catch(() => {
+        /* best effort rollback */
+      });
+      throw e;
+    }
     return this.toDetailRow(saved);
   }
 
@@ -387,6 +685,7 @@ export class CronJobsService {
   ): Promise<CronJobDetailRow> {
     const job = await this.cronJobRepo.findOne({ where: { id } });
     if (!job) throw new NotFoundException('Cron job not found');
+    const previousJob = this.cronJobRepo.create({ ...job });
 
     if (dto.name !== undefined) job.name = dto.name.trim();
     if (dto.description !== undefined) job.description = dto.description.trim() || null;
@@ -456,10 +755,19 @@ export class CronJobsService {
     }
 
     const saved = await this.cronJobRepo.save(job);
+    const prevRemoteId = await this.tryResolveCronRemoteServerId(previousJob);
+    const nextRemoteId = await this.tryResolveCronRemoteServerId(saved);
+    if (prevRemoteId != null && (nextRemoteId == null || prevRemoteId !== nextRemoteId)) {
+      await this.removeCrontabEntryForRemote(prevRemoteId, saved.id);
+    }
+    await this.upsertCrontabEntry(saved);
     return this.toDetailRow(saved);
   }
 
   async remove(userId: number, id: string): Promise<void> {
+    const existing = await this.cronJobRepo.findOne({ where: { id } });
+    if (!existing) throw new NotFoundException('Cron job not found');
+    await this.removeCrontabEntry(existing);
     const res = await this.cronJobRepo.delete({ id });
     if (!res.affected) throw new NotFoundException('Cron job not found');
   }
@@ -615,28 +923,7 @@ export class CronJobsService {
   }
 
   async runDueCronJobs(): Promise<void> {
-    if (this.isTickRunning) return;
-    this.isTickRunning = true;
-    const jobs = await this.cronJobRepo.find({
-      where: { isActive: true },
-    });
-    try {
-      for (const job of jobs) {
-        const now = new Date();
-        const minuteKey = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}-${now.getUTCHours()}-${now.getUTCMinutes()}`;
-        if (this.lastTickByJob.get(job.id) === minuteKey) continue;
-        if (!this.matchesCron(job.cronExpression, now)) continue;
-        this.lastTickByJob.set(job.id, minuteKey);
-        try {
-          const fresh = await this.cronJobRepo.findOne({ where: { id: job.id } });
-          if (!fresh || !fresh.isActive) continue;
-          await this.execute(fresh);
-        } catch {
-          // best effort
-        }
-      }
-    } finally {
-      this.isTickRunning = false;
-    }
+    // Deprecated path: cron execution now uses Linux crontab + SSH-triggered HTTP callbacks.
+    return;
   }
 }

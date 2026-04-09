@@ -581,12 +581,12 @@ export class ServicesService {
     return !['0', 'false', 'no', 'off'].includes(String(v).trim().toLowerCase());
   }
 
-  /** Priority: user-supplied on service → remote host → API env (fallback only). */
+  /** Priority: selected deploy remote host → service-saved override → API env (fallback only). */
   private resolveDeployPublicIpv4(service: Service): string | null {
-    const fromSvc = service.magicTraefikMeIpv4?.trim();
-    if (fromSvc && parseIpv4Octets(fromSvc)) return fromSvc;
     const fromRs = service.remoteServer?.publicIpv4?.trim();
     if (fromRs && parseIpv4Octets(fromRs)) return fromRs;
+    const fromSvc = service.magicTraefikMeIpv4?.trim();
+    if (fromSvc && parseIpv4Octets(fromSvc)) return fromSvc;
     const fromEnv = this.configService
       .get<string>('WEEHAWK_MAGIC_TRAEFIK_ME_PUBLIC_IP')
       ?.trim();

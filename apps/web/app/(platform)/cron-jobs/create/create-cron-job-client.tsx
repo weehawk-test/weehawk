@@ -68,7 +68,9 @@ export function CreateCronJobClient({
     () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
     [initialRemoteServers],
   );
-  const [remoteServerId, setRemoteServerId] = useState("");
+  const [remoteServerId, setRemoteServerId] = useState(
+    deployServers.length > 0 ? String(deployServers[0].id) : "",
+  );
   const [bashScript, setBashScript] = useState("");
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [notifyChannelId, setNotifyChannelId] = useState("");
@@ -102,9 +104,9 @@ export function CreateCronJobClient({
       return;
     }
 
-    const parsedRemoteServerId = remoteServerId ? Number(remoteServerId) : undefined;
-    if (parsedRemoteServerId != null && (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1)) {
-      toast({ title: "Select a valid server", variant: "destructive" });
+    const parsedRemoteServerId = Number(remoteServerId);
+    if (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1) {
+      toast({ title: "Select a deploy server", variant: "destructive" });
       return;
     }
 
@@ -116,7 +118,7 @@ export function CreateCronJobClient({
         targetMode,
         serviceAction: "docker_command",
         dockerCommand: bashScript.trim(),
-        ...(parsedRemoteServerId ? { remoteServerId: parsedRemoteServerId } : {}),
+        remoteServerId: parsedRemoteServerId,
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId, notifyMessage: notifyMessage.trim() }
           : {}),
@@ -242,8 +244,9 @@ export function CreateCronJobClient({
                   className="input-field"
                   value={remoteServerId}
                   onChange={(e) => setRemoteServerId(e.target.value)}
+                  disabled={deployServers.length === 0}
                 >
-                  <option value="">Local Server</option>
+                  {deployServers.length === 0 && <option value="">No deploy servers available</option>}
                   {deployServers.map((srv) => (
                     <option key={srv.id} value={srv.id}>
                       {srv.name} ({srv.host})
@@ -251,7 +254,7 @@ export function CreateCronJobClient({
                   ))}
                 </select>
                 <p className="text-[11px] text-muted-foreground mt-2">
-                  Keep Local Server selected to run here, or choose a remote deploy server.
+                  Cron jobs run only on deploy servers.
                 </p>
               </div>
               <div>

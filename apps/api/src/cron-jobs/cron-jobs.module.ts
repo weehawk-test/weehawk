@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 import { S3Module } from '../s3/s3.module';
 import { ServicesModule } from '../services/services.module';
 import { CronJobsController } from './cron-jobs.controller';
@@ -12,6 +13,7 @@ import { CronJob } from './entities/cron-job.entity';
     TypeOrmModule.forFeature([CronJob]),
     ServicesModule,
     NotificationsModule,
+    RemoteServersModule,
     S3Module,
   ],
   controllers: [CronJobsController],

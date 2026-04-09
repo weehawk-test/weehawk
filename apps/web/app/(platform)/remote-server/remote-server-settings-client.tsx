@@ -73,15 +73,15 @@ function emptyEditDraft(): EditDraft {
 export function RemoteServerSettingsClient() {
   const hideLocalDockerHost = isCloudEdition();
   const { accessToken, user } = useAuth();
-  const ownerKey = user?.userId;
   const { toast } = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
+  const remoteServersQueryKey = ["remote-servers"] as const;
 
   const list = useQuery({
-    queryKey: ["remote-servers", ownerKey],
+    queryKey: remoteServersQueryKey,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken) && ownerKey != null,
+    enabled: Boolean(accessToken),
   });
 
   const [creating, setCreating] = useState(false);
@@ -155,8 +155,13 @@ export function RemoteServerSettingsClient() {
         serverRole: form.serverRole,
         ...(form.publicIpv4.trim() ? { publicIpv4: form.publicIpv4.trim() } : {}),
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["remote-servers"] });
+    onSuccess: (created) => {
+      qc.setQueryData<RemoteServerRow[]>(remoteServersQueryKey, (prev) => {
+        const rows = prev ?? [];
+        if (rows.some((r) => r.id === created.id)) return rows;
+        return [created, ...rows];
+      });
+      qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       setForm(emptyForm());
       setGeneratedPublicKey(null);
       setCreating(false);
@@ -183,7 +188,7 @@ export function RemoteServerSettingsClient() {
       return updateRemoteServerApi(accessToken ?? "", row.id, patch);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["remote-servers"] });
+      qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       setEditingId(null);
       toast({ title: "Updated" });
     },
@@ -194,7 +199,7 @@ export function RemoteServerSettingsClient() {
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteRemoteServerApi(accessToken ?? "", id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["remote-servers"] });
+      qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       toast({ title: "Removed" });
     },
     onError: (e: Error) =>
@@ -444,9 +449,12 @@ export function RemoteServerSettingsClient() {
                     <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
                       Local
                     </span>
+                    <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-sky-500/35 text-sky-300/95 bg-sky-500/10">
+                      Build only
+                    </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Run jobs and scripts directly on this local server (no SSH needed).
+                    This local host is build-only. Use a remote Deploy host to run containers/services.
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

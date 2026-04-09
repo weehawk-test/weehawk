@@ -37,6 +37,13 @@ export type NotificationLogRow = {
   errorDetail: string | null;
 };
 
+export type NotificationChannelRuntimeConfig = {
+  id: string;
+  name: string;
+  type: NotificationChannelType;
+  config: Record<string, unknown>;
+};
+
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
@@ -249,6 +256,22 @@ export class NotificationService {
       relations: ['channel'],
     });
     return this.toLogRow(withChannel ?? savedDelivery, savedNotification, {});
+  }
+
+  async getChannelRuntimeConfig(
+    userId: number,
+    channelId: string,
+  ): Promise<NotificationChannelRuntimeConfig> {
+    const channel = await this.channelRepo.findOne({
+      where: { id: channelId },
+    });
+    if (!channel) throw new NotFoundException('Channel not found');
+    return {
+      id: channel.id,
+      name: channel.name,
+      type: channel.type,
+      config: channelConfigRecord(channel),
+    };
   }
 
   async listChannels(userId: number): Promise<NotificationChannelRow[]> {

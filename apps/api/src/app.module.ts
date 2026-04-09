@@ -51,6 +51,7 @@ function expandEnvPath(input: string): string {
             database: sqlitePath,
             autoLoadEntities: true,
             synchronize: true,
+            //dropSchema: true,
           };
         }
         return {

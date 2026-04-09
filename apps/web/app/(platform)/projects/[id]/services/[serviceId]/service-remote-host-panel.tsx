@@ -17,8 +17,7 @@ const BUILD_ON_API_VALUE = "__local_api__";
 
 export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   const cloud = isCloudEdition();
-  const { accessToken, user } = useAuth();
-  const ownerKey = user?.userId;
+  const { accessToken } = useAuth();
   const { toast } = useToast();
   const updateService = useUpdateService();
   const isApplication = service.type === "application";
@@ -30,9 +29,9 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   );
 
   const q = useQuery({
-    queryKey: ["remote-servers", ownerKey],
+    queryKey: ["remote-servers"],
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken) && ownerKey != null,
+    enabled: Boolean(accessToken),
   });
 
   const [value, setValue] = useState<string>(() =>
@@ -124,10 +123,10 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     deployDirty || buildDirty || registryDirty || staleRegistryWhenMerged;
 
   const save = () => {
-    if (cloud && value === "") {
+    if (value === "") {
       toast({
         title: "Remote host required",
-        description: "In Weehawk Cloud, choose a deploy host from your SSH-connected servers.",
+        description: "Deploy host must be a remote Deploy server. Local server is build-only.",
         variant: "destructive",
       });
       return;
@@ -240,9 +239,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                 onChange={(e) => setValue(e.target.value)}
                 className="flex-1 min-w-0 rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40"
               >
-                {!cloud ? (
-                  <option value="">This server (local Docker)</option>
-                ) : deployOptions.length === 0 ? (
+                {deployOptions.length === 0 ? (
                   <option value="" disabled>
                     Add a remote host first (Remote servers)
                   </option>
@@ -289,7 +286,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                     className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none"
                   >
                     <option value="">
-                      {cloud ? "Same as deploy host" : "Same as deploy host (or local if no deploy host)"}
+                      Same as deploy host
                     </option>
                     <option value={BUILD_ON_API_VALUE}>Build on this server (API Docker)</option>
                     {buildOptions.map((r) => (
@@ -355,7 +352,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           !q.isLoading &&
           !q.isError && (
             <p className="text-xs text-amber-200/90 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
-              Only <strong>Build</strong> hosts here—add a <strong>Deploy</strong> host or use this server.
+              Only <strong>Build</strong> hosts here—add a <strong>Deploy</strong> host. Local server is build-only.
             </p>
           )}
         {isApplication &&

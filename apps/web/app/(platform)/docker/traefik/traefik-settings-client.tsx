@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RadioTower, Loader2, Copy, Check } from "lucide-react";
+import { RadioTower, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import {
   fetchTraefikSettings,
@@ -11,41 +11,6 @@ import {
   type TraefikSettingsPayload,
 } from "@/lib/traefik-api";
 import { useToast } from "@/hooks/use-toast";
-import {
-  dispatchMagicTraefikIpv4Changed,
-  getMagicTraefikSiteIpv4,
-  setMagicTraefikSiteIpv4,
-} from "@/lib/magic-traefik-me-client";
-
-function CopyBlock({ label, text }: { label: string; text: string }) {
-  const [copied, setCopied] = useState(false);
-  const empty = !text.trim();
-  return (
-    <div className="rounded-xl border border-border bg-muted/60 dark:bg-black/20 overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/10 bg-white/[0.03]">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        <button
-          type="button"
-          disabled={empty}
-          onClick={() => {
-            if (empty) return;
-            void navigator.clipboard.writeText(text).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
-            });
-          }}
-          className="inline-flex items-center gap-1 text-xs text-primary hover:underline disabled:opacity-40 disabled:pointer-events-none"
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-      <pre className="text-[11px] leading-relaxed p-3 max-h-64 overflow-auto font-mono text-zinc-300 whitespace-pre-wrap break-all">
-        {empty ? "— Save a domain below to generate this file —" : text}
-      </pre>
-    </div>
-  );
-}
 
 export function TraefikSettingsClient() {
   const { accessToken } = useAuth();
@@ -61,8 +26,6 @@ export function TraefikSettingsClient() {
   const [acmeEmail, setAcmeEmail] = useState("");
   const [platformDomain, setPlatformDomain] = useState("");
   const [dirty, setDirty] = useState(false);
-  const [magicIpv4Draft, setMagicIpv4Draft] = useState("");
-  const [magicIpv4Dirty, setMagicIpv4Dirty] = useState(false);
 
   useEffect(() => {
     if (q.data && !dirty) {
@@ -70,20 +33,6 @@ export function TraefikSettingsClient() {
       setPlatformDomain(q.data.platformDomain ?? "");
     }
   }, [q.data, dirty]);
-
-  useEffect(() => {
-    if (magicIpv4Dirty) return;
-    const stored = getMagicTraefikSiteIpv4();
-    if (stored) {
-      setMagicIpv4Draft(stored);
-      return;
-    }
-    if (typeof window !== "undefined") {
-      const h = window.location.hostname;
-      if (/^(\d{1,3}\.){3}\d{1,3}$/.test(h)) setMagicIpv4Draft(h);
-      else setMagicIpv4Draft("");
-    }
-  }, [magicIpv4Dirty]);
 
   const mut = useMutation({
     mutationFn: (patch: { acmeEmail: string; platformDomain: string }) =>
@@ -124,8 +73,6 @@ export function TraefikSettingsClient() {
       </div>
     );
   }
-
-  const previews: TraefikSettingsPayload = q.data;
 
   return (
     <div className="space-y-8">
@@ -206,73 +153,6 @@ export function TraefikSettingsClient() {
         </button>
       </section>
 
-      <section className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.04] p-6 space-y-4 max-w-xl">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Magic traefik.me (site-wide)</h2>
-          <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-            Optional DNS name — not created until you roll a service. Set the IPv4 that{" "}
-            <span className="font-mono">traefik.me</span> should resolve to for <strong>all</strong> projects (your
-            public IP, LAN IP, or <span className="font-mono">127.0.0.1</span> for local tests). Rolling the dice on a
-            service&apos;s Domains tab uses this value unless that service has its own saved IP from a previous roll.
-            In local dev this page is typically{" "}
-            <span className="font-mono text-[11px]">http://localhost:3000/traefik</span>.
-          </p>
-        </div>
-        <label className="block space-y-1.5">
-          <span className="text-xs text-muted-foreground">Default IPv4 for Magic hostnames</span>
-          <input
-            className="input-field w-full font-mono text-sm"
-            placeholder="e.g. 203.0.113.10 or 127.0.0.1"
-            value={magicIpv4Draft}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(e) => {
-              setMagicIpv4Dirty(true);
-              setMagicIpv4Draft(e.target.value);
-            }}
-          />
-        </label>
-        <button
-          type="button"
-          className="btn-secondary text-sm"
-          onClick={() => {
-            const ip = magicIpv4Draft.trim();
-            if (ip !== "" && !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
-              toast({ title: "Invalid IPv4", description: "Enter four octets or leave empty.", variant: "destructive" });
-              return;
-            }
-            setMagicTraefikSiteIpv4(ip);
-            dispatchMagicTraefikIpv4Changed();
-            setMagicIpv4Dirty(false);
-            toast({
-              title: ip ? "Magic IPv4 saved for this browser" : "Cleared",
-              description: ip
-                ? "Service Domains → roll will use this address unless the service has a saved IP."
-                : "Falling back to deploy host or browser hostname when applicable.",
-            });
-          }}
-        >
-          Save Magic IPv4
-        </button>
-      </section>
-
-      <div className="space-y-4">
-        <h2 className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">
-          Copy for your server
-        </h2>
-        <p className="text-xs text-muted-foreground -mt-2 max-w-2xl">
-          When a UI domain is set, the Compose stack adds the file provider and a volume for{" "}
-          <span className="font-mono">/etc/traefik/dynamic</span>. Save the third file into that folder on the host.
-        </p>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <CopyBlock label="Docker Compose (Traefik)" text={previews.generatedStackCompose} />
-          <CopyBlock label="traefik.yml (reference)" text={previews.generatedStaticConfig} />
-        </div>
-        <CopyBlock
-          label="dynamic/weehawk-platform.yml (Weehawk UI → :3000)"
-          text={previews.generatedPlatformDynamicConfig}
-        />
-      </div>
     </div>
   );
 }

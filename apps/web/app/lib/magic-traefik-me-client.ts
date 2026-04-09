@@ -36,16 +36,16 @@ export function subscribeMagicTraefikIpv4Changed(cb: () => void): () => void {
 }
 
 /**
- * IPv4 sent when rolling Magic traefik.me: per-service saved value, then site default (/traefik),
- * then deploy host, then browser hostname if it is an IPv4 literal.
+ * IPv4 sent when rolling Magic traefik.me: selected deploy host first, then per-service saved value,
+ * then site default (/traefik), then browser hostname if it is an IPv4 literal.
  */
 export function guessRollMagicIpv4(service: Service): string {
+  const p = service.remoteServer?.publicIpv4?.trim();
+  if (p) return p;
   const saved = service.magicTraefikMeIpv4?.trim();
   if (saved) return saved;
   const site = getMagicTraefikSiteIpv4();
   if (site) return site;
-  const p = service.remoteServer?.publicIpv4?.trim();
-  if (p) return p;
   if (typeof window !== "undefined") {
     const h = window.location.hostname;
     if (/^(\d{1,3}\.){3}\d{1,3}$/.test(h)) return h;

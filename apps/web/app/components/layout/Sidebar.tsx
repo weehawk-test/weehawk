@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, FolderKanban, KeyRound, UserCircle, ChevronUp, ChevronLeft, ChevronRight,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, Globe, Server, CreditCard, BookOpen, LifeBuoy,
+  GitBranch, Server, CreditCard, BookOpen, LifeBuoy,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useMemo, useState } from "react";
@@ -71,7 +71,6 @@ function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
     {
       label: "Domains",
       items: [
-        { href: "/traefik", label: "Domains", icon: Globe },
         {
           href: "https://docs.weehawk.io",
           label: "Documentation",
@@ -209,13 +208,10 @@ export function Sidebar() {
     }
     if (href === "/notifications/channels") return location.startsWith("/notifications");
     if (href === "/registry") {
-      return location === "/registry" || location.startsWith("/registry/saved");
+      return location === "/registry" || location.startsWith("/registry/");
     }
     if (href === "/git") {
       return location === "/git" || location.startsWith("/git/");
-    }
-    if (href === "/traefik") {
-      return location === "/traefik" || location.startsWith("/traefik/");
     }
     if (href === "/remote-server") {
       return (

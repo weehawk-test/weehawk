@@ -660,6 +660,22 @@ done
     return this.toSafe(rs);
   }
 
+  async assertDeployServerById(
+    id: number,
+    projectUserId: number | null,
+  ): Promise<void> {
+    const rs = await this.remoteServerRepository.findOne({ where: { id } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${id} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    if (rs.serverRole !== 'deploy') {
+      throw new BadRequestException(
+        `Remote server "${rs.name}" is build-only. Cron jobs require a deploy server.`,
+      );
+    }
+  }
+
   /**
    * For SSH provision worker: load row + decrypted PEM after ownership check.
    */
