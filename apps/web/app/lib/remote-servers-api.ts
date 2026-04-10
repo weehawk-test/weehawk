@@ -19,6 +19,8 @@ export type RemoteServerRow = {
   extraSshOptions: string | null;
   /** Public IPv4 for Magic traefik.me hostnames on deployed services. */
   publicIpv4: string | null;
+  /** JSON string: domain labels / metadata (Domains page; deploy servers). */
+  domainsJson: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -75,6 +77,10 @@ function mapRemoteServer(row: unknown): RemoteServerRow {
       r.publicIpv4 === null || r.publicIpv4 === undefined
         ? null
         : String(r.publicIpv4),
+    domainsJson:
+      r.domainsJson === null || r.domainsJson === undefined || r.domainsJson === ""
+        ? null
+        : String(r.domainsJson),
     createdAt:
       ca instanceof Date ? ca.toISOString() : typeof ca === "string" ? ca : new Date().toISOString(),
     updatedAt:
@@ -110,6 +116,7 @@ export async function createRemoteServerApi(
     extraSshOptions?: string;
     serverRole?: RemoteServerRole;
     publicIpv4?: string;
+    domainsJson?: string;
   },
 ): Promise<RemoteServerRow> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers`, {
@@ -136,6 +143,7 @@ export async function updateRemoteServerApi(
     extraSshOptions: string | null;
     serverRole: RemoteServerRole;
     publicIpv4: string | null;
+    domainsJson?: string | null;
   }>,
 ): Promise<RemoteServerRow> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}`, {

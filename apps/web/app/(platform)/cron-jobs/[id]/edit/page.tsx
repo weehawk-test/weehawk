@@ -24,7 +24,6 @@ export default async function EditCronJobPage({ params }: PageProps) {
   if (!cronJob) notFound();
   return (
     <EditCronJobClient
-      id={id}
       initialCronJob={cronJob}
       initialChannels={initialChannels}
       initialS3Profiles={initialS3Profiles}

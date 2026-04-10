@@ -26,7 +26,7 @@ export function hooksPublicHostForDisplay(stored: string | null | undefined): st
 }
 
 export type WebhookListItem = {
-  id: string;
+  id: number;
   name: string;
   description: string;
   isActive: boolean;
@@ -76,6 +76,13 @@ export type CreateWebhookBody = {
   hooksPublicHost?: string;
   /** Default http. Shown in the remote trigger URL (hostname or IP:port). */
   remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
+  /** When true, omitted from the main /webhooks list (service auto webhooks). */
+  hiddenFromWebhooksList?: boolean;
+  /**
+   * Weehawk API origin only (from NEXT_PUBLIC_API_URL). Primary trigger URL becomes POST {origin}/hooks/{token}
+   * (full UI redeploy). Omit to use the deploy-host agent URL.
+   */
+  hooksTriggerOrigin?: string;
 };
 
 export type UpdateWebhookBody = {
@@ -114,8 +121,15 @@ export function publicWebhookTriggerUrl(secretToken: string): string {
   return `${API_BASE}/hooks/${secretToken}`;
 }
 
-export async function fetchWebhooks(accessToken: string): Promise<WebhookListItem[]> {
-  const res = await fetch(`${API_BASE}/api/webhooks`, {
+export async function fetchWebhooks(
+  accessToken: string,
+  options?: { includeHidden?: boolean },
+): Promise<WebhookListItem[]> {
+  const qs =
+    options?.includeHidden === true
+      ? `?${new URLSearchParams({ includeHidden: "true" }).toString()}`
+      : "";
+  const res = await fetch(`${API_BASE}/api/webhooks${qs}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
   });
@@ -131,8 +145,8 @@ export async function fetchWebhooks(accessToken: string): Promise<WebhookListIte
   }));
 }
 
-export async function fetchWebhook(accessToken: string, id: string): Promise<WebhookDetail> {
-  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(id)}`, {
+export async function fetchWebhook(accessToken: string, id: number): Promise<WebhookDetail> {
+  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
   });
@@ -179,10 +193,10 @@ export async function createWebhook(
 
 export async function updateWebhook(
   accessToken: string,
-  id: string,
+  id: number,
   body: UpdateWebhookBody,
 ): Promise<WebhookDetail> {
-  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
     method: "PATCH",
     headers: {
       ...authHeaders(accessToken),
@@ -205,8 +219,8 @@ export async function updateWebhook(
   };
 }
 
-export async function deleteWebhook(accessToken: string, id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(id)}`, {
+export async function deleteWebhook(accessToken: string, id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
     method: "DELETE",
     headers: authHeaders(accessToken),
     credentials: "include",

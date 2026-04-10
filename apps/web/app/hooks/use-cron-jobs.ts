@@ -19,12 +19,12 @@ export function useCronJobs() {
   });
 }
 
-export function useCronJob(id: string) {
+export function useCronJob(id: number) {
   const { accessToken } = useAuth();
   return useQuery({
     queryKey: ["cron-jobs", id],
     queryFn: () => fetchCronJob(accessToken!, id),
-    enabled: Boolean(accessToken) && Boolean(id),
+    enabled: Boolean(accessToken) && Number.isFinite(id),
   });
 }
 
@@ -43,7 +43,7 @@ export function useUpdateCronJob() {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string } & UpdateCronJobBody) =>
+    mutationFn: ({ id, ...body }: { id: number } & UpdateCronJobBody) =>
       updateCronJob(accessToken!, id, body),
     onSuccess: (_, v) => {
       queryClient.invalidateQueries({ queryKey: ["cron-jobs"] });
@@ -56,7 +56,7 @@ export function useDeleteCronJob() {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
   return useMutation({
-    mutationFn: (id: string) => deleteCronJob(accessToken!, id),
+    mutationFn: (id: number) => deleteCronJob(accessToken!, id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["cron-jobs"] });
     },

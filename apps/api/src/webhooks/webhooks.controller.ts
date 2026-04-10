@@ -1,12 +1,15 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   Param,
-  ParseUUIDPipe,
+  ParseBoolPipe,
+  ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -44,26 +47,30 @@ export class WebhooksController {
   }
 
   @Get()
-  list(@Req() req: AuthedReq) {
-    return this.webhooksService.list(this.uid());
+  list(
+    @Req() req: AuthedReq,
+    @Query('includeHidden', new DefaultValuePipe(false), ParseBoolPipe)
+    includeHidden: boolean,
+  ) {
+    return this.webhooksService.list(this.uid(), { includeHidden });
   }
 
   @Get(':id')
-  findOne(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
+  findOne(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
     return this.webhooksService.findOne(this.uid(), id);
   }
 
   @Patch(':id')
   update(
     @Req() req: AuthedReq,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateWebhookDto,
   ) {
     return this.webhooksService.update(this.uid(), id, dto);
   }
 
   @Delete(':id')
-  async remove(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
+  async remove(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
     await this.webhooksService.remove(this.uid(), id);
     return { ok: true };
   }

@@ -38,10 +38,10 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
         (j.description || "").toLowerCase().includes(search.toLowerCase()) ||
         j.summary.toLowerCase().includes(search.toLowerCase()),
     );
-  const cronJobKeys = useMemo(() => filtered.map((j) => j.id), [filtered]);
+  const cronJobKeys = useMemo(() => filtered.map((j) => String(j.id)), [filtered]);
   const cronJobsBulk = useBulkSelection(cronJobKeys);
 
-  const handleDelete = async (id: string, name: string) => {
+  const handleDelete = async (id: number, name: string) => {
     const ok = await confirm({
       title: "Delete cron job?",
       description: `“${name}” will be removed and will stop running.`,
@@ -71,7 +71,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
 
     setIsBulkDeleting(true);
     try {
-      await Promise.all(ids.map((id) => deleteCronJob.mutateAsync(id)));
+      await Promise.all(ids.map((id) => deleteCronJob.mutateAsync(Number(id))));
       cronJobsBulk.clear();
       toast({ title: "Cron jobs deleted", description: `${ids.length} cron job(s) removed.` });
       router.refresh();
@@ -83,7 +83,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
     }
   };
 
-  const handleToggleActive = (id: string, name: string, currentIsActive: boolean) => {
+  const handleToggleActive = (id: number, name: string, currentIsActive: boolean) => {
     updateCronJob.mutate(
       { id, isActive: !currentIsActive },
       {
@@ -225,21 +225,21 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                     </button>
                     <div
                       className={`transition-opacity ${
-                        cronJobsBulk.selected.has(j.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        cronJobsBulk.selected.has(String(j.id)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                       }`}
                     >
                       <DockerBulkCheckbox
-                        checked={cronJobsBulk.selected.has(j.id)}
-                        onCheckedChange={() => cronJobsBulk.toggle(j.id)}
+                        checked={cronJobsBulk.selected.has(String(j.id))}
+                        onCheckedChange={() => cronJobsBulk.toggle(String(j.id))}
                         aria-label={`Select cron job ${j.name}`}
                       />
                     </div>
                   </div>
                 </div>
 
-                {j.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2">{j.description}</p>
-                )}
+                <p className="text-sm text-muted-foreground line-clamp-2">
+                  {(j.description || "").trim() || "No description"}
+                </p>
 
                 <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
                   <p className="text-[11px] text-muted-foreground mb-1.5">Cron schedule</p>

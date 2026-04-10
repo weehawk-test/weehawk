@@ -1,24 +1,113 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Server } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Copy, Loader2, RefreshCw, Server } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { fetchRemoteServers } from "@/lib/remote-servers-api";
 import type { Service } from "@/lib/schema";
 import { useUpdateService } from "@/hooks/use-services";
+import { syncRemoteDeploymentMirrorApi } from "@/lib/services-api";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
-import { isCloudEdition } from "@/lib/weehawk-edition";
 import { parseApplicationDeployMode } from "@/lib/env-utils";
+import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
+import { API_BASE } from "@/lib/api";
+import {
+  createWebhook,
+  deleteWebhook,
+  fetchWebhooks,
+  hooksPublicHostForDisplay,
+  type WebhookRemoteTriggerUrlScheme,
+} from "@/lib/webhooks-api";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 /** Select value: build with the API host’s local Docker daemon (not SSH). */
 const BUILD_ON_API_VALUE = "__local_api__";
 
+/** Keep in sync with `WEEHAWK_REMOTE_DEPLOYMENTS_BASE` in apps/api remote-servers.service. */
+const REMOTE_DEPLOYMENTS_DIR = "/opt/weehawk-deployments";
+
+function toSafePathSegment(raw: string | undefined): string {
+  const normalized = (raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || "service";
+}
+
+function shSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+/** Bash run on the deploy host. Matches API `buildOnHostRedeployScriptBody` / executor redeploy. */
+function buildOnHostRedeployScript(service: Service): string {
+  /** Same rules as API mirror: path segment from appName only (see `toSafePathSegment` + `service.appName || 'service'`). */
+  const appNameRaw = (service.appName ?? "").trim() || "service";
+  const dirSeg = toSafePathSegment(appNameRaw);
+  const root = `${REMOTE_DEPLOYMENTS_DIR}/${dirSeg}`;
+  const rootQ = shSingleQuote(root);
+  const nameQ = shSingleQuote(appNameRaw);
+
+  if (service.type === "docker-compose") {
+    return `set -euo pipefail
+if [ ! -d ${rootQ} ]; then
+  echo 'Bundle directory missing (Weehawk has not mirrored compose here). Deploy from Weehawk or POST sync-remote-deployment-mirror.' >&2
+  exit 1
+fi
+cd ${rootQ}
+COMPOSE_FILE=""
+for cand in docker-compose.yml compose.yaml docker-compose.yaml; do
+  if [ -f "$cand" ] && [ -r "$cand" ]; then COMPOSE_FILE=$cand; break; fi
+done
+if [ -z "$COMPOSE_FILE" ]; then echo 'No compose file in this bundle folder. Deploy or sync mirror to this host.' >&2; ls -la >&2; exit 1; fi
+_WH_LOG=$(mktemp 2>/dev/null || echo "/tmp/weehawk-redeploy.$$.log")
+trap 'rm -f "$_WH_LOG"' EXIT
+docker compose -f "$COMPOSE_FILE" -p ${nameQ} stop >/dev/null 2>&1 || true
+if ! docker compose -f "$COMPOSE_FILE" -p ${nameQ} up -d --build >"$_WH_LOG" 2>&1; then cat "$_WH_LOG" >&2; exit 1; fi
+echo "Weehawk redeploy: OK (compose)."
+`;
+  }
+
+  return `set -euo pipefail
+if [ ! -d ${rootQ} ]; then
+  echo 'Bundle directory missing (Weehawk has not mirrored compose here). Deploy from Weehawk or POST sync-remote-deployment-mirror.' >&2
+  exit 1
+fi
+cd ${rootQ}
+COMPOSE_FILE=""
+for cand in docker-compose.yml compose.yaml docker-compose.yaml; do
+  if [ -f "$cand" ] && [ -r "$cand" ]; then COMPOSE_FILE=$cand; break; fi
+done
+if [ -z "$COMPOSE_FILE" ]; then echo 'No compose file in this bundle folder. Deploy or sync mirror to this host.' >&2; ls -la >&2; exit 1; fi
+[ -f weehawk-stack-env.sh ] && . ./weehawk-stack-env.sh
+if [ -d docker-config ] && [ -f docker-config/config.json ]; then
+  export DOCKER_CONFIG="$(pwd)/docker-config"
+fi
+_WH_LOG=$(mktemp 2>/dev/null || echo "/tmp/weehawk-redeploy.$$.log")
+trap 'rm -f "$_WH_LOG"' EXIT
+if ! docker stack deploy -c "$COMPOSE_FILE" --with-registry-auth ${nameQ} >"$_WH_LOG" 2>&1; then cat "$_WH_LOG" >&2; exit 1; fi
+SERVICES=$(docker stack services ${nameQ} --format "{{.Name}}" 2>/dev/null || true)
+for svc in $SERVICES; do
+  [ -n "$svc" ] && docker service update --force "$svc" >/dev/null 2>&1 || true
+done
+echo "Weehawk redeploy: OK (stack)."
+`;
+}
+
+/** Short label for long hook URLs; full string in `title` / clipboard. */
+function abbreviateTriggerUrl(url: string, headChars = 36, tailChars = 12): string {
+  const max = headChars + 1 + tailChars;
+  if (url.length <= max) return url;
+  return `${url.slice(0, headChars)}…${url.slice(-tailChars)}`;
+}
+
 export function ServiceRemoteHostPanel({ service }: { service: Service }) {
-  const cloud = isCloudEdition();
   const { accessToken } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const updateService = useUpdateService();
   const isApplication = service.type === "application";
 
@@ -31,6 +120,12 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   const q = useQuery({
     queryKey: ["remote-servers"],
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
+    enabled: Boolean(accessToken),
+  });
+
+  const webhooksQ = useQuery({
+    queryKey: ["webhooks", { includeHidden: true }],
+    queryFn: () => fetchWebhooks(accessToken!, { includeHidden: true }),
     enabled: Boolean(accessToken),
   });
 
@@ -47,6 +142,35 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   );
 
   const [registryValue, setRegistryValue] = useState<string>(() => service.registryPushImage ?? "");
+
+  /** Parent domain from Domains page; API stores weehawk-webhook.<this-host>. */
+  const [webhookPublicHost, setWebhookPublicHost] = useState("");
+  const [webhookTriggerScheme, setWebhookTriggerScheme] =
+    useState<WebhookRemoteTriggerUrlScheme>("http");
+  const [saveFlowPending, setSaveFlowPending] = useState(false);
+  const [regenerateWebhookPending, setRegenerateWebhookPending] = useState(false);
+  /** Shown here immediately after create; list refetch then supplies the same URL. */
+  const [publicRedeployTriggerUrl, setPublicRedeployTriggerUrl] = useState<string | null>(null);
+
+  const redeployWebhookRow = useMemo(() => {
+    const list = webhooksQ.data;
+    if (!list?.length) return null;
+    const publicName = `Redeploy · ${service.name}`;
+    const rsId = service.remoteServerId ?? null;
+    return (
+      list.find(
+        (w) =>
+          w.name === publicName &&
+          w.serviceAction === "docker_command" &&
+          Boolean(w.remoteTriggerUrl?.trim()) &&
+          (rsId == null || w.remoteServerId === rsId),
+      ) ?? null
+    );
+  }, [webhooksQ.data, service.name, service.remoteServerId]);
+
+  const redeployUrlFromApiList = redeployWebhookRow?.remoteTriggerUrl?.trim() ?? null;
+
+  const displayRedeployTriggerUrl = redeployUrlFromApiList ?? publicRedeployTriggerUrl;
 
   const currentId = service.remoteServerId ?? null;
   const currentBuildId = service.buildRemoteServerId ?? null;
@@ -78,6 +202,23 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     () => (q.data ?? []).filter((r) => r.serverRole === "build"),
     [q.data],
   );
+
+  const selectedDeployServer = useMemo(
+    () => deployOptions.find((r) => String(r.id) === value) ?? null,
+    [deployOptions, value],
+  );
+  const webhookHostOptions = useMemo(
+    () => hostsFromRemoteServerDomainsJson(selectedDeployServer?.domainsJson ?? null),
+    [selectedDeployServer?.domainsJson],
+  );
+
+  useEffect(() => {
+    setWebhookPublicHost((prev) => {
+      if (webhookHostOptions.length === 0) return "";
+      if (prev && webhookHostOptions.some((h) => h.toLowerCase() === prev.toLowerCase())) return prev;
+      return webhookHostOptions[0] ?? "";
+    });
+  }, [webhookHostOptions]);
 
   /** Build and deploy use different Docker daemons → image must go through a registry (push/pull). */
   const showRegistryImageField = useMemo(() => {
@@ -122,7 +263,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   const dirty =
     deployDirty || buildDirty || registryDirty || staleRegistryWhenMerged;
 
-  const save = () => {
+  const save = async () => {
     if (value === "") {
       toast({
         title: "Remote host required",
@@ -139,6 +280,30 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       });
       return;
     }
+
+    const deployServerIdNum = Number.isFinite(Number(value)) ? Number(value) : null;
+    const wantRedeployWebhookChain =
+      deployDirty &&
+      deployServerIdNum != null &&
+      deployServerIdNum >= 1 &&
+      webhookHostOptions.length > 0;
+
+    if (wantRedeployWebhookChain) {
+      const wh = webhookPublicHost.trim();
+      if (
+        !wh ||
+        !webhookHostOptions.some((h) => h.toLowerCase() === wh.toLowerCase())
+      ) {
+        toast({
+          title: "Webhook domain required",
+          description:
+            "Choose which hostname will expose the redeploy URL (weehawk-webhook.<your-domain> via Traefik).",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
     const patch: {
       remoteServerId?: number | null;
       buildRemoteServerId?: number | null;
@@ -170,19 +335,130 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     if (staleRegistryWhenMerged) {
       patch.registryPushImage = null;
     }
-    updateService.mutate(
-      { id: service.id, patch },
-      {
-        onSuccess: () => {
-          toast({
-            title: "Saved",
-            description: "Host choices updated for this service.",
+
+    setSaveFlowPending(true);
+    try {
+      await updateService.mutateAsync({ id: service.id, patch });
+
+      let extra = "";
+      if (wantRedeployWebhookChain && accessToken && deployServerIdNum != null) {
+        const parentHost = webhookPublicHost.trim();
+        try {
+          await syncRemoteDeploymentMirrorApi(String(service.id));
+          const dockerCommand = buildOnHostRedeployScript(service);
+          const outer = await createWebhook(accessToken, {
+            name: `Redeploy · ${service.name}`,
+            description: `On-host redeploy for ${REMOTE_DEPLOYMENTS_DIR}/${toSafePathSegment((service.appName ?? "").trim() || "service")}. Compose is synced to this path when you save here.`,
+            targetMode: "service",
+            serviceId: Number(service.id),
+            serviceAction: "docker_command",
+            dockerCommand,
+            remoteServerId: deployServerIdNum,
+            hooksPublicHost: parentHost,
+            remoteTriggerUrlScheme: webhookTriggerScheme,
+            hiddenFromWebhooksList: true,
+            hooksTriggerOrigin: new URL(API_BASE).origin,
           });
-        },
-        onError: (e: Error) =>
-          toast({ title: "Could not save", description: e.message, variant: "destructive" }),
-      },
-    );
+          setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
+          await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
+        } catch (whErr) {
+          toast({
+            title: "Saved; webhook setup failed",
+            description: (whErr as Error).message,
+            variant: "destructive",
+          });
+          return;
+        }
+      } else if (deployDirty && deployServerIdNum != null && webhookHostOptions.length === 0) {
+        extra =
+          " Add hostnames for this deploy server on Domains to create a redeploy webhook from here next time.";
+      }
+
+      toast({
+        title: "Saved",
+        description: `Host choices updated for this service.${extra}`,
+      });
+    } catch (e) {
+      toast({
+        title: "Could not save",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setSaveFlowPending(false);
+    }
+  };
+
+  const regenerateRedeployWebhook = async () => {
+    if (!accessToken) return;
+    const hit = redeployWebhookRow;
+    if (!hit) {
+      toast({
+        title: "No redeploy webhook",
+        description: "Save the deploy host with Domains configured to create one first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const parentHost = hooksPublicHostForDisplay(hit.hooksPublicHost);
+    if (!parentHost.trim()) {
+      toast({
+        title: "Cannot regenerate",
+        description: "This webhook has no saved public hostname.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const deployServerIdNum = hit.remoteServerId;
+    if (deployServerIdNum == null || deployServerIdNum < 1) {
+      toast({
+        title: "Cannot regenerate",
+        description: "This webhook is not tied to a deploy server.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const oldId = hit.id;
+    setRegenerateWebhookPending(true);
+    try {
+      await syncRemoteDeploymentMirrorApi(String(service.id));
+      const outer = await createWebhook(accessToken, {
+        name: `Redeploy · ${service.name}`,
+        description: `On-host redeploy for ${REMOTE_DEPLOYMENTS_DIR}/${toSafePathSegment((service.appName ?? "").trim() || "service")}. Compose is synced to this path when you regenerate here.`,
+        targetMode: "service",
+        serviceId: Number(service.id),
+        serviceAction: "docker_command",
+        dockerCommand: buildOnHostRedeployScript(service),
+        remoteServerId: deployServerIdNum,
+        hooksPublicHost: parentHost,
+        remoteTriggerUrlScheme: hit.remoteTriggerUrlScheme === "https" ? "https" : "http",
+        hiddenFromWebhooksList: true,
+        hooksTriggerOrigin: new URL(API_BASE).origin,
+      });
+      let deleteProblem = "";
+      try {
+        await deleteWebhook(accessToken, oldId);
+      } catch (delErr) {
+        deleteProblem = (delErr as Error).message;
+      }
+      setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
+      await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
+      toast({
+        title: "Webhook regenerated",
+        description: deleteProblem
+          ? `New URL is active. Could not delete the old webhook automatically: ${deleteProblem}`
+          : "Use the new trigger URL; the previous one no longer works.",
+        variant: deleteProblem ? "destructive" : "default",
+      });
+    } catch (e) {
+      toast({
+        title: "Regenerate failed",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setRegenerateWebhookPending(false);
+    }
   };
 
   if (!accessToken) {
@@ -199,26 +475,30 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           <div>
             <h3 className="text-sm font-semibold">Remote Docker host</h3>
             <p className="text-xs text-muted-foreground mt-1 max-w-md leading-relaxed">
-              Choose hosts below, then <strong>Save</strong>. Add machines in{" "}
+              Deploy / build hosts, then <strong>Save</strong>.{" "}
               <Link href="/remote-server" className="text-primary hover:underline">
                 Remote servers
-              </Link>
-              . If build and run use different machines, sign in on{" "}
+              </Link>{" "}
+              for SSH. Split build & deploy:{" "}
               <Link href="/registry" className="text-primary hover:underline">
                 Registry
               </Link>{" "}
-              (this server) and fill the image name when it appears.
+              + image field below.
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            disabled={!dirty || updateService.isPending}
-            onClick={() => save()}
+            disabled={!dirty || updateService.isPending || saveFlowPending}
+            onClick={() => void save()}
             className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
           >
-            {updateService.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
+            {updateService.isPending || saveFlowPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              "Save"
+            )}
           </button>
         </div>
       </div>
@@ -232,6 +512,56 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           <p className="text-sm text-red-300">{(q.error as Error).message}</p>
         ) : (
           <>
+            {displayRedeployTriggerUrl ? (
+              <div className="max-w-2xl space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-muted-foreground">Redeploy trigger URL</p>
+                  <button
+                    type="button"
+                    disabled={regenerateWebhookPending || webhooksQ.isFetching}
+                    onClick={() => void regenerateRedeployWebhook()}
+                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors disabled:opacity-50 disabled:pointer-events-none shrink-0"
+                  >
+                    {regenerateWebhookPending ? (
+                      <Loader2 className="size-3 animate-spin" aria-hidden />
+                    ) : (
+                      <RefreshCw className="size-3" aria-hidden />
+                    )}
+                    Regenerate
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <a
+                    href={displayRedeployTriggerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={displayRedeployTriggerUrl}
+                    className="min-w-0 flex-1 truncate rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-sm font-mono text-primary hover:underline"
+                  >
+                    {abbreviateTriggerUrl(displayRedeployTriggerUrl)}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(displayRedeployTriggerUrl);
+                        toast({ title: "Copied", description: "Trigger URL copied to clipboard." });
+                      } catch {
+                        toast({
+                          title: "Copy failed",
+                          description: "Could not access the clipboard.",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                    className="shrink-0 inline-flex items-center justify-center rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+                    aria-label="Copy trigger URL"
+                  >
+                    <Copy className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 max-w-xl">
               <label className="text-xs text-muted-foreground shrink-0 sm:w-32">Deploy host</label>
               <select
@@ -256,6 +586,63 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                 ))}
               </select>
             </div>
+            {value !== "" ? (
+              <div className="rounded-xl border border-white/10 bg-muted/20 px-4 py-3 space-y-3 max-w-xl">
+                <p className="text-xs font-medium text-foreground">Redeploy webhook (on Save)</p>
+                {webhookHostOptions.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Add at least one hostname for this deploy server on{" "}
+                    <Link href="/domains" className="text-primary hover:underline">
+                      Domains
+                    </Link>{" "}
+                    to choose the public URL. Saving the deploy host still works without it.
+                  </p>
+                ) : (
+                  <>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <label className="text-xs text-muted-foreground shrink-0 sm:w-32">
+                        Webhook domain
+                      </label>
+                      <select
+                        value={webhookPublicHost}
+                        onChange={(e) => setWebhookPublicHost(e.target.value)}
+                        className="flex-1 min-w-0 rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 font-mono"
+                      >
+                        {webhookHostOptions.map((h) => (
+                          <option key={h} value={h}>
+                            {h}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      When you save a deploy host change, Weehawk adds webhooks that redeploy this service.
+                    </p>
+                    <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5">
+                      <div className="space-y-0.5 min-w-0">
+                        <Label
+                          htmlFor="remote-panel-webhook-https"
+                          className="text-xs font-medium text-foreground cursor-pointer"
+                        >
+                          HTTPS for trigger URL
+                        </Label>
+                        <p className="text-[10px] text-muted-foreground">
+                          Match your Traefik / certificate setup for the webhook hostname.
+                        </p>
+                      </div>
+                      <Switch
+                        id="remote-panel-webhook-https"
+                        checked={webhookTriggerScheme === "https"}
+                        onCheckedChange={(v) =>
+                          setWebhookTriggerScheme(v ? "https" : "http")
+                        }
+                        className="shrink-0"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : null}
             {isApplication ? (
               <div className="flex flex-col sm:flex-row sm:items-start gap-3 max-w-xl">
                 <label className="text-xs text-muted-foreground shrink-0 sm:w-32 pt-2">

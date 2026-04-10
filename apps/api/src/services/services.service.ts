@@ -42,6 +42,7 @@ import { S3Service } from '../s3/s3.service';
 import { getErrorMessage } from '../utils/error-message';
 import { GitService } from '../git/git.service';
 import { TraefikService } from '../traefik/traefik.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import {
   buildTraefikMeMagicHostname,
@@ -61,6 +62,8 @@ export class ServicesService {
     private readonly remoteServerRepository: Repository<RemoteServer>,
     @Inject(forwardRef(() => ExecutorService))
     private readonly executorService: ExecutorService,
+    @Inject(forwardRef(() => WebhooksService))
+    private readonly webhooksService: WebhooksService,
     private readonly configService: ConfigService,
     private readonly databaseGenerator: DatabaseGeneratorService,
     private readonly dockerfileGenerator: DockerfileGeneratorService,
@@ -1806,8 +1809,30 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const result = await this.executorService.execute(id, mode, options);
     if (result.success) {
       await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
+      try {
+        const sshTargets = await this.getDockerSshTargetIds(id);
+        if (sshTargets.remoteServerId != null) {
+          await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(id);
+        }
+      } catch {
+        /* best effort — deploy already succeeded */
+      }
     }
     return result;
+  }
+
+  /**
+   * SFTP the current saved compose to the deploy host mirror (`/opt/weehawk-deployments/...`) without deploying.
+   */
+  async syncRemoteDeploymentMirror(id: number, userId: number): Promise<{ ok: boolean }> {
+    await this.assertServiceOwnedByUser(id, userId);
+    const r = await this.executorService.syncRemoteDeploymentMirror(id, userId);
+    try {
+      await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(id);
+    } catch {
+      /* best effort */
+    }
+    return r;
   }
 
   private async finalizeBackupWithS3(

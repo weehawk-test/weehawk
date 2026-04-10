@@ -159,6 +159,18 @@ export class ServicesController {
     });
   }
 
+  @Post(':id/sync-remote-deployment-mirror')
+  @ApiOperation({
+    summary:
+      'Copy saved compose (and Swarm registry/env files) to the deploy host persistent dir without running docker deploy',
+  })
+  syncRemoteDeploymentMirror(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.syncRemoteDeploymentMirror(+id, this.uid(req));
+  }
+
   /**
    * Same deploy as `POST :id/execute`, but streams stdout/stderr chunks over SSE (like local `docker` on the API host).
    * Query: `mode` = deploy | reload | redeploy (default deploy).

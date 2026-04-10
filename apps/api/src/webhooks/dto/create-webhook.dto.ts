@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsIn,
   IsInt,
@@ -36,12 +37,16 @@ export class CreateWebhookDto {
   @IsEnum(['service'] as const)
   targetMode!: WebhookTargetMode;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Required for most service actions; optional for docker_command (recommended for auto on-host redeploy refresh).',
+  })
   @ValidateIf(
     (o: CreateWebhookDto) =>
       o.targetMode === 'service' &&
       o.serviceAction !== 'no_action' &&
-      o.serviceAction !== 'docker_command',
+      (o.serviceAction !== 'docker_command' ||
+        (o.serviceId != null && o.serviceId !== undefined)),
   )
   @IsInt()
   @Min(1)
@@ -145,4 +150,25 @@ export class CreateWebhookDto {
   @IsOptional()
   @IsIn(['http', 'https'])
   remoteTriggerUrlScheme?: 'http' | 'https';
+
+  @ApiPropertyOptional({
+    description:
+      'Weehawk API origin only (e.g. https://api.example.com:8080). Primary trigger URL becomes POST {origin}/hooks/{token} (full UI redeploy). Omit to use the deploy-host agent URL.',
+  })
+  @ValidateIf(
+    (o: CreateWebhookDto) =>
+      o.targetMode === 'service' && o.serviceAction === 'docker_command',
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  hooksTriggerOrigin?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'If true, webhook is hidden from the main /webhooks list (e.g. auto redeploy from service settings).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  hiddenFromWebhooksList?: boolean;
 }

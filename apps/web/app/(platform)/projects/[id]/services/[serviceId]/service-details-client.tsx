@@ -25,7 +25,6 @@ import {
   PackageOpen,
   ArrowDownToLine,
   Search,
-  Dices,
 } from "lucide-react";
 import {
   useService,
@@ -73,14 +72,7 @@ import {
   generateApplicationFromSourceApi,
   runServiceBackupNowApi,
   importServiceBackupFromS3Api,
-  rollMagicTraefikMeApi,
-  clearMagicTraefikMeApi,
 } from "@/lib/services-api";
-import {
-  guessRollMagicIpv4,
-  hostnameFromMagicUrl,
-  subscribeMagicTraefikIpv4Changed,
-} from "@/lib/magic-traefik-me-client";
 import {
   parseApplicationBuildPath,
   parseApplicationDeployMode,
@@ -120,6 +112,7 @@ import {
 import { buildDatabaseInternalConnectionUrl, DB_URL_PASSWORD_PLACEHOLDER } from "@/lib/database-internal-url";
 import { listS3ProfilesApi, type S3BucketListResponse, type S3ProfilePublic } from "@/lib/s3-api";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
+import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
 
 /** Deterministic on server + client (avoids hydration mismatch from `format()` using local TZ). */
@@ -641,6 +634,15 @@ function parseSingleHostname(raw: string): string[] {
   return t ? [t] : [];
 }
 
+/** Backend port Traefik forwards to (container port). 1–65535, or null = use compose default. */
+function sanitizeTraefikInternalPort(p: unknown): number | null {
+  if (p == null) return null;
+  if (typeof p !== "number" || !Number.isFinite(p)) return null;
+  const v = Math.floor(p);
+  if (v < 1 || v > 65535) return null;
+  return v;
+}
+
 function singleHostLabel(hosts: string[] | undefined): string {
   return (hosts?.[0] ?? "").trim();
 }
@@ -666,6 +668,7 @@ function buildInitialTraefikRoutes(service: Service): TraefikRouteRule[] {
       ...r,
       hosts: r.hosts?.length ? [String(r.hosts[0]).trim()].filter(Boolean) : [],
       https: r.https === false ? false : true,
+      port: sanitizeTraefikInternalPort(r.port),
     }));
   }
   if (service.domains?.length) {
@@ -4869,97 +4872,11 @@ function EnvFilePanel({ service }: { service: Service }) {
   );
 }
 
-// ─── Magic traefik.me dice (IPv4 default: /traefik) ───────────────────────────
-
-function MagicHostDice({
-  service,
-  onRolled,
-  autoRollOnMount = false,
-}: {
-  service: Service;
-  onRolled: (updated: Service) => void;
-  autoRollOnMount?: boolean;
-}) {
-  const { toast } = useToast();
-  const { user } = useAuth();
-  const qc = useQueryClient();
-  const [, bump] = useState(0);
-  const autoRolledRef = useRef(false);
-  useEffect(() => subscribeMagicTraefikIpv4Changed(() => bump((n) => n + 1)), []);
-
-  const resolvedIp = guessRollMagicIpv4(service);
-
-  const rollMagicMut = useMutation({
-    mutationFn: () => {
-      const ip = guessRollMagicIpv4(service).trim();
-      if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
-        return Promise.reject(
-          new Error("Set IPv4 in Traefik settings (/traefik) or use a deploy host with a public IP."),
-        );
-      }
-      return rollMagicTraefikMeApi(service.id, { publicIpv4: ip });
-    },
-    onSuccess: (data) => {
-      void invalidateServiceScopedQueries(qc, service.id, user?.userId ?? "none");
-      onRolled(data);
-      toast({
-        title: "Hostname generated",
-        description:
-          "Save the dialog, then redeploy the stack. Note: traefik.me is a public HTTP service and does not support SSL/HTTPS.",
-      });
-    },
-    onError: (e: Error) =>
-      toast({ title: "Could not roll", description: e.message, variant: "destructive" }),
-  });
-
-  const clearMagicMut = useMutation({
-    mutationFn: () => clearMagicTraefikMeApi(service.id),
-    onSuccess: () => {
-      void invalidateServiceScopedQueries(qc, service.id, user?.userId ?? "none");
-      toast({ title: "Magic domain removed", description: "Redeploy the stack to apply." });
-    },
-    onError: (e: Error) =>
-      toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
-  });
-
-  useEffect(() => {
-    if (!autoRollOnMount || autoRolledRef.current) return;
-    const existing = hostnameFromMagicUrl(service.magicTraefikMeUrl);
-    if (existing) return;
-    autoRolledRef.current = true;
-    rollMagicMut.mutate();
-  }, [autoRollOnMount, rollMagicMut, service.magicTraefikMeUrl]);
-
-  return (
-    <div className="flex items-center gap-1.5 shrink-0">
-      <button
-        type="button"
-        title="Generate traefik.me hostname (e.g. …127.0.0.1.traefik.me)"
-        disabled={
-          rollMagicMut.isPending ||
-          clearMagicMut.isPending ||
-          !resolvedIp ||
-          !/^(\d{1,3}\.){3}\d{1,3}$/.test(resolvedIp.trim())
-        }
-        onClick={() => rollMagicMut.mutate()}
-        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-violet-500/35 bg-violet-500/15 text-violet-900 dark:text-violet-100 hover:bg-violet-500/25 transition-colors disabled:opacity-50"
-      >
-        {rollMagicMut.isPending ? (
-          <Loader2 className="w-5 h-5 animate-spin" />
-        ) : (
-          <Dices className="w-5 h-5" aria-hidden />
-        )}
-      </button>
-    </div>
-  );
-}
-
 // ─── DomainsPanel ─────────────────────────────────────────────────────────────
 
 function DomainsPanel({ service }: { service: Service }) {
   const { toast } = useToast();
   const saveRoutesMutation = useUpdateService();
-  const isApplication = service.type === "application";
 
   const seedKey = `${service.id}:${JSON.stringify(service.traefikRoutes)}:${JSON.stringify(service.domains)}`;
   const [routes, setRoutes] = useState<TraefikRouteRule[]>(() => buildInitialTraefikRoutes(service));
@@ -4970,45 +4887,55 @@ function DomainsPanel({ service }: { service: Service }) {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [hostMode, setHostMode] = useState<"domain" | "magic">("domain");
   const [draftRouter, setDraftRouter] = useState("");
   const [draftPath, setDraftPath] = useState("");
   const [draftHost, setDraftHost] = useState("");
-  const [draftLetsEncryptEmail, setDraftLetsEncryptEmail] = useState("");
+  const [draftInternalPort, setDraftInternalPort] = useState("");
   const [draftHttps, setDraftHttps] = useState(false);
 
-  const showMagicDice = isApplication;
+  const deployServer = service.remoteServer;
+  const serverHostnames = useMemo(
+    () => hostsFromRemoteServerDomainsJson(deployServer?.domainsJson ?? null),
+    [deployServer?.domainsJson],
+  );
+
+  const hostnameSelectOptions = useMemo(() => {
+    const list = [...serverHostnames];
+    const cur = draftHost.trim();
+    if (cur && !list.some((h) => h.toLowerCase() === cur.toLowerCase())) {
+      list.unshift(cur);
+    }
+    return list;
+  }, [serverHostnames, draftHost]);
 
   const resetDraft = () => {
-    setHostMode("domain");
     setDraftRouter("");
     setDraftPath("");
     setDraftHost("");
-    setDraftLetsEncryptEmail("");
+    setDraftInternalPort("");
     setDraftHttps(false);
     setEditingIndex(null);
   };
 
   const openAddDialog = () => {
     setEditingIndex(null);
-    setHostMode("magic");
     setDraftRouter("");
     setDraftPath("");
-    setDraftHost(hostnameFromMagicUrl(service.magicTraefikMeUrl));
-    setDraftLetsEncryptEmail("");
+    setDraftHost("");
+    setDraftInternalPort("");
     setDraftHttps(false);
     setDialogOpen(true);
   };
 
   const openEditDialog = (index: number) => {
     const r = routes[index];
-    const host = singleHostLabel(r.hosts).toLowerCase();
-    setHostMode(host.includes(".traefik.me") ? "magic" : "domain");
     setEditingIndex(index);
     setDraftRouter(r.router);
     setDraftPath(r.pathPrefix ?? "");
     setDraftHost(singleHostLabel(r.hosts));
-    setDraftLetsEncryptEmail("");
+    setDraftInternalPort(
+      r.port != null && Number.isFinite(r.port) ? String(Math.floor(r.port)) : "",
+    );
     setDraftHttps(r.https !== false);
     setDialogOpen(true);
   };
@@ -5027,7 +4954,7 @@ function DomainsPanel({ service }: { service: Service }) {
         router,
         hosts,
         pathPrefix,
-        port: null,
+        port: sanitizeTraefikInternalPort(r.port),
         https: r.https !== false,
       });
     }
@@ -5065,21 +4992,14 @@ function DomainsPanel({ service }: { service: Service }) {
     if (!hosts.length) {
       toast({
         title: "Hostname required",
-        description: "Enter a domain or use the dice.",
+        description: deployServer
+          ? serverHostnames.length
+            ? "Choose a hostname from the list for this deploy server."
+            : "Add hostnames for this server on the Domains page first."
+          : "Set a deploy server on the Remote tab, then add hostnames on the Domains page.",
         variant: "destructive",
       });
       return;
-    }
-    if (hostMode === "domain") {
-      const email = draftLetsEncryptEmail.trim();
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        toast({
-          title: "Email required",
-          description: "Enter a valid Let's Encrypt email for custom domains.",
-          variant: "destructive",
-        });
-        return;
-      }
     }
     const dup = routes.some((r, i) => {
       if (editingIndex !== null && i === editingIndex) return false;
@@ -5097,12 +5017,32 @@ function DomainsPanel({ service }: { service: Service }) {
     let pathPrefix = draftPath.trim() || null;
     if (pathPrefix && !pathPrefix.startsWith("/")) pathPrefix = `/${pathPrefix}`;
 
+    const portTrim = draftInternalPort.trim();
+    if (!portTrim) {
+      toast({
+        title: "Internal port required",
+        description: "Enter the container port Traefik should forward to (1–65535).",
+        variant: "destructive",
+      });
+      return;
+    }
+    const n = Number(portTrim);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      toast({
+        title: "Invalid internal port",
+        description: "Use an integer from 1 to 65535.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const port = n;
+
     const entry: TraefikRouteRule = {
       router,
       hosts,
       pathPrefix,
-      port: null,
-      https: hostMode === "magic" ? false : draftHttps,
+      port,
+      https: draftHttps,
     };
     const next = [...routes];
     if (editingIndex === null) next.push(entry);
@@ -5125,8 +5065,10 @@ function DomainsPanel({ service }: { service: Service }) {
         <div>
           <p className="text-sm text-muted-foreground">Domains</p>
           <p className="text-xs text-muted-foreground/80 mt-1 max-w-2xl">
-            Add the web address people will use to open your app. You can use your own domain or a{" "}
-            <span className="font-mono">traefik.me</span> hostname.
+            <Link href="/domains" className="text-primary hover:underline">
+              Domains
+            </Link>{" "}
+            (this deploy server).
           </p>
         </div>
         <button
@@ -5197,6 +5139,14 @@ function DomainsPanel({ service }: { service: Service }) {
                       <span className="font-medium text-foreground/60">TLS</span>{" "}
                       {route.https !== false ? "HTTPS" : "HTTP"}
                     </span>
+                    <span>
+                      <span className="font-medium text-foreground/60">internal port</span>{" "}
+                      {route.port != null ? (
+                        <span className="font-mono">{route.port}</span>
+                      ) : (
+                        <span className="text-amber-700/90 dark:text-amber-500/90">not set — edit to add</span>
+                      )}
+                    </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -5239,8 +5189,8 @@ function DomainsPanel({ service }: { service: Service }) {
           <DialogHeader>
             <DialogTitle>{editingIndex === null ? "Add domain" : "Edit domain"}</DialogTitle>
             <DialogDescription>
-              Set router, hostname, HTTPS (TLS), and optional path or port. The dice rolls the service&apos;s
-              traefik.me hostname (same URL for every route; split traffic with path prefixes).
+              Hostname from Domains for this deploy server, router, optional path, HTTPS or HTTP, then the
+              required internal port Traefik forwards to.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -5264,118 +5214,74 @@ function DomainsPanel({ service }: { service: Service }) {
             </label>
             <div className="space-y-1.5">
               <span className="text-[11px] text-muted-foreground">Hostname</span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHostMode("domain");
-                    setDraftHost("");
-                  }}
-                  className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
-                    hostMode === "domain"
-                      ? "border-primary/40 bg-primary/10 text-foreground"
-                      : "border-border text-muted-foreground hover:bg-white/5"
-                  }`}
-                >
-                  Domain
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHostMode("magic");
-                    setDraftHttps(false);
-                  }}
-                  className={`rounded-md border px-2.5 py-1 text-xs transition-colors ${
-                    hostMode === "magic"
-                      ? "border-primary/40 bg-primary/10 text-foreground"
-                      : "border-border text-muted-foreground hover:bg-white/5"
-                  }`}
-                >
-                  traefik.me
-                </button>
-              </div>
-              {hostMode === "magic" ? (
-                <>
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] text-muted-foreground">traefik.me hostname</span>
-                    <div className="flex gap-2 items-center min-w-0">
-                      <input
-                        className="input-field flex-1 min-w-0 font-mono text-sm"
-                        placeholder="project.service.x.x.x.x.traefik.me"
-                        value={draftHost}
-                        onChange={(e) => setDraftHost(e.target.value)}
-                        spellCheck={false}
-                        autoComplete="off"
-                      />
-                      {showMagicDice ? (
-                        <MagicHostDice
-                          service={service}
-                          autoRollOnMount={editingIndex === null && !draftHost.trim()}
-                          onRolled={(svc) => {
-                            const h = hostnameFromMagicUrl(svc.magicTraefikMeUrl);
-                            if (h) setDraftHost(h);
-                          }}
-                        />
-                      ) : null}
-                    </div>
-                  </label>
-                  <p className="text-[11px] text-muted-foreground">
-                    Dice uses the selected <strong>Deploy host</strong> public IPv4 first.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] text-muted-foreground">Domain</span>
-                    <input
-                      className="input-field w-full min-w-0 font-mono text-sm"
-                      placeholder="app.example.com"
-                      value={draftHost}
-                      onChange={(e) => setDraftHost(e.target.value)}
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
-                  </label>
-                  <label className="block space-y-1.5">
-                    <span className="text-[11px] text-muted-foreground">Email (Let&apos;s Encrypt)</span>
-                    <input
-                      type="email"
-                      className="input-field w-full min-w-0 text-sm"
-                      placeholder="you@example.com"
-                      value={draftLetsEncryptEmail}
-                      onChange={(e) => setDraftLetsEncryptEmail(e.target.value)}
-                      autoComplete="email"
-                    />
-                  </label>
-                  <p className="text-[11px] text-muted-foreground">
-                    Point this domain to:{" "}
-                    <span className="font-mono">
-                      {service.remoteServer?.publicIpv4?.trim() || "set Public IPv4 on selected deploy host"}
-                    </span>{" "}
-                    (the selected Deploy host public IPv4).
-                  </p>
-                </>
-              )}
+              <select
+                className="input-field w-full min-w-0 font-mono text-sm"
+                value={draftHost}
+                onChange={(e) => setDraftHost(e.target.value)}
+                disabled={!deployServer || hostnameSelectOptions.length === 0}
+              >
+                <option value="">
+                  {!deployServer
+                    ? "Set a deploy server on the Remote tab first"
+                    : hostnameSelectOptions.length === 0
+                      ? "No hostnames for this server — add on Domains"
+                      : "Select hostname"}
+                </option>
+                {hostnameSelectOptions.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+              {!deployServer ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Set deploy server under <strong>Remote</strong>, then add hostnames on{" "}
+                  <Link href="/domains" className="text-primary hover:underline">
+                    Domains
+                  </Link>
+                  .
+                </p>
+              ) : serverHostnames.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Add hostnames on{" "}
+                  <Link href="/domains" className="text-primary hover:underline">
+                    Domains
+                  </Link>{" "}
+                  first.
+                </p>
+              ) : null}
             </div>
-            {hostMode === "domain" ? (
-              <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
-                <div className="space-y-0.5 min-w-0">
-                  <Label htmlFor="domain-https" className="text-sm font-medium text-foreground cursor-pointer">
-                    HTTPS
-                  </Label>
-                </div>
-                <Switch
-                  id="domain-https"
-                  checked={draftHttps}
-                  onCheckedChange={(v) => setDraftHttps(Boolean(v))}
-                  className="shrink-0"
-                />
+            <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+              <div className="space-y-0.5 min-w-0">
+                <Label htmlFor="route-https" className="text-sm font-medium text-foreground cursor-pointer">
+                  HTTPS
+                </Label>
               </div>
-            ) : (
-              <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground/90">Protocol:</span> HTTP (default for traefik.me)
-              </div>
-            )}
+              <Switch
+                id="route-https"
+                checked={draftHttps}
+                onCheckedChange={(v) => setDraftHttps(Boolean(v))}
+                className="shrink-0"
+              />
+            </div>
+            <label className="block space-y-1.5">
+              <span className="text-[11px] text-muted-foreground">
+                Internal port <span className="text-destructive">*</span>
+              </span>
+              <input
+                type="number"
+                required
+                min={1}
+                max={65535}
+                className="input-field w-full font-mono text-sm"
+                placeholder="e.g. 3000"
+                value={draftInternalPort}
+                onChange={(e) => setDraftInternalPort(e.target.value.replace(/\D/g, "").slice(0, 5))}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Container port Traefik proxies to (must match your app listen port).
+              </p>
+            </label>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <button

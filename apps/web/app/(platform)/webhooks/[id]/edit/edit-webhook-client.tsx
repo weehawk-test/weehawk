@@ -10,12 +10,15 @@ import {
   type WebhookDetail,
   type WebhookRemoteTriggerUrlScheme,
 } from "@/lib/webhooks-api";
+import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { Service } from "@/lib/schema";
 import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 import {
@@ -48,7 +51,6 @@ function backupConfigToForm(cfg: DatabaseBackupConfig | null): DatabaseBackupFor
 }
 
 type Props = {
-  id: string;
   initialWebhook: WebhookDetail;
   initialChannels: NotificationChannel[];
   initialS3Profiles: S3ProfilePublic[];
@@ -57,7 +59,6 @@ type Props = {
 };
 
 export function EditWebhookClient({
-  id,
   initialWebhook,
   initialChannels,
   initialS3Profiles,
@@ -108,6 +109,22 @@ export function EditWebhookClient({
     () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
     [initialRemoteServers],
   );
+  const selectedDeployServer = useMemo(
+    () => deployServers.find((s) => String(s.id) === remoteServerId) ?? null,
+    [deployServers, remoteServerId],
+  );
+  const serverHostnames = useMemo(
+    () => hostsFromRemoteServerDomainsJson(selectedDeployServer?.domainsJson ?? null),
+    [selectedDeployServer?.domainsJson],
+  );
+  const parentDomainSelectOptions = useMemo(() => {
+    const list = [...serverHostnames];
+    const cur = hooksPublicHost.trim();
+    if (cur && !list.some((h) => h.toLowerCase() === cur.toLowerCase())) {
+      list.unshift(cur);
+    }
+    return list;
+  }, [serverHostnames, hooksPublicHost]);
 
   const submit = () => {
     if (!name.trim()) {
@@ -162,11 +179,31 @@ export function EditWebhookClient({
         toast({ title: "Select a valid server", variant: "destructive" });
         return;
       }
+      const host = hooksPublicHost.trim();
+      if (!host) {
+        toast({
+          title: "Hostname required",
+          description:
+            parentDomainSelectOptions.length === 0
+              ? "Add at least one hostname for this deploy server on the Domains page."
+              : "Choose a hostname from the list.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!parentDomainSelectOptions.some((h) => h.toLowerCase() === host.toLowerCase())) {
+        toast({
+          title: "Invalid hostname",
+          description: "Pick a hostname from the list for this deploy server.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     updateMutation.mutate(
       {
-        id,
+        id: initialWebhook.id,
         name: name.trim(),
         description: description.trim(),
         notifyChannelId: hasNotifyChannel ? notifyChannelId : null,
@@ -193,13 +230,13 @@ export function EditWebhookClient({
           ? {
               dockerCommand: bashScript.trim() || null,
               remoteServerId: parsedRemoteServerId,
-              hooksPublicHost: hooksPublicHost.trim() || null,
+              hooksPublicHost: hooksPublicHost.trim(),
               remoteTriggerUrlScheme,
             }
           : {}),
       },
       {
-        onSuccess: () => router.push(`/webhooks/${id}`),
+        onSuccess: () => router.push(`/webhooks/${initialWebhook.id}`),
         onError: (e: Error) =>
           toast({ title: "Could not update webhook", description: e.message, variant: "destructive" }),
       },
@@ -273,7 +310,10 @@ export function EditWebhookClient({
                 <select
                   className="input-field mb-3"
                   value={remoteServerId}
-                  onChange={(e) => setRemoteServerId(e.target.value)}
+                  onChange={(e) => {
+                    setRemoteServerId(e.target.value);
+                    setHooksPublicHost("");
+                  }}
                   required
                   disabled={deployServers.length === 0}
                 >
@@ -288,31 +328,62 @@ export function EditWebhookClient({
                     </option>
                   ))}
                 </select>
-                <label className="text-xs text-muted-foreground mb-1 block mt-3">
-                  Parent domain (optional)
-                </label>
-                <input
+                <label className="text-xs text-muted-foreground mb-1 block mt-3">Hostname</label>
+                <select
                   className="input-field mb-3"
                   value={hooksPublicHost}
                   onChange={(e) => setHooksPublicHost(e.target.value)}
-                  placeholder="example.com → weehawk-webhook.example.com"
-                  autoComplete="off"
-                />
-                <p className="text-[11px] text-muted-foreground mb-3 leading-snug">
-                  DNS: create <code className="text-primary/90">weehawk-webhook.&lt;your-domain&gt;</code>{" "}
-                  pointing to this deploy host.
-                </p>
-                <label className="text-xs text-muted-foreground mb-1 block">Trigger URL scheme</label>
-                <select
-                  className="input-field mb-3"
-                  value={remoteTriggerUrlScheme}
-                  onChange={(e) =>
-                    setRemoteTriggerUrlScheme(e.target.value === "https" ? "https" : "http")
-                  }
+                  required
+                  disabled={!remoteServerId || parentDomainSelectOptions.length === 0}
                 >
-                  <option value="http">http://</option>
-                  <option value="https">https://</option>
+                  <option value="" disabled>
+                    {!remoteServerId
+                      ? "Select a deploy server first"
+                      : parentDomainSelectOptions.length === 0
+                        ? "No hostnames — add them on the Domains page"
+                        : "Select a hostname…"}
+                  </option>
+                  {parentDomainSelectOptions.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
                 </select>
+                {!remoteServerId ? (
+                  <p className="text-[11px] text-muted-foreground mb-3 leading-snug">
+                    Set this webhook&apos;s deploy server above, then add hostnames on{" "}
+                    <Link href="/domains" className="text-primary hover:underline">
+                      Domains
+                    </Link>
+                    .
+                  </p>
+                ) : parentDomainSelectOptions.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground mb-3 leading-snug">
+                    Add hostnames on{" "}
+                    <Link href="/domains" className="text-primary hover:underline">
+                      Domains
+                    </Link>{" "}
+                    first.
+                  </p>
+                ) : null}
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 mb-3">
+                  <div className="space-y-0.5 min-w-0">
+                    <Label
+                      htmlFor="webhook-trigger-https"
+                      className="text-sm font-medium text-foreground cursor-pointer"
+                    >
+                      HTTPS
+                    </Label>
+                  </div>
+                  <Switch
+                    id="webhook-trigger-https"
+                    checked={remoteTriggerUrlScheme === "https"}
+                    onCheckedChange={(v) =>
+                      setRemoteTriggerUrlScheme(v ? "https" : "http")
+                    }
+                    className="shrink-0"
+                  />
+                </div>
                 <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
                 <div className="relative overflow-hidden rounded-xl border border-border bg-black/50">
                   <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>

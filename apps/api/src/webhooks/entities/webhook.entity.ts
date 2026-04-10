@@ -23,8 +23,8 @@ export type WebhookRemoteTriggerUrlScheme = 'http' | 'https';
 
 @Entity({ name: 'webhooks' })
 export class Webhook {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
+  @PrimaryGeneratedColumn()
+  id!: number;
 
   /** Secret segment in public URL */
   @Column({ name: 'secret_token', type: 'varchar', length: 96, unique: true })
@@ -104,6 +104,19 @@ export class Webhook {
     default: 'http',
   })
   remoteTriggerUrlScheme!: WebhookRemoteTriggerUrlScheme;
+
+  /**
+   * API origin only (e.g. {@code https://weehawk.example.com:8080}). When set, the primary trigger URL is
+   * {@code POST {origin}/hooks/{secretToken}} (same as UI Redeploy) instead of the on-deploy-host agent URL.
+   */
+  @Column({ name: 'hooks_trigger_origin', type: 'varchar', length: 512, nullable: true })
+  hooksTriggerOrigin: string | null = null;
+
+  /**
+   * When true, omitted from GET /api/webhooks (manual list); use ?includeHidden=true to list for service UI.
+   */
+  @Column({ name: 'hidden_from_webhooks_list', default: false })
+  hiddenFromWebhooksList!: boolean;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

@@ -19,12 +19,12 @@ export function useWebhooks() {
   });
 }
 
-export function useWebhook(id: string) {
+export function useWebhook(id: number) {
   const { accessToken } = useAuth();
   return useQuery({
     queryKey: ["webhooks", id],
     queryFn: () => fetchWebhook(accessToken!, id),
-    enabled: Boolean(accessToken) && Boolean(id),
+    enabled: Boolean(accessToken) && Number.isFinite(id),
   });
 }
 
@@ -43,7 +43,7 @@ export function useUpdateWebhook() {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string } & UpdateWebhookBody) =>
+    mutationFn: ({ id, ...body }: { id: number } & UpdateWebhookBody) =>
       updateWebhook(accessToken!, id, body),
     onSuccess: (_, v) => {
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -56,7 +56,7 @@ export function useDeleteWebhook() {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
   return useMutation({
-    mutationFn: (id: string) => deleteWebhook(accessToken!, id),
+    mutationFn: (id: number) => deleteWebhook(accessToken!, id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
     },

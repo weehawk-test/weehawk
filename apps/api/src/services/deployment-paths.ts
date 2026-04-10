@@ -36,7 +36,7 @@ function resolveDeploymentsBaseDir(configuredBaseDir?: string | null): string {
   return path.join(homedir(), '.weehawk', 'deployments');
 }
 
-function toSafePathSegment(raw: string): string {
+export function toSafePathSegment(raw: string): string {
   const normalized = (raw || '')
     .trim()
     .toLowerCase()

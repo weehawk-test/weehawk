@@ -4,7 +4,7 @@ import {
   Delete,
   Get,
   Param,
-  ParseUUIDPipe,
+  ParseIntPipe,
   Patch,
   Post,
   Req,
@@ -49,21 +49,21 @@ export class CronJobsController {
   }
 
   @Get(':id')
-  findOne(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
+  findOne(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
     return this.cronJobsService.findOne(this.uid(), id);
   }
 
   @Patch(':id')
   update(
     @Req() req: AuthedReq,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateCronJobDto,
   ) {
     return this.cronJobsService.update(this.uid(), id, dto);
   }
 
   @Delete(':id')
-  async remove(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
+  async remove(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
     await this.cronJobsService.remove(this.uid(), id);
     return { ok: true };
   }

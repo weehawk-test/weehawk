@@ -56,6 +56,13 @@ export class RemoteServer {
   @Column({ type: 'varchar', length: 45, nullable: true })
   publicIpv4?: string | null;
 
+  /**
+   * Optional JSON string: domain names / metadata per deploy server (for UI notes and tooling).
+   * Example: `["app.example.com","api.example.com"]` or `{"domains":["a.com"],"notes":"prod"}`.
+   */
+  @Column({ type: 'text', nullable: true })
+  domainsJson?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

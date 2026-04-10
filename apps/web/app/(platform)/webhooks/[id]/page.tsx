@@ -10,5 +10,5 @@ export default async function WebhookDetailsPage({ params }: PageProps) {
   const { id } = await params;
   const webhook = await fetchWebhookSSR(id);
   if (!webhook) notFound();
-  return <WebhookDetailsClient id={id} initialWebhook={webhook} />;
+  return <WebhookDetailsClient initialWebhook={webhook} />;
 }

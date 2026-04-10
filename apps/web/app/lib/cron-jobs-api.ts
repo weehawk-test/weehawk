@@ -5,7 +5,7 @@ import type { WebhookServiceAction, WebhookTargetMode } from "./webhooks-api";
 export type { DatabaseBackupConfig };
 
 export type CronJobListItem = {
-  id: string;
+  id: number;
   name: string;
   description: string;
   isActive: boolean;
@@ -84,8 +84,8 @@ export async function fetchCronJobs(accessToken: string): Promise<CronJobListIte
   return data.map((j) => ({ ...j, triggerType: "cron" }));
 }
 
-export async function fetchCronJob(accessToken: string, id: string): Promise<CronJobDetail> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(id)}`, {
+export async function fetchCronJob(accessToken: string, id: number): Promise<CronJobDetail> {
+  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
   });
@@ -124,10 +124,10 @@ export async function createCronJob(
 
 export async function updateCronJob(
   accessToken: string,
-  id: string,
+  id: number,
   body: UpdateCronJobBody,
 ): Promise<CronJobDetail> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(id)}`, {
+  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
     method: "PATCH",
     headers: {
       ...authHeaders(accessToken),
@@ -146,8 +146,8 @@ export async function updateCronJob(
   };
 }
 
-export async function deleteCronJob(accessToken: string, id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(id)}`, {
+export async function deleteCronJob(accessToken: string, id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
     method: "DELETE",
     headers: authHeaders(accessToken),
     credentials: "include",

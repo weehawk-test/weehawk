@@ -24,7 +24,6 @@ export default async function EditWebhookPage({ params }: PageProps) {
   if (!webhook) notFound();
   return (
     <EditWebhookClient
-      id={id}
       initialWebhook={webhook}
       initialChannels={initialChannels}
       initialS3Profiles={initialS3Profiles}

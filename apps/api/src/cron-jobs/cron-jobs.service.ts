@@ -30,7 +30,7 @@ import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
 
 export type CronJobListRow = {
-  id: string;
+  id: number;
   name: string;
   description: string;
   isActive: boolean;
@@ -56,7 +56,7 @@ export type CronJobDetailRow = CronJobListRow & {
 
 @Injectable()
 export class CronJobsService {
-  private readonly lastTickByJob = new Map<string, string>();
+  private readonly lastTickByJob = new Map<number, string>();
   private isTickRunning = false;
 
   constructor(
@@ -73,7 +73,7 @@ export class CronJobsService {
     return `'${value.replace(/'/g, `'\\''`)}'`;
   }
 
-  private cronMarker(jobId: string): string {
+  private cronMarker(jobId: number): string {
     return `WEEHAWK_CRON_JOB:${jobId}`;
   }
 
@@ -81,11 +81,11 @@ export class CronJobsService {
     return '/opt/weehawk-scripts';
   }
 
-  private scriptPathRemote(jobId: string): string {
+  private scriptPathRemote(jobId: number): string {
     return `${this.scriptDirRemote()}/${jobId}.sh`;
   }
 
-  private envPathRemote(jobId: string): string {
+  private envPathRemote(jobId: number): string {
     return `${this.scriptDirRemote()}/${jobId}.env`;
   }
 
@@ -142,7 +142,7 @@ export class CronJobsService {
 
   private async removeCrontabEntryForRemote(
     remoteServerId: number,
-    jobId: string,
+    jobId: number,
   ): Promise<void> {
     const marker = this.cronMarker(jobId);
     const script = [
@@ -161,7 +161,7 @@ export class CronJobsService {
 
   private async writeRemoteScriptFile(
     remoteServerId: number,
-    jobId: string,
+    jobId: number,
     scriptBody: string,
     envLines: string[],
   ): Promise<void> {
@@ -185,7 +185,7 @@ export class CronJobsService {
 
   private async removeRemoteScriptFile(
     remoteServerId: number,
-    jobId: string,
+    jobId: number,
   ): Promise<void> {
     const scriptPath = this.scriptPathRemote(jobId);
     const envPath = this.envPathRemote(jobId);
@@ -428,7 +428,7 @@ export class CronJobsService {
 
   private async finalizeBackupWithS3(
     userId: number,
-    contextId: string,
+    contextId: number,
     profileName: string | null | undefined,
     destDir: string,
     r: { success: boolean; output: string; archiveBasename?: string },
@@ -548,7 +548,7 @@ export class CronJobsService {
     return list.map((w) => this.toListRow(w));
   }
 
-  async findOne(userId: number, id: string): Promise<CronJobDetailRow> {
+  async findOne(userId: number, id: number): Promise<CronJobDetailRow> {
     const job = await this.cronJobRepo.findOne({ where: { id } });
     if (!job) throw new NotFoundException('Cron job not found');
     return this.toDetailRow(job);
@@ -556,7 +556,7 @@ export class CronJobsService {
 
   async update(
     userId: number,
-    id: string,
+    id: number,
     dto: UpdateCronJobDto,
   ): Promise<CronJobDetailRow> {
     const job = await this.cronJobRepo.findOne({ where: { id } });
@@ -640,7 +640,7 @@ export class CronJobsService {
     return this.toDetailRow(saved);
   }
 
-  async remove(userId: number, id: string): Promise<void> {
+  async remove(userId: number, id: number): Promise<void> {
     const existing = await this.cronJobRepo.findOne({ where: { id } });
     if (!existing) throw new NotFoundException('Cron job not found');
     await this.removeCrontabEntry(existing);

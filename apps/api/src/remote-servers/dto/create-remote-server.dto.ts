@@ -13,6 +13,8 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+const DOMAINS_JSON_MAX = 65_535;
+
 export class CreateRemoteServerDto {
   @ApiProperty({ example: 'Production Docker' })
   @IsString()
@@ -75,13 +77,21 @@ export class CreateRemoteServerDto {
     example: '203.0.113.10',
   })
   @IsOptional()
-  @ValidateIf((_, o) => {
-    const v = (o as { publicIpv4?: string }).publicIpv4;
-    return v != null && String(v).trim().length > 0;
-  })
+  @ValidateIf((_object, value) => value != null && String(value).trim().length > 0)
   @IsString()
   @Matches(/^(\d{1,3}\.){3}\d{1,3}$/, {
     message: 'publicIpv4 must be a dotted IPv4 address',
   })
   publicIpv4?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Optional JSON string listing domains or metadata for this server (shown on the Domains page for deploy hosts).',
+    example: '["app.example.com","api.example.com"]',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(DOMAINS_JSON_MAX)
+  domainsJson?: string;
 }

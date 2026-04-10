@@ -150,10 +150,14 @@ echo "Weehawk: [script preview] Install also creates Swarm service weehawk-webho
 WA_SVC='weehawk-webhook-agent'
 WA_PORT='8759'
 WA_SCRIPTS='/opt/weehawk-scripts/webhooks'
+WA_DEPLOY='/opt/weehawk-deployments'
 WA_PFIX='hooks'
 WA_IMG='${img}'
 WA_MOUNT="type=bind,source=\${WA_SCRIPTS},target=\${WA_SCRIPTS}"
+WA_MOUNT_DEPLOY="type=bind,source=\${WA_DEPLOY},target=\${WA_DEPLOY}"
+WA_MOUNT_SOCK="type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock"
 $SUDO_CMD mkdir -p "$WA_SCRIPTS"
+$SUDO_CMD mkdir -p "$WA_DEPLOY"
 if ! $SUDO_CMD docker image inspect "$WA_IMG" >/dev/null 2>&1; then
   echo "Weehawk: skip $WA_SVC — Docker image not present (set WEEHAWK_WEBHOOK_AGENT_IMAGE on the API or ship the webhook bundle)."
 elif $SUDO_CMD docker service ls --format '{{.Name}}' 2>/dev/null | grep -qx "$WA_SVC"; then
@@ -165,6 +169,8 @@ else
     --network "$OVERLAY_NET" \\
     --constraint node.role==manager \\
     --mount "$WA_MOUNT" \\
+    --mount "$WA_MOUNT_DEPLOY" \\
+    --mount "$WA_MOUNT_SOCK" \\
     -e "WEEHAWK_HOOK_LISTEN=:\${WA_PORT}" \\
     -e "WEEHAWK_HOOK_SCRIPTS_DIR=$WA_SCRIPTS" \\
     -e "WEEHAWK_HOOK_PATH_PREFIX=$WA_PFIX" \\

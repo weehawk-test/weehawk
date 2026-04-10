@@ -450,7 +450,7 @@ export function RemoteServerSettingsClient() {
                       Local
                     </span>
                     <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-sky-500/35 text-sky-300/95 bg-sky-500/10">
-                      Build only
+                      Build
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">

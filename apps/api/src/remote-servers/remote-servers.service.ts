@@ -48,6 +48,7 @@ import {
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
+import { toSafePathSegment } from '../services/deployment-paths';
 
 /**
  * Bash-safe `export VAR='…'` lines so `docker stack deploy` can substitute `${VAR}` in the compose
@@ -132,6 +133,12 @@ function humanizeRemoteTestError(raw: string, mode: 'docker' | 'ssh'): string {
 /** Bash scripts for webhooks are uploaded here for the on-host Go webhook agent. */
 export const WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR = '/opt/weehawk-scripts/webhooks';
 
+/**
+ * After each remote stack deploy, the compose bundle is copied here so redeploy webhooks can run
+ * `docker stack deploy` / `docker compose` on the host without calling the Weehawk API.
+ */
+export const WEEHAWK_REMOTE_DEPLOYMENTS_BASE = '/opt/weehawk-deployments';
+
 const WEEHAWK_WEBHOOK_SWARM_SERVICE_NAME = 'weehawk-webhook-agent';
 
 function shSingleQuoteRemote(s: string): string {
@@ -169,9 +176,27 @@ export type RemoteServerSafe = {
   extraSshOptions: string | null;
   /** Public IPv4 for Magic Traefik.me hostnames (optional). */
   publicIpv4: string | null;
+  /** Optional JSON: domain labels / metadata (primarily for deploy servers). */
+  domainsJson: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
+
+const DOMAINS_JSON_MAX_LEN = 65_535;
+
+function normalizeDomainsJsonInput(raw: string | undefined): string | null {
+  const t = String(raw ?? '').trim();
+  if (!t) return null;
+  if (t.length > DOMAINS_JSON_MAX_LEN) {
+    throw new BadRequestException('domainsJson exceeds maximum length');
+  }
+  try {
+    JSON.parse(t);
+  } catch {
+    throw new BadRequestException('domainsJson must be valid JSON');
+  }
+  return t;
+}
 
 @Injectable()
 export class RemoteServersService {
@@ -252,6 +277,7 @@ export class RemoteServersService {
       privateKeyPath: hasPath ? rs.privateKeyPath! : null,
       extraSshOptions: rs.extraSshOptions ?? null,
       publicIpv4: rs.publicIpv4?.trim() ? rs.publicIpv4.trim() : null,
+      domainsJson: rs.domainsJson?.trim() ? rs.domainsJson.trim() : null,
       createdAt: rs.createdAt,
       updatedAt: rs.updatedAt,
     };
@@ -557,7 +583,16 @@ export class RemoteServersService {
       .filter(Boolean);
 
     const imageQ = shSingleQuoteRemote(image);
-    const mountArg = `type=bind,source=${scriptsDir},target=${scriptsDir}`;
+    /** Scripts uploaded by the API (token.sh). */
+    const mountScripts = `type=bind,source=${scriptsDir},target=${scriptsDir}`;
+    /**
+     * On-host redeploy bash must read docker-compose.yml under {@link WEEHAWK_REMOTE_DEPLOYMENTS_BASE}.
+     * Without this mount the agent container only saw an empty path while the host had the mirror.
+     */
+    const mountDeployments = `type=bind,source=${WEEHAWK_REMOTE_DEPLOYMENTS_BASE},target=${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}`;
+    /** Bash redeploy scripts invoke `docker`; the agent image is client-only and talks to the host daemon. */
+    const mountDockerSock =
+      'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock';
 
     const labelsPart = rule
       ? (() => {
@@ -591,7 +626,9 @@ export class RemoteServersService {
       '--name "$SVC"',
       '--network "$NET"',
       '--constraint node.role==manager',
-      `--mount ${shSingleQuoteRemote(mountArg)}`,
+      `--mount ${shSingleQuoteRemote(mountScripts)}`,
+      `--mount ${shSingleQuoteRemote(mountDeployments)}`,
+      `--mount ${shSingleQuoteRemote(mountDockerSock)}`,
       `-e WEEHAWK_HOOK_LISTEN=:${port}`,
       '-e WEEHAWK_HOOK_SCRIPTS_DIR="$SCRIPTS"',
       '-e WEEHAWK_HOOK_PATH_PREFIX="$PFIX"',
@@ -605,10 +642,12 @@ export class RemoteServersService {
       `NET=${shSingleQuoteRemote(net)}`,
       `SVC=${shSingleQuoteRemote(svc)}`,
       `SCRIPTS=${shSingleQuoteRemote(scriptsDir)}`,
+      `DEPLOY=${shSingleQuoteRemote(WEEHAWK_REMOTE_DEPLOYMENTS_BASE)}`,
       `PFIX=${shSingleQuoteRemote(pathPrefix)}`,
       'if ! command -v docker >/dev/null 2>&1; then echo "docker CLI not found on remote host" >&2; exit 1; fi',
       'if ! docker info 2>/dev/null | grep -q "Swarm: active"; then echo "Docker Swarm is not active. Run Weehawk deploy-server provision on this host first (Swarm + weehawk overlay network)." >&2; exit 1; fi',
       'sudo -n mkdir -p "$SCRIPTS" 2>/dev/null || sudo mkdir -p "$SCRIPTS"',
+      'sudo -n mkdir -p "$DEPLOY" 2>/dev/null || sudo mkdir -p "$DEPLOY"',
       'sudo -n systemctl stop weehawk-webhook-agent 2>/dev/null || true',
       'sudo -n systemctl disable weehawk-webhook-agent 2>/dev/null || true',
       ...(pullImage ? ['docker pull "$IMAGE" || true'] : []),
@@ -1089,7 +1128,9 @@ sudo -n systemctl enable --now weehawk-webhook-agent
       userScriptBody: scriptBody,
       defaults: REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
     });
+    const deployBaseQ = WEEHAWK_REMOTE_DEPLOYMENTS_BASE.replace(/'/g, `'\\''`);
     await this.withSshClient(p, async (client) => {
+      await this.sshExecIgnoreFailure(client, `mkdir -p '${deployBaseQ}'`);
       await this.execSshBashScriptCollectOutputOnClient(client, installScript, undefined);
     });
   }
@@ -1184,9 +1225,158 @@ else
   docker stack deploy -c docker-compose.yml --with-registry-auth '${stackQ}'
 fi
 `;
-        return await this.execSshBashScriptCollectOutputOnClient(client, deployScript, onChunk);
+        const result = await this.execSshBashScriptCollectOutputOnClient(
+          client,
+          deployScript,
+          onChunk,
+        );
+        await this.copyRemoteStackDeployToPersistentMirror(
+          client,
+          remoteDir,
+          params.stackName,
+          params.deployEnv,
+          onChunk,
+        );
+        return result;
       } finally {
         await this.sshExecIgnoreFailure(client, `rm -rf '${remoteDir}'`);
+      }
+    });
+  }
+
+  /**
+   * Keeps a copy of the last stack deploy bundle under {@link WEEHAWK_REMOTE_DEPLOYMENTS_BASE}
+   * for on-host redeploy scripts.
+   */
+  private async copyRemoteStackDeployToPersistentMirror(
+    client: Client,
+    remoteTempDir: string,
+    stackName: string,
+    deployEnv: Record<string, string> | undefined,
+    onChunk?: (s: string) => void,
+  ): Promise<void> {
+    const tempQ = shSingleQuoteRemote(remoteTempDir);
+    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(stackName)}`;
+    const persistQ = shSingleQuoteRemote(persist);
+    const mirrorScript = `set -euo pipefail
+mkdir -p ${persistQ}
+cp -f ${tempQ}/docker-compose.yml ${persistQ}/
+if [ -d ${tempQ}/docker-config ]; then
+  rm -rf ${persistQ}/docker-config
+  cp -a ${tempQ}/docker-config ${persistQ}/
+fi
+`;
+    await this.execSshBashScriptCollectOutputOnClient(client, mirrorScript, onChunk);
+    const envExports = bashExportBlockForStackDeploy(deployEnv ?? {});
+    if (envExports.trim()) {
+      await this.sftpWriteRemoteFile(
+        client,
+        `${persist}/weehawk-stack-env.sh`,
+        `${envExports}\n`,
+      );
+    } else {
+      await this.sshExecIgnoreFailure(
+        client,
+        `rm -f ${persistQ}/weehawk-stack-env.sh`,
+      );
+    }
+  }
+
+  /** Writes compose for non-Swarm remote projects to the same persistent dir layout as stacks. */
+  async mirrorDockerComposeToRemotePersistent(
+    remoteServerId: number,
+    projectUserId: number | null,
+    params: { localComposeAbsolutePath: string; projectName: string },
+  ): Promise<void> {
+    const yaml = await fs.readFile(params.localComposeAbsolutePath, 'utf8');
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(params.projectName)}`;
+    const remoteYml = `${persist}/docker-compose.yml`;
+    const persistQ = persist.replace(/'/g, `'\\''`);
+    await this.withSshClient(p, async (client) => {
+      await this.sshExecCollectOutput(client, `mkdir -p '${persistQ}'`, undefined);
+      await this.sftpWriteRemoteFile(client, remoteYml, yaml);
+    });
+  }
+
+  /**
+   * Writes compose (and optional registry config + env exports) under {@link WEEHAWK_REMOTE_DEPLOYMENTS_BASE}
+   * without running `docker stack deploy` — same layout as after a successful remote stack deploy mirror.
+   */
+  async writePersistentDeploymentMirror(
+    remoteServerId: number,
+    projectUserId: number | null,
+    params: {
+      stackName: string;
+      composeYaml: string;
+      deployEnv?: Record<string, string>;
+      localDockerConfigDir?: string;
+    },
+  ): Promise<void> {
+    const rs = await this.remoteServerRepository.findOne({
+      where: { id: remoteServerId },
+    });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(params.stackName)}`;
+    const persistQ = persist.replace(/'/g, `'\\''`);
+
+    let configJson: string | undefined;
+    if (params.localDockerConfigDir?.trim()) {
+      const cfgPath = path.join(params.localDockerConfigDir.trim(), 'config.json');
+      try {
+        configJson = await fs.readFile(cfgPath, 'utf8');
+      } catch {
+        configJson = undefined;
+      }
+    }
+
+    await this.withSshClient(p, async (client) => {
+      await this.sshExecCollectOutput(client, `mkdir -p '${persistQ}'`, undefined);
+      await this.sftpWriteRemoteFile(
+        client,
+        `${persist}/docker-compose.yml`,
+        params.composeYaml,
+      );
+      if (configJson != null) {
+        await this.sshExecCollectOutput(
+          client,
+          `mkdir -p '${persistQ}/docker-config'`,
+          undefined,
+        );
+        await this.sftpWriteRemoteFile(
+          client,
+          `${persist}/docker-config/config.json`,
+          configJson,
+        );
+      } else {
+        await this.sshExecIgnoreFailure(
+          client,
+          `rm -rf '${persistQ}/docker-config'`,
+        );
+      }
+      const envExports = bashExportBlockForStackDeploy(params.deployEnv ?? {});
+      if (envExports.trim()) {
+        await this.sftpWriteRemoteFile(
+          client,
+          `${persist}/weehawk-stack-env.sh`,
+          `${envExports}\n`,
+        );
+      } else {
+        await this.sshExecIgnoreFailure(
+          client,
+          `rm -f '${persistQ}/weehawk-stack-env.sh'`,
+        );
       }
     });
   }
@@ -1556,6 +1746,10 @@ done
       privateKeyPath: null,
       extraSshOptions: dto.extraSshOptions?.trim() || null,
       publicIpv4: dto.publicIpv4?.trim() ? dto.publicIpv4.trim() : null,
+      domainsJson:
+        dto.domainsJson !== undefined && String(dto.domainsJson).trim()
+          ? normalizeDomainsJsonInput(String(dto.domainsJson))
+          : null,
     });
     const saved = await this.remoteServerRepository.save(entity);
     return this.toSafe(saved);
@@ -1628,6 +1822,12 @@ done
           : dto.publicIpv4 != null && String(dto.publicIpv4).trim()
             ? String(dto.publicIpv4).trim()
             : null,
+      domainsJson:
+        dto.domainsJson === undefined
+          ? existing.domainsJson ?? null
+          : normalizeDomainsJsonInput(
+              dto.domainsJson == null ? undefined : String(dto.domainsJson),
+            ),
       privateKeyEncrypted: nextEnc,
       privateKeyPath: nextPath,
     });

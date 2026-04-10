@@ -30,7 +30,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
   const { toast } = useToast();
   const confirm = useConfirm();
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
-  const [copiedWebhookId, setCopiedWebhookId] = useState<string | null>(null);
+  const [copiedWebhookId, setCopiedWebhookId] = useState<number | null>(null);
 
   const filtered =
     (webhooks ?? []).filter(
@@ -39,10 +39,10 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
         (w.description || "").toLowerCase().includes(search.toLowerCase()) ||
         w.summary.toLowerCase().includes(search.toLowerCase()),
     );
-  const webhookKeys = useMemo(() => filtered.map((w) => w.id), [filtered]);
+  const webhookKeys = useMemo(() => filtered.map((w) => String(w.id)), [filtered]);
   const webhooksBulk = useBulkSelection(webhookKeys);
 
-  const handleDelete = async (id: string, name: string) => {
+  const handleDelete = async (id: number, name: string) => {
     const ok = await confirm({
       title: "Delete webhook?",
       description: `“${name}” will be removed and will stop running.`,
@@ -72,7 +72,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
 
     setIsBulkDeleting(true);
     try {
-      await Promise.all(ids.map((id) => deleteWebhook.mutateAsync(id)));
+      await Promise.all(ids.map((id) => deleteWebhook.mutateAsync(Number(id))));
       webhooksBulk.clear();
       toast({ title: "Webhooks deleted", description: `${ids.length} webhook(s) removed.` });
       router.refresh();
@@ -84,7 +84,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
     }
   };
 
-  const handleCopyWebhookUrl = async (id: string, triggerUrl: string) => {
+  const handleCopyWebhookUrl = async (id: number, triggerUrl: string) => {
     try {
       await navigator.clipboard.writeText(triggerUrl);
       setCopiedWebhookId(id);
@@ -95,7 +95,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
     }
   };
 
-  const handleToggleActive = (id: string, name: string, currentIsActive: boolean) => {
+  const handleToggleActive = (id: number, name: string, currentIsActive: boolean) => {
     updateWebhook.mutate(
       { id, isActive: !currentIsActive },
       {
@@ -241,21 +241,21 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                     </button>
                     <div
                       className={`transition-opacity ${
-                        webhooksBulk.selected.has(w.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        webhooksBulk.selected.has(String(w.id)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                       }`}
                     >
                       <DockerBulkCheckbox
-                        checked={webhooksBulk.selected.has(w.id)}
-                        onCheckedChange={() => webhooksBulk.toggle(w.id)}
+                        checked={webhooksBulk.selected.has(String(w.id))}
+                        onCheckedChange={() => webhooksBulk.toggle(String(w.id))}
                         aria-label={`Select webhook ${w.name}`}
                       />
                     </div>
                   </div>
                 </div>
 
-                {w.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2">{w.description}</p>
-                )}
+                <p className="text-sm text-muted-foreground line-clamp-2">
+                  {(w.description || "").trim() || "No description"}
+                </p>
 
                 {w.remoteTriggerUrl && (
                   <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">

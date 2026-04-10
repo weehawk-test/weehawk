@@ -26,11 +26,10 @@ import type { WebhookDetail } from "@/lib/webhooks-api";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 
 type Props = {
-  id: string;
   initialWebhook: WebhookDetail;
 };
 
-export function WebhookDetailsClient({ id, initialWebhook }: Props) {
+export function WebhookDetailsClient({ initialWebhook }: Props) {
   const router = useRouter();
   const webhook = initialWebhook;
 
@@ -64,7 +63,7 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
 
   const handleToggleActive = () => {
     updateMutation.mutate(
-      { id, isActive: !webhook.isActive },
+      { id: webhook.id, isActive: !webhook.isActive },
       {
         onSuccess: (updated) => {
           toast({
@@ -117,13 +116,13 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
                 {webhook.isActive ? "Active" : "Inactive"}
               </span>
             </div>
-            {webhook.description && (
-              <p className="text-muted-foreground text-base">{webhook.description}</p>
-            )}
+            <p className="text-muted-foreground text-base">
+              {webhook.description?.trim() || "No description"}
+            </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <Link href={`/webhooks/${id}/edit`}>
+            <Link href={`/webhooks/${webhook.id}/edit`}>
               <button type="button" className="btn-secondary whitespace-nowrap flex items-center gap-2">
                 <Pencil className="w-4 h-4" /> Edit
               </button>
@@ -155,21 +154,6 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
                 <div className="font-mono text-primary text-sm break-all selection:bg-primary/30 leading-relaxed">
                   {remoteAgentUrl}
                 </div>
-                {(webhook.hooksPublicHost || webhook.serviceAction === "docker_command") && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {webhook.hooksPublicHost ? (
-                      <>
-                        Public host (Traefik):{" "}
-                        <span className="font-mono text-foreground/90">{webhook.hooksPublicHost}</span>
-                        {" · "}
-                      </>
-                    ) : null}
-                    Trigger URL scheme:{" "}
-                    <span className="font-mono text-foreground/90">
-                      {webhook.remoteTriggerUrlScheme === "https" ? "https" : "http"}
-                    </span>
-                  </p>
-                )}
               </div>
               <button
                 type="button"
@@ -332,7 +316,7 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
                 variant: "destructive",
               });
               if (!ok) return;
-              deleteMutation.mutate(id, {
+              deleteMutation.mutate(webhook.id, {
                 onSuccess: () => router.replace("/webhooks"),
                 onError: (e: Error) =>
                   toast({ title: "Delete failed", description: e.message, variant: "destructive" }),

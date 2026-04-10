@@ -219,6 +219,11 @@ export function mapApiServiceToService(row: unknown): Service {
                 : typeof (rs as { publicIpv4?: unknown }).publicIpv4 === "string"
                   ? (rs as { publicIpv4: string }).publicIpv4
                   : null,
+            domainsJson:
+              (rs as { domainsJson?: string | null }).domainsJson != null &&
+              String((rs as { domainsJson?: unknown }).domainsJson).trim()
+                ? String((rs as { domainsJson: string }).domainsJson)
+                : null,
           }
         : undefined,
     buildRemoteServerId,
@@ -537,6 +542,19 @@ export async function executeServiceDeploymentApi(
   }
   const j = JSON.parse(text) as { success?: boolean; output?: string };
   return { success: j.success !== false, output: typeof j.output === "string" ? j.output : "" };
+}
+
+/** Uploads saved compose to the deploy host `/opt/weehawk-deployments/...` mirror without running docker (for on-host webhooks). */
+export async function syncRemoteDeploymentMirrorApi(id: string): Promise<{ ok: boolean }> {
+  const res = await apiFetch(
+    `/api/services/${encodeURIComponent(id)}/sync-remote-deployment-mirror`,
+    { method: "POST" },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return JSON.parse(text) as { ok: boolean };
 }
 
 /** SSE: same deploy as `POST .../execute` with streamed chunks (`{ data }`) then `{ done, success, output }`. */

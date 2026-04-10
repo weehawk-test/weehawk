@@ -10,8 +10,8 @@ import type { WebhookServiceAction, WebhookTargetMode } from '../../webhooks/ent
 
 @Entity({ name: 'cron_jobs' })
 export class CronJob {
-  @PrimaryGeneratedColumn('uuid')
-  id!: string;
+  @PrimaryGeneratedColumn()
+  id!: number;
 
   @Column({ type: 'varchar', length: 200 })
   name!: string;

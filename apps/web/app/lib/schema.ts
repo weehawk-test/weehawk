@@ -59,6 +59,8 @@ export const serviceSchema = z.object({
       id: z.number(),
       name: z.string(),
       publicIpv4: z.string().nullable().optional(),
+      /** JSON list from Domains page (deploy server). */
+      domainsJson: z.string().nullable().optional(),
     })
     .nullable()
     .optional(),

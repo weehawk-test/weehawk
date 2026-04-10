@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { useCreateWebhook } from "@/hooks/use-webhooks";
 import { type WebhookRemoteTriggerUrlScheme, type WebhookTargetMode } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
@@ -18,6 +19,8 @@ import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 type Props = {
   initialServices: Service[];
@@ -72,7 +75,14 @@ export function CreateWebhookClient({
     () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
     [initialRemoteServers],
   );
-
+  const selectedDeployServer = useMemo(
+    () => deployServers.find((s) => String(s.id) === remoteServerId) ?? null,
+    [deployServers, remoteServerId],
+  );
+  const serverHostnames = useMemo(
+    () => hostsFromRemoteServerDomainsJson(selectedDeployServer?.domainsJson ?? null),
+    [selectedDeployServer?.domainsJson],
+  );
   const submit = () => {
     if (!name.trim()) {
       toast({ title: "Name required", variant: "destructive" });
@@ -97,6 +107,26 @@ export function CreateWebhookClient({
       toast({ title: "Select a valid server", variant: "destructive" });
       return;
     }
+    const host = hooksPublicHost.trim();
+    if (!host) {
+      toast({
+        title: "Hostname required",
+        description:
+          serverHostnames.length === 0
+            ? "Add at least one hostname for this deploy server on the Domains page."
+            : "Choose a hostname from the list.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!serverHostnames.some((h) => h.toLowerCase() === host.toLowerCase())) {
+      toast({
+        title: "Invalid hostname",
+        description: "Pick a hostname saved for this deploy server on the Domains page.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     createMutation.mutate(
       {
@@ -107,7 +137,7 @@ export function CreateWebhookClient({
         dockerCommand: bashScript.trim(),
         remoteServerId: parsedRemoteServerId,
         remoteTriggerUrlScheme,
-        ...(hooksPublicHost.trim() ? { hooksPublicHost: hooksPublicHost.trim() } : {}),
+        hooksPublicHost: host,
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId, notifyMessage: notifyMessage.trim() }
           : {}),
@@ -185,7 +215,10 @@ export function CreateWebhookClient({
                   <select
                     className="input-field"
                     value={remoteServerId}
-                    onChange={(e) => setRemoteServerId(e.target.value)}
+                    onChange={(e) => {
+                      setRemoteServerId(e.target.value);
+                      setHooksPublicHost("");
+                    }}
                     required
                     disabled={deployServers.length === 0}
                   >
@@ -202,40 +235,62 @@ export function CreateWebhookClient({
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">
-                    Parent domain (optional)
-                  </label>
-                  <input
+                  <label className="text-xs text-muted-foreground mb-1 block">Hostname</label>
+                  <select
                     className="input-field"
                     value={hooksPublicHost}
                     onChange={(e) => setHooksPublicHost(e.target.value)}
-                    placeholder="e.g. example.com"
-                    autoComplete="off"
-                  />
-                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                    Weehawk uses <code className="text-primary/90">weehawk-webhook.&lt;your-domain&gt;</code> for Traefik
-                    and the trigger URL. Point that hostname in DNS to this server. Leave empty to use IP and agent port
-                    only.
-                  </p>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Trigger URL scheme</label>
-                  <select
-                    className="input-field"
-                    value={remoteTriggerUrlScheme}
-                    onChange={(e) =>
-                      setRemoteTriggerUrlScheme(
-                        e.target.value === "https" ? "https" : "http",
-                      )
-                    }
+                    required
+                    disabled={!remoteServerId || serverHostnames.length === 0}
                   >
-                    <option value="http">http://</option>
-                    <option value="https">https://</option>
+                    <option value="" disabled>
+                      {!remoteServerId
+                        ? "Select a deploy server first"
+                        : serverHostnames.length === 0
+                          ? "No hostnames — add them on the Domains page"
+                          : "Select a hostname…"}
+                    </option>
+                    {serverHostnames.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
                   </select>
-                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                    Use the scheme that matches your Traefik entrypoint (or IP access). This is stored on the webhook,
-                    not from server environment variables.
-                  </p>
+                  {!remoteServerId ? (
+                    <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                      Set this webhook&apos;s deploy server above, then add hostnames on{" "}
+                      <Link href="/domains" className="text-primary hover:underline">
+                        Domains
+                      </Link>
+                      .
+                    </p>
+                  ) : serverHostnames.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                      Add hostnames on{" "}
+                      <Link href="/domains" className="text-primary hover:underline">
+                        Domains
+                      </Link>{" "}
+                      first.
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+                  <div className="space-y-0.5 min-w-0">
+                    <Label
+                      htmlFor="webhook-trigger-https"
+                      className="text-sm font-medium text-foreground cursor-pointer"
+                    >
+                      HTTPS
+                    </Label>
+                  </div>
+                  <Switch
+                    id="webhook-trigger-https"
+                    checked={remoteTriggerUrlScheme === "https"}
+                    onCheckedChange={(v) =>
+                      setRemoteTriggerUrlScheme(v ? "https" : "http")
+                    }
+                    className="shrink-0"
+                  />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>

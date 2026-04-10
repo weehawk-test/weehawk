@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RemoteServersModule } from '../remote-servers/remote-servers.module';
@@ -13,12 +13,13 @@ import { PublicWebhookHostGuard } from './public-webhook-host.guard';
 @Module({
   imports: [
     TypeOrmModule.forFeature([Webhook]),
-    ServicesModule,
+    forwardRef(() => ServicesModule),
     RemoteServersModule,
     NotificationsModule,
     S3Module,
   ],
   controllers: [WebhooksController, WebhooksTriggerController],
   providers: [WebhooksService, PublicWebhookHostGuard],
+  exports: [WebhooksService],
 })
 export class WebhooksModule {}

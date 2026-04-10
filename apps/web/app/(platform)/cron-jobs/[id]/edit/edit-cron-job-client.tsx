@@ -44,7 +44,6 @@ function backupConfigToForm(cfg: DatabaseBackupConfig | null): DatabaseBackupFor
 }
 
 type Props = {
-  id: string;
   initialCronJob: CronJobDetail;
   initialChannels: NotificationChannel[];
   initialS3Profiles: S3ProfilePublic[];
@@ -53,7 +52,6 @@ type Props = {
 };
 
 export function EditCronJobClient({
-  id,
   initialCronJob,
   initialChannels,
   initialS3Profiles,
@@ -156,7 +154,7 @@ export function EditCronJobClient({
 
     updateMutation.mutate(
       {
-        id,
+        id: initialCronJob.id,
         name: name.trim(),
         description: description.trim(),
         cronExpression: cronExpression.trim(),
@@ -188,7 +186,7 @@ export function EditCronJobClient({
           : {}),
       },
       {
-        onSuccess: () => router.push(`/cron-jobs/${id}`),
+        onSuccess: () => router.push(`/cron-jobs/${initialCronJob.id}`),
         onError: (e: Error) =>
           toast({ title: "Could not update cron job", description: e.message, variant: "destructive" }),
       },

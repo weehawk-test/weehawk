@@ -13,11 +13,10 @@ import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 import { motion } from "framer-motion";
 
 type Props = {
-  id: string;
   initialCronJob: CronJobDetail;
 };
 
-export function CronJobDetailsClient({ id, initialCronJob }: Props) {
+export function CronJobDetailsClient({ initialCronJob }: Props) {
   const router = useRouter();
   const cronJob = initialCronJob;
   const { toast } = useToast();
@@ -61,10 +60,12 @@ export function CronJobDetailsClient({ id, initialCronJob }: Props) {
                 {cronJob.isActive ? "Active" : "Inactive"}
               </span>
             </div>
-            {cronJob.description && <p className="text-muted-foreground text-base">{cronJob.description}</p>}
+            <p className="text-muted-foreground text-base">
+              {cronJob.description?.trim() || "No description"}
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            <Link href={`/cron-jobs/${id}/edit`}>
+            <Link href={`/cron-jobs/${cronJob.id}/edit`}>
               <button type="button" className="btn-secondary whitespace-nowrap flex items-center gap-2">
                 <Pencil className="w-4 h-4" /> Edit
               </button>
@@ -73,7 +74,7 @@ export function CronJobDetailsClient({ id, initialCronJob }: Props) {
               type="button"
               onClick={() =>
                 updateMutation.mutate(
-                  { id, isActive: !cronJob.isActive },
+                  { id: cronJob.id, isActive: !cronJob.isActive },
                   {
                     onSuccess: (updated) => {
                       toast({
@@ -249,7 +250,7 @@ export function CronJobDetailsClient({ id, initialCronJob }: Props) {
                 variant: "destructive",
               });
               if (!ok) return;
-              deleteMutation.mutate(id, {
+              deleteMutation.mutate(cronJob.id, {
                 onSuccess: () => router.replace("/cron-jobs"),
               });
             }}

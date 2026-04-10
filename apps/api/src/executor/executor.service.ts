@@ -143,6 +143,16 @@ export class ExecutorService {
       service.appName,
     );
     await fs.writeFile(composeFile, finalConfig);
+    if (sshTargets.remoteServerId != null && !isSwarmStackService(service)) {
+      await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
+        sshTargets.remoteServerId,
+        projectUserId,
+        {
+          localComposeAbsolutePath: composeFile,
+          projectName: service.appName || 'service',
+        },
+      );
+    }
 
     const execOpts = {
       cwd: deployDir,
@@ -460,6 +470,108 @@ export class ExecutorService {
       }
       return { success: false, output: formatExecError(error) };
     }
+  }
+
+  /**
+   * Copies the saved compose bundle to the deploy host under `/opt/weehawk-deployments/<app>/`
+   * (and Swarm registry/env sidecar files) without running `docker stack deploy` / compose up —
+   * so on-host redeploy webhooks work before the first full deploy from Weehawk.
+   */
+  async syncRemoteDeploymentMirror(
+    id: number,
+    _actingUserId: number,
+  ): Promise<{ ok: boolean }> {
+    const service = await this.servicesService.findOne(id);
+    const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId: number | null = null;
+    const remoteId = sshTargets.remoteServerId;
+    if (remoteId == null) {
+      throw new BadRequestException(
+        'This service has no deploy host selected. Choose a remote Docker host for this service.',
+      );
+    }
+    const rawConfig = (service.dockerConfig || '').trim();
+    if (!rawConfig) {
+      if (service.composeType === composeType.DATABASES) {
+        throw new BadRequestException(
+          'No stack file yet. Configure the database stack (or paste YAML), save, then try again.',
+        );
+      }
+      throw new BadRequestException(
+        'No compose YAML saved for this service yet. Save the service configuration first.',
+      );
+    }
+    const deployDir = getServiceDeploymentDir(
+      service.appName,
+      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+    );
+    await fs.mkdir(deployDir, { recursive: true });
+    const composeFile = path.join(deployDir, 'docker-compose.yml');
+    const finalConfig = service.dockerConfig.replace(
+      /\${APP_NAME}/g,
+      service.appName,
+    );
+    if (!finalConfig.trim()) {
+      throw new BadRequestException(
+        'Compose content is empty after resolving ${APP_NAME}. Fix the service YAML and save.',
+      );
+    }
+    await fs.writeFile(composeFile, finalConfig);
+
+    if (!isSwarmStackService(service)) {
+      await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
+        remoteId,
+        projectUserId,
+        {
+          localComposeAbsolutePath: composeFile,
+          projectName: service.appName || 'service',
+        },
+      );
+      return { ok: true };
+    }
+
+    const authImageRef =
+      parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim() ||
+      firstImageRefFromComposeYaml(finalConfig) ||
+      '';
+    const deployEnv = parseEnv(service.env || '');
+    const execEnv = await this.getProcessEnvForService(service);
+    if (authImageRef.trim()) {
+      const merged = await this.registryService.mergePushEnvForImageRef(
+        authImageRef,
+        execEnv,
+      );
+      let localDockerConfigDir: string | undefined;
+      const dockerCfg = merged.env.DOCKER_CONFIG;
+      if (typeof dockerCfg === 'string' && dockerCfg.trim().length > 0) {
+        localDockerConfigDir = dockerCfg.trim();
+      }
+      try {
+        await this.remoteServersService.writePersistentDeploymentMirror(
+          remoteId,
+          projectUserId,
+          {
+            stackName: service.appName || 'service',
+            composeYaml: finalConfig,
+            deployEnv,
+            localDockerConfigDir,
+          },
+        );
+      } finally {
+        await merged.cleanup();
+      }
+    } else {
+      await this.remoteServersService.writePersistentDeploymentMirror(
+        remoteId,
+        projectUserId,
+        {
+          stackName: service.appName || 'service',
+          composeYaml: finalConfig,
+          deployEnv,
+        },
+      );
+    }
+    return { ok: true };
   }
 
   /** Start stopped containers; compose tries `start` then `up -d --no-build`. Stack: stack deploy. */
