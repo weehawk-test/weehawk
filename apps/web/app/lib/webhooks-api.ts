@@ -11,6 +11,20 @@ export type WebhookServiceAction =
   | "docker_command"
   | "no_action";
 
+export type WebhookRemoteTriggerUrlScheme = "http" | "https";
+
+/** Must match apps/api/src/webhooks/hooks-public-host.ts */
+const WEEHAWK_HOOK_PUBLIC_HOST_PREFIX = "weehawk-webhook.";
+
+/** Strip Weehawk subdomain for edit form (user edits parent domain only). */
+export function hooksPublicHostForDisplay(stored: string | null | undefined): string {
+  if (stored == null || !String(stored).trim()) return "";
+  const t = String(stored).trim().toLowerCase();
+  return t.startsWith(WEEHAWK_HOOK_PUBLIC_HOST_PREFIX)
+    ? t.slice(WEEHAWK_HOOK_PUBLIC_HOST_PREFIX.length)
+    : t;
+}
+
 export type WebhookListItem = {
   id: string;
   name: string;
@@ -27,6 +41,9 @@ export type WebhookListItem = {
   createdAt: string;
   summary: string;
   secretToken: string;
+  remoteTriggerUrl: string | null;
+  hooksPublicHost: string | null;
+  remoteTriggerUrlScheme: WebhookRemoteTriggerUrlScheme;
 };
 
 export type WebhookDetail = WebhookListItem & {
@@ -38,6 +55,8 @@ export type WebhookDetail = WebhookListItem & {
   notifyChannelId: string | null;
   notifyMessage: string | null;
   secretToken: string;
+  /** On-host agent URL when the script is deployed to a remote server (same path token as API `/hooks/{token}` by default). */
+  remoteTriggerUrl: string | null;
 };
 
 export type CreateWebhookBody = {
@@ -53,6 +72,10 @@ export type CreateWebhookBody = {
   backupS3ProfileName?: string;
   notifyChannelId?: string;
   notifyMessage?: string;
+  /** Traefik hostname; API runs docker build on the deploy host unless WEEHAWK_WEBHOOK_AGENT_IMAGE is set. */
+  hooksPublicHost?: string;
+  /** Default http. Shown in the remote trigger URL (hostname or IP:port). */
+  remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
 };
 
 export type UpdateWebhookBody = {
@@ -65,6 +88,8 @@ export type UpdateWebhookBody = {
   notifyMessage?: string | null;
   backupS3ProfileName?: string | null;
   databaseBackupConfig?: DatabaseBackupConfig | null;
+  hooksPublicHost?: string | null;
+  remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
 };
 
 async function errorBody(res: Response): Promise<string> {
@@ -96,7 +121,14 @@ export async function fetchWebhooks(accessToken: string): Promise<WebhookListIte
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<WebhookListItem, "triggerType" | "cronExpression">[];
-  return data.map((w) => ({ ...w, triggerType: "webhook", cronExpression: null }));
+  return data.map((w) => ({
+    ...w,
+    remoteTriggerUrl: w.remoteTriggerUrl ?? null,
+    hooksPublicHost: w.hooksPublicHost ?? null,
+    remoteTriggerUrlScheme: w.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    triggerType: "webhook" as const,
+    cronExpression: null,
+  }));
 }
 
 export async function fetchWebhook(accessToken: string, id: string): Promise<WebhookDetail> {
@@ -110,6 +142,9 @@ export async function fetchWebhook(accessToken: string, id: string): Promise<Web
     ...data,
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
+    remoteTriggerUrl: data.remoteTriggerUrl ?? null,
+    hooksPublicHost: data.hooksPublicHost ?? null,
+    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
     triggerType: "webhook",
     cronExpression: null,
   };
@@ -134,6 +169,9 @@ export async function createWebhook(
     ...data,
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
+    remoteTriggerUrl: data.remoteTriggerUrl ?? null,
+    hooksPublicHost: data.hooksPublicHost ?? null,
+    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
     triggerType: "webhook",
     cronExpression: null,
   };
@@ -159,6 +197,9 @@ export async function updateWebhook(
     ...data,
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
+    remoteTriggerUrl: data.remoteTriggerUrl ?? null,
+    hooksPublicHost: data.hooksPublicHost ?? null,
+    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
     triggerType: "webhook",
     cronExpression: null,
   };

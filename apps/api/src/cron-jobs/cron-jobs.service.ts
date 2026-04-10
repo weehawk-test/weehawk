@@ -7,7 +7,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 import { NotificationService } from '../notifications/notification.service';
-import { NotificationChannelType } from '../notifications/entities/notification-channel-type.enum';
+import {
+  buildRemoteEnvAndWrappedShInstallScript,
+  buildRemoteNotificationEnvLinesFromChannel,
+  normalizeRemoteNotificationMessage,
+  remoteInstallShQuote,
+  REMOTE_NOTIFY_DEFAULTS_CRON,
+} from '../common/remote-wrapped-script-install';
 import {
   createBackupTempDir,
   removeBackupTempDir,
@@ -83,15 +89,6 @@ export class CronJobsService {
     return `${this.scriptDirRemote()}/${jobId}.env`;
   }
 
-  private envQuote(value: string): string {
-    return `'${value.replace(/'/g, `'\\''`)}'`;
-  }
-
-  private readConfigString(cfg: Record<string, unknown>, key: string): string {
-    const v = cfg[key];
-    return typeof v === 'string' ? v : '';
-  }
-
   private buildRemoteCrontabLine(job: CronJob): string {
     if (job.serviceAction !== 'docker_command' || !job.dockerCommand?.trim()) {
       throw new BadRequestException(
@@ -105,60 +102,17 @@ export class CronJobsService {
 
   private async buildNotificationEnvForJob(job: CronJob): Promise<string[]> {
     if (!job.notifyOnTrigger || !job.notifyChannelId || !job.notifyMessage) {
-      return ['WEEHAWK_NOTIFY_ENABLED=0'];
+      return buildRemoteNotificationEnvLinesFromChannel(false, null, null);
     }
     const channel = await this.notificationsService.getChannelRuntimeConfig(
       1,
       job.notifyChannelId,
     );
-    const lines: string[] = [
-      'WEEHAWK_NOTIFY_ENABLED=1',
-      `WEEHAWK_NOTIFY_TYPE=${this.envQuote(channel.type)}`,
-      `WEEHAWK_NOTIFY_MESSAGE=${this.envQuote(this.normalizeNotificationMessage(job.notifyMessage))}`,
-      `WEEHAWK_NOTIFY_CHANNEL_NAME=${this.envQuote(channel.name)}`,
-    ];
-    const cfg = channel.config;
-    switch (channel.type) {
-      case NotificationChannelType.TELEGRAM:
-        lines.push(
-          `WEEHAWK_NOTIFY_TOKEN=${this.envQuote(this.readConfigString(cfg, 'token'))}`,
-          `WEEHAWK_NOTIFY_TARGET=${this.envQuote(this.readConfigString(cfg, 'target'))}`,
-        );
-        break;
-      case NotificationChannelType.SLACK:
-      case NotificationChannelType.DISCORD:
-      case NotificationChannelType.LARK:
-      case NotificationChannelType.MICROSOFT_TEAMS:
-        lines.push(
-          `WEEHAWK_NOTIFY_WEBHOOK_URL=${this.envQuote(this.readConfigString(cfg, 'webhookUrl'))}`,
-        );
-        break;
-      case NotificationChannelType.GOTIFY:
-        lines.push(
-          `WEEHAWK_NOTIFY_SERVER_URL=${this.envQuote(this.readConfigString(cfg, 'serverUrl'))}`,
-          `WEEHAWK_NOTIFY_APP_TOKEN=${this.envQuote(this.readConfigString(cfg, 'appToken'))}`,
-          `WEEHAWK_NOTIFY_PRIORITY=${this.envQuote(this.readConfigString(cfg, 'priority') || '5')}`,
-        );
-        break;
-      case NotificationChannelType.NTFY:
-        lines.push(
-          `WEEHAWK_NOTIFY_SERVER_URL=${this.envQuote(this.readConfigString(cfg, 'serverUrl'))}`,
-          `WEEHAWK_NOTIFY_TOPIC=${this.envQuote(this.readConfigString(cfg, 'topic'))}`,
-          `WEEHAWK_NOTIFY_TOKEN=${this.envQuote(this.readConfigString(cfg, 'token'))}`,
-        );
-        break;
-      case NotificationChannelType.PUSHOVER:
-        lines.push(
-          `WEEHAWK_NOTIFY_APP_TOKEN=${this.envQuote(this.readConfigString(cfg, 'appToken'))}`,
-          `WEEHAWK_NOTIFY_USER_KEY=${this.envQuote(this.readConfigString(cfg, 'userKey'))}`,
-          `WEEHAWK_NOTIFY_DEVICE=${this.envQuote(this.readConfigString(cfg, 'device'))}`,
-        );
-        break;
-      default:
-        lines.push('WEEHAWK_NOTIFY_ENABLED=0');
-        break;
-    }
-    return lines;
+    return buildRemoteNotificationEnvLinesFromChannel(
+      true,
+      channel,
+      job.notifyMessage,
+    );
   }
 
   private async resolveCronRemoteServerId(job: CronJob): Promise<number> {
@@ -213,75 +167,14 @@ export class CronJobsService {
   ): Promise<void> {
     const scriptPath = this.scriptPathRemote(jobId);
     const envPath = this.envPathRemote(jobId);
-    const installScript = [
-      'set -eu',
-      'umask 077',
-      `mkdir -p ${this.shQuote(this.scriptDirRemote())}`,
-      `cat > ${this.shQuote(envPath)} <<'WEEHAWK_ENV'`,
-      ...envLines,
-      'WEEHAWK_ENV',
-      `chmod 600 ${this.shQuote(envPath)}`,
-      `cat > ${this.shQuote(scriptPath)} <<'WEEHAWK_EOF'`,
-      '#!/usr/bin/env bash',
-      'set -euo pipefail',
-      `ENV_FILE=${this.shQuote(envPath)}`,
-      'if [ -f "$ENV_FILE" ]; then',
-      '  set -a',
-      '  # shellcheck disable=SC1090',
-      '  . "$ENV_FILE"',
-      '  set +a',
-      'fi',
-      'json_escape() {',
-      "  printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g; s/\r/\\\\r/g; s/\n/\\\\n/g'",
-      '}',
-      'send_notification() {',
-      '  if [ "${WEEHAWK_NOTIFY_ENABLED:-0}" != "1" ]; then return 0; fi',
-      '  local msg="$1"',
-      '  local t="${WEEHAWK_NOTIFY_TYPE:-}"',
-      '  case "$t" in',
-      '    telegram)',
-      '      [ -n "${WEEHAWK_NOTIFY_TOKEN:-}" ] && [ -n "${WEEHAWK_NOTIFY_TARGET:-}" ] || return 0',
-      '      curl -fsS -X POST "https://api.telegram.org/bot${WEEHAWK_NOTIFY_TOKEN}/sendMessage" --data-urlencode "chat_id=${WEEHAWK_NOTIFY_TARGET}" --data-urlencode "text=${msg}" >/dev/null 2>&1 || true',
-      '      ;;',
-      '    slack|microsoft-teams)',
-      '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || return 0',
-      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"text\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null 2>&1 || true',
-      '      ;;',
-      '    discord)',
-      '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || return 0',
-      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"content\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null 2>&1 || true',
-      '      ;;',
-      '    lark)',
-      '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || return 0',
-      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$(json_escape "$msg")\"}}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null 2>&1 || true',
-      '      ;;',
-      '    gotify)',
-      '      [ -n "${WEEHAWK_NOTIFY_SERVER_URL:-}" ] && [ -n "${WEEHAWK_NOTIFY_APP_TOKEN:-}" ] || return 0',
-      '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\",\"priority\":${WEEHAWK_NOTIFY_PRIORITY:-5}}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/message?token=${WEEHAWK_NOTIFY_APP_TOKEN}" >/dev/null 2>&1 || true',
-      '      ;;',
-      '    ntfy)',
-      '      [ -n "${WEEHAWK_NOTIFY_SERVER_URL:-}" ] && [ -n "${WEEHAWK_NOTIFY_TOPIC:-}" ] || return 0',
-      '      if [ -n "${WEEHAWK_NOTIFY_TOKEN:-}" ]; then',
-      '        curl -fsS -X POST -H "Authorization: Bearer ${WEEHAWK_NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "{\"topic\":\"$(json_escape "${WEEHAWK_NOTIFY_TOPIC}")\",\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/${WEEHAWK_NOTIFY_TOPIC}" >/dev/null 2>&1 || true',
-      '      else',
-      '        curl -fsS -X POST -H "Content-Type: application/json" -d "{\"topic\":\"$(json_escape "${WEEHAWK_NOTIFY_TOPIC}")\",\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/${WEEHAWK_NOTIFY_TOPIC}" >/dev/null 2>&1 || true',
-      '      fi',
-      '      ;;',
-      '    pushover)',
-      '      [ -n "${WEEHAWK_NOTIFY_APP_TOKEN:-}" ] && [ -n "${WEEHAWK_NOTIFY_USER_KEY:-}" ] || return 0',
-      '      if [ -n "${WEEHAWK_NOTIFY_DEVICE:-}" ]; then',
-      '        curl -fsS -X POST "https://api.pushover.net/1/messages.json" --data-urlencode "token=${WEEHAWK_NOTIFY_APP_TOKEN}" --data-urlencode "user=${WEEHAWK_NOTIFY_USER_KEY}" --data-urlencode "device=${WEEHAWK_NOTIFY_DEVICE}" --data-urlencode "title=${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}" --data-urlencode "message=${msg}" >/dev/null 2>&1 || true',
-      '      else',
-      '        curl -fsS -X POST "https://api.pushover.net/1/messages.json" --data-urlencode "token=${WEEHAWK_NOTIFY_APP_TOKEN}" --data-urlencode "user=${WEEHAWK_NOTIFY_USER_KEY}" --data-urlencode "title=${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}" --data-urlencode "message=${msg}" >/dev/null 2>&1 || true',
-      '      fi',
-      '      ;;',
-      '  esac',
-      '}',
-      'trap \'exit_code=$?; if [ "${WEEHAWK_NOTIFY_ENABLED:-0}" = "1" ]; then if [ "$exit_code" -eq 0 ]; then send_notification "${WEEHAWK_NOTIFY_MESSAGE:-Cron job completed}"; else send_notification "${WEEHAWK_NOTIFY_MESSAGE:-Cron job failed} (exit $exit_code)"; fi; fi; exit "$exit_code"\' EXIT',
-      scriptBody.trim(),
-      'WEEHAWK_EOF',
-      `chmod 700 ${this.shQuote(scriptPath)}`,
-    ].join('\n');
+    const installScript = buildRemoteEnvAndWrappedShInstallScript({
+      parentDirShQuoted: remoteInstallShQuote(this.scriptDirRemote()),
+      envPath,
+      scriptPath,
+      envLines,
+      userScriptBody: scriptBody,
+      defaults: REMOTE_NOTIFY_DEFAULTS_CRON,
+    });
     const r = await this.executorService.runSystemScript(installScript, remoteServerId, 1);
     if (!r.success) {
       throw new BadRequestException(
@@ -500,23 +393,6 @@ export class CronJobsService {
     if (a === 'docker_command') return `[Cron ${w.cronExpression}] Docker command`;
     if (a === 'no_action') return `[Cron ${w.cronExpression}] No action`;
     return `[Cron ${w.cronExpression}] ${a}`;
-  }
-
-  // Backward-compat: old builds stored generated multi-line cron summaries as notifyMessage.
-  // If that legacy format is detected, keep only the human-entered short text.
-  private normalizeNotificationMessage(message: string): string {
-    const trimmed = message.trim();
-    const legacyLines = trimmed.split(/\r?\n/);
-    if (legacyLines.length < 4) return trimmed;
-    const cronJobLine = legacyLines.find((l) => l.startsWith('Cron Job:'));
-    const cronLine = legacyLines.find((l) => l.startsWith('Cron:'));
-    const actionLine = legacyLines.find((l) => l.startsWith('Action:'));
-    const successLine = legacyLines.find((l) => l.startsWith('Success:'));
-    if (cronJobLine && cronLine && actionLine && successLine) {
-      const extracted = cronJobLine.replace(/^Cron Job:\s*/, '').trim();
-      return extracted || trimmed;
-    }
-    return trimmed;
   }
 
   private toListRow(w: CronJob): CronJobListRow {
@@ -914,7 +790,7 @@ export class CronJobsService {
         await this.notificationsService.sendMessage(
           1,
           job.notifyChannelId,
-          this.normalizeNotificationMessage(job.notifyMessage),
+          normalizeRemoteNotificationMessage(job.notifyMessage),
         );
       } catch {
         // best effort

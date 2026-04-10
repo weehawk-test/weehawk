@@ -39,6 +39,9 @@ export async function fetchWebhookSSR(id: string): Promise<WebhookDetail | null>
     ...data,
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
+    remoteTriggerUrl: data.remoteTriggerUrl ?? null,
+    hooksPublicHost: data.hooksPublicHost ?? null,
+    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
     triggerType: "webhook",
     cronExpression: null,
   };
@@ -51,7 +54,14 @@ export async function fetchWebhooksSSR(): Promise<WebhookListItem[]> {
   });
   if (!res.ok) return [];
   const data = (await res.json()) as Omit<WebhookListItem, "triggerType" | "cronExpression">[];
-  return data.map((w) => ({ ...w, triggerType: "webhook" as const, cronExpression: null }));
+  return data.map((w) => ({
+    ...w,
+    remoteTriggerUrl: w.remoteTriggerUrl ?? null,
+    hooksPublicHost: w.hooksPublicHost ?? null,
+    remoteTriggerUrlScheme: w.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    triggerType: "webhook" as const,
+    cronExpression: null,
+  }));
 }
 
 export async function fetchCronJobSSR(id: string): Promise<CronJobDetail | null> {

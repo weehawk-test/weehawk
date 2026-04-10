@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsInt,
   Min,
   IsOptional,
@@ -73,4 +74,23 @@ export class UpdateWebhookDto {
   @IsString()
   @MaxLength(4000)
   dockerCommand?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Parent domain (e.g. example.com) → weehawk-webhook.example.com; null clears public host (IP:port URL).',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsString()
+  @MaxLength(255)
+  hooksPublicHost?: string | null;
+
+  @ApiPropertyOptional({
+    enum: ['http', 'https'],
+    description: 'Scheme for the remote trigger URL (docker_command only).',
+  })
+  @IsOptional()
+  @IsIn(['http', 'https'])
+  remoteTriggerUrlScheme?: 'http' | 'https';
 }

@@ -8,7 +8,6 @@ import { useDeleteWebhook, useUpdateWebhook } from "@/hooks/use-webhooks";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import type { WebhookListItem } from "@/lib/webhooks-api";
-import { publicWebhookTriggerUrl } from "@/lib/webhooks-api";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 
@@ -85,15 +84,14 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
     }
   };
 
-  const handleCopyWebhookUrl = async (id: string, secretToken: string) => {
-    const webhookUrl = publicWebhookTriggerUrl(secretToken);
+  const handleCopyWebhookUrl = async (id: string, triggerUrl: string) => {
     try {
-      await navigator.clipboard.writeText(webhookUrl);
+      await navigator.clipboard.writeText(triggerUrl);
       setCopiedWebhookId(id);
       window.setTimeout(() => setCopiedWebhookId((current) => (current === id ? null : current)), 1500);
-      toast({ title: "Copied", description: "Webhook URL copied to clipboard." });
+      toast({ title: "Copied", description: "Trigger URL copied to clipboard." });
     } catch {
-      toast({ title: "Copy failed", description: "Could not copy webhook URL.", variant: "destructive" });
+      toast({ title: "Copy failed", description: "Could not copy URL.", variant: "destructive" });
     }
   };
 
@@ -259,23 +257,25 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                   <p className="text-sm text-muted-foreground line-clamp-2">{w.description}</p>
                 )}
 
-                <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
-                  <p className="text-[11px] text-muted-foreground mb-1.5">Webhook URL</p>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <p className="text-xs text-foreground/90 truncate font-mono" title={publicWebhookTriggerUrl(w.secretToken)}>
-                      {publicWebhookTriggerUrl(w.secretToken)}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyWebhookUrl(w.id, w.secretToken)}
-                      className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-                      title="Copy webhook URL"
-                      aria-label={`Copy webhook URL for ${w.name}`}
-                    >
-                      {copiedWebhookId === w.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
+                {w.remoteTriggerUrl && (
+                  <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2.5">
+                    <p className="text-[11px] text-muted-foreground mb-1.5">Trigger URL (deploy server)</p>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <p className="text-xs text-foreground/90 truncate font-mono" title={w.remoteTriggerUrl}>
+                        {w.remoteTriggerUrl}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyWebhookUrl(w.id, w.remoteTriggerUrl!)}
+                        className="p-1.5 rounded-md hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                        title="Copy trigger URL"
+                        aria-label={`Copy trigger URL for ${w.name}`}
+                      >
+                        {copiedWebhookId === w.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1">

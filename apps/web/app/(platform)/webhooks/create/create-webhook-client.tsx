@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateWebhook } from "@/hooks/use-webhooks";
-import { type WebhookTargetMode } from "@/lib/webhooks-api";
+import { type WebhookRemoteTriggerUrlScheme, type WebhookTargetMode } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
@@ -54,6 +54,9 @@ export function CreateWebhookClient({
   const [description, setDescription] = useState("");
   const [targetMode] = useState<WebhookTargetMode>("service");
   const [remoteServerId, setRemoteServerId] = useState("");
+  const [hooksPublicHost, setHooksPublicHost] = useState("");
+  const [remoteTriggerUrlScheme, setRemoteTriggerUrlScheme] =
+    useState<WebhookRemoteTriggerUrlScheme>("http");
   const [bashScript, setBashScript] = useState("");
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [notifyChannelId, setNotifyChannelId] = useState("");
@@ -85,8 +88,12 @@ export function CreateWebhookClient({
       toast({ title: "Choose channel and message together", variant: "destructive" });
       return;
     }
-    const parsedRemoteServerId = remoteServerId ? Number(remoteServerId) : undefined;
-    if (parsedRemoteServerId != null && (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1)) {
+    if (!remoteServerId.trim()) {
+      toast({ title: "Deploy server required", description: "Choose a deploy remote server.", variant: "destructive" });
+      return;
+    }
+    const parsedRemoteServerId = Number(remoteServerId);
+    if (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1) {
       toast({ title: "Select a valid server", variant: "destructive" });
       return;
     }
@@ -98,7 +105,9 @@ export function CreateWebhookClient({
         targetMode,
         serviceAction: "docker_command",
         dockerCommand: bashScript.trim(),
-        ...(parsedRemoteServerId ? { remoteServerId: parsedRemoteServerId } : {}),
+        remoteServerId: parsedRemoteServerId,
+        remoteTriggerUrlScheme,
+        ...(hooksPublicHost.trim() ? { hooksPublicHost: hooksPublicHost.trim() } : {}),
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId, notifyMessage: notifyMessage.trim() }
           : {}),
@@ -172,21 +181,60 @@ export function CreateWebhookClient({
 
               <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Server</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Deploy server</label>
                   <select
                     className="input-field"
                     value={remoteServerId}
                     onChange={(e) => setRemoteServerId(e.target.value)}
+                    required
+                    disabled={deployServers.length === 0}
                   >
-                    <option value="">Local Server</option>
+                    <option value="" disabled>
+                      {deployServers.length === 0
+                        ? "No deploy servers — add one under Remote servers"
+                        : "Select a deploy server…"}
+                    </option>
                     {deployServers.map((srv) => (
-                      <option key={srv.id} value={srv.id}>
+                      <option key={srv.id} value={String(srv.id)}>
                         {srv.name} ({srv.host})
                       </option>
                     ))}
                   </select>
-                  <p className="text-[11px] text-muted-foreground mt-2">
-                    Keep Local Server selected to run here, or choose a remote deploy server.
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">
+                    Parent domain (optional)
+                  </label>
+                  <input
+                    className="input-field"
+                    value={hooksPublicHost}
+                    onChange={(e) => setHooksPublicHost(e.target.value)}
+                    placeholder="e.g. example.com"
+                    autoComplete="off"
+                  />
+                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                    Weehawk uses <code className="text-primary/90">weehawk-webhook.&lt;your-domain&gt;</code> for Traefik
+                    and the trigger URL. Point that hostname in DNS to this server. Leave empty to use IP and agent port
+                    only.
+                  </p>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">Trigger URL scheme</label>
+                  <select
+                    className="input-field"
+                    value={remoteTriggerUrlScheme}
+                    onChange={(e) =>
+                      setRemoteTriggerUrlScheme(
+                        e.target.value === "https" ? "https" : "http",
+                      )
+                    }
+                  >
+                    <option value="http">http://</option>
+                    <option value="https">https://</option>
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
+                    Use the scheme that matches your Traefik entrypoint (or IP access). This is stored on the webhook,
+                    not from server environment variables.
                   </p>
                 </div>
                 <div>

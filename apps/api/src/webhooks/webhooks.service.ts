@@ -18,9 +18,15 @@ import { ServicesService } from '../services/services.service';
 import { getErrorMessage } from '../utils/error-message';
 import type { DatabaseBackupConfig } from '../backup/database-backup.types';
 import { describeDatabaseBackupPreview } from '../backup/database-backup.types';
+import {
+  RemoteServersService,
+  WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR,
+} from '../remote-servers/remote-servers.service';
+import { buildRemoteNotificationEnvLinesFromChannel } from '../common/remote-wrapped-script-install';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
-import { Webhook } from './entities/webhook.entity';
+import { Webhook, type WebhookRemoteTriggerUrlScheme } from './entities/webhook.entity';
+import { deriveHooksPublicHost } from './hooks-public-host';
 
 export type WebhookListRow = {
   id: string;
@@ -35,6 +41,11 @@ export type WebhookListRow = {
   createdAt: string;
   summary: string;
   secretToken: string;
+  remoteTriggerUrl: string | null;
+  /** Traefik hostname for the Swarm webhook agent when configured. */
+  hooksPublicHost: string | null;
+  /** http/https prefix for the remote trigger URL when the action is docker_command. */
+  remoteTriggerUrlScheme: WebhookRemoteTriggerUrlScheme;
 };
 
 export type WebhookDetailRow = WebhookListRow & {
@@ -46,6 +57,8 @@ export type WebhookDetailRow = WebhookListRow & {
   notifyChannelId: string | null;
   notifyMessage: string | null;
   secretToken: string;
+  /** When script runs on a remote server: URL for the on-host agent (e.g. Go) at that server’s IP. */
+  remoteTriggerUrl: string | null;
 };
 
 @Injectable()
@@ -57,6 +70,7 @@ export class WebhooksService {
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
     private readonly s3Service: S3Service,
+    private readonly remoteServersService: RemoteServersService,
   ) {}
 
   private validateCreate(dto: CreateWebhookDto): void {
@@ -84,6 +98,13 @@ export class WebhooksService {
       ) {
         throw new BadRequestException('dockerCommand is required.');
       }
+      if (dto.serviceAction === 'docker_command') {
+        if (dto.remoteServerId == null || dto.remoteServerId < 1) {
+          throw new BadRequestException(
+            'A deploy remote server is required for bash webhooks.',
+          );
+        }
+      }
       if (
         dto.serviceAction === 'database_backup' &&
         !dto.databaseBackupConfig
@@ -109,6 +130,50 @@ export class WebhooksService {
         'Provide both notifyChannelId and notifyMessage, or leave both empty.',
       );
     }
+    if (dto.serviceAction === 'docker_command') {
+      this.assertPlausibleHooksPublicHost(
+        this.resolveHooksPublicHostForStorage(dto.hooksPublicHost),
+      );
+    }
+  }
+
+  /** Resolves optional user domain to stored Traefik host {@code weehawk-webhook.<domain>}. */
+  private resolveHooksPublicHostForStorage(
+    raw: string | null | undefined,
+  ): string | null {
+    if (raw == null || !String(raw).trim()) {
+      return null;
+    }
+    return deriveHooksPublicHost(String(raw).trim());
+  }
+
+  private normalizeRemoteTriggerUrlScheme(
+    raw: string | null | undefined,
+  ): WebhookRemoteTriggerUrlScheme {
+    const t = String(raw ?? 'http').trim().toLowerCase();
+    return t === 'https' ? 'https' : 'http';
+  }
+
+  private assertPlausibleHooksPublicHost(raw: string | null | undefined): void {
+    if (raw == null || !String(raw).trim()) {
+      return;
+    }
+    const t = String(raw).trim();
+    if (t.length > 253) {
+      throw new BadRequestException('hooksPublicHost is too long.');
+    }
+    if (/[\s\/:]/.test(t)) {
+      throw new BadRequestException(
+        'hooksPublicHost must be a hostname only (no scheme, port, or path). Example: example.com → weehawk-webhook.example.com',
+      );
+    }
+    if (
+      !/^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(
+        t,
+      )
+    ) {
+      throw new BadRequestException('hooksPublicHost does not look like a valid hostname.');
+    }
   }
 
   private async assertNotificationChannel(
@@ -119,6 +184,60 @@ export class WebhooksService {
     if (!rows.some((c) => c.id === channelId)) {
       throw new BadRequestException('Notification channel not found.');
     }
+  }
+
+  /** Env file beside the remote `.sh`, same pattern as cron jobs (`send_notification` + EXIT trap). */
+  private async buildRemoteWebhookNotificationEnvLines(
+    userId: number,
+    notifyOnTrigger: boolean,
+    notifyChannelId: string | null | undefined,
+    notifyMessage: string | null | undefined,
+  ): Promise<string[]> {
+    if (!notifyOnTrigger || !notifyChannelId || !notifyMessage?.trim()) {
+      return buildRemoteNotificationEnvLinesFromChannel(false, null, null);
+    }
+    const ch = await this.notificationsService.getChannelRuntimeConfig(
+      userId,
+      notifyChannelId,
+    );
+    return buildRemoteNotificationEnvLinesFromChannel(true, ch, notifyMessage);
+  }
+
+  private async collectHooksPublicHostsForRemoteServer(
+    remoteServerId: number,
+  ): Promise<string[]> {
+    const rows = await this.webhookRepo.find({
+      where: { remoteServerId, serviceAction: 'docker_command' },
+      select: ['hooksPublicHost'],
+    });
+    const out = new Set<string>();
+    for (const r of rows) {
+      const h = r.hooksPublicHost?.trim().toLowerCase();
+      if (h) out.add(h);
+    }
+    return [...out].sort();
+  }
+
+  private async mergeHooksPublicHostsForRemoteCreate(
+    remoteServerId: number,
+    extraHost: string | null | undefined,
+  ): Promise<string[]> {
+    const fromDb = await this.collectHooksPublicHostsForRemoteServer(remoteServerId);
+    const merged = new Set(fromDb);
+    const t = extraHost?.trim().toLowerCase();
+    if (t) merged.add(t);
+    return [...merged].sort();
+  }
+
+  private async syncWebhookAgentForRemoteServer(
+    remoteServerId: number | null | undefined,
+    userId: number,
+  ): Promise<void> {
+    if (remoteServerId == null || remoteServerId < 1) {
+      return;
+    }
+    const hosts = await this.collectHooksPublicHostsForRemoteServer(remoteServerId);
+    await this.remoteServersService.ensureRemoteWebhookListening(remoteServerId, userId, hosts);
   }
 
   private summaryLabel(w: Webhook): string {
@@ -134,7 +253,7 @@ export class WebhooksService {
     return a;
   }
 
-  private toListRow(w: Webhook): WebhookListRow {
+  private baseListFields(w: Webhook): Omit<WebhookListRow, 'remoteTriggerUrl'> {
     return {
       id: w.id,
       name: w.name,
@@ -148,13 +267,24 @@ export class WebhooksService {
       createdAt: w.createdAt.toISOString(),
       summary: this.summaryLabel(w),
       secretToken: w.secretToken,
+      hooksPublicHost: w.hooksPublicHost ?? null,
+      remoteTriggerUrlScheme: this.normalizeRemoteTriggerUrlScheme(w.remoteTriggerUrlScheme),
     };
   }
 
-  private toDetailRow(w: Webhook): WebhookDetailRow {
+  private async toListRow(userId: number, w: Webhook): Promise<WebhookListRow> {
+    const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
+    return {
+      ...this.baseListFields(w),
+      remoteTriggerUrl,
+    };
+  }
+
+  private toDetailRow(w: Webhook, remoteTriggerUrl: string | null = null): WebhookDetailRow {
     const cfg = w.databaseBackupConfig;
     return {
-      ...this.toListRow(w),
+      ...this.baseListFields(w),
+      remoteTriggerUrl,
       volumeSource: w.volumeSource,
       dockerCommand: w.dockerCommand,
       databaseBackupConfig: cfg,
@@ -162,8 +292,39 @@ export class WebhooksService {
       backupS3ProfileName: w.backupS3ProfileName,
       notifyChannelId: w.notifyChannelId,
       notifyMessage: w.notifyMessage,
-      secretToken: w.secretToken,
     };
+  }
+
+  private async resolveRemoteTriggerUrl(
+    userId: number,
+    w: Webhook,
+  ): Promise<string | null> {
+    if (
+      w.serviceAction !== 'docker_command' ||
+      w.remoteServerId == null ||
+      !w.dockerCommand?.trim()
+    ) {
+      return null;
+    }
+    const scheme = this.normalizeRemoteTriggerUrlScheme(w.remoteTriggerUrlScheme);
+    const publicHost = w.hooksPublicHost?.trim();
+    if (publicHost) {
+      return this.remoteServersService.formatRemoteWebhookTriggerUrlFromPublicHost(
+        publicHost,
+        w.secretToken,
+        scheme,
+      );
+    }
+    try {
+      const rs = await this.remoteServersService.findOne(w.remoteServerId, userId);
+      return this.remoteServersService.formatRemoteWebhookHttpTriggerUrlFromSafe(
+        rs,
+        w.secretToken,
+        scheme,
+      );
+    } catch {
+      return null;
+    }
   }
 
   private async finalizeBackupWithS3(
@@ -208,6 +369,13 @@ export class WebhooksService {
     dto: CreateWebhookDto,
   ): Promise<WebhookDetailRow> {
     this.validateCreate(dto);
+    if (
+      dto.targetMode === 'service' &&
+      dto.serviceAction === 'docker_command' &&
+      dto.remoteServerId != null
+    ) {
+      await this.remoteServersService.assertDeployServerById(dto.remoteServerId, userId);
+    }
     if (dto.notifyChannelId) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
@@ -230,6 +398,43 @@ export class WebhooksService {
     }
 
     const secretToken = randomBytes(32).toString('hex');
+    const notifyOnTriggerCreate =
+      Boolean(dto.notifyChannelId?.trim()) &&
+      Boolean(dto.notifyMessage?.trim());
+    const hooksPublicStored =
+      dto.serviceAction === 'docker_command'
+        ? this.resolveHooksPublicHostForStorage(dto.hooksPublicHost)
+        : null;
+    if (
+      dto.targetMode === 'service' &&
+      dto.serviceAction === 'docker_command' &&
+      dto.remoteServerId != null &&
+      dto.dockerCommand?.trim()
+    ) {
+      const mergedHosts = await this.mergeHooksPublicHostsForRemoteCreate(
+        dto.remoteServerId,
+        hooksPublicStored,
+      );
+      await this.remoteServersService.ensureRemoteWebhookListening(
+        dto.remoteServerId,
+        userId,
+        mergedHosts,
+      );
+      const notificationEnvLines = await this.buildRemoteWebhookNotificationEnvLines(
+        userId,
+        notifyOnTriggerCreate,
+        dto.notifyChannelId,
+        dto.notifyMessage,
+      );
+      await this.remoteServersService.writeRemoteWebhookScript(
+        dto.remoteServerId,
+        userId,
+        secretToken,
+        dto.dockerCommand.trim(),
+        notificationEnvLines,
+      );
+    }
+
     const w = this.webhookRepo.create({
       secretToken,
       name: dto.name.trim(),
@@ -268,27 +473,32 @@ export class WebhooksService {
           ? (dto.databaseBackupConfig as unknown as DatabaseBackupConfig)
           : null,
       backupS3ProfileName: backupProfile,
-      notifyOnTrigger:
-        Boolean(dto.notifyChannelId?.trim()) &&
-        Boolean(dto.notifyMessage?.trim()),
+      notifyOnTrigger: notifyOnTriggerCreate,
       notifyChannelId: dto.notifyChannelId?.trim() || null,
       notifyMessage: dto.notifyMessage?.trim() || null,
+      hooksPublicHost: hooksPublicStored,
+      remoteTriggerUrlScheme:
+        dto.targetMode === 'service' && dto.serviceAction === 'docker_command'
+          ? this.normalizeRemoteTriggerUrlScheme(dto.remoteTriggerUrlScheme)
+          : 'http',
     });
     const saved = await this.webhookRepo.save(w);
-    return this.toDetailRow(saved);
+    const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
+    return this.toDetailRow(saved, remoteTriggerUrl);
   }
 
   async list(userId: number): Promise<WebhookListRow[]> {
     const list = await this.webhookRepo.find({
       order: { createdAt: 'DESC' },
     });
-    return list.map((w) => this.toListRow(w));
+    return await Promise.all(list.map((w) => this.toListRow(userId, w)));
   }
 
   async findOne(userId: number, id: string): Promise<WebhookDetailRow> {
     const w = await this.webhookRepo.findOne({ where: { id } });
     if (!w) throw new NotFoundException('Webhook not found');
-    return this.toDetailRow(w);
+    const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
+    return this.toDetailRow(w, remoteTriggerUrl);
   }
 
   async update(
@@ -298,6 +508,13 @@ export class WebhooksService {
   ): Promise<WebhookDetailRow> {
     const w = await this.webhookRepo.findOne({ where: { id } });
     if (!w) throw new NotFoundException('Webhook not found');
+
+    const beforeRemote = w.remoteServerId;
+    const beforeDocker = w.dockerCommand;
+    const beforeNotifyOnTrigger = w.notifyOnTrigger;
+    const beforeNotifyChannelId = w.notifyChannelId;
+    const beforeNotifyMessage = w.notifyMessage;
+    const beforeHooksPublicHost = w.hooksPublicHost;
 
     if (dto.name !== undefined) w.name = dto.name.trim();
     if (dto.description !== undefined) {
@@ -345,10 +562,35 @@ export class WebhooksService {
     }
     if (dto.remoteServerId !== undefined) {
       if (w.serviceAction === 'docker_command') {
-        w.remoteServerId = dto.remoteServerId ?? null;
+        const nextId = dto.remoteServerId ?? null;
+        if (nextId == null || nextId < 1) {
+          throw new BadRequestException(
+            'A deploy remote server is required for bash webhooks.',
+          );
+        }
+        await this.remoteServersService.assertDeployServerById(nextId, userId);
+        w.remoteServerId = nextId;
       } else {
         w.remoteServerId = null;
       }
+    }
+    if (dto.hooksPublicHost !== undefined && w.serviceAction === 'docker_command') {
+      const next =
+        dto.hooksPublicHost === null || dto.hooksPublicHost === ''
+          ? null
+          : this.resolveHooksPublicHostForStorage(dto.hooksPublicHost);
+      if (next) {
+        this.assertPlausibleHooksPublicHost(next);
+      }
+      w.hooksPublicHost = next;
+    }
+    if (
+      dto.remoteTriggerUrlScheme !== undefined &&
+      w.serviceAction === 'docker_command'
+    ) {
+      w.remoteTriggerUrlScheme = this.normalizeRemoteTriggerUrlScheme(
+        dto.remoteTriggerUrlScheme,
+      );
     }
     if (w.notifyChannelId && w.notifyMessage) {
       w.notifyOnTrigger = true;
@@ -362,12 +604,85 @@ export class WebhooksService {
     }
 
     const saved = await this.webhookRepo.save(w);
-    return this.toDetailRow(saved);
+
+    const hadRemoteFile =
+      beforeRemote != null &&
+      !!(beforeDocker?.trim()) &&
+      w.serviceAction === 'docker_command';
+    if (
+      hadRemoteFile &&
+      (saved.remoteServerId !== beforeRemote ||
+        !saved.dockerCommand?.trim() ||
+        saved.serviceAction !== 'docker_command')
+    ) {
+      await this.remoteServersService
+        .removeRemoteWebhookScript(beforeRemote, userId, saved.secretToken)
+        .catch(() => undefined);
+      await this.syncWebhookAgentForRemoteServer(beforeRemote, userId);
+    }
+
+    const scriptOrTargetChanged =
+      saved.remoteServerId !== beforeRemote ||
+      (beforeDocker?.trim() ?? '') !== (saved.dockerCommand?.trim() ?? '');
+    const notifySettingsChanged =
+      saved.notifyOnTrigger !== beforeNotifyOnTrigger ||
+      saved.notifyChannelId !== beforeNotifyChannelId ||
+      (saved.notifyMessage?.trim() ?? '') !==
+        (beforeNotifyMessage?.trim() ?? '');
+    const hooksPublicHostChanged =
+      (saved.hooksPublicHost?.trim() ?? '') !==
+        (beforeHooksPublicHost?.trim() ?? '');
+    const needsScriptRewrite =
+      saved.serviceAction === 'docker_command' &&
+      saved.remoteServerId != null &&
+      !!saved.dockerCommand?.trim() &&
+      (scriptOrTargetChanged || notifySettingsChanged);
+    const needsAgentSync =
+      saved.serviceAction === 'docker_command' &&
+      saved.remoteServerId != null &&
+      !!saved.dockerCommand?.trim() &&
+      (scriptOrTargetChanged || notifySettingsChanged || hooksPublicHostChanged);
+
+    if (needsAgentSync) {
+      await this.syncWebhookAgentForRemoteServer(saved.remoteServerId, userId);
+    }
+
+    if (needsScriptRewrite && saved.remoteServerId != null) {
+      const notificationEnvLines = await this.buildRemoteWebhookNotificationEnvLines(
+        userId,
+        saved.notifyOnTrigger,
+        saved.notifyChannelId,
+        saved.notifyMessage,
+      );
+      await this.remoteServersService.writeRemoteWebhookScript(
+        saved.remoteServerId,
+        userId,
+        saved.secretToken,
+        saved.dockerCommand!.trim(),
+        notificationEnvLines,
+      );
+    }
+
+    const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
+    return this.toDetailRow(saved, remoteTriggerUrl);
   }
 
   async remove(userId: number, id: string): Promise<void> {
+    const w = await this.webhookRepo.findOne({ where: { id } });
+    if (!w) throw new NotFoundException('Webhook not found');
+    const remoteId = w.remoteServerId;
+    if (
+      w.serviceAction === 'docker_command' &&
+      w.remoteServerId != null &&
+      w.dockerCommand?.trim()
+    ) {
+      await this.remoteServersService
+        .removeRemoteWebhookScript(w.remoteServerId, userId, w.secretToken)
+        .catch(() => undefined);
+    }
     const res = await this.webhookRepo.delete({ id });
     if (!res.affected) throw new NotFoundException('Webhook not found');
+    await this.syncWebhookAgentForRemoteServer(remoteId, userId);
   }
 
   async triggerByToken(token: string): Promise<Record<string, unknown>> {
@@ -496,8 +811,12 @@ export class WebhooksService {
           w.dockerCommand
         ) {
           action = 'docker_command';
+          const scriptToRun =
+            w.remoteServerId != null
+              ? `bash '${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${w.secretToken}.sh'`
+              : w.dockerCommand;
           const r = await this.executorService.runSystemScript(
-            w.dockerCommand,
+            scriptToRun,
             w.remoteServerId,
             1,
           );
@@ -522,7 +841,14 @@ export class WebhooksService {
       output: output.slice(0, 8000),
     };
 
-    if (w.notifyOnTrigger && w.notifyChannelId && w.notifyMessage) {
+    const notificationSentOnRemote =
+      w.serviceAction === 'docker_command' && w.remoteServerId != null;
+    if (
+      w.notifyOnTrigger &&
+      w.notifyChannelId &&
+      w.notifyMessage &&
+      !notificationSentOnRemote
+    ) {
       try {
         await this.notificationsService.sendMessage(
           1,

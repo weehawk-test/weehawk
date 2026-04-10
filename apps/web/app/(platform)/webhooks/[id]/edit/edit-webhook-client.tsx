@@ -5,7 +5,11 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUpdateWebhook } from "@/hooks/use-webhooks";
-import type { WebhookDetail } from "@/lib/webhooks-api";
+import {
+  hooksPublicHostForDisplay,
+  type WebhookDetail,
+  type WebhookRemoteTriggerUrlScheme,
+} from "@/lib/webhooks-api";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
@@ -81,6 +85,13 @@ export function EditWebhookClient({
   const [remoteServerId, setRemoteServerId] = useState(
     initialWebhook.remoteServerId != null ? String(initialWebhook.remoteServerId) : "",
   );
+  const [hooksPublicHost, setHooksPublicHost] = useState(
+    hooksPublicHostForDisplay(initialWebhook.hooksPublicHost),
+  );
+  const [remoteTriggerUrlScheme, setRemoteTriggerUrlScheme] =
+    useState<WebhookRemoteTriggerUrlScheme>(
+      initialWebhook.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    );
   const [backupS3ProfileName, setBackupS3ProfileName] = useState(
     initialWebhook.backupS3ProfileName ?? "",
   );
@@ -136,14 +147,21 @@ export function EditWebhookClient({
         return;
       }
     }
-    const parsedRemoteServerId = remoteServerId ? Number(remoteServerId) : null;
-    if (
-      initialWebhook.serviceAction === "docker_command" &&
-      parsedRemoteServerId != null &&
-      (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1)
-    ) {
-      toast({ title: "Select a valid server", variant: "destructive" });
-      return;
+    let parsedRemoteServerId: number | null = null;
+    if (initialWebhook.serviceAction === "docker_command") {
+      if (!remoteServerId.trim()) {
+        toast({
+          title: "Deploy server required",
+          description: "Choose a deploy remote server.",
+          variant: "destructive",
+        });
+        return;
+      }
+      parsedRemoteServerId = Number(remoteServerId);
+      if (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1) {
+        toast({ title: "Select a valid server", variant: "destructive" });
+        return;
+      }
     }
 
     updateMutation.mutate(
@@ -175,6 +193,8 @@ export function EditWebhookClient({
           ? {
               dockerCommand: bashScript.trim() || null,
               remoteServerId: parsedRemoteServerId,
+              hooksPublicHost: hooksPublicHost.trim() || null,
+              remoteTriggerUrlScheme,
             }
           : {}),
       },
@@ -249,18 +269,49 @@ export function EditWebhookClient({
             </div>
             {initialWebhook.serviceAction === "docker_command" && (
               <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
-                <label className="text-xs text-muted-foreground mb-1 block">Server</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Deploy server</label>
                 <select
                   className="input-field mb-3"
                   value={remoteServerId}
                   onChange={(e) => setRemoteServerId(e.target.value)}
+                  required
+                  disabled={deployServers.length === 0}
                 >
-                  <option value="">Local Server</option>
+                  <option value="" disabled>
+                    {deployServers.length === 0
+                      ? "No deploy servers — add one under Remote servers"
+                      : "Select a deploy server…"}
+                  </option>
                   {deployServers.map((srv) => (
-                    <option key={srv.id} value={srv.id}>
+                    <option key={srv.id} value={String(srv.id)}>
                       {srv.name} ({srv.host})
                     </option>
                   ))}
+                </select>
+                <label className="text-xs text-muted-foreground mb-1 block mt-3">
+                  Parent domain (optional)
+                </label>
+                <input
+                  className="input-field mb-3"
+                  value={hooksPublicHost}
+                  onChange={(e) => setHooksPublicHost(e.target.value)}
+                  placeholder="example.com → weehawk-webhook.example.com"
+                  autoComplete="off"
+                />
+                <p className="text-[11px] text-muted-foreground mb-3 leading-snug">
+                  DNS: create <code className="text-primary/90">weehawk-webhook.&lt;your-domain&gt;</code>{" "}
+                  pointing to this deploy host.
+                </p>
+                <label className="text-xs text-muted-foreground mb-1 block">Trigger URL scheme</label>
+                <select
+                  className="input-field mb-3"
+                  value={remoteTriggerUrlScheme}
+                  onChange={(e) =>
+                    setRemoteTriggerUrlScheme(e.target.value === "https" ? "https" : "http")
+                  }
+                >
+                  <option value="http">http://</option>
+                  <option value="https">https://</option>
                 </select>
                 <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
                 <div className="relative overflow-hidden rounded-xl border border-border bg-black/50">

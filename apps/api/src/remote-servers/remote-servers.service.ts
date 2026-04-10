@@ -40,6 +40,14 @@ import {
 } from './remote-docker-console.helper';
 import { decryptPrivateKey, encryptPrivateKey } from './ssh-key-crypto';
 import { generateEd25519SshKeyPair } from './ssh-ed25519-generate';
+import {
+  buildRemoteEnvAndWrappedShInstallScript,
+  remoteInstallShQuote,
+  REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
+} from '../common/remote-wrapped-script-install';
+import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
+import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
+import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
 
 /**
  * Bash-safe `export VAR='…'` lines so `docker stack deploy` can substitute `${VAR}` in the compose
@@ -121,6 +129,31 @@ function humanizeRemoteTestError(raw: string, mode: 'docker' | 'ssh'): string {
   return t.length > 0 ? t : 'Unknown error';
 }
 
+/** Bash scripts for webhooks are uploaded here for the on-host Go webhook agent. */
+export const WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR = '/opt/weehawk-scripts/webhooks';
+
+const WEEHAWK_WEBHOOK_SWARM_SERVICE_NAME = 'weehawk-webhook-agent';
+
+function shSingleQuoteRemote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+function normalizeHooksPublicHosts(hosts: string[]): string[] {
+  const out = new Set<string>();
+  for (const h of hosts) {
+    const t = h.trim().toLowerCase();
+    if (t) out.add(t);
+  }
+  return [...out].sort();
+}
+
+/** Traefik rule fragment: `Host(\`a\`) || Host(\`b\`)` */
+function buildTraefikHostRuleForWebhookAgent(hosts: string[]): string {
+  const n = normalizeHooksPublicHosts(hosts);
+  if (n.length === 0) return '';
+  return n.map((h) => `Host(\`${h.replace(/`/g, '')}\`)`).join(' || ');
+}
+
 export type RemoteServerSafe = {
   id: number;
   name: string;
@@ -142,11 +175,33 @@ export type RemoteServerSafe = {
 
 @Injectable()
 export class RemoteServersService {
+  /**
+   * Serialize Swarm webhook-agent deploys per remote server so concurrent API calls
+   * do not race on `docker service rm` / `docker service create` (AlreadyExists).
+   */
+  private readonly webhookSwarmRecreateChainByServerId = new Map<number, Promise<void>>();
+
   constructor(
     @InjectRepository(RemoteServer)
     private readonly remoteServerRepository: Repository<RemoteServer>,
     private readonly configService: ConfigService,
   ) {}
+
+  private runWebhookSwarmOpSerialized(
+    remoteServerId: number,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    const prev = this.webhookSwarmRecreateChainByServerId.get(remoteServerId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.webhookSwarmRecreateChainByServerId.set(
+      remoteServerId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
+  }
 
   /**
    * Ensures a remote host used at deploy/build time belongs to the same account as the project.
@@ -293,6 +348,778 @@ export class RemoteServersService {
     const p = this.getSshConnectParams(rs, pem);
     const script = `set -eu\n${bashScriptBody}`;
     return await this.execSshBashScriptCollectOutput(p, script, onChunk);
+  }
+
+  /**
+   * Public URL for the on-host webhook agent (e.g. Go) that runs
+   * `{@link WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/{token}.sh`.
+   * Env: `WEEHAWK_REMOTE_WEBHOOK_HTTP_PORT` (default 8759),
+   * `WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX` (default `hooks` → path `/hooks/{token}`).
+   * HTTP vs HTTPS for webhooks is set per webhook ({@code remoteTriggerUrlScheme}), not env.
+   */
+  /** HTTP port the on-host webhook agent must listen on (loopback health check + systemd unit). */
+  resolveRemoteWebhookHttpPort(): number {
+    const portRaw = this.configService.get<string>('WEEHAWK_REMOTE_WEBHOOK_HTTP_PORT');
+    const portNum =
+      portRaw != null && String(portRaw).trim() !== ''
+        ? Number(portRaw)
+        : 8759;
+    return Number.isFinite(portNum) && portNum > 0 ? portNum : 8759;
+  }
+
+  /** URL path segment before the secret token (must match weehawk-webhook-agent). */
+  resolveRemoteWebhookPathPrefix(): string {
+    let pathPrefix =
+      this.configService.get<string>('WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX')?.trim() || 'hooks';
+    return pathPrefix.replace(/^\/+|\/+$/g, '');
+  }
+
+  /**
+   * Traefik entrypoints for the webhook Swarm service (comma-separated).
+   * Default `web,websecure` matches deploy provision (:80 and :443).
+   * The Swarm recreate emits **one Traefik router per entrypoint** so plain HTTP on `web` is not
+   * forced to TLS (a single router with `entrypoints=web,websecure` and `tls=true` can redirect HTTP→HTTPS).
+   */
+  private resolveWeehawkWebhookAgentTraefikEntrypoints(): string {
+    const raw = this.configService.get<string>('WEEHAWK_WEBHOOK_AGENT_TRAEFIK_ENTRYPOINTS')?.trim();
+    if (raw) {
+      return raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(',');
+    }
+    return 'web,websecure';
+  }
+
+  formatRemoteWebhookHttpTriggerUrlFromSafe(
+    rs: Pick<RemoteServerSafe, 'host' | 'publicIpv4'>,
+    secretToken: string,
+    scheme: 'http' | 'https',
+  ): string {
+    const port = this.resolveRemoteWebhookHttpPort();
+    const pathPrefix = this.resolveRemoteWebhookPathPrefix();
+    const hostRaw = rs.publicIpv4?.trim() || rs.host.trim();
+    const host =
+      hostRaw.includes(':') && !hostRaw.startsWith('[') ? `[${hostRaw}]` : hostRaw;
+    const defaultPort = scheme === 'https' ? 443 : 80;
+    const portPart = port === defaultPort ? '' : `:${port}`;
+    const pathSuffix = `/${pathPrefix}/${secretToken}`.replace(/\/+/g, '/');
+    return `${scheme}://${host}${portPart}${pathSuffix}`;
+  }
+
+  /**
+   * When set, the API deploys the `weehawk-webhook-agent` Swarm service
+   * (Docker image with Traefik labels) instead of installing a systemd binary on the host.
+   */
+  getWeehawkWebhookAgentImage(): string | null {
+    return this.configService.get<string>('WEEHAWK_WEBHOOK_AGENT_IMAGE')?.trim() || null;
+  }
+
+  /**
+   * Embed in the deploy-host Install script: registry pull or bundled Dockerfile/main.go/go.mod build.
+   */
+  async getWebhookAgentProvisionInput(): Promise<WebhookAgentProvisionInput> {
+    const registry = this.getWeehawkWebhookAgentImage();
+    if (registry) {
+      return { mode: 'registry', image: registry };
+    }
+    const dir = await this.resolveBundledWebhookAgentDir();
+    if (!dir) {
+      return { mode: 'none' };
+    }
+    try {
+      const dockerfile = await fs.readFile(path.join(dir, 'Dockerfile'));
+      const mainGo = await fs.readFile(path.join(dir, 'main.go'));
+      const goMod = await fs.readFile(path.join(dir, 'go.mod'));
+      return {
+        mode: 'bundle',
+        imageTag: WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE,
+        dockerfileB64: dockerfile.toString('base64'),
+        mainGoB64: mainGo.toString('base64'),
+        goModB64: goMod.toString('base64'),
+      };
+    } catch {
+      return { mode: 'none' };
+    }
+  }
+
+  /**
+   * Public trigger URL when the webhook uses a dedicated hostname behind Traefik on the deploy host.
+   */
+  formatRemoteWebhookTriggerUrlFromPublicHost(
+    publicHost: string,
+    secretToken: string,
+    scheme: 'http' | 'https',
+  ): string {
+    const pathPrefix = this.resolveRemoteWebhookPathPrefix();
+    const pathSuffix = `/${pathPrefix}/${secretToken}`.replace(/\/+/g, '/');
+    const host = publicHost.trim().toLowerCase();
+    return `${scheme}://${host}${pathSuffix}`;
+  }
+
+  /**
+   * Ensures the webhook agent is running:
+   * - Swarm + registry image when {@code WEEHAWK_WEBHOOK_AGENT_IMAGE} is set
+   * - Swarm + image built on the host from bundled Dockerfile/source when any {@code hooksPublicHost} is used
+   * - If deploy-host Install already created Swarm service {@code weehawk-webhook-agent}, no-op
+   * - Otherwise legacy systemd + on-host Go binary
+   */
+  async ensureRemoteWebhookListening(
+    remoteServerId: number,
+    projectUserId: number | null,
+    hooksPublicHosts: string[],
+  ): Promise<void> {
+    const registryImage = this.getWeehawkWebhookAgentImage();
+    const hasPublicHosts = normalizeHooksPublicHosts(hooksPublicHosts).length > 0;
+
+    if (registryImage) {
+      await this.recreateWeehawkWebhookSwarmService(
+        remoteServerId,
+        projectUserId,
+        registryImage,
+        hooksPublicHosts,
+        { pullImage: true },
+      );
+      return;
+    }
+
+    if (hasPublicHosts) {
+      const image = await this.buildBundledWebhookAgentImageOnRemote(remoteServerId, projectUserId);
+      await this.recreateWeehawkWebhookSwarmService(
+        remoteServerId,
+        projectUserId,
+        image,
+        hooksPublicHosts,
+        { pullImage: false },
+      );
+      return;
+    }
+
+    if (await this.remoteSwarmWebhookAgentServiceExists(remoteServerId, projectUserId)) {
+      return;
+    }
+
+    await this.ensureRemoteWebhookAgent(remoteServerId, projectUserId);
+  }
+
+  private async remoteSwarmWebhookAgentServiceExists(
+    remoteServerId: number,
+    projectUserId: number | null,
+  ): Promise<boolean> {
+    const q = shSingleQuoteRemote(WEEHAWK_WEBHOOK_SWARM_SERVICE_NAME);
+    const body = `docker service inspect ${q} >/dev/null 2>&1`;
+    try {
+      await this.execDockerCliOnRemoteViaSsh(remoteServerId, projectUserId, body);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async recreateWeehawkWebhookSwarmService(
+    remoteServerId: number,
+    projectUserId: number | null,
+    image: string,
+    hooksPublicHosts: string[],
+    options?: { pullImage?: boolean },
+  ): Promise<void> {
+    await this.runWebhookSwarmOpSerialized(remoteServerId, () =>
+      this.recreateWeehawkWebhookSwarmServiceUnlocked(
+        remoteServerId,
+        projectUserId,
+        image,
+        hooksPublicHosts,
+        options,
+      ),
+    );
+  }
+
+  private async recreateWeehawkWebhookSwarmServiceUnlocked(
+    remoteServerId: number,
+    projectUserId: number | null,
+    image: string,
+    hooksPublicHosts: string[],
+    options?: { pullImage?: boolean },
+  ): Promise<void> {
+    const pullImage = options?.pullImage ?? true;
+    const net = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK.trim() || 'weehawk';
+    const svc = WEEHAWK_WEBHOOK_SWARM_SERVICE_NAME;
+    const scriptsDir = WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR;
+    const port = this.resolveRemoteWebhookHttpPort();
+    const pathPrefix = this.resolveRemoteWebhookPathPrefix();
+    const hostsNorm = normalizeHooksPublicHosts(hooksPublicHosts);
+    const rule = buildTraefikHostRuleForWebhookAgent(hostsNorm);
+    const entrypointsCsv = this.resolveWeehawkWebhookAgentTraefikEntrypoints();
+    const entrypointsList = entrypointsCsv
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const imageQ = shSingleQuoteRemote(image);
+    const mountArg = `type=bind,source=${scriptsDir},target=${scriptsDir}`;
+
+    const labelsPart = rule
+      ? (() => {
+          const base = [
+            `--label ${shSingleQuoteRemote('traefik.enable=true')}`,
+            `--label ${shSingleQuoteRemote(`traefik.docker.network=${net}`)}`,
+            `--label ${shSingleQuoteRemote(`traefik.http.services.weehawkhooks.loadbalancer.server.port=${port}`)}`,
+            `--label ${shSingleQuoteRemote('traefik.http.services.weehawkhooks.loadbalancer.passhostheader=true')}`,
+          ];
+          const routerLabels: string[] = [];
+          for (const ep of entrypointsList.length ? entrypointsList : ['web', 'websecure']) {
+            const safe = ep.replace(/[^a-z0-9-]/gi, '') || 'ep';
+            const routerName = `weehawkhooks-${safe}`;
+            routerLabels.push(
+              `--label ${shSingleQuoteRemote(`traefik.http.routers.${routerName}.rule=${rule}`)}`,
+              `--label ${shSingleQuoteRemote(`traefik.http.routers.${routerName}.entrypoints=${ep}`)}`,
+              `--label ${shSingleQuoteRemote(`traefik.http.routers.${routerName}.service=weehawkhooks`)}`,
+            );
+            if (ep === 'websecure') {
+              routerLabels.push(
+                `--label ${shSingleQuoteRemote(`traefik.http.routers.${routerName}.tls=true`)}`,
+              );
+            }
+          }
+          return [...base, ...routerLabels].join(' ');
+        })()
+      : `--publish mode=host,published=${port},target=${port}`;
+
+    const dockerCreateOneLine = [
+      'docker service create',
+      '--name "$SVC"',
+      '--network "$NET"',
+      '--constraint node.role==manager',
+      `--mount ${shSingleQuoteRemote(mountArg)}`,
+      `-e WEEHAWK_HOOK_LISTEN=:${port}`,
+      '-e WEEHAWK_HOOK_SCRIPTS_DIR="$SCRIPTS"',
+      '-e WEEHAWK_HOOK_PATH_PREFIX="$PFIX"',
+      labelsPart,
+      '"$IMAGE"',
+    ].join(' ');
+
+    const body = [
+      'set -euo pipefail',
+      `IMAGE=${imageQ}`,
+      `NET=${shSingleQuoteRemote(net)}`,
+      `SVC=${shSingleQuoteRemote(svc)}`,
+      `SCRIPTS=${shSingleQuoteRemote(scriptsDir)}`,
+      `PFIX=${shSingleQuoteRemote(pathPrefix)}`,
+      'if ! command -v docker >/dev/null 2>&1; then echo "docker CLI not found on remote host" >&2; exit 1; fi',
+      'if ! docker info 2>/dev/null | grep -q "Swarm: active"; then echo "Docker Swarm is not active. Run Weehawk deploy-server provision on this host first (Swarm + weehawk overlay network)." >&2; exit 1; fi',
+      'sudo -n mkdir -p "$SCRIPTS" 2>/dev/null || sudo mkdir -p "$SCRIPTS"',
+      'sudo -n systemctl stop weehawk-webhook-agent 2>/dev/null || true',
+      'sudo -n systemctl disable weehawk-webhook-agent 2>/dev/null || true',
+      ...(pullImage ? ['docker pull "$IMAGE" || true'] : []),
+      'if docker service inspect "$SVC" >/dev/null 2>&1; then docker service rm "$SVC"; fi',
+      '_wh_i=0',
+      'while docker service inspect "$SVC" >/dev/null 2>&1; do',
+      '  _wh_i=$((_wh_i+1))',
+      '  if [ "$_wh_i" -gt 45 ]; then echo "timeout waiting for docker service removal: $SVC" >&2; exit 1; fi',
+      '  sleep 1',
+      'done',
+      dockerCreateOneLine,
+    ].join('\n');
+
+    await this.execDockerCliOnRemoteViaSsh(remoteServerId, projectUserId, body);
+  }
+
+  /**
+   * Builds {@link WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE} on the remote manager via `docker build`
+   * from API-bundled Dockerfile + Go source (no registry).
+   */
+  private async remoteDockerImageExistsOnRemote(
+    remoteServerId: number,
+    projectUserId: number | null,
+    imageRef: string,
+  ): Promise<boolean> {
+    const q = shSingleQuoteRemote(imageRef);
+    const body = `docker image inspect ${q} >/dev/null 2>&1`;
+    try {
+      await this.execDockerCliOnRemoteViaSsh(remoteServerId, projectUserId, body);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async buildBundledWebhookAgentImageOnRemote(
+    remoteServerId: number,
+    projectUserId: number | null,
+  ): Promise<string> {
+    if (
+      await this.remoteDockerImageExistsOnRemote(
+        remoteServerId,
+        projectUserId,
+        WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE,
+      )
+    ) {
+      return WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE;
+    }
+    const bundleDir = await this.resolveBundledWebhookAgentDir();
+    if (!bundleDir) {
+      throw new BadRequestException(
+        'Weehawk webhook agent bundle (main.go, go.mod, Dockerfile) was not found in this API build. ' +
+          'Set WEEHAWK_WEBHOOK_AGENT_IMAGE to a registry image you can pull on the deploy host.',
+      );
+    }
+    let dockerfile: Buffer;
+    let mainGo: Buffer;
+    let goMod: Buffer;
+    try {
+      dockerfile = await fs.readFile(path.join(bundleDir, 'Dockerfile'));
+      mainGo = await fs.readFile(path.join(bundleDir, 'main.go'));
+      goMod = await fs.readFile(path.join(bundleDir, 'go.mod'));
+    } catch {
+      throw new BadRequestException(
+        'Could not read bundled webhook agent files for Docker build. Set WEEHAWK_WEBHOOK_AGENT_IMAGE instead.',
+      );
+    }
+
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const remoteDir = `/tmp/weehawk_wa_img_${randomBytes(12).toString('hex')}`;
+    const dirQ = remoteDir.replace(/'/g, `'\\''`);
+    const tag = WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE;
+    const tagQ = tag.replace(/'/g, `'\\''`);
+
+    const body = `set -euo pipefail
+DIR='${dirQ}'
+trap 'rm -rf "$DIR"' EXIT
+cd "$DIR"
+docker build -t '${tagQ}' .
+`;
+
+    await this.withSshClient(p, async (client) => {
+      await this.sshExecCollectOutput(client, `mkdir -p '${dirQ}'`);
+      await this.sftpWriteRemoteBuffer(client, `${remoteDir}/Dockerfile`, dockerfile);
+      await this.sftpWriteRemoteBuffer(client, `${remoteDir}/main.go`, mainGo);
+      await this.sftpWriteRemoteBuffer(client, `${remoteDir}/go.mod`, goMod);
+      await this.execSshBashScriptCollectOutputOnClient(client, body, undefined);
+    });
+
+    return tag;
+  }
+
+  /**
+   * True when loopback `http://127.0.0.1:{port}/healthz` responds (weehawk-webhook-agent).
+   */
+  async isRemoteWebhookAgentHealthy(
+    remoteServerId: number,
+    projectUserId: number | null,
+  ): Promise<boolean> {
+    const port = this.resolveRemoteWebhookHttpPort();
+    const body = `
+if command -v curl >/dev/null 2>&1; then
+  curl -sf --max-time 6 "http://127.0.0.1:${port}/healthz" >/dev/null
+  exit 0
+fi
+if command -v wget >/dev/null 2>&1; then
+  wget -q -T 6 -O /dev/null "http://127.0.0.1:${port}/healthz"
+  exit 0
+fi
+exit 1
+`;
+    try {
+      await this.execDockerCliOnRemoteViaSsh(remoteServerId, projectUserId, body);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private buildWebhookAgentSystemdUnit(): string {
+    const port = this.resolveRemoteWebhookHttpPort();
+    const scriptsDir = WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR;
+    const pathPrefix = this.resolveRemoteWebhookPathPrefix();
+    return `[Unit]
+Description=Weehawk webhook agent
+After=network.target
+
+[Service]
+Type=simple
+Environment=WEEHAWK_REMOTE_WEBHOOK_HTTP_PORT=${port}
+Environment=WEEHAWK_HOOK_SCRIPTS_DIR=${scriptsDir}
+Environment=WEEHAWK_HOOK_PATH_PREFIX=${pathPrefix}
+ExecStart=/usr/local/bin/weehawk-webhook-agent
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+`;
+  }
+
+  /**
+   * Go source shipped inside the API (`bundled/` + nest assets, or monorepo `packages/` in dev).
+   */
+  private async resolveBundledWebhookAgentDir(): Promise<string | null> {
+    const candidates = [
+      path.join(__dirname, '..', 'bundled', 'weehawk-webhook-agent'),
+      path.join(__dirname, '..', '..', 'bundled', 'weehawk-webhook-agent'),
+      path.join(process.cwd(), 'dist', 'bundled', 'weehawk-webhook-agent'),
+      path.join(process.cwd(), 'bundled', 'weehawk-webhook-agent'),
+      path.join(process.cwd(), '..', '..', 'packages', 'weehawk-webhook-agent'),
+    ];
+    for (const dir of candidates) {
+      try {
+        await fs.access(path.join(dir, 'main.go'));
+        await fs.access(path.join(dir, 'go.mod'));
+        return dir;
+      } catch {
+        /* try next */
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Go toolchain tarball version from {@code https://go.dev/dl/} when auto-install runs on the remote host.
+   * Override with {@code WEEHAWK_REMOTE_GO_INSTALL_VERSION} (e.g. {@code 1.22.12}).
+   */
+  private resolveRemoteGoBootstrapVersion(): string {
+    const v = this.configService.get<string>('WEEHAWK_REMOTE_GO_INSTALL_VERSION')?.trim();
+    if (v && /^\d+\.\d+(\.\d+)?$/.test(v)) {
+      return v;
+    }
+    return '1.22.12';
+  }
+
+  /**
+   * When false, the remote must already have Go 1.22+. Env: {@code WEEHAWK_REMOTE_GO_AUTO_INSTALL}
+   * (set to {@code false}, {@code 0}, or {@code no} to disable).
+   */
+  private remoteGoAutoInstallEnabled(): boolean {
+    const s = this.configService.get<string>('WEEHAWK_REMOTE_GO_AUTO_INSTALL')?.trim().toLowerCase();
+    return s !== 'false' && s !== '0' && s !== 'no';
+  }
+
+  /**
+   * Bash snippet: ensure {@code go} is 1.22+ — may download Go to {@code /usr/local/go} (needs {@code sudo -n}).
+   */
+  private bashEnsureGoToolchainForWebhookBuild(): string {
+    const ver = this.resolveRemoteGoBootstrapVersion().replace(/[^0-9.]/g, '');
+    if (!this.remoteGoAutoInstallEnabled()) {
+      return [
+        'if ! command -v go >/dev/null 2>&1; then',
+        "  echo 'Go 1.22+ is required (enable automatic install: leave WEEHAWK_REMOTE_GO_AUTO_INSTALL unset, or install Go manually).' >&2",
+        '  exit 1',
+        'fi',
+        "gv=$(go version | sed -n 's/.*go\\([0-9][0-9]*\\)\\.\\([0-9][0-9]*\\).*/\\1 \\2/p')",
+        'read major minor <<< "$gv"',
+        'if [ "${major:-0}" -lt 1 ] || { [ "${major:-0}" -eq 1 ] && [ "${minor:-0}" -lt 22 ]; }; then',
+        "  echo 'Go 1.22+ is required on this server.' >&2",
+        '  exit 1',
+        'fi',
+      ].join('\n');
+    }
+
+    return [
+      `GO_BOOTSTRAP_VER='${ver}'`,
+      'NEED_GO=1',
+      'if command -v go >/dev/null 2>&1; then',
+      "  gv=$(go version | sed -n 's/.*go\\([0-9][0-9]*\\)\\.\\([0-9][0-9]*\\).*/\\1 \\2/p')",
+      '  read major minor <<< "$gv"',
+      '  if [ "${major:-0}" -gt 1 ] || { [ "${major:-0}" -eq 1 ] && [ "${minor:-0}" -ge 22 ]; }; then',
+      '    NEED_GO=0',
+      '  fi',
+      'fi',
+      'if [ "$NEED_GO" -eq 1 ]; then',
+      '  ARCH=$(uname -m)',
+      '  case "$ARCH" in',
+      '    x86_64) GARCH=amd64 ;;',
+      '    aarch64|arm64) GARCH=arm64 ;;',
+      '    *)',
+      '      echo "Unsupported machine for Go bootstrap: $ARCH (need x86_64 or aarch64/arm64)" >&2',
+      '      exit 1',
+      '      ;;',
+      '  esac',
+      '  GO_TGZ="go${GO_BOOTSTRAP_VER}.linux-${GARCH}.tar.gz"',
+      '  URL="https://go.dev/dl/${GO_TGZ}"',
+      '  TMPG=$(mktemp)',
+      '  if command -v curl >/dev/null 2>&1; then',
+      '    curl -fsSL "$URL" -o "$TMPG"',
+      '  elif command -v wget >/dev/null 2>&1; then',
+      '    wget -q "$URL" -O "$TMPG"',
+      '  else',
+      "    echo 'curl or wget is required to download Go' >&2",
+      '    exit 1',
+      '  fi',
+      '  sudo -n rm -rf /usr/local/go',
+      '  sudo -n tar -C /usr/local -xzf "$TMPG"',
+      '  rm -f "$TMPG"',
+      '  export PATH="/usr/local/go/bin:$PATH"',
+      '  hash -r',
+      'fi',
+    ].join('\n');
+  }
+
+  /**
+   * Ensures weehawk-webhook-agent is running on the remote host (health check on 127.0.0.1).
+   * Install order: (1) push bundled Go source and {@code go build} on the server, (2) optional
+   * {@code WEEHAWK_WEBHOOK_AGENT_DOWNLOAD_URL}, (3) optional {@code WEEHAWK_WEBHOOK_AGENT_BINARY} on the API host.
+   * Go 1.22+ is installed under {@code /usr/local/go} from go.dev when missing unless
+   * {@code WEEHAWK_REMOTE_GO_AUTO_INSTALL} is disabled.
+   * Requires passwordless `sudo` on the remote SSH user for install/systemctl.
+   */
+  async ensureRemoteWebhookAgent(
+    remoteServerId: number,
+    projectUserId: number | null,
+  ): Promise<void> {
+    if (await this.isRemoteWebhookAgentHealthy(remoteServerId, projectUserId)) {
+      return;
+    }
+
+    const unit = this.buildWebhookAgentSystemdUnit();
+    const unitB64 = Buffer.from(unit, 'utf8').toString('base64');
+    const downloadUrl = this.configService.get<string>('WEEHAWK_WEBHOOK_AGENT_DOWNLOAD_URL')?.trim();
+    const localBinary = this.configService.get<string>('WEEHAWK_WEBHOOK_AGENT_BINARY')?.trim();
+    let lastErr: string | undefined;
+
+    const bundleDir = await this.resolveBundledWebhookAgentDir();
+    if (bundleDir) {
+      try {
+        await this.installRemoteWebhookAgentFromGoSource(
+          remoteServerId,
+          projectUserId,
+          bundleDir,
+          unitB64,
+        );
+        if (await this.isRemoteWebhookAgentHealthy(remoteServerId, projectUserId)) {
+          return;
+        }
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+
+    if (downloadUrl) {
+      try {
+        await this.installRemoteWebhookAgentFromUrl(
+          remoteServerId,
+          projectUserId,
+          downloadUrl,
+          unitB64,
+        );
+        if (await this.isRemoteWebhookAgentHealthy(remoteServerId, projectUserId)) {
+          return;
+        }
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+
+    if (localBinary) {
+      try {
+        await this.installRemoteWebhookAgentFromLocalBinary(
+          remoteServerId,
+          projectUserId,
+          localBinary,
+          unitB64,
+        );
+        if (await this.isRemoteWebhookAgentHealthy(remoteServerId, projectUserId)) {
+          return;
+        }
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+    }
+
+    const port = this.resolveRemoteWebhookHttpPort();
+    throw new BadRequestException(
+      (lastErr ? `${lastErr}\n\n` : '') +
+        `Remote server has no webhook agent on http://127.0.0.1:${port}/healthz. ` +
+        'Weehawk can install Go from go.dev under /usr/local/go, push agent source, and run go build (unless WEEHAWK_REMOTE_GO_AUTO_INSTALL is disabled). ' +
+        'Optional: WEEHAWK_WEBHOOK_AGENT_DOWNLOAD_URL or WEEHAWK_WEBHOOK_AGENT_BINARY. ' +
+        'The SSH user needs passwordless sudo for tar, /usr/local/go, and systemctl.',
+    );
+  }
+
+  private async installRemoteWebhookAgentFromGoSource(
+    remoteServerId: number,
+    projectUserId: number | null,
+    sourceDir: string,
+    unitB64: string,
+  ): Promise<void> {
+    const mainGo = await fs.readFile(path.join(sourceDir, 'main.go'));
+    const goMod = await fs.readFile(path.join(sourceDir, 'go.mod'));
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const remoteSrc = `/tmp/weehawk_wa_src_${randomBytes(16).toString('hex')}`;
+    const srcQ = remoteSrc.replace(/'/g, `'\\''`);
+    const b64Q = `'${unitB64.replace(/'/g, `'\\''`)}'`;
+    const systemd = `echo ${b64Q} | base64 -d | sudo -n tee /etc/systemd/system/weehawk-webhook-agent.service > /dev/null
+sudo -n chmod 644 /etc/systemd/system/weehawk-webhook-agent.service
+sudo -n systemctl daemon-reload
+sudo -n systemctl enable --now weehawk-webhook-agent`;
+    const goPreamble = this.bashEnsureGoToolchainForWebhookBuild();
+    const body = `set -euo pipefail
+DIR='${srcQ}'
+trap 'rm -rf "$DIR"' EXIT
+${goPreamble}
+cd "$DIR"
+go build -trimpath -ldflags="-s -w" -o /tmp/weehawk-webhook-agent-bin .
+sudo -n install -m 0755 /tmp/weehawk-webhook-agent-bin /usr/local/bin/weehawk-webhook-agent
+rm -f /tmp/weehawk-webhook-agent-bin
+${systemd}
+`;
+
+    await this.withSshClient(p, async (client) => {
+      await this.sshExecCollectOutput(client, `mkdir -p '${srcQ}'`);
+      await this.sftpWriteRemoteBuffer(client, `${remoteSrc}/main.go`, mainGo);
+      await this.sftpWriteRemoteBuffer(client, `${remoteSrc}/go.mod`, goMod);
+      await this.execSshBashScriptCollectOutputOnClient(client, body, undefined);
+    });
+  }
+
+  private async installRemoteWebhookAgentFromUrl(
+    remoteServerId: number,
+    projectUserId: number | null,
+    downloadUrl: string,
+    unitB64: string,
+  ): Promise<void> {
+    const urlQ = `'${downloadUrl.replace(/'/g, `'\\''`)}'`;
+    const b64Q = `'${unitB64.replace(/'/g, `'\\''`)}'`;
+    const body = `set -euo pipefail
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL ${urlQ} -o "$TMP"
+elif command -v wget >/dev/null 2>&1; then
+  wget -q ${urlQ} -O "$TMP"
+else
+  echo 'curl or wget is required on the remote host' >&2
+  exit 1
+fi
+chmod +x "$TMP"
+sudo -n install -m 0755 "$TMP" /usr/local/bin/weehawk-webhook-agent
+echo ${b64Q} | base64 -d | sudo -n tee /etc/systemd/system/weehawk-webhook-agent.service > /dev/null
+sudo -n chmod 644 /etc/systemd/system/weehawk-webhook-agent.service
+sudo -n systemctl daemon-reload
+sudo -n systemctl enable --now weehawk-webhook-agent
+`;
+    await this.execDockerCliOnRemoteViaSsh(remoteServerId, projectUserId, body);
+  }
+
+  private async installRemoteWebhookAgentFromLocalBinary(
+    remoteServerId: number,
+    projectUserId: number | null,
+    localBinaryPath: string,
+    unitB64: string,
+  ): Promise<void> {
+    const abs = path.resolve(localBinaryPath);
+    if (!path.isAbsolute(abs)) {
+      throw new BadRequestException('WEEHAWK_WEBHOOK_AGENT_BINARY must be an absolute path.');
+    }
+    let buf: Buffer;
+    try {
+      buf = await fs.readFile(abs);
+    } catch {
+      throw new BadRequestException(
+        `WEEHAWK_WEBHOOK_AGENT_BINARY file not readable: ${abs}`,
+      );
+    }
+    if (buf.length < 512) {
+      throw new BadRequestException('WEEHAWK_WEBHOOK_AGENT_BINARY file is too small to be a valid binary.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const remoteTmp = `/tmp/weehawk_wa_${randomBytes(16).toString('hex')}`;
+    const tmpQ = remoteTmp.replace(/'/g, `'\\''`);
+    const b64Q = `'${unitB64.replace(/'/g, `'\\''`)}'`;
+    const body = `set -euo pipefail
+sudo -n install -m 0755 '${tmpQ}' /usr/local/bin/weehawk-webhook-agent
+rm -f '${tmpQ}'
+echo ${b64Q} | base64 -d | sudo -n tee /etc/systemd/system/weehawk-webhook-agent.service > /dev/null
+sudo -n chmod 644 /etc/systemd/system/weehawk-webhook-agent.service
+sudo -n systemctl daemon-reload
+sudo -n systemctl enable --now weehawk-webhook-agent
+`;
+    await this.withSshClient(p, async (client) => {
+      await this.sftpWriteRemoteBuffer(client, remoteTmp, buf);
+      await this.sshExecCollectOutput(client, `chmod 700 '${tmpQ}'`);
+      await this.execSshBashScriptCollectOutputOnClient(client, body, undefined);
+    });
+  }
+
+  /**
+   * Writes `{token}.sh` + `{token}.env` under {@link WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}.
+   * Call {@link ensureRemoteWebhookListening} first so the agent (Swarm or systemd) is running.
+   */
+  async writeRemoteWebhookScript(
+    remoteServerId: number,
+    projectUserId: number | null,
+    scriptToken: string,
+    scriptBody: string,
+    notificationEnvLines: string[],
+  ): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(scriptToken)) {
+      throw new BadRequestException('Invalid webhook script token.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const envPath = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.env`;
+    const scriptPath = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.sh`;
+    const installScript = buildRemoteEnvAndWrappedShInstallScript({
+      parentDirShQuoted: remoteInstallShQuote(WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR),
+      envPath,
+      scriptPath,
+      envLines: notificationEnvLines,
+      userScriptBody: scriptBody,
+      defaults: REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
+    });
+    await this.withSshClient(p, async (client) => {
+      await this.execSshBashScriptCollectOutputOnClient(client, installScript, undefined);
+    });
+  }
+
+  async removeRemoteWebhookScript(
+    remoteServerId: number,
+    projectUserId: number | null,
+    scriptToken: string,
+  ): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(scriptToken)) {
+      return;
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      return;
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const shQ = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.sh`.replace(
+      /'/g,
+      `'\\''`,
+    );
+    const envQ = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.env`.replace(
+      /'/g,
+      `'\\''`,
+    );
+    await this.withSshClient(p, async (client) => {
+      await this.sshExecIgnoreFailure(client, `rm -f '${shQ}' '${envQ}'`);
+    });
   }
 
   /**
@@ -671,7 +1498,7 @@ done
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     if (rs.serverRole !== 'deploy') {
       throw new BadRequestException(
-        `Remote server "${rs.name}" is build-only. Cron jobs require a deploy server.`,
+        `Remote server "${rs.name}" is build-only. Choose a deploy server (not a build host).`,
       );
     }
   }
@@ -1476,7 +2303,14 @@ done
     remotePath: string,
     content: string,
   ): Promise<void> {
-    const buf = Buffer.from(content, 'utf8');
+    return await this.sftpWriteRemoteBuffer(client, remotePath, Buffer.from(content, 'utf8'));
+  }
+
+  private async sftpWriteRemoteBuffer(
+    client: Client,
+    remotePath: string,
+    buf: Buffer,
+  ): Promise<void> {
     return await new Promise((resolve, reject) => {
       client.sftp((err, sftp) => {
         if (err) {

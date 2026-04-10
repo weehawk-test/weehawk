@@ -132,8 +132,6 @@ export class DatabaseGeneratorService {
     const commandSection = redisCmd;
 
     return `
-version: '3.8'
-
 services:
   ${safe}:
     image: ${image}

@@ -1,4 +1,26 @@
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
+import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
+
+function bashSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * How the deploy host gets the weehawk-webhook-agent Docker image during Install.
+ * - registry: docker pull (then tag as {@link WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE} if needed)
+ * - bundle: docker build from base64 files embedded by the API job
+ * - none: skip (first webhook with public host may still build remotely)
+ */
+export type WebhookAgentProvisionInput =
+  | { mode: 'none' }
+  | { mode: 'registry'; image: string }
+  | {
+      mode: 'bundle';
+      imageTag: string;
+      dockerfileB64: string;
+      mainGoB64: string;
+      goModB64: string;
+    };
 
 /**
  * Shared bash: install Docker without pinning versions (avoids apt downgrade errors).
@@ -32,6 +54,126 @@ docker_install_weehawk() {
   curl -fsSL https://get.docker.com | $SUDO_CMD sh
 }
 `.trim();
+
+/**
+ * Traefik v2.11 static args (single place — keep in sync with RemoteServersService Swarm labels: web + websecure).
+ * - TLS on websecure: default generated cert (browser warning) until you add ACME / real certs.
+ * - Swarm provider + overlay network match Weehawk stacks.
+ */
+const TRAEFIK_WEEHAWK_SERVICE_ARGS = String.raw`
+    traefik:v2.11 \
+    --providers.docker=true \
+    --providers.docker.swarmMode=true \
+    --providers.docker.exposedByDefault=false \
+    --providers.docker.watch=true \
+    --providers.providersThrottleDuration=2s \
+    --providers.docker.network="$OVERLAY_NET" \
+    --log.level=INFO \
+    --accesslog=false \
+    --ping=true \
+    --entrypoints.web.address=:80 \
+    --entrypoints.websecure.address=:443 \
+    --entrypoints.websecure.http.tls=true
+`.trim();
+
+function buildDeployWebhookAgentBash(
+  wa: WebhookAgentProvisionInput | undefined,
+  isPreview: boolean,
+): string {
+  const tagQ = bashSingleQuote(WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE);
+
+  if (isPreview) {
+    return `
+# --- Weehawk webhook agent image ---
+echo "Weehawk: [script preview only] A real Install job embeds docker pull (if WEEHAWK_WEBHOOK_AGENT_IMAGE is set) or docker build for ${WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE} from the API bundle."
+`.trim();
+  }
+
+  const input = wa ?? { mode: 'none' as const };
+
+  if (input.mode === 'none') {
+    return `
+# --- Weehawk webhook agent image ---
+echo "Weehawk: webhook agent image not pre-installed (set WEEHAWK_WEBHOOK_AGENT_IMAGE on the API or ship the API bundle). You can still create a webhook; the API may build ${WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE} on first use."
+`.trim();
+  }
+
+  if (input.mode === 'registry') {
+    const pullQ = bashSingleQuote(input.image);
+    return `
+# --- Weehawk webhook agent image (registry) ---
+WA_IMG=${tagQ}
+PULL_IMG=${pullQ}
+echo "Weehawk: pulling webhook agent from registry..."
+$SUDO_CMD docker pull "$PULL_IMG"
+if [ "$PULL_IMG" != "$WA_IMG" ]; then
+  $SUDO_CMD docker tag "$PULL_IMG" "$WA_IMG"
+fi
+echo "Weehawk: webhook agent image ready ($WA_IMG)"
+`.trim();
+  }
+
+  const { dockerfileB64, mainGoB64, goModB64, imageTag } = input;
+  const imgQ = bashSingleQuote(imageTag);
+  return `
+# --- Weehawk webhook agent image (docker build from API bundle) ---
+WA_IMG=${imgQ}
+WA_DIR=$(mktemp -d)
+wa_cleanup() { rm -rf "$WA_DIR"; }
+trap wa_cleanup EXIT
+printf '%s' '${dockerfileB64}' | base64 -d > "$WA_DIR/Dockerfile"
+printf '%s' '${mainGoB64}' | base64 -d > "$WA_DIR/main.go"
+printf '%s' '${goModB64}' | base64 -d > "$WA_DIR/go.mod"
+echo "Weehawk: building webhook agent ($WA_IMG)..."
+$SUDO_CMD docker build -t "$WA_IMG" "$WA_DIR"
+wa_cleanup
+trap - EXIT
+echo "Weehawk: webhook agent image ready ($WA_IMG)"
+`.trim();
+}
+
+/**
+ * Start {@code weehawk-webhook-agent} as a Swarm service so `docker service ls` shows it right after Install.
+ * Uses host-published TCP (default 8759) until a webhook with a public hostname triggers Traefik labels (API recreates the service).
+ */
+function buildDeployWebhookSwarmServiceBash(isPreview: boolean): string {
+  const img = WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE;
+  if (isPreview) {
+    return `
+# --- weehawk-webhook-agent Swarm service ---
+echo "Weehawk: [script preview] Install also creates Swarm service weehawk-webhook-agent (host :8759) when image ${img} exists."
+`.trim();
+  }
+
+  return `
+# --- weehawk-webhook-agent Swarm service (visible in docker service ls) ---
+WA_SVC='weehawk-webhook-agent'
+WA_PORT='8759'
+WA_SCRIPTS='/opt/weehawk-scripts/webhooks'
+WA_PFIX='hooks'
+WA_IMG='${img}'
+WA_MOUNT="type=bind,source=\${WA_SCRIPTS},target=\${WA_SCRIPTS}"
+$SUDO_CMD mkdir -p "$WA_SCRIPTS"
+if ! $SUDO_CMD docker image inspect "$WA_IMG" >/dev/null 2>&1; then
+  echo "Weehawk: skip $WA_SVC — Docker image not present (set WEEHAWK_WEBHOOK_AGENT_IMAGE on the API or ship the webhook bundle)."
+elif $SUDO_CMD docker service ls --format '{{.Name}}' 2>/dev/null | grep -qx "$WA_SVC"; then
+  echo "Weehawk: Swarm service $WA_SVC already exists."
+else
+  echo "Weehawk: creating Swarm service $WA_SVC (health: curl -sS http://127.0.0.1:\${WA_PORT}/healthz)..."
+  $SUDO_CMD docker service create \\
+    --name "$WA_SVC" \\
+    --network "$OVERLAY_NET" \\
+    --constraint node.role==manager \\
+    --mount "$WA_MOUNT" \\
+    -e "WEEHAWK_HOOK_LISTEN=:\${WA_PORT}" \\
+    -e "WEEHAWK_HOOK_SCRIPTS_DIR=$WA_SCRIPTS" \\
+    -e "WEEHAWK_HOOK_PATH_PREFIX=$WA_PFIX" \\
+    --publish mode=host,published="\${WA_PORT}",target="\${WA_PORT}" \\
+    "$WA_IMG"
+  echo "Weehawk: $WA_SVC is up. Public URL via Traefik after you add a webhook public hostname; until then use http://<manager-ip>:\${WA_PORT}/hooks/<token>."
+fi
+`.trim();
+}
 
 /**
  * Full Docker removal for Debian/Ubuntu when old or conflicting packages block a clean install.
@@ -94,12 +236,15 @@ echo "Docker removal finished. You can run Install again for a fresh Docker Engi
 
 /**
  * Remote bash provision script (run as root or passwordless sudo).
- * Aligns with Weehawk app stacks: Docker Engine, Swarm, overlay {@link WEEHAWK_TRAEFIK_EXTERNAL_NETWORK}.
+ * Deploy role: Docker, Swarm, overlay, Traefik (pinned args), and webhook agent image (pull or build).
  */
 export function buildWeehawkProvisionScript(opts: {
   role: 'deploy' | 'build';
   /** Overlay name for Traefik + app attachment (default weehawk). */
   overlayNetworkName?: string;
+  webhookAgent?: WebhookAgentProvisionInput;
+  /** GET preview: omit embedded base64 bundle; print placeholders instead. */
+  isProvisionJobPreview?: boolean;
 }): string {
   const net = (opts.overlayNetworkName ?? WEEHAWK_TRAEFIK_EXTERNAL_NETWORK).trim() || 'weehawk';
   const isBuild = opts.role === 'build';
@@ -163,6 +308,14 @@ echo "Docker OK ($(docker --version 2>/dev/null || echo '?'))"
 echo "Weehawk build host provision: done."
 `.trim();
   }
+
+  const webhookBash = buildDeployWebhookAgentBash(
+    opts.webhookAgent,
+    Boolean(opts.isProvisionJobPreview),
+  );
+  const webhookSwarmBash = buildDeployWebhookSwarmServiceBash(
+    Boolean(opts.isProvisionJobPreview),
+  );
 
   return `
 set -e
@@ -252,15 +405,13 @@ else
     --network "$OVERLAY_NET" \\
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \\
     --constraint "node.role == manager" \\
-    traefik:v2.11 \\
-    --providers.docker=true \\
-    --providers.docker.swarmMode=true \\
-    --providers.docker.exposedByDefault=false \\
-    --providers.docker.network="$OVERLAY_NET" \\
-    --entrypoints.web.address=:80 \\
-    --entrypoints.websecure.address=:443
+    ${TRAEFIK_WEEHAWK_SERVICE_ARGS}
   echo "Traefik traefik-weehawk created."
 fi
+
+${webhookBash}
+
+${webhookSwarmBash}
 
 if [ -n "$SUDO_CMD" ] && ! groups "$CURRENT_USER" | grep -qw docker; then
   $SUDO_CMD usermod -aG docker "$CURRENT_USER" || true

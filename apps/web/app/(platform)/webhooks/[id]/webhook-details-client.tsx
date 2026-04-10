@@ -22,7 +22,7 @@ import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { motion } from "framer-motion";
-import { publicWebhookTriggerUrl, type WebhookDetail } from "@/lib/webhooks-api";
+import type { WebhookDetail } from "@/lib/webhooks-api";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 
 type Props = {
@@ -39,19 +39,20 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
   const { toast } = useToast();
   const confirm = useConfirm();
 
-  const [copied, setCopied] = useState(false);
+  const [copiedRemote, setCopiedRemote] = useState(false);
 
-  const webhookUrl = publicWebhookTriggerUrl(webhook.secretToken);
+  const remoteAgentUrl = webhook.remoteTriggerUrl;
 
-  const handleCopy = async () => {
+  const handleCopyRemote = async () => {
+    if (!remoteAgentUrl) return;
     try {
-      await navigator.clipboard.writeText(webhookUrl);
-      setCopied(true);
+      await navigator.clipboard.writeText(remoteAgentUrl);
+      setCopiedRemote(true);
       toast({
         title: "Copied",
-        description: "Webhook URL copied to clipboard.",
+        description: "Trigger URL copied.",
       });
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopiedRemote(false), 2000);
     } catch {
       toast({
         title: "Copy failed",
@@ -69,8 +70,8 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
           toast({
             title: updated.isActive ? "Activated" : "Deactivated",
             description: updated.isActive
-              ? "This URL will run actions again."
-              : "Requests will receive 404.",
+              ? "Triggers will run again when called."
+              : "Triggers will be ignored while inactive.",
           });
           router.refresh();
         },
@@ -138,32 +139,53 @@ export function WebhookDetailsClient({ id, initialWebhook }: Props) {
           </div>
         </div>
 
-        <motion.div
-          initial={{ y: 12, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="glass-panel p-1 rounded-2xl mb-6 relative group"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl pointer-events-none" />
-          <div className="bg-background rounded-xl p-5 relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex-1 overflow-hidden min-w-0">
-              <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                <LinkIcon className="w-3.5 h-3.5" />
-                Trigger URL (GET or POST)
-              </label>
-              <div className="font-mono text-primary text-sm break-all selection:bg-primary/30 leading-relaxed">
-                {webhookUrl}
+        {remoteAgentUrl && (
+          <motion.div
+            initial={{ y: 12, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="glass-panel p-1 rounded-2xl mb-6 relative group"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl pointer-events-none" />
+            <div className="bg-background rounded-xl p-5 relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex-1 overflow-hidden min-w-0">
+                <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                  <LinkIcon className="w-3.5 h-3.5" />
+                  Trigger URL (GET or POST)
+                </label>
+                <div className="font-mono text-primary text-sm break-all selection:bg-primary/30 leading-relaxed">
+                  {remoteAgentUrl}
+                </div>
+                {(webhook.hooksPublicHost || webhook.serviceAction === "docker_command") && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {webhook.hooksPublicHost ? (
+                      <>
+                        Public host (Traefik):{" "}
+                        <span className="font-mono text-foreground/90">{webhook.hooksPublicHost}</span>
+                        {" · "}
+                      </>
+                    ) : null}
+                    Trigger URL scheme:{" "}
+                    <span className="font-mono text-foreground/90">
+                      {webhook.remoteTriggerUrlScheme === "https" ? "https" : "http"}
+                    </span>
+                  </p>
+                )}
               </div>
+              <button
+                type="button"
+                onClick={handleCopyRemote}
+                className="flex items-center justify-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 text-foreground rounded-lg transition-all shrink-0 font-medium"
+              >
+                {copiedRemote ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                ) : (
+                  <Copy className="w-5 h-5" />
+                )}
+                {copiedRemote ? "Copied" : "Copy"}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="flex items-center justify-center gap-2 px-5 py-2.5 bg-white/5 hover:bg-white/10 text-foreground rounded-lg transition-all shrink-0 font-medium"
-            >
-              {copied ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </motion.div>
+          </motion.div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div className="glass-panel p-4 rounded-2xl max-h-[62vh] overflow-y-auto">

@@ -29,7 +29,13 @@ export class RemoteServerProvisionService {
 
   /** Same bash the worker runs over SSH — for UI preview. */
   getProvisionScriptPreview(role: 'deploy' | 'build'): { script: string } {
-    return { script: buildWeehawkProvisionScript({ role }) };
+    return {
+      script: buildWeehawkProvisionScript({
+        role,
+        isProvisionJobPreview: role === 'deploy',
+        webhookAgent: { mode: 'none' },
+      }),
+    };
   }
 
   /** Bash for full Docker removal — UI preview only; same script runs on enqueue (docker_purge job). */
@@ -152,11 +158,17 @@ export class RemoteServerProvisionService {
       const kind = await this.resolveJobKindFromDb(job.id);
 
       const ctx = await this.remoteServersService.getSshProvisionContext(serverId, ownerId);
+      const webhookAgent =
+        ctx.server.serverRole === 'build'
+          ? undefined
+          : await this.remoteServersService.getWebhookAgentProvisionInput();
       const script =
         kind === 'docker_purge'
           ? buildDockerPurgeScript()
           : buildWeehawkProvisionScript({
               role: ctx.server.serverRole === 'build' ? 'build' : 'deploy',
+              webhookAgent,
+              isProvisionJobPreview: false,
             });
       this.logger.log(
         `Job ${job.id} remote_server_id=${serverId} resolved job_kind=${kind} (from DB column job_kind)`,

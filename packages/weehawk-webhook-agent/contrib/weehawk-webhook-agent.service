@@ -1,0 +1,14 @@
+[Unit]
+Description=Weehawk webhook agent (runs /opt/weehawk-scripts/webhooks/*.sh by HTTP token)
+After=network.target
+
+[Service]
+Type=simple
+Environment=WEEHAWK_REMOTE_WEBHOOK_HTTP_PORT=8759
+Environment=WEEHAWK_HOOK_SCRIPTS_DIR=/opt/weehawk-scripts/webhooks
+ExecStart=/usr/local/bin/weehawk-webhook-agent
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
-import { All, Controller, Param } from '@nestjs/common';
+import { All, Controller, Param, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PublicWebhookHostGuard } from './public-webhook-host.guard';
 import { WebhooksService } from './webhooks.service';
 
 /**
@@ -7,6 +8,7 @@ import { WebhooksService } from './webhooks.service';
  */
 @ApiTags('Triggers (public)')
 @Controller('hooks')
+@UseGuards(PublicWebhookHostGuard)
 export class WebhooksTriggerController {
   constructor(private readonly webhooksService: WebhooksService) {}
 

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -117,4 +118,31 @@ export class CreateWebhookDto {
   @IsString()
   @MaxLength(4000)
   notifyMessage?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Parent domain only (e.g. example.com). Stored and routed as weehawk-webhook.example.com behind Traefik. DNS: point that hostname to this server.',
+    example: 'example.com',
+  })
+  @ValidateIf(
+    (o: CreateWebhookDto) =>
+      o.targetMode === 'service' && o.serviceAction === 'docker_command',
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  hooksPublicHost?: string;
+
+  @ApiPropertyOptional({
+    enum: ['http', 'https'],
+    description:
+      'Scheme for the remote trigger URL (public Traefik host or IP:port). Default http.',
+  })
+  @ValidateIf(
+    (o: CreateWebhookDto) =>
+      o.targetMode === 'service' && o.serviceAction === 'docker_command',
+  )
+  @IsOptional()
+  @IsIn(['http', 'https'])
+  remoteTriggerUrlScheme?: 'http' | 'https';
 }

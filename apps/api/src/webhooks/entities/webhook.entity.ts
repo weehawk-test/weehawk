@@ -18,6 +18,9 @@ export type WebhookServiceAction =
   | 'docker_command'
   | 'no_action';
 
+/** Scheme shown in the remote trigger URL (Traefik hostname or IP:port). */
+export type WebhookRemoteTriggerUrlScheme = 'http' | 'https';
+
 @Entity({ name: 'webhooks' })
 export class Webhook {
   @PrimaryGeneratedColumn('uuid')
@@ -82,6 +85,25 @@ export class Webhook {
 
   @Column({ name: 'notify_message', type: 'text', nullable: true })
   notifyMessage: string | null = null;
+
+  /**
+   * Optional hostname for the on-server webhook agent behind Traefik (e.g. `hooks.example.com`).
+   * Requires API `WEEHAWK_WEBHOOK_AGENT_IMAGE` and Swarm + overlay {@code weehawk} on the deploy host.
+   */
+  @Column({ name: 'hooks_public_host', type: 'varchar', length: 255, nullable: true })
+  hooksPublicHost: string | null = null;
+
+  /**
+   * URL scheme for the remote bash trigger URL when `serviceAction` is docker_command.
+   * Set per webhook in the API/UI (not a global env default).
+   */
+  @Column({
+    name: 'remote_trigger_url_scheme',
+    type: 'varchar',
+    length: 8,
+    default: 'http',
+  })
+  remoteTriggerUrlScheme!: WebhookRemoteTriggerUrlScheme;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
