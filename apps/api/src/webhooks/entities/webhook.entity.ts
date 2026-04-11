@@ -106,8 +106,7 @@ export class Webhook {
   remoteTriggerUrlScheme!: WebhookRemoteTriggerUrlScheme;
 
   /**
-   * API origin only (e.g. {@code https://weehawk.example.com:8080}). When set, the primary trigger URL is
-   * {@code POST {origin}/hooks/{secretToken}} (same as UI Redeploy) instead of the on-deploy-host agent URL.
+   * Optional legacy field; on-host redeploy no longer calls back to the API. May be null.
    */
   @Column({ name: 'hooks_trigger_origin', type: 'varchar', length: 512, nullable: true })
   hooksTriggerOrigin: string | null = null;

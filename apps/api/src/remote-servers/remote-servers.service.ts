@@ -3,6 +3,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -49,6 +50,7 @@ import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
 import { toSafePathSegment } from '../services/deployment-paths';
+import { isLoopbackSshHost } from './loopback-ssh-host';
 
 /**
  * Bash-safe `export VAR='…'` lines so `docker stack deploy` can substitute `${VAR}` in the compose
@@ -199,7 +201,7 @@ function normalizeDomainsJsonInput(raw: string | undefined): string | null {
 }
 
 @Injectable()
-export class RemoteServersService {
+export class RemoteServersService implements OnApplicationBootstrap {
   /**
    * Serialize Swarm webhook-agent deploys per remote server so concurrent API calls
    * do not race on `docker service rm` / `docker service create` (AlreadyExists).
@@ -211,6 +213,28 @@ export class RemoteServersService {
     private readonly remoteServerRepository: Repository<RemoteServer>,
     private readonly configService: ConfigService,
   ) {}
+
+  /** Fix legacy rows: loopback SSH hosts are build-only, never deploy. */
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      const svcRepo =
+        this.remoteServerRepository.manager.getRepository(Service);
+      const rows = await this.remoteServerRepository.find();
+      for (const r of rows) {
+        if (isLoopbackSshHost(r.host) && r.serverRole === 'deploy') {
+          const n = await svcRepo.count({
+            where: { remoteServer: { id: r.id } },
+          });
+          if (n === 0) {
+            r.serverRole = 'build';
+            await this.remoteServerRepository.save(r);
+          }
+        }
+      }
+    } catch {
+      /* ignore if DB not ready */
+    }
+  }
 
   private runWebhookSwarmOpSerialized(
     remoteServerId: number,
@@ -271,7 +295,10 @@ export class RemoteServersService {
       host: rs.host,
       port: rs.port,
       sshUser: rs.sshUser,
-      serverRole: rs.serverRole === 'build' ? 'build' : 'deploy',
+      serverRole:
+        isLoopbackSshHost(rs.host) || rs.serverRole === 'build'
+          ? 'build'
+          : 'deploy',
       authMode,
       hasPrivateKey,
       privateKeyPath: hasPath ? rs.privateKeyPath! : null,
@@ -338,12 +365,7 @@ export class RemoteServersService {
     family?: number;
   } {
     const raw = rs.host.trim();
-    const lower = raw.toLowerCase();
-    const isLoopback =
-      lower === 'localhost' ||
-      raw === '127.0.0.1' ||
-      lower === '::1' ||
-      lower === '[::1]';
+    const isLoopback = isLoopbackSshHost(raw);
     const host = isLoopback ? 'localhost' : raw;
     const port = rs.port ?? 22;
     return {
@@ -1381,6 +1403,114 @@ fi
     });
   }
 
+  private static readonly MIRROR_SKIP_DIR_NAMES = new Set([
+    'node_modules',
+    '.git',
+    '.svn',
+    '__pycache__',
+    '.next',
+    'dist',
+    'build',
+    '.turbo',
+    '.cache',
+    'vendor',
+    '.venv',
+  ]);
+
+  /** Relative POSIX paths under `localRootAbs` for SFTP upload (skips heavy dirs). */
+  private async listRelativeFilePathsForDeploymentMirror(localRootAbs: string): Promise<string[]> {
+    const root = path.resolve(localRootAbs);
+    const out: string[] = [];
+    const walk = async (dirAbs: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(dirAbs, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const ent of entries) {
+        const full = path.join(dirAbs, ent.name);
+        if (ent.isDirectory()) {
+          if (RemoteServersService.MIRROR_SKIP_DIR_NAMES.has(ent.name)) {
+            continue;
+          }
+          await walk(full);
+        } else if (ent.isFile()) {
+          out.push(path.relative(root, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    await walk(root);
+    return out;
+  }
+
+  /**
+   * Uploads a local directory tree to `remoteDirAbsolute` on the deploy host (e.g. …/app-source)
+   * so on-host webhooks can run `docker build` without calling back to the API machine.
+   */
+  async mirrorLocalDirectoryToRemoteDeployment(
+    remoteServerId: number,
+    projectUserId: number | null,
+    params: { localRootAbsolute: string; remoteDirAbsolute: string },
+  ): Promise<void> {
+    const localRoot = path.resolve(params.localRootAbsolute);
+    try {
+      const st = await fs.stat(localRoot);
+      if (!st.isDirectory()) {
+        throw new BadRequestException(`Local mirror path is not a directory: ${localRoot}`);
+      }
+    } catch (e) {
+      if (e instanceof BadRequestException) {
+        throw e;
+      }
+      throw new BadRequestException(`Local mirror path not found: ${localRoot}`);
+    }
+    const files = await this.listRelativeFilePathsForDeploymentMirror(localRoot);
+    if (files.length === 0) {
+      return;
+    }
+    const rs = await this.remoteServerRepository.findOne({
+      where: { id: remoteServerId },
+    });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const remoteDir = params.remoteDirAbsolute.replace(/\\/g, '/').replace(/\/+$/, '');
+
+    await this.withSshClient(p, async (client) => {
+      const rdq = remoteDir.replace(/'/g, `'\\''`);
+      await this.sshExecCollectOutput(client, `rm -rf '${rdq}' && mkdir -p '${rdq}'`, undefined);
+      const dirs = new Set<string>();
+      for (const rel of files) {
+        const pd = path.posix.dirname(rel);
+        if (pd && pd !== '.') {
+          let acc = '';
+          for (const part of pd.split('/')) {
+            acc = acc ? `${acc}/${part}` : part;
+            dirs.add(acc);
+          }
+        }
+      }
+      const sorted = [...dirs].sort(
+        (a, b) => a.split('/').length - b.split('/').length,
+      );
+      for (const d of sorted) {
+        const rp = `${remoteDir}/${d}`.replace(/\/+/g, '/');
+        const rpq = rp.replace(/'/g, `'\\''`);
+        await this.sshExecCollectOutput(client, `mkdir -p '${rpq}'`, undefined);
+      }
+      for (const rel of files) {
+        const abs = path.join(localRoot, ...rel.split('/'));
+        const buf = await fs.readFile(abs);
+        const rp = `${remoteDir}/${rel}`.replace(/\/+/g, '/');
+        await this.sftpWriteRemoteBuffer(client, rp, buf);
+      }
+    });
+  }
+
   /** Rolling restart each service in a stack (`docker service update --force`) on the remote host. */
   async forceRollingRestartStackViaSsh(
     remoteServerId: number,
@@ -1533,12 +1663,7 @@ done
   async dockerHostEnvForServer(rs: RemoteServer): Promise<Record<string, string>> {
     const identityPath = await this.resolveIdentityFilePath(rs);
     const raw = rs.host.trim();
-    const lower = raw.toLowerCase();
-    const isLoopback =
-      lower === 'localhost' ||
-      raw === '127.0.0.1' ||
-      lower === '::1' ||
-      lower === '[::1]';
+    const isLoopback = isLoopbackSshHost(raw);
     // Use `localhost` in ssh:// so OpenSSH matches [localhost]:port in known_hosts (avoids yes/no prompts).
     // With `-4`, resolution stays on 127.0.0.1 so we don't hit ::1 when sshd listens on IPv4 only (common on Windows).
     const host = isLoopback ? 'localhost' : raw;
@@ -1581,6 +1706,11 @@ done
     if (rs.serverRole === 'build') {
       throw new BadRequestException(
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
+      );
+    }
+    if (isLoopbackSshHost(rs.host)) {
+      throw new BadRequestException(
+        'This service uses the local machine (loopback) as deploy target. Point deploy to a real remote host under Remote servers.',
       );
     }
     const extra = await this.dockerHostEnvForServer(rs);
@@ -1661,6 +1791,11 @@ done
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
       );
     }
+    if (isLoopbackSshHost(rs.host)) {
+      throw new BadRequestException(
+        'This service uses the local machine (loopback) as deploy target. Point deploy to a real remote host under Remote servers.',
+      );
+    }
     const extra = await this.dockerHostEnvForServer(rs);
     return { ...base, ...extra };
   }
@@ -1689,6 +1824,11 @@ done
     if (rs.serverRole !== 'deploy') {
       throw new BadRequestException(
         `Remote server "${rs.name}" is build-only. Choose a deploy server (not a build host).`,
+      );
+    }
+    if (isLoopbackSshHost(rs.host)) {
+      throw new BadRequestException(
+        `Remote server "${rs.name}" points to the local machine (loopback). It cannot be used as a deploy host — use a real remote server, or use this entry only for image builds.`,
       );
     }
   }
@@ -1736,12 +1876,19 @@ done
     const pem = dto.privateKey.trim();
     const privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
 
+    const hostTrimmed = dto.host.trim();
+    const serverRole: 'deploy' | 'build' = isLoopbackSshHost(hostTrimmed)
+      ? 'build'
+      : dto.serverRole === 'build'
+        ? 'build'
+        : 'deploy';
+
     const entity = this.remoteServerRepository.create({
       name: dto.name.trim(),
-      host: dto.host.trim(),
+      host: hostTrimmed,
       port: dto.port ?? 22,
       sshUser: dto.sshUser.trim(),
-      serverRole: dto.serverRole === 'build' ? 'build' : 'deploy',
+      serverRole,
       privateKeyEncrypted,
       privateKeyPath: null,
       extraSshOptions: dto.extraSshOptions?.trim() || null,
@@ -1831,6 +1978,17 @@ done
       privateKeyEncrypted: nextEnc,
       privateKeyPath: nextPath,
     });
+    if (isLoopbackSshHost(merged.host) && merged.serverRole === 'deploy') {
+      const nDeploy = await svcRepo.count({
+        where: { remoteServer: { id: merged.id } },
+      });
+      if (nDeploy > 0) {
+        throw new BadRequestException(
+          'The local machine (localhost / loopback) cannot be a deploy server. Point those services at a remote deploy host first, then set this entry to Build-only under Remote servers.',
+        );
+      }
+      merged.serverRole = 'build';
+    }
     const saved = await this.remoteServerRepository.save(merged);
     return this.toSafe(saved);
   }

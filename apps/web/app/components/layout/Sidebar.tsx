@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, FolderKanban, KeyRound, UserCircle, ChevronUp, ChevronLeft, ChevronRight,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, Server, CreditCard, BookOpen, LifeBuoy, Globe,
+  GitBranch, Server, CreditCard, LifeBuoy, Globe, Newspaper,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { useMemo, useState } from "react";
@@ -70,16 +70,11 @@ function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
       ],
     },
     {
-      label: "Resources",
+      label: "More",
       items: [
+        { href: "/news", label: "News", icon: Newspaper },
         {
-          href: "https://docs.weehawk.io",
-          label: "Documentation",
-          icon: BookOpen,
-          external: true,
-        },
-        {
-          href: "https://docs.weehawk.io/support",
+          href: "https://weehawk.io/support",
           label: "Support",
           icon: LifeBuoy,
           external: true,

@@ -16,6 +16,7 @@ import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -65,7 +66,7 @@ export function CreateCronJobClient({
   const [cronExpression, setCronExpression] = useState("*/15 * * * *");
   const [targetMode] = useState<WebhookTargetMode>("service");
   const deployServers = useMemo(
-    () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
+    () => filterSshDeployServers(initialRemoteServers),
     [initialRemoteServers],
   );
   const [remoteServerId, setRemoteServerId] = useState(

@@ -1,5 +1,5 @@
 import { API_BASE } from "./api";
-import { authFetch } from "./auth-fetch";
+import { authFetch, authFormDataUploadWithProgress } from "./auth-fetch";
 import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
 import type { DatabaseEngineId } from "./database-engines";
 import type { DatabaseBackupConfig } from "./database-backup-preview";
@@ -792,6 +792,26 @@ export async function startServiceApi(id: string): Promise<{ success: boolean; o
   return JSON.parse(text) as { success: boolean; output?: string };
 }
 
+/** Deploy-host mirror result after generating application stack (compose + app-source on server). */
+export type RemoteMirrorPayload =
+  | { status: "synced" }
+  | { status: "skipped"; reason: "no_deploy_host" }
+  | { status: "failed"; message: string };
+
+function parseRemoteMirrorPayload(raw: unknown): RemoteMirrorPayload | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const st = o.status;
+  if (st === "synced") return { status: "synced" };
+  if (st === "skipped" && o.reason === "no_deploy_host") {
+    return { status: "skipped", reason: "no_deploy_host" };
+  }
+  if (st === "failed" && typeof o.message === "string") {
+    return { status: "failed", message: o.message };
+  }
+  return undefined;
+}
+
 export async function uploadApplicationArchiveApi(
   id: string,
   file: File,
@@ -805,8 +825,10 @@ export async function uploadApplicationArchiveApi(
     variables?: Array<{ key: string; value: string }>;
     /** Applied with the upload; avoids a separate PATCH to `/application/networks`. */
     networks?: { external: string[]; stack: string[] };
+    /** Browser-only: XMLHttpRequest upload progress (bytes sent to the API). */
+    onUploadProgress?: (loaded: number, total: number) => void;
   },
-): Promise<Service> {
+): Promise<{ service: Service; remoteMirror?: RemoteMirrorPayload }> {
   const fd = new FormData();
   // Append all text fields before `file`. Multer/Nest often only bind body fields that appear
   // before the file part; putting `file` first can drop `networksJson` and other metadata.
@@ -829,17 +851,34 @@ export async function uploadApplicationArchiveApi(
   }
   fd.append("file", file);
 
-  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/upload`, {
-    method: "POST",
-    body: fd,
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  const path = `/api/services/${encodeURIComponent(id)}/application/upload`;
+  const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
+  const url = `${base}${path}`;
+
+  let text: string;
+  if (typeof window !== "undefined" && options?.onUploadProgress) {
+    try {
+      text = await authFormDataUploadWithProgress(url, fd, options.onUploadProgress);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(nestErrorMessage(msg, msg));
+    }
+  } else {
+    const res = await apiFetch(path, {
+      method: "POST",
+      body: fd,
+    });
+    text = await res.text();
+    if (!res.ok) {
+      throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+    }
   }
-  const json = JSON.parse(text) as { service?: unknown };
+  const json = JSON.parse(text) as { service?: unknown; remoteMirror?: unknown };
   if (!json.service) throw new Error("Upload succeeded but no service payload was returned.");
-  return mapApiServiceToService(json.service);
+  return {
+    service: mapApiServiceToService(json.service),
+    remoteMirror: parseRemoteMirrorPayload(json.remoteMirror),
+  };
 }
 
 /** Stage: clone Git repo into app source only (no stack). Then call `generateApplicationFromSourceApi`. */
@@ -885,7 +924,7 @@ export async function generateApplicationFromSourceApi(
     variables?: Array<{ key: string; value: string }>;
     networks?: { external: string[]; stack: string[] };
   },
-): Promise<Service> {
+): Promise<{ service: Service; remoteMirror?: RemoteMirrorPayload }> {
   const body: Record<string, unknown> = {
     buildPath: options.buildPath,
     dockerfilePath: options.dockerfilePath,
@@ -911,9 +950,12 @@ export async function generateApplicationFromSourceApi(
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
-  const json = JSON.parse(text) as { service?: unknown };
+  const json = JSON.parse(text) as { service?: unknown; remoteMirror?: unknown };
   if (!json.service) throw new Error("Request succeeded but no service payload was returned.");
-  return mapApiServiceToService(json.service);
+  return {
+    service: mapApiServiceToService(json.service),
+    remoteMirror: parseRemoteMirrorPayload(json.remoteMirror),
+  };
 }
 
 /** @deprecated One-shot clone + stack; prefer `applicationGitCloneStageApi` + `generateApplicationFromSourceApi`. */
@@ -930,7 +972,7 @@ export async function uploadApplicationGitCloneApi(
     variables?: Array<{ key: string; value: string }>;
     networks?: { external: string[]; stack: string[] };
   },
-): Promise<Service> {
+): Promise<{ service: Service; remoteMirror?: RemoteMirrorPayload }> {
   const body: Record<string, unknown> = {
     buildPath: options.buildPath,
     containerPort: options.containerPort,
@@ -958,9 +1000,12 @@ export async function uploadApplicationGitCloneApi(
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
-  const json = JSON.parse(text) as { service?: unknown };
+  const json = JSON.parse(text) as { service?: unknown; remoteMirror?: unknown };
   if (!json.service) throw new Error("Request succeeded but no service payload was returned.");
-  return mapApiServiceToService(json.service);
+  return {
+    service: mapApiServiceToService(json.service),
+    remoteMirror: parseRemoteMirrorPayload(json.remoteMirror),
+  };
 }
 
 /** Configure Swarm stack to use a pre-built image (no ZIP upload / docker build on deploy). */

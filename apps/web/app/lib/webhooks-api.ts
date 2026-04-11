@@ -97,6 +97,8 @@ export type UpdateWebhookBody = {
   databaseBackupConfig?: DatabaseBackupConfig | null;
   hooksPublicHost?: string | null;
   remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
+  /** API origin from the browser ({@link API_BASE}); stored for remote-script callback env, not the displayed trigger URL. */
+  hooksTriggerOrigin?: string | null;
 };
 
 async function errorBody(res: Response): Promise<string> {

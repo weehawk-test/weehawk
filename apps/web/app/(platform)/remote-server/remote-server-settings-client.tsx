@@ -35,6 +35,7 @@ import {
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
 import { isCloudEdition } from "@/lib/weehawk-edition";
+import { isLoopbackSshHost } from "@/lib/loopback-ssh-host";
 
 function emptyForm() {
   return {
@@ -113,6 +114,18 @@ export function RemoteServerSettingsClient() {
       }
     }
   }, [editingId, list.data]);
+
+  useEffect(() => {
+    if (creating && isLoopbackSshHost(form.host)) {
+      setForm((f) => (f.serverRole !== "build" ? { ...f, serverRole: "build" } : f));
+    }
+  }, [creating, form.host]);
+
+  useEffect(() => {
+    if (editingId != null && isLoopbackSshHost(editDraft.host)) {
+      setEditDraft((d) => (d.serverRole !== "build" ? { ...d, serverRole: "build" } : d));
+    }
+  }, [editingId, editDraft.host]);
 
   useEffect(() => {
     if (editingId == null || list.data == null) return;

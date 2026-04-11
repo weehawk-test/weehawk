@@ -93,4 +93,15 @@ export class UpdateWebhookDto {
   @IsOptional()
   @IsIn(['http', 'https'])
   remoteTriggerUrlScheme?: 'http' | 'https';
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'API origin for POST /hooks/{token} (full UI redeploy). Null clears (use deploy-host agent URL).',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
+  @IsString()
+  @MaxLength(512)
+  hooksTriggerOrigin?: string | null;
 }

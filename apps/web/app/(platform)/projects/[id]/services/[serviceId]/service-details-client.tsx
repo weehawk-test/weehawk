@@ -100,6 +100,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { listDatabaseBackupOptions } from "@/lib/database-backup-from-service";
@@ -3237,6 +3238,11 @@ function ApplicationArchivePanel({
   const [buildPath, setBuildPath] = useState(".");
   const [replicas, setReplicas] = useState("1");
   const [uploading, setUploading] = useState(false);
+  /** 0–100 while uploading ZIP to API; 100 while server processes after bytes sent. */
+  const [uploadProgressPct, setUploadProgressPct] = useState<number | null>(null);
+  /** Approximate progress while POST generate-from-source runs (no byte-level progress). */
+  const [stackGenProgressPct, setStackGenProgressPct] = useState<number | null>(null);
+  const stackGenProgressTimerRef = useRef<number | null>(null);
   /** Generate stack from staged git source (POST generate-from-source). */
   const [stackGenerating, setStackGenerating] = useState(false);
   const [variablesText, setVariablesText] = useState("");
@@ -3354,6 +3360,15 @@ function ApplicationArchivePanel({
     setGithubManualUrlStaged(false);
     setGitSourceStaged(false);
   }, [serviceId]);
+
+  useEffect(() => {
+    return () => {
+      if (stackGenProgressTimerRef.current != null) {
+        clearInterval(stackGenProgressTimerRef.current);
+        stackGenProgressTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const filledEnvVarCount = useMemo(
     () => variables.filter((v) => v.key.trim()).length,
@@ -3686,8 +3701,18 @@ function ApplicationArchivePanel({
     if (!common) return;
     const { cp, rp, rep, cleanVars, stk } = common;
     setStackGenerating(true);
+    setStackGenProgressPct(5);
+    if (stackGenProgressTimerRef.current != null) {
+      clearInterval(stackGenProgressTimerRef.current);
+    }
+    stackGenProgressTimerRef.current = window.setInterval(() => {
+      setStackGenProgressPct((p) => {
+        const n = p ?? 0;
+        return n >= 88 ? 88 : n + 2 + Math.floor(Math.random() * 5);
+      });
+    }, 400);
     try {
-      await generateApplicationFromSourceApi(serviceId, {
+      const { remoteMirror } = await generateApplicationFromSourceApi(serviceId, {
         buildPath: buildPath.trim() || ".",
         containerPort: cp,
         publishPort: rp,
@@ -3696,9 +3721,18 @@ function ApplicationArchivePanel({
         networks: { external: connectionExternal, stack: stk },
       });
       await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
+      const syncDesc =
+        remoteMirror?.status === "synced"
+          ? "Compose and app source were pushed to the deploy server — on-host webhooks can run without this PC."
+          : remoteMirror?.status === "skipped"
+            ? "Stack saved on this machine. Choose a deploy host under Remote Docker host and Save to mirror files to the server."
+            : remoteMirror?.status === "failed"
+              ? `Stack saved locally; sync to deploy server failed: ${remoteMirror.message}`
+              : "Deploy from the header to build the image and run the stack.";
       toast({
         title: "Stack generated",
-        description: "Deploy from the header to build the image and run the stack.",
+        description: syncDesc,
+        variant: remoteMirror?.status === "failed" ? "destructive" : "default",
       });
     } catch (e) {
       toast({
@@ -3707,6 +3741,12 @@ function ApplicationArchivePanel({
         variant: "destructive",
       });
     } finally {
+      if (stackGenProgressTimerRef.current != null) {
+        clearInterval(stackGenProgressTimerRef.current);
+        stackGenProgressTimerRef.current = null;
+      }
+      setStackGenProgressPct(100);
+      window.setTimeout(() => setStackGenProgressPct(null), 700);
       setStackGenerating(false);
     }
   };
@@ -3779,8 +3819,9 @@ function ApplicationArchivePanel({
     const { cp, rp, rep, cleanVars, stk } = common;
 
     setUploading(true);
+    setUploadProgressPct(0);
     try {
-      await uploadApplicationArchiveApi(serviceId, file, {
+      const { remoteMirror } = await uploadApplicationArchiveApi(serviceId, file, {
         buildPath: buildPath.trim() || ".",
         buildMode: "dockerfile",
         containerPort: cp,
@@ -3788,11 +3829,25 @@ function ApplicationArchivePanel({
         replicas: rep,
         variables: cleanVars,
         networks: { external: connectionExternal, stack: stk },
+        onUploadProgress: (loaded, total) => {
+          if (total > 0) {
+            setUploadProgressPct(Math.min(100, Math.round((loaded / total) * 100)));
+          }
+        },
       });
       await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
+      const uploadDesc =
+        remoteMirror?.status === "synced"
+          ? "Stack config saved and files mirrored to the deploy server."
+          : remoteMirror?.status === "skipped"
+            ? "Stack saved locally. Set a deploy host under Remote Docker host and Save to push to the server."
+            : remoteMirror?.status === "failed"
+              ? `Saved locally; deploy server sync failed: ${remoteMirror.message}`
+              : "Stack config is generated. Deploy to build image and run the stack.";
       toast({
         title: "Application source uploaded",
-        description: "Stack config is generated. Deploy to build image and run the stack.",
+        description: uploadDesc,
+        variant: remoteMirror?.status === "failed" ? "destructive" : "default",
       });
       setFile(null);
       setGitSourceStaged(false);
@@ -3806,6 +3861,7 @@ function ApplicationArchivePanel({
       });
     } finally {
       setUploading(false);
+      setUploadProgressPct(null);
     }
   };
 
@@ -4705,54 +4761,87 @@ function ApplicationArchivePanel({
             </div>
           </details>
         </div>
-        <div className="sm:col-span-2 flex flex-wrap gap-2">
-          {deployTarget === "source" ? (
-            <button
-              type="button"
-              onClick={() => void onGenerateStackFromSource()}
-              disabled={
-                uploading ||
-                stackGenerating ||
-                gitlabUrlStaging ||
-                stagingProjectId !== null ||
-                githubUrlStaging ||
-                stagingGithubRepoKey !== null
-              }
-              className="btn-primary text-sm inline-flex items-center gap-2"
-            >
-              {uploading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : stackGenerating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : gitlabUrlStaging ||
-                stagingProjectId !== null ||
-                githubUrlStaging ||
-                stagingGithubRepoKey !== null ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <PackageOpen className="w-4 h-4" />
-              )}
-              {uploading
-                ? "Uploading…"
-                : stackGenerating
-                  ? "Generating…"
-                  : gitlabUrlStaging ||
-                      stagingProjectId !== null ||
-                      githubUrlStaging ||
-                      stagingGithubRepoKey !== null
-                    ? "Fetching…"
-                    : "Generate stack from source"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void onSaveImageStack()}
-              disabled={savingImage}
-              className="btn-primary text-sm inline-flex items-center gap-2"
-            >
-              {savingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Container className="w-4 h-4" />}
-              {savingImage ? "Saving..." : "Save image stack"}
-            </button>
+        <div className="sm:col-span-2 flex flex-col gap-2">
+          <div className="flex flex-wrap gap-2">
+            {deployTarget === "source" ? (
+              <button
+                type="button"
+                onClick={() => void onGenerateStackFromSource()}
+                disabled={
+                  uploading ||
+                  stackGenerating ||
+                  gitlabUrlStaging ||
+                  stagingProjectId !== null ||
+                  githubUrlStaging ||
+                  stagingGithubRepoKey !== null
+                }
+                className="btn-primary text-sm inline-flex items-center gap-2"
+              >
+                {uploading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : stackGenerating ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : gitlabUrlStaging ||
+                  stagingProjectId !== null ||
+                  githubUrlStaging ||
+                  stagingGithubRepoKey !== null ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <PackageOpen className="w-4 h-4" />
+                )}
+                {uploading
+                  ? uploadProgressPct != null && uploadProgressPct < 100
+                    ? `Uploading… ${uploadProgressPct}%`
+                    : "Processing on server…"
+                  : stackGenerating
+                    ? stackGenProgressPct != null && stackGenProgressPct < 100
+                      ? `Generating… ${Math.round(stackGenProgressPct)}%`
+                      : "Generating…"
+                    : gitlabUrlStaging ||
+                        stagingProjectId !== null ||
+                        githubUrlStaging ||
+                        stagingGithubRepoKey !== null
+                      ? "Fetching…"
+                      : "Generate stack from source"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void onSaveImageStack()}
+                disabled={savingImage}
+                className="btn-primary text-sm inline-flex items-center gap-2"
+              >
+                {savingImage ? <Loader2 className="w-4 h-4 animate-spin" /> : <Container className="w-4 h-4" />}
+                {savingImage ? "Saving..." : "Save image stack"}
+              </button>
+            )}
+          </div>
+          {(uploading ||
+            stackGenerating ||
+            uploadProgressPct !== null ||
+            stackGenProgressPct !== null) && (
+            <div className="w-full max-w-lg space-y-1.5">
+              <Progress
+                value={
+                  uploading && uploadProgressPct != null
+                    ? uploadProgressPct
+                    : stackGenProgressPct != null
+                      ? stackGenProgressPct
+                      : 0
+                }
+              />
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                {uploading
+                  ? uploadProgressPct != null && uploadProgressPct < 100
+                    ? `Sending archive to the API… ${uploadProgressPct}%`
+                    : "Server is extracting the archive and generating the stack (this can take a minute on large projects)."
+                  : stackGenerating || stackGenProgressPct != null
+                    ? stackGenProgressPct != null && stackGenProgressPct < 100
+                      ? `Generating compose on the server… about ${Math.round(stackGenProgressPct)}% (estimate until the request completes).`
+                      : "Finishing…"
+                    : null}
+              </p>
+            </div>
           )}
         </div>
       </div>
@@ -5278,9 +5367,6 @@ function DomainsPanel({ service }: { service: Service }) {
                 value={draftInternalPort}
                 onChange={(e) => setDraftInternalPort(e.target.value.replace(/\D/g, "").slice(0, 5))}
               />
-              <p className="text-[11px] text-muted-foreground">
-                Container port Traefik proxies to (must match your app listen port).
-              </p>
             </label>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">

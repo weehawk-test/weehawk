@@ -141,7 +141,7 @@ func main() {
 	listen := listenAddr()
 	scriptsDir := env("WEEHAWK_HOOK_SCRIPTS_DIR", "/opt/weehawk-scripts/webhooks")
 	prefix := pathPrefix()
-	timeout := parseTimeout(env("WEEHAWK_HOOK_TIMEOUT", "180s"))
+	timeout := parseTimeout(env("WEEHAWK_HOOK_TIMEOUT", "900s"))
 
 	urlPrefix := "/" + prefix
 
@@ -213,8 +213,8 @@ func main() {
 		cmd.Env = os.Environ()
 		out, runErr := cmd.CombinedOutput()
 		outStr := strings.TrimSpace(string(out))
-		if len(outStr) > 8000 {
-			outStr = outStr[:8000] + "…"
+		if len(outStr) > 32000 {
+			outStr = outStr[:32000] + "…"
 		}
 
 		if runErr != nil {

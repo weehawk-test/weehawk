@@ -82,6 +82,17 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly remoteServersService: RemoteServersService,
   ) {}
 
+  /** Deploy hosts cannot reach the developer machine via localhost; never persist loopback as callback origin. */
+  private isLoopbackApiHostname(hostname: string): boolean {
+    const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return (
+      h === 'localhost' ||
+      h === '127.0.0.1' ||
+      h === '::1' ||
+      h === '0:0:0:0:0:0:0:1'
+    );
+  }
+
   /** Normalize optional client-supplied API origin (no path). */
   private normalizeHooksTriggerOriginInput(
     raw: string | undefined | null,
@@ -91,7 +102,10 @@ export class WebhooksService implements OnApplicationBootstrap {
       return null;
     }
     try {
-      const u = new URL(t);
+      const u = new URL(/:\/\//.test(t) ? t : `http://${t}`);
+      if (this.isLoopbackApiHostname(u.hostname)) {
+        return null;
+      }
       if (u.pathname !== '/' && u.pathname !== '') {
         throw new BadRequestException(
           'hooksTriggerOrigin must be an origin only (e.g. https://api.example.com:8080), without a path.',
@@ -376,6 +390,20 @@ export class WebhooksService implements OnApplicationBootstrap {
     };
   }
 
+  /**
+   * Auto “Redeploy · …” service webhooks should run the same path as the Services Redeploy button
+   * ({@link ServicesService.executeDeployment}), even if the stored bash body is an older template.
+   */
+  private shouldRunExecutorRedeployForDockerWebhook(w: Webhook): boolean {
+    if (w.serviceId == null || w.serviceId < 1) {
+      return false;
+    }
+    if (looksLikeGeneratedOnHostRedeployScript(w.dockerCommand)) {
+      return true;
+    }
+    return typeof w.name === 'string' && w.name.startsWith('Redeploy ·');
+  }
+
   private async resolveRemoteTriggerUrl(
     userId: number,
     w: Webhook,
@@ -387,11 +415,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     ) {
       return null;
     }
-    const apiOrigin = w.hooksTriggerOrigin?.trim();
-    if (apiOrigin) {
-      const base = apiOrigin.replace(/\/+$/, '');
-      return `${base}/hooks/${w.secretToken}`;
-    }
+    /** Public trigger URL is always the deploy-host agent (Traefik hostname or IP:port), not the API origin. */
     const scheme = this.normalizeRemoteTriggerUrlScheme(w.remoteTriggerUrlScheme);
     const publicHost = w.hooksPublicHost?.trim();
     if (publicHost) {
@@ -741,6 +765,15 @@ export class WebhooksService implements OnApplicationBootstrap {
         dto.remoteTriggerUrlScheme,
       );
     }
+    if (dto.hooksTriggerOrigin !== undefined && w.serviceAction === 'docker_command') {
+      if (dto.hooksTriggerOrigin === null || dto.hooksTriggerOrigin === '') {
+        w.hooksTriggerOrigin = null;
+      } else {
+        w.hooksTriggerOrigin = this.normalizeHooksTriggerOriginInput(
+          dto.hooksTriggerOrigin,
+        );
+      }
+    }
     if (w.notifyChannelId && w.notifyMessage) {
       w.notifyOnTrigger = true;
       await this.assertNotificationChannel(userId, w.notifyChannelId);
@@ -974,10 +1007,9 @@ export class WebhooksService implements OnApplicationBootstrap {
           w.serviceAction === 'docker_command' &&
           w.dockerCommand
         ) {
-          action = 'docker_command';
           const useExecutorRedeploy =
-            w.serviceId != null &&
-            looksLikeGeneratedOnHostRedeployScript(w.dockerCommand);
+            this.shouldRunExecutorRedeployForDockerWebhook(w);
+          action = useExecutorRedeploy ? 'redeploy' : 'docker_command';
           if (useExecutorRedeploy) {
             const r = await this.servicesService.executeDeployment(
               w.serviceId!,
@@ -1015,17 +1047,15 @@ export class WebhooksService implements OnApplicationBootstrap {
       ok: success,
       webhook: w.name,
       action: actionLabel,
-      output: output.slice(0, 8000),
+      output: output.slice(0, 32000),
     };
 
-    const isGeneratedOnHostRedeploy =
-      w.serviceId != null &&
-      w.dockerCommand != null &&
-      looksLikeGeneratedOnHostRedeployScript(w.dockerCommand);
-    const notificationSentOnRemote =
+    const ranRemoteBashOnly =
       w.serviceAction === 'docker_command' &&
       w.remoteServerId != null &&
-      !isGeneratedOnHostRedeploy;
+      w.dockerCommand != null &&
+      !this.shouldRunExecutorRedeployForDockerWebhook(w);
+    const notificationSentOnRemote = ranRemoteBashOnly;
     if (
       w.notifyOnTrigger &&
       w.notifyChannelId &&

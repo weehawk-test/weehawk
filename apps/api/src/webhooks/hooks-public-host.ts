@@ -55,6 +55,13 @@ export function hostHeaderHostname(hostHeader: string | undefined): string {
  * Public /hooks triggers (API or agent) must use a Host containing {@link WEEHAWK_WEBHOOK_TRAEFIK_HOST_PREFIX},
  * unless {@code allowAnyHost}. Loopback may be allowed for local development.
  */
+/** Path-only check: `GET|POST /hooks/{64-hex token}` (public trigger; token is the secret). */
+export function isPublicHooksTriggerPath(pathname: string | undefined): boolean {
+  const raw = (pathname ?? '').trim();
+  const p = raw.split('?')[0] ?? '';
+  return /^\/hooks\/[a-f0-9]{64}\/?$/i.test(p);
+}
+
 export function isPublicWebhookHostAllowed(
   hostHeader: string | undefined,
   opts: { allowAnyHost: boolean; allowLoopback: boolean },

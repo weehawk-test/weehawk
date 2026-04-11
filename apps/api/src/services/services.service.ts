@@ -4,6 +4,7 @@ import {
   BadRequestException,
   forwardRef,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -48,11 +49,14 @@ import {
   buildTraefikMeMagicHostname,
   parseIpv4Octets,
 } from '../common/magic-traefik-me';
+import { isLoopbackSshHost } from '../remote-servers/loopback-ssh-host';
 
 const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class ServicesService {
+  private readonly log = new Logger(ServicesService.name);
+
   constructor(
     @InjectRepository(Service)
     private readonly serviceRepository: Repository<Service>,
@@ -1153,11 +1157,17 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     }
     const { external: ext, stack: stk } = this.normalizeApplicationNetworkPayload(dto);
 
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: service.env ?? '',
+    };
     service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
       external: ext,
       stack: stk,
     });
-    return await this.serviceRepository.save(service);
+    const saved = await this.serviceRepository.save(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    return saved;
   }
 
   private async applyApplicationSourceFromDirectory(
@@ -1406,10 +1416,12 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       options,
       'archive',
     );
+    const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
       message: 'Archive uploaded and application stack generated.',
       service: saved,
+      remoteMirror,
     };
   }
 
@@ -1456,10 +1468,12 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       options,
       'repository',
     );
+    const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
       message: 'Repository cloned and application stack generated.',
       service: saved,
+      remoteMirror,
     };
   }
 
@@ -1549,10 +1563,12 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       options,
       'repository',
     );
+    const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
       message: 'Application stack generated from source.',
       service: saved,
+      remoteMirror,
     };
   }
 
@@ -1577,6 +1593,10 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException('This service is not an application-type service.');
     }
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: service.env ?? '',
+    };
     const imageRef = this.validateDockerImageRef(options.imageRef);
     let containerPort = options.containerPort ?? 3000;
     const publishPort = options.publishPort;
@@ -1611,6 +1631,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       traefik,
     });
     const saved = await this.serviceRepository.save(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
     const hydrated =
       (await this.serviceRepository.findOne({
         where: { id: saved.id },
@@ -1833,6 +1854,51 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       /* best effort */
     }
     return r;
+  }
+
+  /**
+   * After stack YAML + app-source exist on the API host, mirror to the deploy server so builds/webhooks
+   * can run there without this machine. Skips when no deploy host is selected.
+   */
+  private async pushApplicationMirrorToDeployHostIfConfigured(
+    serviceId: number,
+    userId: number,
+  ): Promise<
+    | { status: 'synced' }
+    | { status: 'skipped'; reason: 'no_deploy_host' }
+    | { status: 'failed'; message: string }
+  > {
+    const ssh = await this.getDockerSshTargetIds(serviceId);
+    if (ssh.remoteServerId == null) {
+      return { status: 'skipped', reason: 'no_deploy_host' };
+    }
+    try {
+      await this.syncRemoteDeploymentMirror(serviceId, userId);
+      return { status: 'synced' };
+    } catch (e) {
+      return { status: 'failed', message: getErrorMessage(e) };
+    }
+  }
+
+  /**
+   * When compose YAML and/or env change on disk, push the mirror to the deploy host (best-effort).
+   */
+  private mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+    before: Pick<Service, 'dockerConfig' | 'env'>,
+    after: Pick<Service, 'id' | 'dockerConfig' | 'env'>,
+    userId: number,
+  ): void {
+    const ymlChanged = (before.dockerConfig ?? '') !== (after.dockerConfig ?? '');
+    const envChanged = (before.env ?? '') !== (after.env ?? '');
+    if (!ymlChanged && !envChanged) return;
+    if (!(after.dockerConfig || '').trim()) return;
+    void this.pushApplicationMirrorToDeployHostIfConfigured(after.id, userId).then((r) => {
+      if (r.status === 'failed') {
+        this.log.warn(
+          `Deploy host mirror after service #${after.id} save failed: ${r.message}`,
+        );
+      }
+    });
   }
 
   private async finalizeBackupWithS3(
@@ -2204,6 +2270,11 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         'That host is a build-only server. Pick a deploy server to run containers, or change its role under Remote servers.',
       );
     }
+    if (isLoopbackSshHost(rs.host)) {
+      throw new BadRequestException(
+        'That SSH host is the local machine (loopback). It can only be used for image builds — pick a real remote deploy server to run containers.',
+      );
+    }
     this.assertRemoteServerBelongsToProjectOwner(rs, projectUserId);
   }
 
@@ -2286,6 +2357,10 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
   async update(id: number, updateServiceDto: UpdateServiceDto, userId: number) {
     const service = await this.assertServiceOwnedByUser(id, userId);
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: service.env ?? '',
+    };
     if (updateServiceDto.remoteServerId !== undefined) {
       if (updateServiceDto.remoteServerId !== null) {
         await this.assertDeployRemoteServer(
@@ -2395,6 +2470,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     );
 
     const saved = await this.serviceRepository.save(updated);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
     const hydrated =
       (await this.serviceRepository.findOne({
         where: { id: saved.id },
@@ -2432,6 +2508,10 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         `This service is not configured for ${engine} (engine mismatch).`,
       );
     }
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: service.env ?? '',
+    };
     const normalized = this.normalizeDatabaseSetupInput(engine, dto);
     const safeDb = this.databaseGenerator.sanitizeDbName(normalized.dbName);
     const allCredentials = this.credentialsForEngine(engine, safeDb, normalized);
@@ -2463,7 +2543,9 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       this.removeManagedDbEnvKeys(service.env || ''),
       plainEnv,
     );
-    return await this.serviceRepository.save(service);
+    const saved = await this.serviceRepository.save(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    return saved;
   }
 
   async applyPostgresDatabase(id: number, dto: DatabaseSetupDto, userId: number) {
@@ -2539,6 +2621,10 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     ) {
       currentImage = this.defaultImageForEngine(engine);
     }
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: service.env ?? '',
+    };
     service.dockerConfig = this.databaseGenerator.buildDatabaseDockerConfig(
       engine,
       dbName,
@@ -2548,7 +2634,9 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       currentVolumePath,
       this.credentialKeysForEngine(engine),
     );
-    return await this.serviceRepository.save(service);
+    const saved = await this.serviceRepository.save(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    return saved;
   }
 
   async updatePostgresStack(

@@ -17,6 +17,7 @@ import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Label } from "@/components/ui/label";
@@ -72,7 +73,7 @@ export function CreateWebhookClient({
   const scriptHighlightRef = useRef<HTMLPreElement | null>(null);
   const scriptLineNumbersRef = useRef<HTMLDivElement | null>(null);
   const deployServers = useMemo(
-    () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
+    () => filterSshDeployServers(initialRemoteServers),
     [initialRemoteServers],
   );
   const selectedDeployServer = useMemo(

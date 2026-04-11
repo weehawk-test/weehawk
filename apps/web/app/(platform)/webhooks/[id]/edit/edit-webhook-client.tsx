@@ -13,6 +13,7 @@ import {
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { Service } from "@/lib/schema";
 import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
@@ -106,7 +107,7 @@ export function EditWebhookClient({
     return initialServices.find((s) => Number(s.id) === sid) ?? null;
   }, [initialServices, initialWebhook.serviceId]);
   const deployServers = useMemo(
-    () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
+    () => filterSshDeployServers(initialRemoteServers),
     [initialRemoteServers],
   );
   const selectedDeployServer = useMemo(

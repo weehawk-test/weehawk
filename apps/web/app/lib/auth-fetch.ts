@@ -51,3 +51,54 @@ export async function authFetch(
   res = await run();
   return res;
 }
+
+/**
+ * POST `multipart/form-data` with cookie auth and optional upload progress (browser only).
+ * Mirrors {@link authFetch} 401 → refresh → retry once. Returns response body text.
+ */
+export async function authFormDataUploadWithProgress(
+  url: string,
+  formData: FormData,
+  onUploadProgress?: (loaded: number, total: number) => void,
+): Promise<string> {
+  if (typeof window === "undefined") {
+    throw new Error("Upload with progress is only available in the browser.");
+  }
+
+  const send = (isRetry: boolean): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.withCredentials = true;
+      xhr.open("POST", url);
+      xhr.setRequestHeader("Accept", "application/json");
+      xhr.upload.onprogress = (e) => {
+        if (!onUploadProgress) return;
+        if (e.lengthComputable && e.total > 0) {
+          onUploadProgress(e.loaded, e.total);
+        } else {
+          onUploadProgress(e.loaded, Math.max(e.loaded, 1));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 401 && !isRetry) {
+          void refreshTokensOnce().then((ok) => {
+            if (ok) {
+              void send(true).then(resolve).catch(reject);
+            } else {
+              reject(new Error(xhr.responseText || "Session expired (401)."));
+            }
+          });
+          return;
+        }
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(xhr.responseText || `HTTP ${xhr.status}`));
+          return;
+        }
+        resolve(xhr.responseText);
+      };
+      xhr.onerror = () => reject(new Error("Network error"));
+      xhr.send(formData);
+    });
+
+  return send(false);
+}

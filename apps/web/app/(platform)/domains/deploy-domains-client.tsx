@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 
 const REMOTE_SERVERS_QK = ["remote-servers"] as const;
 const TRAEFIK_SETTINGS_QK = ["traefik", "settings"] as const;
@@ -370,7 +371,7 @@ export function DeployDomainsClient() {
   const domainsUnlocked = isLetsEncryptEmailConfigured(savedAcme);
 
   const deployServers = useMemo(
-    () => (q.data ?? []).filter((s) => s.serverRole === "deploy"),
+    () => filterSshDeployServers(q.data ?? []),
     [q.data],
   );
 

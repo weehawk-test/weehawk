@@ -8,6 +8,7 @@ import { useUpdateCronJob } from "@/hooks/use-cron-jobs";
 import type { CronJobDetail } from "@/lib/cron-jobs-api";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { Service } from "@/lib/schema";
 import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
@@ -77,13 +78,13 @@ export function EditCronJobClient({
   const [notificationEnabled, setNotificationEnabled] = useState(
     Boolean(initialCronJob.notifyChannelId && initialCronJob.notifyMessage),
   );
-  const [remoteServerId, setRemoteServerId] = useState(
-    initialCronJob.remoteServerId != null
-      ? String(initialCronJob.remoteServerId)
-      : initialRemoteServers.find((s) => s.serverRole === "deploy")
-        ? String(initialRemoteServers.find((s) => s.serverRole === "deploy")!.id)
-        : "",
-  );
+  const [remoteServerId, setRemoteServerId] = useState(() => {
+    if (initialCronJob.remoteServerId != null) {
+      return String(initialCronJob.remoteServerId);
+    }
+    const deploy = filterSshDeployServers(initialRemoteServers);
+    return deploy.length > 0 ? String(deploy[0].id) : "";
+  });
   const [backupS3ProfileName, setBackupS3ProfileName] = useState(
     initialCronJob.backupS3ProfileName ?? "",
   );
@@ -97,7 +98,7 @@ export function EditCronJobClient({
     return initialServices.find((s) => Number(s.id) === sid) ?? null;
   }, [initialServices, initialCronJob.serviceId]);
   const deployServers = useMemo(
-    () => initialRemoteServers.filter((s) => s.serverRole === "deploy"),
+    () => filterSshDeployServers(initialRemoteServers),
     [initialRemoteServers],
   );
 

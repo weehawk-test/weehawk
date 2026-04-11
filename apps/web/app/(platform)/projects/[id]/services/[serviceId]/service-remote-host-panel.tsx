@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Copy, Loader2, RefreshCw, Server } from "lucide-react";
+import { AlertTriangle, ChevronDown, Copy, Loader2, RefreshCw, Server } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { fetchRemoteServers } from "@/lib/remote-servers-api";
 import type { Service } from "@/lib/schema";
@@ -12,16 +12,22 @@ import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { parseApplicationDeployMode } from "@/lib/env-utils";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
-import { API_BASE } from "@/lib/api";
 import {
   createWebhook,
   deleteWebhook,
   fetchWebhooks,
   hooksPublicHostForDisplay,
+  updateWebhook,
   type WebhookRemoteTriggerUrlScheme,
 } from "@/lib/webhooks-api";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 
 /** Select value: build with the API host’s local Docker daemon (not SSH). */
 const BUILD_ON_API_VALUE = "__local_api__";
@@ -195,7 +201,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   }, [service.registryPushImage]);
 
   const deployOptions = useMemo(
-    () => (q.data ?? []).filter((r) => r.serverRole === "deploy"),
+    () => filterSshDeployServers(q.data ?? []),
     [q.data],
   );
   const buildOptions = useMemo(
@@ -212,13 +218,44 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     [selectedDeployServer?.domainsJson],
   );
 
+  /** Webhook row that matches the current deploy selection (pending or saved). */
+  const webhookRowForBaseline = useMemo(() => {
+    if (!redeployWebhookRow) return null;
+    if (String(redeployWebhookRow.remoteServerId) !== value) return null;
+    return redeployWebhookRow;
+  }, [redeployWebhookRow, value]);
+
   useEffect(() => {
-    setWebhookPublicHost((prev) => {
-      if (webhookHostOptions.length === 0) return "";
-      if (prev && webhookHostOptions.some((h) => h.toLowerCase() === prev.toLowerCase())) return prev;
-      return webhookHostOptions[0] ?? "";
-    });
-  }, [webhookHostOptions]);
+    if (webhookHostOptions.length === 0) {
+      setWebhookPublicHost("");
+      return;
+    }
+    const fromRow = webhookRowForBaseline
+      ? hooksPublicHostForDisplay(webhookRowForBaseline.hooksPublicHost).trim()
+      : "";
+    if (
+      fromRow &&
+      webhookHostOptions.some((h) => h.toLowerCase() === fromRow.toLowerCase())
+    ) {
+      setWebhookPublicHost(fromRow);
+    } else {
+      setWebhookPublicHost((prev) => {
+        if (prev && webhookHostOptions.some((h) => h.toLowerCase() === prev.toLowerCase()))
+          return prev;
+        return webhookHostOptions[0] ?? "";
+      });
+    }
+    if (webhookRowForBaseline) {
+      setWebhookTriggerScheme(
+        webhookRowForBaseline.remoteTriggerUrlScheme === "https" ? "https" : "http",
+      );
+    }
+  }, [
+    webhookHostOptions,
+    webhookRowForBaseline?.id,
+    webhookRowForBaseline?.hooksPublicHost,
+    webhookRowForBaseline?.remoteTriggerUrlScheme,
+  ]);
 
   /** Build and deploy use different Docker daemons → image must go through a registry (push/pull). */
   const showRegistryImageField = useMemo(() => {
@@ -260,8 +297,26 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     !isPrebuiltImageMode &&
     !showRegistryImageField &&
     currentRegistry !== "";
+
+  const savedWebhookDisplay = webhookRowForBaseline
+    ? hooksPublicHostForDisplay(webhookRowForBaseline.hooksPublicHost).trim()
+    : "";
+  const savedWebhookScheme: WebhookRemoteTriggerUrlScheme =
+    webhookRowForBaseline?.remoteTriggerUrlScheme === "https" ? "https" : "http";
+  const webhookSettingsDirty = Boolean(
+    webhookRowForBaseline &&
+      value !== "" &&
+      webhookHostOptions.length > 0 &&
+      (webhookPublicHost.trim().toLowerCase() !== savedWebhookDisplay.toLowerCase() ||
+        webhookTriggerScheme !== savedWebhookScheme),
+  );
+
   const dirty =
-    deployDirty || buildDirty || registryDirty || staleRegistryWhenMerged;
+    deployDirty ||
+    buildDirty ||
+    registryDirty ||
+    staleRegistryWhenMerged ||
+    webhookSettingsDirty;
 
   const save = async () => {
     if (value === "") {
@@ -289,6 +344,22 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       webhookHostOptions.length > 0;
 
     if (wantRedeployWebhookChain) {
+      const wh = webhookPublicHost.trim();
+      if (
+        !wh ||
+        !webhookHostOptions.some((h) => h.toLowerCase() === wh.toLowerCase())
+      ) {
+        toast({
+          title: "Webhook domain required",
+          description:
+            "Choose which hostname will expose the redeploy URL (weehawk-webhook.<your-domain> via Traefik).",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    if (webhookSettingsDirty && !deployDirty) {
       const wh = webhookPublicHost.trim();
       if (
         !wh ||
@@ -336,9 +407,13 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       patch.registryPushImage = null;
     }
 
+    const hasServicePatch = Object.keys(patch).length > 0;
+
     setSaveFlowPending(true);
     try {
-      await updateService.mutateAsync({ id: service.id, patch });
+      if (hasServicePatch) {
+        await updateService.mutateAsync({ id: service.id, patch });
+      }
 
       let extra = "";
       if (wantRedeployWebhookChain && accessToken && deployServerIdNum != null) {
@@ -357,13 +432,34 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
             hooksPublicHost: parentHost,
             remoteTriggerUrlScheme: webhookTriggerScheme,
             hiddenFromWebhooksList: true,
-            hooksTriggerOrigin: new URL(API_BASE).origin,
           });
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
           await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
         } catch (whErr) {
           toast({
             title: "Saved; webhook setup failed",
+            description: (whErr as Error).message,
+            variant: "destructive",
+          });
+          return;
+        }
+      } else if (
+        webhookSettingsDirty &&
+        !deployDirty &&
+        accessToken &&
+        webhookRowForBaseline
+      ) {
+        const parentHost = webhookPublicHost.trim();
+        try {
+          const outer = await updateWebhook(accessToken, webhookRowForBaseline.id, {
+            hooksPublicHost: parentHost,
+            remoteTriggerUrlScheme: webhookTriggerScheme,
+          });
+          setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
+          await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
+        } catch (whErr) {
+          toast({
+            title: "Webhook update failed",
             description: (whErr as Error).message,
             variant: "destructive",
           });
@@ -433,7 +529,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         hooksPublicHost: parentHost,
         remoteTriggerUrlScheme: hit.remoteTriggerUrlScheme === "https" ? "https" : "http",
         hiddenFromWebhooksList: true,
-        hooksTriggerOrigin: new URL(API_BASE).origin,
       });
       let deleteProblem = "";
       try {
@@ -513,9 +608,9 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         ) : (
           <>
             {displayRedeployTriggerUrl ? (
-              <div className="max-w-2xl space-y-1.5">
+              <div className="max-w-xl space-y-1.5 w-full">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[11px] text-muted-foreground">Redeploy trigger URL</p>
+                  <p className="text-[11px] text-muted-foreground">Redeploy webhook link</p>
                   <button
                     type="button"
                     disabled={regenerateWebhookPending || webhooksQ.isFetching}
@@ -562,8 +657,8 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                 </div>
               </div>
             ) : null}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 max-w-xl">
-              <label className="text-xs text-muted-foreground shrink-0 sm:w-32">Deploy host</label>
+            <div className="flex flex-col gap-1.5 max-w-xl">
+              <label className="text-xs text-muted-foreground">Deploy host</label>
               <select
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
@@ -587,71 +682,85 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
               </select>
             </div>
             {value !== "" ? (
-              <div className="rounded-xl border border-white/10 bg-muted/20 px-4 py-3 space-y-3 max-w-xl">
-                <p className="text-xs font-medium text-foreground">Redeploy webhook (on Save)</p>
-                {webhookHostOptions.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">
-                    Add at least one hostname for this deploy server on{" "}
-                    <Link href="/domains" className="text-primary hover:underline">
-                      Domains
-                    </Link>{" "}
-                    to choose the public URL. Saving the deploy host still works without it.
-                  </p>
-                ) : (
-                  <>
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                      <label className="text-xs text-muted-foreground shrink-0 sm:w-32">
-                        Webhook domain
-                      </label>
-                      <select
-                        value={webhookPublicHost}
-                        onChange={(e) => setWebhookPublicHost(e.target.value)}
-                        className="flex-1 min-w-0 rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 font-mono"
-                      >
-                        {webhookHostOptions.map((h) => (
-                          <option key={h} value={h}>
-                            {h}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      When you save a deploy host change, Weehawk adds webhooks that redeploy this service.
-                    </p>
-                    <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5">
-                      <div className="space-y-0.5 min-w-0">
-                        <Label
-                          htmlFor="remote-panel-webhook-https"
-                          className="text-xs font-medium text-foreground cursor-pointer"
-                        >
-                          HTTPS for trigger URL
-                        </Label>
-                        <p className="text-[10px] text-muted-foreground">
-                          Match your Traefik / certificate setup for the webhook hostname.
+              <Collapsible
+                defaultOpen
+                className="group max-w-xl overflow-hidden rounded-xl border border-white/10 bg-muted/20"
+              >
+                <CollapsibleTrigger
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary/30"
+                >
+                  <span className="text-xs font-medium text-foreground">
+                    Redeploy webhook
+                  </span>
+                  <ChevronDown
+                    className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180"
+                    aria-hidden
+                  />
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="space-y-3 border-t border-white/5 px-4 pb-3 pt-3">
+                    {webhookHostOptions.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        Add at least one hostname for this deploy server on{" "}
+                        <Link href="/domains" className="text-primary hover:underline">
+                          Domains
+                        </Link>{" "}
+                        to choose the public URL. Saving the deploy host still works without it.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs text-muted-foreground">Webhook domain</label>
+                          <select
+                            value={webhookPublicHost}
+                            onChange={(e) => setWebhookPublicHost(e.target.value)}
+                            className="flex-1 min-w-0 rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary/40 font-mono"
+                          >
+                            {webhookHostOptions.map((h) => (
+                              <option key={h} value={h}>
+                                {h}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                          When you save, Weehawk mirrors compose and app source to the deploy server. The webhook runs
+                          only on that server (build + stack/compose) — your PC can be off after sync.
                         </p>
-                      </div>
-                      <Switch
-                        id="remote-panel-webhook-https"
-                        checked={webhookTriggerScheme === "https"}
-                        onCheckedChange={(v) =>
-                          setWebhookTriggerScheme(v ? "https" : "http")
-                        }
-                        className="shrink-0"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
+                        <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5">
+                          <div className="min-w-0">
+                            <Label
+                              htmlFor="remote-panel-webhook-https"
+                              className="text-xs font-medium text-foreground cursor-pointer"
+                            >
+                              HTTPS
+                            </Label>
+                          </div>
+                          <Switch
+                            id="remote-panel-webhook-https"
+                            checked={webhookTriggerScheme === "https"}
+                            onCheckedChange={(v) =>
+                              setWebhookTriggerScheme(v ? "https" : "http")
+                            }
+                            className="shrink-0"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             ) : null}
             {isApplication ? (
-              <div className="flex flex-col sm:flex-row sm:items-start gap-3 max-w-xl">
-                <label className="text-xs text-muted-foreground shrink-0 sm:w-32 pt-2">
+              <div className="flex flex-col gap-1.5 max-w-xl">
+                <label className="text-xs text-muted-foreground">
                   Build host
                   <span className="block font-normal text-[10px] text-muted-foreground/80 mt-0.5 normal-case">
                     Optional
                   </span>
                 </label>
-                <div className="flex-1 min-w-0 space-y-1">
+                <div className="min-w-0 space-y-1">
                   {isPrebuiltImageMode ? (
                     <div
                       role="alert"
@@ -683,13 +792,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                       </option>
                     ))}
                   </select>
-                  {!isPrebuiltImageMode ? (
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      <strong className="text-foreground/90">API Docker</strong> builds on the machine running Weehawk
-                      (then push/pull via registry if deploy is remote). Otherwise build follows deploy host or a
-                      build-role server.
-                    </p>
-                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -740,15 +842,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           !q.isError && (
             <p className="text-xs text-amber-200/90 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
               Only <strong>Build</strong> hosts here—add a <strong>Deploy</strong> host. Local server is build-only.
-            </p>
-          )}
-        {isApplication &&
-          buildOptions.length === 0 &&
-          (q.data ?? []).length > 0 &&
-          !q.isLoading &&
-          !q.isError && (
-            <p className="text-[11px] text-muted-foreground">
-              No build-only hosts yet—builds follow deploy for now.
             </p>
           )}
       </div>

@@ -17,7 +17,7 @@ import { ServicesService } from '../services/services.service';
 import { composeType } from '../services/entities/composeType.enum';
 import { Service } from '../services/entities/service.entity';
 import type { ServiceVolumesResponseDto } from '../services/dto/service-volume-mount.dto';
-import { getServiceDeploymentDir } from '../services/deployment-paths';
+import { getServiceDeploymentDir, toSafePathSegment } from '../services/deployment-paths';
 import { resolveEffectiveDockerfileRel } from '../services/weehawk-build-paths';
 import { maybeRemoveApplicationSourceAfterDeploy } from './executor-app-source';
 import { runIsolatedApplicationBuild } from './executor-application-build';
@@ -50,7 +50,10 @@ import {
   assertSafeComposeService,
   type DatabaseBackupConfig,
 } from '../backup/database-backup.types';
-import { RemoteServersService } from '../remote-servers/remote-servers.service';
+import {
+  RemoteServersService,
+  WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
+} from '../remote-servers/remote-servers.service';
 import { RegistryService } from '../registry/registry.service';
 
 export type { ExecuteDeployOptions } from './executor-types';
@@ -130,6 +133,15 @@ export class ExecutorService {
         };
       }
     }
+
+    if (sshTargets.remoteServerId == null) {
+      return {
+        success: false,
+        output:
+          'No deploy host is set for this service. Open the service → Remote Docker host, choose a remote Deploy server, save, then deploy again. The machine running Weehawk is for image builds only; running stacks and compose projects must use a remote Deploy host.',
+      };
+    }
+
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -370,6 +382,13 @@ export class ExecutorService {
             const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
             const success = !stderrIndicatesFailure;
             if (success) {
+              if (service.composeType === composeType.APPLICATION) {
+                await this.maybeMirrorApplicationSourceForOnHostRedeploy(
+                  service,
+                  deployDir,
+                  remoteDeployId,
+                );
+              }
               await maybeRemoveApplicationSourceAfterDeploy(
                 service,
                 deployDir,
@@ -571,12 +590,55 @@ export class ExecutorService {
         },
       );
     }
+    if (isSwarmStackService(service) && service.composeType === composeType.APPLICATION) {
+      await this.maybeMirrorApplicationSourceForOnHostRedeploy(service, deployDir, remoteId);
+    }
     return { ok: true };
+  }
+
+  /**
+   * Copies `app-source/` to the deploy host mirror so on-host webhooks can `docker build` without the API running.
+   */
+  private async maybeMirrorApplicationSourceForOnHostRedeploy(
+    service: Service,
+    deployDir: string,
+    remoteId: number,
+  ): Promise<void> {
+    const raw = (service.dockerConfig || '').trim();
+    const deployMode = parseConfigHeaderValue(raw, 'deployMode')?.toLowerCase() || 'source';
+    if (deployMode === 'image') {
+      return;
+    }
+    const sourceDirName = parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
+    const localSourceRoot = path.join(deployDir, sourceDirName);
+    try {
+      await fs.access(localSourceRoot);
+    } catch {
+      return;
+    }
+    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
+    const remoteTarget = `${persist}/${sourceDirName.replace(/\\/g, '/')}`;
+    await this.remoteServersService.mirrorLocalDirectoryToRemoteDeployment(remoteId, null, {
+      localRootAbsolute: localSourceRoot,
+      remoteDirAbsolute: remoteTarget,
+    });
   }
 
   /** Start stopped containers; compose tries `start` then `up -d --no-build`. Stack: stack deploy. */
   async startContainers(id: number) {
     const service = await this.servicesService.findOne(id);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+
+    if (isSwarmStackService(service)) {
+      return await this.execute(id, 'reload');
+    }
+
+    if (sshIds.remoteServerId == null) {
+      throw new BadRequestException(
+        'No deploy host is set for this service. Choose a remote Deploy server under Remote Docker host, save, then start again.',
+      );
+    }
+
     const deployDir = getServiceDeploymentDir(
       service.appName,
       this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
@@ -590,10 +652,6 @@ export class ExecutorService {
     );
     await fs.writeFile(composeFile, finalConfig);
     const procEnv = await this.getProcessEnvForService(service);
-
-    if (isSwarmStackService(service)) {
-      return await this.execute(id, 'reload');
-    }
 
     const base = `docker compose -f "${composeFile}" -p ${service.appName}`;
     try {
