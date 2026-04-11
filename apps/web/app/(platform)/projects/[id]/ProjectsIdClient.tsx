@@ -237,9 +237,18 @@ function CreateServiceModal({
     }
   };
 
+  const closeModal = () => {
+    if (create.isPending) return;
+    onClose();
+  };
+
   return createPortal(
     <>
-      <div className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4">
+      <div
+        className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
+        onClick={closeModal}
+        role="presentation"
+      >
       <DatabaseEnginePicker
         open={dbPickerOpen}
         selectedId={databaseEngine}
@@ -254,7 +263,10 @@ function CreateServiceModal({
           }
         }}
       />
-      <div className="glass-panel rounded-2xl p-8 w-full max-w-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto">
+      <div
+        className="glass-panel rounded-2xl p-8 w-full max-w-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="absolute top-0 right-0 w-48 h-48 bg-primary/10 blur-[60px] pointer-events-none" />
         <h2 className="text-2xl font-bold mb-1">New Service</h2>
         <p className="text-muted-foreground text-sm mb-6">Add a service to this project.</p>
@@ -547,7 +559,7 @@ function CreateServiceModal({
           )}
 
           <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary">
+            <button type="button" onClick={onClose} disabled={create.isPending} className="btn-secondary">
               Cancel
             </button>
             <button type="submit" disabled={create.isPending} className="btn-primary flex items-center gap-2">

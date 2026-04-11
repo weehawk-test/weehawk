@@ -37,7 +37,7 @@ export function NotificationsTabs() {
           </div>
         ) : null}
       </div>
-      <div className="flex gap-1 p-1 bg-card/50 rounded-xl border border-white/5 w-fit mb-6">
+      <div className="flex gap-1 p-1 w-fit mb-6 rounded-xl border border-border bg-muted/70 shadow-sm dark:border-white/5 dark:bg-card/50 dark:shadow-none">
         {TABS.map((tab) => {
           const active = pathname === tab.href;
           return (
@@ -51,7 +51,7 @@ export function NotificationsTabs() {
               {active && (
                 <motion.div
                   layoutId="notif-tab-route"
-                  className="absolute inset-0 bg-white/10 rounded-lg border border-white/10"
+                  className="absolute inset-0 rounded-lg border border-zinc-200 bg-background shadow-sm dark:border-white/10 dark:bg-white/10 dark:shadow-none"
                   initial={false}
                   transition={{ type: "spring", stiffness: 400, damping: 35 }}
                 />

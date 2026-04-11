@@ -89,7 +89,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
   return (
     <>
     <details
-      className="border-t border-border bg-muted/20"
+      className="border-t border-border bg-zinc-100/90 dark:bg-muted/20"
       onToggle={(e) => setPanelOpen((e.target as HTMLDetailsElement).open)}
     >
       <summary className="px-5 py-2.5 text-xs font-medium cursor-pointer select-none text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden flex items-center gap-2">
@@ -107,8 +107,8 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
             </>
           ) : (
             <>
-              When needed, it installs Docker, switches on Swarm, creates a shared network for your services, and opens
-              the public web ports (80 and 443) so your deployments on this server are reachable.
+              When needed, it installs Docker and the Weehawk agents, switches on Swarm, creates a shared network for
+              your services, and opens the public web ports (80 and 443) so your deployments on this server are reachable.
             </>
           )}
         </p>
@@ -122,7 +122,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
           <p className="text-xs text-red-400">{(scriptQ.error as Error).message}</p>
         )}
         {scriptQ.data?.script ? (
-          <pre className="text-[10px] leading-snug font-mono overflow-x-auto max-h-52 overflow-y-auto rounded-lg border border-border bg-black/35 p-3 text-zinc-300">
+          <pre className="text-[10px] leading-snug font-mono overflow-x-auto max-h-52 overflow-y-auto rounded-lg border border-zinc-700/60 bg-zinc-950 p-3 text-zinc-200 shadow-inner dark:border-border dark:bg-zinc-950/90 dark:text-zinc-300">
             {scriptQ.data.script}
           </pre>
         ) : null}
@@ -135,7 +135,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
           />
           <span>
             I want the platform to run this script on{" "}
-            <strong className="text-foreground">{row.host}</strong> now (SSH using the stored key).
+            <strong className="text-foreground">{row.host}</strong>.
           </span>
         </label>
         <div className="flex flex-wrap items-center gap-2">
@@ -143,7 +143,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
             type="button"
             disabled={!row.hasPrivateKey || !ack || enqueueMut.isPending}
             onClick={() => enqueueMut.mutate()}
-            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-100 hover:bg-amber-500/20 disabled:opacity-40 disabled:pointer-events-none"
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-amber-600/45 bg-amber-500/20 text-amber-950 hover:bg-amber-500/30 dark:border-amber-500/35 dark:bg-amber-500/15 dark:text-amber-100 dark:hover:bg-amber-500/20 disabled:opacity-40 disabled:pointer-events-none"
           >
             {enqueueMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
             Install
@@ -156,7 +156,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
     </details>
 
     <details
-      className="border-t border-border bg-muted/15"
+      className="border-t border-border bg-zinc-100/90 dark:bg-muted/15"
       onToggle={(e) => setPurgeOpen((e.target as HTMLDetailsElement).open)}
     >
       <summary className="px-5 py-2.5 text-xs font-medium cursor-pointer select-none text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden flex items-center gap-2">
@@ -181,7 +181,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
           <p className="text-xs text-red-400">{(purgeScriptQ.error as Error).message}</p>
         )}
         {purgeScriptQ.data?.script ? (
-          <pre className="text-[10px] leading-snug font-mono overflow-x-auto max-h-52 overflow-y-auto rounded-lg border border-border bg-black/35 p-3 text-zinc-300">
+          <pre className="text-[10px] leading-snug font-mono overflow-x-auto max-h-52 overflow-y-auto rounded-lg border border-zinc-700/60 bg-zinc-950 p-3 text-zinc-200 shadow-inner dark:border-border dark:bg-zinc-950/90 dark:text-zinc-300">
             {purgeScriptQ.data.script}
           </pre>
         ) : null}
@@ -194,8 +194,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
           />
           <span>
             I understand this will remove Docker and local image/container data on{" "}
-            <strong className="text-foreground">{row.host}</strong> and I want the platform to run the purge script now
-            (SSH using the stored key).
+            <strong className="text-foreground">{row.host}</strong> and I want the platform to run the purge script now.
           </span>
         </label>
         <div className="flex flex-wrap items-center gap-2">
@@ -203,7 +202,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
             type="button"
             disabled={!row.hasPrivateKey || !purgeAck || purgeMut.isPending}
             onClick={() => purgeMut.mutate()}
-            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/35 text-red-100 hover:bg-red-500/20 disabled:opacity-40 disabled:pointer-events-none"
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-600/45 bg-red-500/20 text-red-950 hover:bg-red-500/30 dark:border-red-500/35 dark:bg-red-500/15 dark:text-red-100 dark:hover:bg-red-500/20 disabled:opacity-40 disabled:pointer-events-none"
           >
             {purgeMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
             Run purge
@@ -216,12 +215,12 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
     </details>
 
     {jobId && jobQ.data && !jobLogDismissed ? (
-      <div className="border-t border-border bg-muted/10 px-5 py-3">
-        <div className="rounded-lg border border-border bg-black/25 p-3 space-y-2">
+      <div className="border-t border-border bg-zinc-100/80 dark:bg-muted/10 px-5 py-3">
+        <div className="rounded-lg border border-zinc-700/50 bg-zinc-950 p-3 space-y-2 shadow-inner dark:border-border dark:bg-black/40">
           <div className="flex items-start justify-between gap-2 flex-wrap">
-            <p className="text-[11px] font-medium min-w-0">
+            <p className="text-[11px] font-medium min-w-0 text-zinc-100">
               Job ({jobQ.data.jobKind === "docker_purge" ? "purge" : "install"}):{" "}
-              <span className="font-mono text-[10px] opacity-80">{jobId.slice(0, 8)}…</span>
+              <span className="font-mono text-[10px] text-zinc-400">{jobId.slice(0, 8)}…</span>
             </p>
             <div className="flex items-center gap-1.5 shrink-0">
               <span
@@ -238,7 +237,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
               <button
                 type="button"
                 onClick={() => setJobLogDismissed(true)}
-                className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-white/10"
+                className="rounded-md p-1 text-zinc-400 hover:text-zinc-100 hover:bg-white/10"
                 aria-label="Close log"
                 title="Close log"
               >
@@ -250,18 +249,18 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
             <p className="text-[11px] text-red-400 whitespace-pre-wrap">{jobQ.data.errorMessage}</p>
           ) : null}
           {jobQ.data.log ? (
-            <pre className="text-[10px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto text-zinc-400 leading-snug">
+            <pre className="text-[10px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto text-zinc-300 leading-snug">
               {jobQ.data.log}
             </pre>
           ) : (
-            <p className="text-[11px] text-muted-foreground">Waiting for log output…</p>
+            <p className="text-[11px] text-zinc-400">Waiting for log output…</p>
           )}
         </div>
       </div>
     ) : null}
 
     {jobId && jobQ.data && jobLogDismissed ? (
-      <div className="border-t border-border bg-muted/10 px-5 py-2">
+      <div className="border-t border-border bg-zinc-100/80 dark:bg-muted/10 px-5 py-2">
         <button
           type="button"
           onClick={() => setJobLogDismissed(false)}

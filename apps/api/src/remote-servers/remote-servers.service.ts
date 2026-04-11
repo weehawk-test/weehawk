@@ -2394,10 +2394,12 @@ done
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const p = this.getSshConnectParams(rs, pem);
-      const stdout = await this.execSshRemoteShell(p, "bash -lc 'echo weehawk-ssh-ok; uname -sn'");
-      const lines = [`SSH OK (${p.username}@${p.host}:${p.port})`, stdout.trim()].filter(
-        (s) => s.length > 0,
-      );
+      const stdout = await this.execSshRemoteShell(p, "bash -lc 'uname -sn 2>/dev/null || uname -s'");
+      const uname = stdout.trim().replace(/\s+/g, ' ');
+      const lines = [
+        `Connected as ${p.username} to ${p.host}:${p.port}.`,
+        uname ? `Remote reports: ${uname}.` : '',
+      ].filter((s) => s.length > 0);
       return { success: true, output: lines.join('\n') };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

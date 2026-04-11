@@ -766,6 +766,17 @@ export default function ServiceDetails({
   const { toast } = useToast();
   const confirm = useConfirm();
 
+  /** Build & deployment: send user to Remote tab to pick deploy host before upload / generate stack. */
+  const openRemoteDeployHostPanel = useCallback(() => {
+    setActiveTab("remote");
+    window.setTimeout(() => {
+      document.getElementById("remote-docker-host-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 180);
+  }, []);
+
   const envEntryCount = countEnvEntries(service?.env ?? "");
   const typeConf = service ? (SERVICE_TYPE_CONFIG[service.type as keyof typeof SERVICE_TYPE_CONFIG] ?? SERVICE_TYPE_CONFIG["docker-compose"]) : SERVICE_TYPE_CONFIG["docker-compose"];
   const isDatabaseService = service?.type === "databases";
@@ -992,7 +1003,7 @@ export default function ServiceDetails({
     const ok = await confirm({
       title: "Stop running workload?",
       description:
-        `This stops Docker for “${service.name}” (compose stop or stack scale 0). Your service record, YAML, and .env stay saved — deploy again when ready.`,
+        `This stops Docker for “${service.name}”. Your service record, YAML, and .env stay saved — deploy again when ready.`,
       confirmLabel: "Stop",
       variant: "destructive",
     });
@@ -1152,7 +1163,6 @@ export default function ServiceDetails({
                     type="button"
                     onClick={() => handleRunDocker("redeploy")}
                     disabled={actionBusy}
-                    title={isDatabaseService ? "Stack: docker stack deploy then forced rolling restart on each Swarm service." : "Compose: stop project then docker compose up -d --build. Stack: docker stack deploy then docker service update --force on each service."}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border bg-muted text-foreground hover:bg-accent transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {deploy.isPending && deploy.variables?.mode === "redeploy" ? (
@@ -1166,7 +1176,7 @@ export default function ServiceDetails({
                       type="button"
                       onClick={handleStop}
                       disabled={actionBusy}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-500/40 bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-600/45 bg-red-600/12 text-red-700 hover:bg-red-600/22 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed dark:border-red-500/40 dark:bg-red-600/20 dark:text-red-400 dark:hover:bg-red-600/30"
                     >
                       {shutdownService.isPending ? (
                         <><RefreshCw className="w-4 h-4 animate-spin" />Stopping…</>
@@ -1179,7 +1189,7 @@ export default function ServiceDetails({
                       type="button"
                       onClick={handleStartHost}
                       disabled={actionBusy}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-600/40 bg-emerald-600/12 text-emerald-800 hover:bg-emerald-600/20 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
                     >
                       {startService.isPending ? (
                         <><RefreshCw className="w-4 h-4 animate-spin" />Starting…</>
@@ -1198,7 +1208,6 @@ export default function ServiceDetails({
                 type="button"
                 onClick={handleDelete}
                 className="inline-flex items-center justify-center p-2 rounded-lg border border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
-                title="Delete service"
                 aria-label="Delete service"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -1263,12 +1272,18 @@ export default function ServiceDetails({
               transition={{ duration: 0.2 }}
               className="space-y-4"
             >
-              <ApplicationArchivePanel serviceId={service.id} projectId={projectId} service={service} />
+              <ApplicationArchivePanel
+                serviceId={service.id}
+                projectId={projectId}
+                service={service}
+                onNavigateToRemoteDeployHost={openRemoteDeployHostPanel}
+              />
             </motion.div>
           )}
 
           {activeTab === "remote" && (
             <motion.div
+              id="remote-docker-host-panel"
               key="remote"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1419,31 +1434,19 @@ export default function ServiceDetails({
               transition={{ duration: 0.2 }}>
               <div className="glass-panel rounded-xl overflow-hidden flex flex-col border border-border/60 min-h-[min(70vh,560px)] max-h-[min(88vh,760px)]">
                 <div className="px-5 pt-5 pb-3 border-b border-border/60 shrink-0">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <ScrollText className="w-5 h-5 text-primary shrink-0" />
-                        <h2 className="text-base font-semibold tracking-tight">Logs</h2>
-                        {service && (
-                          <span className="font-mono text-sm font-normal text-muted-foreground truncate max-w-[min(100%,28rem)]">
-                            {service.name}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-                        Switch between live container output and the last deploy run.
-                      </p>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <ScrollText className="w-5 h-5 text-primary shrink-0" />
+                      <h2 className="text-base font-semibold tracking-tight">Logs</h2>
+                      {service && (
+                        <span className="font-mono text-sm font-normal text-muted-foreground truncate max-w-[min(100%,28rem)]">
+                          {service.name}
+                        </span>
+                      )}
                     </div>
-                    {(!isDatabaseService || hasDatabaseCompose) && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab("terminal")}
-                        className="btn-secondary inline-flex items-center gap-2 text-sm py-2 px-3 shrink-0 self-start"
-                      >
-                        <Terminal className="w-4 h-4" />
-                        Terminal
-                      </button>
-                    )}
+                    <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                      Switch between live container output and the last deploy run.
+                    </p>
                   </div>
                 </div>
 
@@ -1502,7 +1505,7 @@ export default function ServiceDetails({
                     </div>
                     <div
                       ref={liveLogScrollRef}
-                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950/80"
+                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950"
                     >
                       {isDatabaseService && !hasDatabaseCompose ? (
                         <p className="text-sm text-muted-foreground text-center py-16 px-4 leading-relaxed max-w-md mx-auto">
@@ -1565,7 +1568,7 @@ export default function ServiceDetails({
                     </div>
                     <div
                       ref={deployLogScrollRef}
-                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950/80"
+                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950"
                     >
                       {deploy.isPending && deployStreamText ? (
                         <>
@@ -1618,12 +1621,6 @@ export default function ServiceDetails({
                     </div>
                   </TabsContent>
                 </Tabs>
-
-                <div className="px-5 py-3 border-t border-border/60 shrink-0">
-                  <p className="text-[11px] text-muted-foreground">
-                    Live: timestamps come from Docker when available; Clear only clears the view. The stream stops when you leave this tab.
-                  </p>
-                </div>
               </div>
             </motion.div>
           )}
@@ -3206,15 +3203,22 @@ function ApplicationArchivePanel({
   serviceId,
   projectId,
   service,
+  onNavigateToRemoteDeployHost,
 }: {
   serviceId: string;
   projectId: string;
   service: Service;
+  onNavigateToRemoteDeployHost: () => void;
 }) {
   const queryClient = useQueryClient();
   const { accessToken, user: authUser } = useAuth();
   const { toast } = useToast();
   const { data: serviceRow } = useService(serviceId);
+  const effectiveService = serviceRow ?? service;
+  const hasDeployHost = useMemo(() => {
+    const id = effectiveService.remoteServerId;
+    return typeof id === "number" && id > 0;
+  }, [effectiveService.remoteServerId]);
   const { data: gitSettings, isLoading: gitSettingsLoading } = useQuery({
     queryKey: ["git-settings"],
     queryFn: () => fetchGitSettings(accessToken!),
@@ -3699,6 +3703,16 @@ function ApplicationArchivePanel({
   const generateStackFromGitSource = async () => {
     const common = validateApplicationDeployForm();
     if (!common) return;
+    if (!hasDeployHost) {
+      toast({
+        title: "Choose a deploy host first",
+        description:
+          "Open the Remote tab, select a remote Docker host, and click Save. Then generate the stack so compose and source mirror to that server.",
+        variant: "destructive",
+      });
+      onNavigateToRemoteDeployHost();
+      return;
+    }
     const { cp, rp, rep, cleanVars, stk } = common;
     setStackGenerating(true);
     setStackGenProgressPct(5);
@@ -3725,7 +3739,7 @@ function ApplicationArchivePanel({
         remoteMirror?.status === "synced"
           ? "Compose and app source were pushed to the deploy server — on-host webhooks can run without this PC."
           : remoteMirror?.status === "skipped"
-            ? "Stack saved on this machine. Choose a deploy host under Remote Docker host and Save to mirror files to the server."
+            ? "Stack saved on this machine only — no deploy host was selected. Choose a host on the Remote tab and Save, then generate again to mirror."
             : remoteMirror?.status === "failed"
               ? `Stack saved locally; sync to deploy server failed: ${remoteMirror.message}`
               : "Deploy from the header to build the image and run the stack.";
@@ -3816,6 +3830,16 @@ function ApplicationArchivePanel({
     }
     const common = validateApplicationDeployForm();
     if (!common) return;
+    if (!hasDeployHost) {
+      toast({
+        title: "Choose a deploy host first",
+        description:
+          "Open the Remote tab, select a remote Docker host, and click Save. Then upload your ZIP so the stack and source mirror to that server.",
+        variant: "destructive",
+      });
+      onNavigateToRemoteDeployHost();
+      return;
+    }
     const { cp, rp, rep, cleanVars, stk } = common;
 
     setUploading(true);
@@ -3840,7 +3864,7 @@ function ApplicationArchivePanel({
         remoteMirror?.status === "synced"
           ? "Stack config saved and files mirrored to the deploy server."
           : remoteMirror?.status === "skipped"
-            ? "Stack saved locally. Set a deploy host under Remote Docker host and Save to push to the server."
+            ? "Stack saved on this machine only — no deploy host was selected when saving. Choose a host on the Remote tab and Save, then upload or generate again to mirror."
             : remoteMirror?.status === "failed"
               ? `Saved locally; deploy server sync failed: ${remoteMirror.message}`
               : "Stack config is generated. Deploy to build image and run the stack.";
@@ -3950,6 +3974,23 @@ function ApplicationArchivePanel({
         Application deploy Form
       </h3>
       <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
+        {!hasDeployHost && (
+          <div
+            className="sm:col-span-2 rounded-lg border border-amber-500/45 bg-amber-500/[0.12] dark:bg-amber-950/35 px-3 py-2.5 text-[11px] leading-snug text-amber-950 dark:text-amber-100/95"
+            role="status"
+          >
+            <span className="font-semibold">Select a deploy host first.</span>{" "}
+            Open the{" "}
+            <button
+              type="button"
+              className="underline font-medium text-amber-900 dark:text-amber-50"
+              onClick={() => onNavigateToRemoteDeployHost()}
+            >
+              Remote
+            </button>{" "}
+            tab, choose <span className="font-medium">Remote Docker host</span>, click Save, then come back here to generate the stack.
+          </div>
+        )}
         <div className="sm:col-span-2 space-y-2">
           <label className="text-xs font-medium text-muted-foreground block">Deploy from</label>
           <div className="flex flex-wrap gap-2">
@@ -4773,9 +4814,15 @@ function ApplicationArchivePanel({
                   gitlabUrlStaging ||
                   stagingProjectId !== null ||
                   githubUrlStaging ||
-                  stagingGithubRepoKey !== null
+                  stagingGithubRepoKey !== null ||
+                  !hasDeployHost
                 }
                 className="btn-primary text-sm inline-flex items-center gap-2"
+                title={
+                  !hasDeployHost
+                    ? "Choose a remote Docker host on the Remote tab and Save first."
+                    : undefined
+                }
               >
                 {uploading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -4802,7 +4849,9 @@ function ApplicationArchivePanel({
                         githubUrlStaging ||
                         stagingGithubRepoKey !== null
                       ? "Fetching…"
-                      : "Generate stack from source"}
+                      : !hasDeployHost
+                        ? "Choose deploy host on Remote tab first…"
+                        : "Generate stack from source"}
               </button>
             ) : (
               <button
@@ -5154,10 +5203,11 @@ function DomainsPanel({ service }: { service: Service }) {
         <div>
           <p className="text-sm text-muted-foreground">Domains</p>
           <p className="text-xs text-muted-foreground/80 mt-1 max-w-2xl">
+            Add a domain to your service. Register hostnames on the{" "}
             <Link href="/domains" className="text-primary hover:underline">
               Domains
             </Link>{" "}
-            (this deploy server).
+            page.
           </p>
         </div>
         <button
@@ -5277,10 +5327,7 @@ function DomainsPanel({ service }: { service: Service }) {
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingIndex === null ? "Add domain" : "Edit domain"}</DialogTitle>
-            <DialogDescription>
-              Hostname from Domains for this deploy server, router, optional path, HTTPS or HTTP, then the
-              required internal port Traefik forwards to.
-            </DialogDescription>
+            <DialogDescription>Route a hostname to your service.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <label className="block space-y-1.5">

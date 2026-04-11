@@ -209,7 +209,7 @@ export function RegistrySettingsClient({ preset }: Props) {
       <RegistryBreadcrumb current={preset} />
 
       <div className="flex items-start gap-4">
-        <div className="rounded-2xl border border-white/10 bg-black/40 p-3 shadow-lg shrink-0">
+        <div className="rounded-2xl border border-zinc-200/90 bg-white p-3 shadow-md shadow-zinc-900/5 dark:border-white/10 dark:bg-zinc-950 dark:shadow-lg shrink-0">
           <ProviderIcon preset={preset} />
         </div>
         <div className="min-w-0">

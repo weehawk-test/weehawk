@@ -295,11 +295,11 @@ export function CreateWebhookClient({
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
-                  <div className="relative overflow-hidden rounded-xl border border-border bg-black/50">
+                  <div className="relative overflow-hidden rounded-xl border border-border bg-zinc-900">
                     <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>
                       <div
                         ref={scriptLineNumbersRef}
-                        className="h-full w-12 shrink-0 overflow-hidden border-r border-white/10 bg-black/40 px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
+                        className="h-full w-12 shrink-0 overflow-hidden border-r border-zinc-800 bg-black px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
                       >
                         {Array.from({ length: scriptLines }, (_, i) => (
                           <div key={`ln-${i}`} className="leading-6">
@@ -307,7 +307,7 @@ export function CreateWebhookClient({
                           </div>
                         ))}
                       </div>
-                      <div className="relative flex-1">
+                      <div className="relative min-h-0 flex-1 bg-zinc-800">
                         <pre
                           ref={scriptHighlightRef}
                           aria-hidden="true"
@@ -339,7 +339,7 @@ echo "Webhook done"`}
                     <button
                       type="button"
                       onMouseDown={handleScriptResizeStart}
-                      className="h-6 w-full border-t border-white/10 bg-black/40 hover:bg-black/55 cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
+                      className="h-6 w-full border-t border-zinc-800 bg-black hover:bg-zinc-950 cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
                       aria-label="Resize script editor"
                       title="Drag to resize"
                     >

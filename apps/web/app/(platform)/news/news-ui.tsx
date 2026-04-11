@@ -34,8 +34,10 @@ export function splitNewsContent(content: string): string[] {
 
 export function newsCardClassName(extra?: string) {
   return cn(
-    "block overflow-hidden border-border/80 bg-card/60 backdrop-blur-sm transition-colors",
-    "hover:bg-card/80 hover:border-primary/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+    "block overflow-hidden border border-border/80 bg-card/65 backdrop-blur-sm transition-colors",
+    "dark:bg-zinc-950/95 dark:border-zinc-800/90 dark:shadow-md dark:shadow-black/25 dark:backdrop-blur-none",
+    "hover:bg-card/85 hover:border-primary/25 dark:hover:bg-zinc-900/95 dark:hover:border-primary/35",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
     extra,
   );
 }

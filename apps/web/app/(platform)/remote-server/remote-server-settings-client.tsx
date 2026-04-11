@@ -248,7 +248,7 @@ export function RemoteServerSettingsClient() {
     mutationFn: (id: number) => testRemoteServerSshApi(accessToken ?? "", id),
     onSuccess: (data) => {
       toast({
-        title: data.success ? "SSH OK" : "SSH failed",
+        title: data.success ? "Connected via SSH" : "SSH connection failed",
         description: data.output.slice(0, 900) + (data.output.length > 900 ? "…" : ""),
         variant: data.success ? "default" : "destructive",
       });
@@ -430,7 +430,9 @@ export function RemoteServerSettingsClient() {
             <h1 className="text-2xl font-bold tracking-tight">Remote servers</h1>
             <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
               Connect and manage remote hosts via SSH keys. Assign each server a specific role,{" "}
-              <strong>Deploy</strong> for running containers and stacks, or <strong>Build</strong> to handle heavy Docker
+              <strong className="font-semibold text-violet-900 dark:text-violet-100">Deploy</strong> for running containers
+              and stacks, or{" "}
+              <strong className="font-semibold text-violet-900 dark:text-violet-100">Build</strong> to handle heavy Docker
               builds externally.
             </p>
           </div>
@@ -462,7 +464,7 @@ export function RemoteServerSettingsClient() {
                     <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
                       Local
                     </span>
-                    <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-sky-500/35 text-sky-300/95 bg-sky-500/10">
+                    <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100">
                       Build
                     </span>
                   </div>
@@ -516,13 +518,7 @@ export function RemoteServerSettingsClient() {
                         <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
                           Remote
                         </span>
-                        <span
-                          className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border ${
-                            row.serverRole === "build"
-                              ? "border-sky-500/35 text-sky-300/95 bg-sky-500/10"
-                              : "border-blue-500/30 text-blue-300/90 bg-blue-500/10"
-                          }`}
-                        >
+                        <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100">
                           {row.serverRole === "build" ? "Build" : "Deploy"}
                         </span>
                         {row.authMode !== "stored" ? (
@@ -669,7 +665,7 @@ export function RemoteServerSettingsClient() {
                     type="button"
                     disabled={generateMut.isPending || createMut.isPending}
                     onClick={() => generateMut.mutate("create")}
-                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-600/40 bg-violet-500/20 text-violet-950 hover:bg-violet-500/30 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-100 dark:hover:bg-violet-500/20 disabled:opacity-50"
                   >
                     {generateMut.isPending ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -840,7 +836,7 @@ export function RemoteServerSettingsClient() {
                     type="button"
                     disabled={generateMut.isPending || updateMut.isPending}
                     onClick={() => generateMut.mutate("edit")}
-                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-600/40 bg-violet-500/20 text-violet-950 hover:bg-violet-500/30 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-100 dark:hover:bg-violet-500/20 disabled:opacity-50"
                   >
                     {generateMut.isPending ? (
                       <Loader2 className="size-3.5 animate-spin" />

@@ -109,14 +109,11 @@ export default function CustomGitSettingsPage() {
       <GitBreadcrumb current="custom" />
 
       <div className="flex items-start gap-4">
-        <div className="rounded-2xl border border-sky-500/20 bg-gradient-to-br from-sky-500/10 to-transparent p-3 shadow-lg shrink-0">
-          <Globe2 className="h-14 w-14 text-sky-500" />
+        <div className="rounded-2xl border border-zinc-200/90 bg-white p-3 shadow-md shadow-zinc-900/5 dark:border-sky-500/25 dark:bg-gradient-to-br dark:from-sky-950/40 dark:to-zinc-950 dark:shadow-lg shrink-0">
+          <Globe2 className="h-14 w-14 text-sky-600 dark:text-sky-500" />
         </div>
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">Custom Git</h1>
-          <p className="text-sm text-muted-foreground mt-1 max-w-xl leading-relaxed">
-            Configure any self-managed Git provider using base URL and access token.
-          </p>
         </div>
       </div>
 

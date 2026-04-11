@@ -83,7 +83,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
     mutationFn: (id: number) => testRemoteServerSshApi(accessToken, id),
     onSuccess: (data) => {
       toast({
-        title: data.success ? "SSH OK" : "SSH failed",
+        title: data.success ? "Connected via SSH" : "SSH connection failed",
         description: data.output.slice(0, 900) + (data.output.length > 900 ? "…" : ""),
         variant: data.success ? "default" : "destructive",
       });
@@ -113,7 +113,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
           type="button"
           disabled={generateMut.isPending}
           onClick={() => generateMut.mutate()}
-          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-violet-500/30 bg-violet-500/10 text-violet-200 hover:bg-violet-500/15 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-600/40 bg-violet-500/20 text-violet-950 hover:bg-violet-500/30 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-100 dark:hover:bg-violet-500/20 disabled:opacity-50"
         >
           {generateMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
           Generate key pair

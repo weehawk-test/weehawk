@@ -51,10 +51,22 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
     });
   };
 
+  const closeModal = () => {
+    if (create.isPending) return;
+    onClose();
+  };
+
   /** Portal to `body`: modal inside `main` (`z-10`) cannot stack above sidebar (`z-40`), so blur never reached it. */
   return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 modal-scrim">
-      <div className="glass-panel rounded-2xl p-8 w-full max-w-lg relative overflow-hidden">
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center p-4 modal-scrim"
+      onClick={closeModal}
+      role="presentation"
+    >
+      <div
+        className="glass-panel rounded-2xl p-8 w-full max-w-lg relative overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="absolute top-0 right-0 w-48 h-48 bg-primary/10 blur-[60px] pointer-events-none" />
         <h2 className="text-2xl font-bold mb-1">New Project</h2>
         <p className="text-muted-foreground text-sm mb-6">Create a new project to organize your services.</p>
@@ -78,7 +90,7 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary">
+            <button type="button" onClick={onClose} disabled={create.isPending} className="btn-secondary">
               Cancel
             </button>
             <button type="submit" disabled={create.isPending} className="btn-primary flex items-center gap-2">

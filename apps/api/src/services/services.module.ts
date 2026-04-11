@@ -14,6 +14,7 @@ import { S3Module } from '../s3/s3.module';
 import { GitModule } from '../git/git.module';
 import { TraefikModule } from '../traefik/traefik.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { WebhooksModule } from '../webhooks/webhooks.module';
     DockerfileGeneratorModule,
     forwardRef(() => ExecutorModule),
     forwardRef(() => WebhooksModule),
+    RemoteServersModule,
     S3Module,
     GitModule,
     TraefikModule,

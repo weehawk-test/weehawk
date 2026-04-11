@@ -2,51 +2,45 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Globe2 } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
 export default function GitLandingPage() {
   return (
-    <>
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">Git</h1>
-          <p className="text-muted-foreground">
-            Choose where Weehawk stores credentials for pulling application source.
-            <br />
-            GitHub uses a GitHub App (manifest flow). GitLab and Custom use an access token.
-          </p>
-        </div>
-      </div>
+    <div className="mx-auto max-w-4xl pb-10">
+      <header className="mb-10 md:mb-12 max-w-2xl">
+        <h1 className="text-3xl font-bold tracking-tight text-foreground md:text-4xl">Git</h1>
+        <p className="mt-3 text-muted-foreground leading-relaxed">
+          Choose where Weehawk stores credentials for pulling application source.
+          <br />
+          GitHub uses a GitHub App (manifest flow). GitLab uses an access token.
+        </p>
+      </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6">
         <Link
           href="/git/github"
           scroll={false}
-          className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col min-h-[180px] group interactive-card"
+          className="group interactive-card flex min-h-[168px] flex-col rounded-3xl border border-border/70 bg-card/40 p-8 shadow-sm transition-colors hover:border-primary/30 hover:bg-card/60 dark:border-white/10 dark:bg-card/30 dark:shadow-none dark:hover:bg-card/50"
         >
-          <div className="flex items-start gap-3 min-w-0 mb-4">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 p-2">
+          <div className="flex flex-1 flex-col gap-5 sm:flex-row sm:items-start">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-white/10 dark:bg-zinc-950/90 dark:shadow-none">
               <Image
                 src="/deployment-sources/github.svg"
                 alt=""
-                width={48}
-                height={48}
-                className="h-8 w-8 object-contain dark:invert"
+                width={40}
+                height={40}
+                className="h-10 w-10 object-contain dark:invert"
               />
             </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold text-lg leading-tight text-foreground">GitHub</h2>
-              <p className="text-xs text-muted-foreground mt-1">GitHub App · manifest setup</p>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">GitHub</h2>
+              <p className="mt-1.5 text-sm text-muted-foreground">GitHub App · manifest setup</p>
             </div>
           </div>
-          <p className="text-sm text-muted-foreground leading-relaxed flex-1">
-            Register an app on GitHub, then return here with credentials saved automatically when
-            you use the manifest link.
-          </p>
-          <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-end">
-            <span className="inline-flex items-center gap-2 text-sm font-medium text-primary group-hover:gap-3 transition-all">
+          <div className="mt-8 flex items-center justify-end border-t border-border/60 pt-6 dark:border-white/10">
+            <span className="inline-flex items-center gap-2 text-sm font-medium text-primary transition-all group-hover:gap-3">
               Configure GitHub
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="h-4 w-4" />
             </span>
           </div>
         </Link>
@@ -54,59 +48,31 @@ export default function GitLandingPage() {
         <Link
           href="/git/gitlab"
           scroll={false}
-          className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col min-h-[180px] group interactive-card"
+          className="group interactive-card flex min-h-[168px] flex-col rounded-3xl border border-border/70 bg-card/40 p-8 shadow-sm transition-colors hover:border-primary/30 hover:bg-card/60 dark:border-white/10 dark:bg-card/30 dark:shadow-none dark:hover:bg-card/50"
         >
-          <div className="flex items-start gap-3 min-w-0 mb-4">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 p-2">
+          <div className="flex flex-1 flex-col gap-5 sm:flex-row sm:items-start">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-zinc-200/90 bg-white shadow-sm dark:border-white/10 dark:bg-zinc-950/90 dark:shadow-none">
               <Image
                 src="/deployment-sources/gitlab.svg"
                 alt=""
-                width={48}
-                height={48}
-                className="h-8 w-8 object-contain"
+                width={40}
+                height={40}
+                className="h-10 w-10 object-contain"
               />
             </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold text-lg leading-tight text-foreground">GitLab</h2>
-              <p className="text-xs text-muted-foreground mt-1">Personal or group token</p>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xl font-semibold tracking-tight text-foreground">GitLab</h2>
+              <p className="mt-1.5 text-sm text-muted-foreground">Personal or group token</p>
             </div>
           </div>
-          <p className="text-sm text-muted-foreground leading-relaxed flex-1">
-            Connect GitLab.com or your self-managed instance with a saved access token.
-          </p>
-          <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-end">
-            <span className="inline-flex items-center gap-2 text-sm font-medium text-primary group-hover:gap-3 transition-all">
+          <div className="mt-8 flex items-center justify-end border-t border-border/60 pt-6 dark:border-white/10">
+            <span className="inline-flex items-center gap-2 text-sm font-medium text-primary transition-all group-hover:gap-3">
               Configure GitLab
-              <ArrowRight className="w-4 h-4" />
-            </span>
-          </div>
-        </Link>
-
-        <Link
-          href="/git/custom"
-          scroll={false}
-          className="glass-panel backdrop-blur-none rounded-2xl p-6 flex flex-col min-h-[180px] group interactive-card"
-        >
-          <div className="flex items-start gap-3 min-w-0 mb-4">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 p-2">
-              <Globe2 className="h-8 w-8 text-sky-500" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="font-semibold text-lg leading-tight text-foreground">Custom Git</h2>
-              <p className="text-xs text-muted-foreground mt-1">Self-managed provider token</p>
-            </div>
-          </div>
-          <p className="text-sm text-muted-foreground leading-relaxed flex-1">
-            Configure any self-managed Git provider by setting its base URL and access token.
-          </p>
-          <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-end">
-            <span className="inline-flex items-center gap-2 text-sm font-medium text-primary group-hover:gap-3 transition-all">
-              Configure Custom Git
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="h-4 w-4" />
             </span>
           </div>
         </Link>
       </div>
-    </>
+    </div>
   );
 }

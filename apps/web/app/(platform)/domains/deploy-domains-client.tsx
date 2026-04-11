@@ -273,18 +273,11 @@ function ServerDomainsCard({
           <div className="flex flex-wrap items-center gap-2 max-w-xl">
             <button
               type="button"
-              className="btn-primary flex items-center justify-center gap-2"
+              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
               disabled={!domainsEnabled || isPending || !isDirty}
               onClick={onSave}
             >
-              {isPending ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                "Save"
-              )}
+              {isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
             </button>
             <Button
               type="button"
@@ -462,7 +455,7 @@ export function DeployDomainsClient() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="btn-primary flex items-center justify-center gap-2"
+                  className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
                   disabled={
                     emailMutation.isPending ||
                     !acmeEmailChanged ||
@@ -472,10 +465,7 @@ export function DeployDomainsClient() {
                   onClick={onSaveAcmeEmail}
                 >
                   {emailMutation.isPending ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Saving…
-                    </>
+                    <Loader2 className="size-3.5 animate-spin" />
                   ) : (
                     "Save email"
                   )}

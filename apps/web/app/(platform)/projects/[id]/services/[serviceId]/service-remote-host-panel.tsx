@@ -684,11 +684,11 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
             {value !== "" ? (
               <Collapsible
                 defaultOpen
-                className="group max-w-xl overflow-hidden rounded-xl border border-white/10 bg-muted/20"
+                className="group max-w-xl overflow-hidden rounded-xl border border-border bg-muted/50 dark:border-white/10 dark:bg-muted/20"
               >
                 <CollapsibleTrigger
                   type="button"
-                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary/30"
+                  className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left outline-none transition-colors hover:bg-muted/70 dark:hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary/30"
                 >
                   <span className="text-xs font-medium text-foreground">
                     Redeploy webhook
@@ -699,7 +699,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                   />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="space-y-3 border-t border-white/5 px-4 pb-3 pt-3">
+                  <div className="space-y-3 border-t border-border px-4 pb-3 pt-3 dark:border-white/10">
                     {webhookHostOptions.length === 0 ? (
                       <p className="text-[11px] text-muted-foreground leading-relaxed">
                         Add at least one hostname for this deploy server on{" "}
@@ -728,7 +728,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                           When you save, Weehawk mirrors compose and app source to the deploy server. The webhook runs
                           only on that server (build + stack/compose) — your PC can be off after sync.
                         </p>
-                        <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5">
+                        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-background/80 px-3 py-2.5 dark:bg-background/40">
                           <div className="min-w-0">
                             <Label
                               htmlFor="remote-panel-webhook-https"
