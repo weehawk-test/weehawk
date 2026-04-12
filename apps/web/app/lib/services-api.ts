@@ -1180,3 +1180,20 @@ export async function configureAutoDeployApi(
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   return JSON.parse(text) as AutoDeploySettings;
 }
+
+/**
+ * Re-register auto-deploy hooks on GitHub/GitLab after the local webhook URL changes
+ * (e.g. after a token regenerate).
+ */
+export async function resyncAutoDeployHooks(
+  serviceId: string,
+): Promise<{ updated: boolean }> {
+  const res = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/auto-deploy/resync`,
+    { method: "POST" },
+  );
+  const text = await res.text();
+  if (!res.ok)
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  return JSON.parse(text) as { updated: boolean };
+}

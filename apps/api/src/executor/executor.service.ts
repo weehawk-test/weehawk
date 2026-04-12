@@ -60,6 +60,10 @@ export type { ExecuteDeployOptions } from './executor-types';
 
 const execAsync = promisify(exec);
 
+/** Swarm stacks are deployed over SSH; without a deploy host, do not call local `docker` (avoids Windows Docker Desktop / npipe errors on the API PC). */
+const SWARM_NEEDS_DEPLOY_HOST_MESSAGE =
+  'Configure a deploy SSH server for this service (Remote / deploy host) first.';
+
 function pickDockerSshEnv(
   env: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv | undefined {
@@ -711,11 +715,7 @@ export class ExecutorService {
             return { running: false };
           }
         } else {
-          const r = await execAsync(
-            `docker stack services ${service.appName} --format "{{.Replicas}}"`,
-            { env: procEnv },
-          );
-          stdout = r.stdout;
+          return { running: false };
         }
         const running = stdout.split(/\r?\n/).some((line) => {
           const m = line.trim().match(/^(\d+)\//);
@@ -795,11 +795,7 @@ export class ExecutorService {
             return { error: msg || 'Could not resolve container.' };
           }
         } else {
-          const r = await execAsync(
-            `docker ps -q -f "name=${service.appName}_${key}" -f "status=running"`,
-            { env: procEnv },
-          );
-          stdout = r.stdout;
+          return { error: SWARM_NEEDS_DEPLOY_HOST_MESSAGE };
         }
         const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
         if (!cid) {
@@ -859,10 +855,12 @@ export class ExecutorService {
             projectUserId,
             service.appName,
           );
+          console.log(`Stack ${service.appName} removed from Swarm.`);
         } else {
-          await execAsync(`docker stack rm ${service.appName}`, { env: procEnv });
+          console.warn(
+            `stopAndRemove: Swarm service "${service.appName}" has no deploy host; skipped docker stack rm on API host (use a deploy SSH server for remote stacks).`,
+          );
         }
-        console.log(`Stack ${service.appName} removed from Swarm.`);
       } else {
         const fileExists = await fs
           .access(composeFile)

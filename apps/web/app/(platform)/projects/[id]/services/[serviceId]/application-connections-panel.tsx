@@ -155,7 +155,7 @@ export function ApplicationConnectionsPanel({
               )}
             </div>
             <p className="text-[11px] text-zinc-600 dark:text-muted-foreground mt-0.5 leading-snug">
-              Databases, apps, extra paths — applied on upload.
+              Link databases and apps; optionally add extra Swarm overlay networks. Saved with your app settings.
             </p>
           </div>
           <ChevronDown
@@ -204,8 +204,11 @@ export function ApplicationConnectionsPanel({
           <div className="space-y-2 rounded-xl border border-border bg-muted/25 p-3 dark:border-white/10 dark:bg-white/[0.03]">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs font-medium text-foreground">Optional: extra paths</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">Only if you need more than one separate path for this app.</p>
+                <p className="text-xs font-medium text-foreground">Optional: extra overlay networks</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Each name adds another Docker overlay network to this stack’s Compose file so this service can join
+                  multiple internal networks (for example to isolate traffic). Skip this if the default network is enough.
+                </p>
               </div>
               <button
                 type="button"
@@ -219,7 +222,7 @@ export function ApplicationConnectionsPanel({
               <div key={i} className="flex gap-2 items-start">
                 <input
                   className="input-field flex-1 text-sm"
-                  placeholder="e.g. cache"
+                  placeholder="e.g. cache-net"
                   value={stackKeys[i] ?? ""}
                   onChange={(e) => {
                     const v = e.target.value;

@@ -2426,8 +2426,58 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     };
   }
 
+  /**
+   * Removes GitHub/GitLab repo hooks registered for auto-deploy (best effort).
+   */
+  private async deleteAutoDeployExternalHooksIfAny(service: Service): Promise<void> {
+    if (
+      service.autoDeployGithubHookId != null &&
+      service.autoDeployGitProvider === 'github' &&
+      service.autoDeployRepoId
+    ) {
+      const parsed = ServicesService.parseGithubRepoId(service.autoDeployRepoId);
+      if (parsed) {
+        try {
+          await this.gitService.deleteGithubRepoWebhook(
+            parsed.installationId,
+            parsed.fullName,
+            service.autoDeployGithubHookId,
+          );
+          this.log.log(
+            `Service delete: removed GitHub webhook #${service.autoDeployGithubHookId} for ${parsed.fullName}`,
+          );
+        } catch (e) {
+          this.log.warn(
+            `Service delete: GitHub hook cleanup failed: ${getErrorMessage(e)}`,
+          );
+        }
+      }
+    }
+    if (
+      service.autoDeployGitlabHookId != null &&
+      service.autoDeployGitlabHookProjectId != null &&
+      service.autoDeployGitProvider === 'gitlab'
+    ) {
+      try {
+        await this.gitService.deleteGitlabProjectWebhook(
+          service.autoDeployGitlabHookProjectId,
+          service.autoDeployGitlabHookId,
+        );
+        this.log.log(
+          `Service delete: removed GitLab hook #${service.autoDeployGitlabHookId} for project ${service.autoDeployGitlabHookProjectId}`,
+        );
+      } catch (e) {
+        this.log.warn(
+          `Service delete: GitLab hook cleanup failed: ${getErrorMessage(e)}`,
+        );
+      }
+    }
+  }
+
   async remove(id: number, userId: number) {
     const service = await this.assertServiceOwnedByUser(id, userId);
+    await this.deleteAutoDeployExternalHooksIfAny(service);
+    await this.webhooksService.removeAllForService(userId, id);
     await this.executorService.stopAndRemove(id);
     await this.removeManagedSecretsForService(service.dockerConfig || '');
     await this.serviceRepository.remove(service);
@@ -3151,6 +3201,117 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       autoDeployGitProvider: service.autoDeployGitProvider ?? null,
       autoDeployRepoId: service.autoDeployRepoId ?? null,
     };
+  }
+
+  /**
+   * Force-resync auto-deploy external hooks (GitHub/GitLab) after the local
+   * redeploy webhook URL changes (e.g. token regenerate).
+   * Deletes the stale hook on the provider and registers a fresh one
+   * pointing to the current trigger URL.
+   */
+  async resyncAutoDeployHooks(
+    serviceId: number,
+    userId: number,
+  ): Promise<{ updated: boolean }> {
+    const service = await this.assertServiceOwnedByUser(serviceId, userId);
+
+    if (!service.autoDeployEnabled || !service.autoDeployGitProvider) {
+      return { updated: false };
+    }
+
+    const previous = {
+      autoDeployEnabled: service.autoDeployEnabled,
+      autoDeployGitProvider: service.autoDeployGitProvider,
+      autoDeployRepoId: service.autoDeployRepoId ?? null,
+      autoDeployGithubHookId: service.autoDeployGithubHookId ?? null,
+      autoDeployGitlabHookId: service.autoDeployGitlabHookId ?? null,
+      autoDeployGitlabHookProjectId: service.autoDeployGitlabHookProjectId ?? null,
+    };
+
+    // Delete existing external hooks (force clean)
+    if (
+      previous.autoDeployGithubHookId != null &&
+      previous.autoDeployGitProvider === 'github' &&
+      previous.autoDeployRepoId
+    ) {
+      const parsed = ServicesService.parseGithubRepoId(previous.autoDeployRepoId);
+      if (parsed) {
+        try {
+          await this.gitService.deleteGithubRepoWebhook(
+            parsed.installationId,
+            parsed.fullName,
+            previous.autoDeployGithubHookId,
+          );
+        } catch (e) {
+          this.log.warn(`resync: failed to delete old GitHub hook: ${getErrorMessage(e)}`);
+        }
+      }
+      service.autoDeployGithubHookId = null;
+      await this.serviceRepository.save(service);
+    }
+
+    if (
+      previous.autoDeployGitlabHookId != null &&
+      previous.autoDeployGitlabHookProjectId != null &&
+      previous.autoDeployGitProvider === 'gitlab'
+    ) {
+      try {
+        await this.gitService.deleteGitlabProjectWebhook(
+          previous.autoDeployGitlabHookProjectId,
+          previous.autoDeployGitlabHookId,
+        );
+      } catch (e) {
+        this.log.warn(`resync: failed to delete old GitLab hook: ${getErrorMessage(e)}`);
+      }
+      service.autoDeployGitlabHookId = null;
+      service.autoDeployGitlabHookProjectId = null;
+      await this.serviceRepository.save(service);
+    }
+
+    // Re-register with the new trigger URL
+    const triggerUrl = await this.resolveRemoteRedeployWebhookTriggerUrl(service);
+    if (!triggerUrl) {
+      this.log.warn(
+        `resync: service #${service.id} has no remote redeploy webhook with a trigger URL.`,
+      );
+      return { updated: false };
+    }
+
+    if (service.autoDeployGitProvider === 'github' && service.autoDeployRepoId) {
+      const parsed = ServicesService.parseGithubRepoId(service.autoDeployRepoId);
+      if (parsed) {
+        const hookId = await this.gitService.createGithubRepoWebhook({
+          installationId: parsed.installationId,
+          repoFullName: parsed.fullName,
+          url: triggerUrl,
+        });
+        service.autoDeployGithubHookId = hookId;
+        await this.serviceRepository.save(service);
+        this.log.log(
+          `resync: registered GitHub webhook #${hookId} for ${parsed.fullName} → ${triggerUrl}`,
+        );
+      }
+    }
+
+    if (
+      service.autoDeployGitProvider === 'gitlab' &&
+      ServicesService.isNumericGitlabProjectRepoId(service.autoDeployRepoId)
+    ) {
+      const projectId = parseInt(service.autoDeployRepoId!.trim(), 10);
+      const hookId = await this.gitService.createGitlabPushWebhook({
+        projectId,
+        url: triggerUrl,
+        token: randomBytes(24).toString('hex'),
+      });
+      service.autoDeployGitlabHookId = hookId;
+      service.autoDeployGitlabHookProjectId = projectId;
+      await this.serviceRepository.save(service);
+      this.log.log(
+        `resync: registered GitLab hook #${hookId} for project ${projectId} → ${triggerUrl}`,
+      );
+    }
+
+    return { updated: true };
   }
 
   private static isNumericGitlabProjectRepoId(repoId: string | null | undefined): boolean {

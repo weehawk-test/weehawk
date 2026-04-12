@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Terminal } from "lucide-react";
-import { useService } from "@/hooks/use-services";
 import { serviceTerminalWsUrl } from "@/lib/services-api";
 
 type Props = {
@@ -10,12 +9,6 @@ type Props = {
 };
 
 export function ServiceTerminalPanel({ serviceId }: Props) {
-  const { data: service } = useService(serviceId);
-  const remoteDeploy =
-    service != null &&
-    typeof service.remoteServerId === "number" &&
-    service.remoteServerId > 0;
-
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -150,15 +143,7 @@ export function ServiceTerminalPanel({ serviceId }: Props) {
           <h2 className="text-base font-semibold tracking-tight">Terminal</h2>
         </div>
         <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-          Interactive shell inside this service&apos;s Docker{" "}
-          <span className="font-medium text-foreground/90">container</span>.
-          {!remoteDeploy && (
-            <>
-              {" "}
-              Runs on the same machine as the Weehawk API using local Docker. If you see a Windows <code className="text-[10px]">npipe</code>{" "}
-              error, start Docker Desktop on the PC running the API.
-            </>
-          )}
+          Interactive shell inside this service&apos;s Docker container.
         </p>
       </div>
 

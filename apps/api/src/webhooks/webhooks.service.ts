@@ -984,6 +984,17 @@ export class WebhooksService implements OnApplicationBootstrap {
     await this.syncWebhookAgentForRemoteServer(remoteId, userId);
   }
 
+  /**
+   * Deletes all webhooks tied to a service (DB rows, remote agent scripts, Swarm sync).
+   * Called when a service is removed so tokens and scripts do not linger.
+   */
+  async removeAllForService(userId: number, serviceId: number): Promise<void> {
+    const rows = await this.webhookRepo.find({ where: { serviceId } });
+    for (const w of rows) {
+      await this.remove(userId, w.id);
+    }
+  }
+
   async triggerByToken(token: string): Promise<Record<string, unknown>> {
     const w = await this.webhookRepo.findOne({
       where: { secretToken: token },

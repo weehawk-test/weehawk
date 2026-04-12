@@ -546,8 +546,6 @@ export function RemoteServerSettingsClient() {
                         <p className="text-[11px] text-zinc-500 font-mono mt-1 truncate break-all">
                           {row.privateKeyPath}
                         </p>
-                      ) : row.authMode === "stored" ? (
-                        <p className="text-[11px] text-zinc-500 mt-1">Private key stored encrypted</p>
                       ) : null}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">

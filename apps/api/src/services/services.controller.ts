@@ -647,4 +647,13 @@ export class ServicesController {
   ) {
     return this.servicesService.configureAutoDeploy(+id, this.uid(req), body);
   }
+
+  @Post(':id/auto-deploy/resync')
+  @ApiOperation({ summary: 'Re-register auto-deploy hooks on GitHub/GitLab after webhook URL changes' })
+  resyncAutoDeployHooks(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.resyncAutoDeployHooks(+id, this.uid(req));
+  }
 }

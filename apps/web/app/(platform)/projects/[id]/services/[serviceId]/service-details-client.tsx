@@ -3539,7 +3539,7 @@ function ApplicationArchivePanel({
     for (const k of stk) {
       if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,62}$/.test(k)) {
         toast({
-          title: "Invalid extra path name",
+          title: "Invalid overlay network name",
           description: "Use letters and numbers; start with a letter.",
           variant: "destructive",
         });
@@ -3549,7 +3549,7 @@ function ApplicationArchivePanel({
       if (seen.has(low)) {
         toast({
           title: "Duplicate name",
-          description: "Each extra path needs a unique name.",
+          description: "Each overlay network name must be unique.",
           variant: "destructive",
         });
         return null;
@@ -3957,7 +3957,7 @@ function ApplicationArchivePanel({
     for (const k of stk) {
       if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,62}$/.test(k)) {
         toast({
-          title: "Invalid extra path name",
+          title: "Invalid overlay network name",
           description: "Use letters and numbers; start with a letter.",
           variant: "destructive",
         });
@@ -3967,7 +3967,7 @@ function ApplicationArchivePanel({
       if (seen.has(low)) {
         toast({
           title: "Duplicate name",
-          description: "Each extra path needs a unique name.",
+          description: "Each overlay network name must be unique.",
           variant: "destructive",
         });
         return;
@@ -4821,8 +4821,7 @@ function ApplicationArchivePanel({
           <p className="text-xs font-medium text-foreground mb-1">Dockerfile-first build</p>
           <p className="text-[11px] text-muted-foreground leading-relaxed">
             If your project includes a <code className="text-[10px]">Dockerfile</code> in the build path, it is used as-is.
-            Otherwise Weehawk generates a multi-stage Dockerfile (Node, Go, Python, or static) inside the same context — flat{" "}
-            <code className="text-[10px]">/app</code>, symlink-safe, and <code className="text-[10px]">npm ci</code> for Node.
+            Otherwise Weehawk generates a multi-stage Dockerfile (Node, Go, Python, or static).
           </p>
         </div>
         </>
