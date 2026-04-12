@@ -57,8 +57,8 @@ docker_install_weehawk() {
 
 /**
  * Traefik v2.11 static args (single place — keep in sync with RemoteServersService Swarm labels: web + websecure).
- * - TLS on websecure: default generated cert (browser warning) until you add ACME / real certs.
- * - Swarm provider + overlay network match Weehawk stacks.
+ * Includes ACME (Let's Encrypt) resolver so `tls.certresolver=letsencrypt` labels actually obtain real certificates.
+ * The acme.json host path and email are set via env vars injected into the provision script.
  */
 const TRAEFIK_WEEHAWK_SERVICE_ARGS = String.raw`
     traefik:v2.11 \
@@ -73,7 +73,10 @@ const TRAEFIK_WEEHAWK_SERVICE_ARGS = String.raw`
     --ping=true \
     --entrypoints.web.address=:80 \
     --entrypoints.websecure.address=:443 \
-    --entrypoints.websecure.http.tls=true
+    --entrypoints.websecure.http.tls=true \
+    --certificatesresolvers.letsencrypt.acme.email="$ACME_EMAIL" \
+    --certificatesresolvers.letsencrypt.acme.storage=/acme.json \
+    --certificatesresolvers.letsencrypt.acme.httpChallenge.entryPoint=web
 `.trim();
 
 function buildDeployWebhookAgentBash(
@@ -251,6 +254,8 @@ export function buildWeehawkProvisionScript(opts: {
   webhookAgent?: WebhookAgentProvisionInput;
   /** GET preview: omit embedded base64 bundle; print placeholders instead. */
   isProvisionJobPreview?: boolean;
+  /** Email for ACME (Let's Encrypt) certificates on the deploy Traefik instance. */
+  acmeEmail?: string;
 }): string {
   const net = (opts.overlayNetworkName ?? WEEHAWK_TRAEFIK_EXTERNAL_NETWORK).trim() || 'weehawk';
   const isBuild = opts.role === 'build';
@@ -329,6 +334,7 @@ OS_TYPE=$(grep -w "ID" /etc/os-release | cut -d "=" -f 2 | tr -d '"')
 SYS_ARCH=$(uname -m)
 CURRENT_USER=$USER
 OVERLAY_NET="${net}"
+ACME_EMAIL="${(opts.acmeEmail ?? '').replace(/"/g, '\\"') || 'admin@example.com'}"
 
 echo "Weehawk deploy host provision | OS: $OS_TYPE | arch: $SYS_ARCH | network: $OVERLAY_NET"
 
@@ -401,6 +407,13 @@ else
   echo "Overlay $OVERLAY_NET created."
 fi
 
+ACME_JSON_PATH="/opt/weehawk/acme.json"
+$SUDO_CMD mkdir -p /opt/weehawk
+if [ ! -f "$ACME_JSON_PATH" ]; then
+  $SUDO_CMD touch "$ACME_JSON_PATH"
+fi
+$SUDO_CMD chmod 600 "$ACME_JSON_PATH"
+
 if $SUDO_CMD docker service ls --format '{{.Name}}' 2>/dev/null | grep -qx "traefik-weehawk"; then
   echo "Swarm service traefik-weehawk already exists."
 else
@@ -410,6 +423,7 @@ else
     --publish published=443,target=443 \\
     --network "$OVERLAY_NET" \\
     --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \\
+    --mount type=bind,source="$ACME_JSON_PATH",target=/acme.json \\
     --constraint "node.role == manager" \\
     ${TRAEFIK_WEEHAWK_SERVICE_ARGS}
   echo "Traefik traefik-weehawk created."

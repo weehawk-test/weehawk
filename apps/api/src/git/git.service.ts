@@ -418,6 +418,202 @@ export class GitService implements OnModuleInit {
   }
 
   /**
+   * Registers a GitHub repository webhook (push events) using an installation access token.
+   * Points to the given URL (typically the remote server's webhook agent).
+   * @returns The GitHub hook id
+   */
+  async createGithubRepoWebhook(params: {
+    installationId: number;
+    repoFullName: string;
+    url: string;
+    secret?: string;
+  }): Promise<number> {
+    const row = await this.githubAppCredentialsRow();
+    const appJwt = this.createGithubAppJwt(
+      row.githubAppId!.trim(),
+      row.githubPrivateKey!.trim(),
+    );
+    const instTok = await this.githubInstallationAccessToken(
+      params.installationId,
+      appJwt,
+    );
+    const res = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(params.repoFullName)}/hooks`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          Authorization: `Bearer ${instTok}`,
+          'User-Agent': 'weehawk-api',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: 'web',
+          active: true,
+          events: ['push'],
+          config: {
+            url: params.url,
+            content_type: 'json',
+            ...(params.secret ? { secret: params.secret } : {}),
+          },
+        }),
+      },
+    );
+    const text = await res.text();
+    if (!res.ok) {
+      throw new BadRequestException(
+        text.trim().slice(0, 800) || `GitHub create hook failed (${res.status})`,
+      );
+    }
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestException('Invalid JSON from GitHub (create hook)');
+    }
+    const id = Number(data.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException('GitHub did not return a hook id');
+    }
+    return id;
+  }
+
+  /** Deletes a GitHub repository webhook; ignores 404. */
+  async deleteGithubRepoWebhook(
+    installationId: number,
+    repoFullName: string,
+    hookId: number,
+  ): Promise<void> {
+    try {
+      const row = await this.githubAppCredentialsRow();
+      const appJwt = this.createGithubAppJwt(
+        row.githubAppId!.trim(),
+        row.githubPrivateKey!.trim(),
+      );
+      const instTok = await this.githubInstallationAccessToken(
+        installationId,
+        appJwt,
+      );
+      const res = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(repoFullName)}/hooks/${encodeURIComponent(String(hookId))}`,
+        {
+          method: 'DELETE',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            Authorization: `Bearer ${instTok}`,
+            'User-Agent': 'weehawk-api',
+          },
+        },
+      );
+      if (!res.ok && res.status !== 404) {
+        const text = await res.text();
+        throw new BadRequestException(
+          text.trim().slice(0, 800) || `GitHub delete hook failed (${res.status})`,
+        );
+      }
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /**
+   * Registers a GitLab project hook for push events (PRIVATE-TOKEN auth).
+   * @returns New hook id
+   */
+  async createGitlabPushWebhook(params: {
+    projectId: number;
+    url: string;
+    token: string;
+  }): Promise<number> {
+    const row = await this.gitlabSettingsRow();
+    const privateToken = row.gitlabGroupAccessToken?.trim();
+    if (!privateToken) {
+      throw new BadRequestException(
+        'GitLab token is not configured. Add it under Git → GitLab.',
+      );
+    }
+    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
+      /\/+$/,
+      '',
+    );
+    const res = await fetch(
+      `${base}/api/v4/projects/${encodeURIComponent(String(params.projectId))}/hooks`,
+      {
+        method: 'POST',
+        headers: {
+          'PRIVATE-TOKEN': privateToken,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: params.url,
+          push_events: true,
+          token: params.token,
+          enable_ssl_verification: true,
+        }),
+      },
+    );
+    const text = await res.text();
+    if (!res.ok) {
+      const raw = text.trim().slice(0, 800);
+      try {
+        const errJson = JSON.parse(text) as { error?: string };
+        if (errJson.error === 'insufficient_scope') {
+          throw new BadRequestException(
+            'GitLab: the access token needs the `api` scope to register webhooks. Open Git → GitLab in Weehawk and save a personal or group access token that includes `api` (alongside read_api / read_repository as needed).',
+          );
+        }
+      } catch (e) {
+        if (e instanceof BadRequestException) throw e;
+      }
+      throw new BadRequestException(
+        raw || `GitLab create hook failed (${res.status})`,
+      );
+    }
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestException('Invalid JSON from GitLab (create hook)');
+    }
+    const id = Number(data.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException('GitLab did not return a hook id');
+    }
+    return id;
+  }
+
+  /** Deletes a project hook; ignores 404. */
+  async deleteGitlabProjectWebhook(
+    projectId: number,
+    hookId: number,
+  ): Promise<void> {
+    const row = await this.gitlabSettingsRow();
+    const privateToken = row.gitlabGroupAccessToken?.trim();
+    if (!privateToken) {
+      return;
+    }
+    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
+      /\/+$/,
+      '',
+    );
+    const res = await fetch(
+      `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/hooks/${encodeURIComponent(String(hookId))}`,
+      {
+        method: 'DELETE',
+        headers: { 'PRIVATE-TOKEN': privateToken },
+      },
+    );
+    if (!res.ok && res.status !== 404) {
+      const text = await res.text();
+      throw new BadRequestException(
+        text.trim().slice(0, 800) || `GitLab delete hook failed (${res.status})`,
+      );
+    }
+  }
+
+  /**
    * Exchanges the temporary code from GitHub after manifest registration and persists credentials.
    * @see https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-a-github-app-from-a-manifest
    */

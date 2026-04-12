@@ -106,7 +106,7 @@ export default function GitHubGitSettingsPage() {
             </code>
             . For local development, use a tunnel (e.g. ngrok) for both the API and the web app, and
             set <code className="text-[10px]">WEB_ORIGIN</code> and <code className="text-[10px]">API_PUBLIC_URL</code>{" "}
-            on the API to match your public URLs.
+            on the API to match your public URLs. Auto-deploy registers per-repo webhooks pointing to your remote deploy server so pushes trigger builds even when this PC is off.
           </p>
         </div>
       </div>

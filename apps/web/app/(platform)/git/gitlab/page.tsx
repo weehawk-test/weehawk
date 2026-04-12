@@ -147,11 +147,15 @@ export default function GitLabGitSettingsPage() {
           >
             Group access token
           </a>
-          ) with at least{" "}
+          )           with at least{" "}
           <code className="rounded bg-amber-100/90 px-1 text-[11px] text-amber-950 dark:bg-black/30 dark:text-amber-100">
             read_api
+          </code>
+          ,{" "}
+          <code className="rounded bg-amber-100/90 px-[3px] text-[11px] text-amber-950 dark:bg-black/30 dark:text-amber-100">
+            api
           </code>{" "}
-          and{" "}
+          (to register push webhooks for auto-deploy), and{" "}
           <code className="rounded bg-amber-100/90 px-[3px] text-[11px] text-amber-950 dark:bg-black/30 dark:text-amber-100">
             read_repository
           </code>{" "}

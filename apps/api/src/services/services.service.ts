@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  HttpException,
   forwardRef,
   Inject,
   Logger,
@@ -3096,6 +3097,16 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       );
     }
 
+    const previous = {
+      autoDeployEnabled: service.autoDeployEnabled,
+      autoDeployBranch: service.autoDeployBranch ?? 'main',
+      autoDeployGitProvider: service.autoDeployGitProvider ?? null,
+      autoDeployRepoId: service.autoDeployRepoId ?? null,
+      autoDeployGithubHookId: service.autoDeployGithubHookId ?? null,
+      autoDeployGitlabHookId: service.autoDeployGitlabHookId ?? null,
+      autoDeployGitlabHookProjectId: service.autoDeployGitlabHookProjectId ?? null,
+    };
+
     service.autoDeployEnabled = opts.enabled;
     if (opts.branch !== undefined) {
       service.autoDeployBranch = opts.branch.trim() || 'main';
@@ -3108,6 +3119,23 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     }
 
     await this.serviceRepository.save(service);
+
+    try {
+      await this.syncAutoDeployExternalHooks(service, previous);
+    } catch (e) {
+      service.autoDeployEnabled = previous.autoDeployEnabled;
+      service.autoDeployBranch = previous.autoDeployBranch;
+      service.autoDeployGitProvider = previous.autoDeployGitProvider;
+      service.autoDeployRepoId = previous.autoDeployRepoId;
+      service.autoDeployGithubHookId = previous.autoDeployGithubHookId;
+      service.autoDeployGitlabHookId = previous.autoDeployGitlabHookId;
+      service.autoDeployGitlabHookProjectId = previous.autoDeployGitlabHookProjectId;
+      await this.serviceRepository.save(service);
+      if (e instanceof HttpException) {
+        throw e;
+      }
+      throw new BadRequestException(getErrorMessage(e));
+    }
 
     try {
       await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(
@@ -3123,6 +3151,173 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       autoDeployGitProvider: service.autoDeployGitProvider ?? null,
       autoDeployRepoId: service.autoDeployRepoId ?? null,
     };
+  }
+
+  private static isNumericGitlabProjectRepoId(repoId: string | null | undefined): boolean {
+    if (repoId == null || repoId === '') return false;
+    const n = parseInt(repoId.trim(), 10);
+    return Number.isFinite(n) && n > 0 && String(n) === repoId.trim();
+  }
+
+  /**
+   * Parses `"installationId:owner/repo"` → `{ installationId, fullName }`.
+   */
+  private static parseGithubRepoId(
+    repoId: string,
+  ): { installationId: number; fullName: string } | null {
+    const sep = repoId.indexOf(':');
+    if (sep < 0) return null;
+    const iid = parseInt(repoId.slice(0, sep), 10);
+    const fn = repoId.slice(sep + 1).trim();
+    if (!Number.isFinite(iid) || iid <= 0 || !fn) return null;
+    return { installationId: iid, fullName: fn };
+  }
+
+  /**
+   * Finds the existing redeploy webhook that runs on the remote server for this service.
+   * Returns the webhook's public trigger URL (on the remote deploy host).
+   */
+  private async resolveRemoteRedeployWebhookTriggerUrl(
+    service: Service,
+  ): Promise<string | null> {
+    const webhooks = await this.webhooksService.findWebhooksForService(service.id);
+    for (const w of webhooks) {
+      if (
+        w.serviceAction === 'docker_command' &&
+        w.remoteServerId != null &&
+        w.remoteTriggerUrl
+      ) {
+        return w.remoteTriggerUrl;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * When auto-deploy is toggled, registers or removes webhooks on GitHub/GitLab
+   * pointing directly to the **remote server's webhook agent** — not the desktop API.
+   * This way auto-deploy works even when the user's PC is off.
+   */
+  private async syncAutoDeployExternalHooks(
+    service: Service,
+    previous: {
+      autoDeployEnabled: boolean;
+      autoDeployGitProvider: string | null;
+      autoDeployRepoId: string | null;
+      autoDeployGithubHookId: number | null;
+      autoDeployGitlabHookId: number | null;
+      autoDeployGitlabHookProjectId: number | null;
+    },
+  ): Promise<void> {
+    const disabling = previous.autoDeployEnabled && !service.autoDeployEnabled;
+    const providerChanged =
+      (previous.autoDeployGitProvider ?? null) !==
+      (service.autoDeployGitProvider ?? null);
+    const repoChanged =
+      (previous.autoDeployRepoId ?? null) !==
+      (service.autoDeployRepoId ?? null);
+    const shouldClean = disabling || providerChanged || repoChanged;
+
+    // ── Remove old GitHub hook ──
+    if (
+      shouldClean &&
+      previous.autoDeployGithubHookId != null &&
+      previous.autoDeployGitProvider === 'github' &&
+      previous.autoDeployRepoId
+    ) {
+      const parsed = ServicesService.parseGithubRepoId(previous.autoDeployRepoId);
+      if (parsed) {
+        try {
+          await this.gitService.deleteGithubRepoWebhook(
+            parsed.installationId,
+            parsed.fullName,
+            previous.autoDeployGithubHookId,
+          );
+        } catch (e) {
+          this.log.warn(`Failed to delete GitHub repo hook: ${getErrorMessage(e)}`);
+        }
+      }
+      service.autoDeployGithubHookId = null;
+      await this.serviceRepository.save(service);
+    }
+
+    // ── Remove old GitLab hook ──
+    if (
+      shouldClean &&
+      previous.autoDeployGitlabHookId != null &&
+      previous.autoDeployGitlabHookProjectId != null &&
+      previous.autoDeployGitProvider === 'gitlab'
+    ) {
+      try {
+        await this.gitService.deleteGitlabProjectWebhook(
+          previous.autoDeployGitlabHookProjectId,
+          previous.autoDeployGitlabHookId,
+        );
+      } catch (e) {
+        this.log.warn(`Failed to delete GitLab project hook: ${getErrorMessage(e)}`);
+      }
+      service.autoDeployGitlabHookId = null;
+      service.autoDeployGitlabHookProjectId = null;
+      await this.serviceRepository.save(service);
+    }
+
+    if (!service.autoDeployEnabled) {
+      return;
+    }
+
+    // Resolve the remote webhook trigger URL (the URL on the remote deploy server)
+    const triggerUrl = await this.resolveRemoteRedeployWebhookTriggerUrl(service);
+    if (!triggerUrl) {
+      this.log.warn(
+        `Auto-deploy: service #${service.id} has no remote redeploy webhook with a public trigger URL. ` +
+          'Create a webhook with a deploy server first so GitHub/GitLab can reach it.',
+      );
+      return;
+    }
+
+    // ── Register GitHub repo hook ──
+    if (
+      service.autoDeployGitProvider === 'github' &&
+      service.autoDeployRepoId
+    ) {
+      const parsed = ServicesService.parseGithubRepoId(service.autoDeployRepoId);
+      if (parsed && service.autoDeployGithubHookId == null) {
+        const hookId = await this.gitService.createGithubRepoWebhook({
+          installationId: parsed.installationId,
+          repoFullName: parsed.fullName,
+          url: triggerUrl,
+        });
+        service.autoDeployGithubHookId = hookId;
+        await this.serviceRepository.save(service);
+        this.log.log(
+          `Auto-deploy: registered GitHub webhook #${hookId} for ${parsed.fullName} → ${triggerUrl}`,
+        );
+      }
+    }
+
+    // ── Register GitLab project hook ──
+    if (
+      service.autoDeployGitProvider === 'gitlab' &&
+      ServicesService.isNumericGitlabProjectRepoId(service.autoDeployRepoId)
+    ) {
+      const projectId = parseInt(service.autoDeployRepoId!.trim(), 10);
+      if (
+        service.autoDeployGitlabHookId == null ||
+        service.autoDeployGitlabHookProjectId !== projectId
+      ) {
+        const hookId = await this.gitService.createGitlabPushWebhook({
+          projectId,
+          url: triggerUrl,
+          token: randomBytes(24).toString('hex'),
+        });
+        service.autoDeployGitlabHookId = hookId;
+        service.autoDeployGitlabHookProjectId = projectId;
+        await this.serviceRepository.save(service);
+        this.log.log(
+          `Auto-deploy: registered GitLab hook #${hookId} for project ${projectId} → ${triggerUrl}`,
+        );
+      }
+    }
   }
 
   /**

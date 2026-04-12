@@ -116,6 +116,18 @@ export class Service {
   @Column({ type: 'varchar', length: 512, nullable: true })
   autoDeployRepoId?: string | null;
 
+  /** GitHub repo hook id (auto-registered for push → remote server webhook agent). */
+  @Column({ type: 'int', nullable: true })
+  autoDeployGithubHookId?: number | null;
+
+  /** GitLab project hook id (auto-registered for push → remote server webhook agent). */
+  @Column({ type: 'int', nullable: true })
+  autoDeployGitlabHookId?: number | null;
+
+  /** GitLab project id that {@link autoDeployGitlabHookId} belongs to (for DELETE). */
+  @Column({ type: 'int', nullable: true })
+  autoDeployGitlabHookProjectId?: number | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

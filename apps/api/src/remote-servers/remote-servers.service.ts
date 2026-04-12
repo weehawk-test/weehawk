@@ -47,6 +47,7 @@ import {
   REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
 } from '../common/remote-wrapped-script-install';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
+import { TraefikService } from '../traefik/traefik.service';
 import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
 import { toSafePathSegment } from '../services/deployment-paths';
@@ -212,6 +213,7 @@ export class RemoteServersService implements OnApplicationBootstrap {
     @InjectRepository(RemoteServer)
     private readonly remoteServerRepository: Repository<RemoteServer>,
     private readonly configService: ConfigService,
+    private readonly traefikService: TraefikService,
   ) {}
 
   /** Fix legacy rows: loopback SSH hosts are build-only, never deploy. */
@@ -708,6 +710,9 @@ export class RemoteServersService implements OnApplicationBootstrap {
     const mountDockerSock =
       'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock';
 
+    const traefikSettings = rule ? await this.traefikService.getSettings() : null;
+    const certResolverName = (traefikSettings?.certResolverName || 'letsencrypt').trim();
+
     const labelsPart = rule
       ? (() => {
           const base = [
@@ -728,6 +733,7 @@ export class RemoteServersService implements OnApplicationBootstrap {
             if (ep === 'websecure') {
               routerLabels.push(
                 `--label ${shSingleQuoteRemote(`traefik.http.routers.${routerName}.tls=true`)}`,
+                `--label ${shSingleQuoteRemote(`traefik.http.routers.${routerName}.tls.certresolver=${certResolverName}`)}`,
               );
             }
           }

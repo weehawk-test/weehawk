@@ -22,8 +22,16 @@ export type TraefikSettingsPayload = {
   generatedPlatformDynamicConfig: string;
 };
 
-/** UI: ACME email + optional hostname for the Weehawk dashboard. */
-export type TraefikSettingsPatch = Partial<{ acmeEmail: string; platformDomain: string }>;
+export type TraefikSettingsPatch = Partial<{
+  acmeEmail: string;
+  platformDomain: string;
+  certResolverName: string;
+  acmeStorageHostPath: string;
+  httpEntrypoint: string;
+  httpsEntrypoint: string;
+  redirectHttpToHttps: boolean;
+  traefikImage: string;
+}>;
 
 async function errorBody(res: Response): Promise<string> {
   const text = await res.text();

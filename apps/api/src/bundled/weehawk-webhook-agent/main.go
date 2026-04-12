@@ -206,39 +206,32 @@ func main() {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), timeout)
-		defer cancel()
+		// Run the script in the background so GitHub/GitLab get an immediate response
+		// and don't hit their short webhook timeout (~10s).
+		go func(script string, dur time.Duration) {
+			ctx, cancel := context.WithTimeout(context.Background(), dur)
+			defer cancel()
 
-		cmd := exec.CommandContext(ctx, "bash", scriptPath)
-		cmd.Env = os.Environ()
-		out, runErr := cmd.CombinedOutput()
-		outStr := strings.TrimSpace(string(out))
-		if len(outStr) > 32000 {
-			outStr = outStr[:32000] + "…"
-		}
+			cmd := exec.CommandContext(ctx, "bash", script)
+			cmd.Env = os.Environ()
+			out, runErr := cmd.CombinedOutput()
+			outStr := strings.TrimSpace(string(out))
+			if len(outStr) > 4000 {
+				outStr = outStr[len(outStr)-4000:]
+			}
 
-		if runErr != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(runErr, context.DeadlineExceeded) {
-				writeJSON(w, http.StatusGatewayTimeout, responseBody{
-					OK:     false,
-					Output: outStr,
-					Error:  "script timed out",
-				})
+			if runErr != nil {
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					log.Printf("[webhook] script timed out after %s: %s", dur, script)
+				} else {
+					log.Printf("[webhook] script failed: %s — %s | %s", script, runErr, outStr)
+				}
 				return
 			}
-			msg := outStr
-			if msg == "" {
-				msg = runErr.Error()
-			}
-			writeJSON(w, http.StatusInternalServerError, responseBody{
-				OK:     false,
-				Output: msg,
-				Error:  "script failed",
-			})
-			return
-		}
+			log.Printf("[webhook] script OK: %s | %s", script, outStr)
+		}(scriptPath, timeout)
 
-		writeJSON(w, http.StatusOK, responseBody{OK: true, Output: outStr})
+		writeJSON(w, http.StatusAccepted, responseBody{OK: true, Output: "script started in background"})
 	}
 
 	mux.HandleFunc("/", handler)

@@ -755,6 +755,20 @@ export class WebhooksService implements OnApplicationBootstrap {
     return await Promise.all(list.map((w) => this.toListRow(userId, w)));
   }
 
+  /**
+   * Returns webhooks linked to a service (including hidden ones).
+   * Used by auto-deploy to find the remote trigger URL.
+   */
+  async findWebhooksForService(
+    serviceId: number,
+  ): Promise<WebhookListRow[]> {
+    const rows = await this.webhookRepo.find({
+      where: { serviceId },
+      order: { createdAt: 'DESC' },
+    });
+    return await Promise.all(rows.map((w) => this.toListRow(1, w)));
+  }
+
   async findOne(userId: number, id: number): Promise<WebhookDetailRow> {
     const w = await this.webhookRepo.findOne({ where: { id } });
     if (!w) throw new NotFoundException('Webhook not found');

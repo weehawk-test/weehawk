@@ -7,10 +7,12 @@ import { RemoteServersService } from './remote-servers.service';
 import { RemoteServerProvisionService } from './remote-server-provision.service';
 import { RemoteTerminalGateway } from './remote-terminal.gateway';
 import { LocalTerminalGateway } from './local-terminal.gateway';
+import { TraefikModule } from '../traefik/traefik.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([RemoteServer, RemoteServerProvisionJob]),
+    TraefikModule,
   ],
   controllers: [RemoteServersController],
   providers: [

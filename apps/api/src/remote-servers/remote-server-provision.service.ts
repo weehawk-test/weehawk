@@ -13,6 +13,7 @@ import {
   buildDockerPurgeScript,
   buildWeehawkProvisionScript,
 } from './remote-server-provision.script';
+import { TraefikService } from '../traefik/traefik.service';
 
 const MAX_LOG_CHARS = 512_000;
 
@@ -25,15 +26,18 @@ export class RemoteServerProvisionService {
     @InjectRepository(RemoteServerProvisionJob)
     private readonly jobRepo: Repository<RemoteServerProvisionJob>,
     private readonly remoteServersService: RemoteServersService,
+    private readonly traefikService: TraefikService,
   ) {}
 
   /** Same bash the worker runs over SSH — for UI preview. */
-  getProvisionScriptPreview(role: 'deploy' | 'build'): { script: string } {
+  async getProvisionScriptPreview(role: 'deploy' | 'build'): Promise<{ script: string }> {
+    const traefikSettings = await this.traefikService.getSettings();
     return {
       script: buildWeehawkProvisionScript({
         role,
         isProvisionJobPreview: role === 'deploy',
         webhookAgent: { mode: 'none' },
+        acmeEmail: traefikSettings.acmeEmail,
       }),
     };
   }
@@ -162,6 +166,7 @@ export class RemoteServerProvisionService {
         ctx.server.serverRole === 'build'
           ? undefined
           : await this.remoteServersService.getWebhookAgentProvisionInput();
+      const traefikSettings = await this.traefikService.getSettings();
       const script =
         kind === 'docker_purge'
           ? buildDockerPurgeScript()
@@ -169,6 +174,7 @@ export class RemoteServerProvisionService {
               role: ctx.server.serverRole === 'build' ? 'build' : 'deploy',
               webhookAgent,
               isProvisionJobPreview: false,
+              acmeEmail: traefikSettings.acmeEmail,
             });
       this.logger.log(
         `Job ${job.id} remote_server_id=${serverId} resolved job_kind=${kind} (from DB column job_kind)`,
