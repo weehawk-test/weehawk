@@ -72,6 +72,8 @@ import {
   generateApplicationFromSourceApi,
   runServiceBackupNowApi,
   importServiceBackupFromS3Api,
+  fetchAutoDeploySettings,
+  configureAutoDeployApi,
 } from "@/lib/services-api";
 import {
   parseApplicationBuildPath,
@@ -1449,17 +1451,6 @@ export default function ServiceDetails({
                     </p>
                   </div>
                 </div>
-
-                {deploy.isPending ? (
-                  <div className="px-5 py-2.5 border-b border-amber-500/25 bg-amber-500/10 shrink-0 flex items-start gap-2 text-xs text-amber-100/95 leading-snug">
-                    <Loader2 className="w-4 h-4 animate-spin shrink-0 mt-0.5" />
-                    <span>
-                      Deployment running — output streams live under{" "}
-                      <span className="font-medium">Last deployment</span> and{" "}
-                      <span className="font-medium">Live container</span> (same as Docker on the host or remote SSH).
-                    </span>
-                  </div>
-                ) : null}
 
                 <Tabs defaultValue="live" className="flex flex-col flex-1 min-h-0">
                   <div className="px-5 pt-3 pb-2 border-b border-border/40 shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -3266,12 +3257,24 @@ function ApplicationArchivePanel({
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "env" | null>(null);
   const [deployTarget, setDeployTarget] = useState<"source" | "image">("source");
-  /** GitHub card expands clone from App installations (same flow as GitLab). */
-  const [showGithubPanel, setShowGithubPanel] = useState(false);
-  /** GitLab card expands clone + integration hints inline (no navigation on card click). */
-  const [showGitlabPanel, setShowGitlabPanel] = useState(false);
+  /** Only one of GitHub / GitLab deploy panels open at a time (accordion). */
+  const [gitRepoDeployPanel, setGitRepoDeployPanel] = useState<"github" | "gitlab" | null>(null);
+  const showGithubPanel = gitRepoDeployPanel === "github";
+  const showGitlabPanel = gitRepoDeployPanel === "gitlab";
   const [imageRef, setImageRef] = useState("");
   const [savingImage, setSavingImage] = useState(false);
+
+  const autoDeployQ = useQuery({
+    queryKey: ["auto-deploy", serviceId],
+    queryFn: () => fetchAutoDeploySettings(serviceId),
+    enabled: Boolean(accessToken),
+  });
+  const [autoDeployEnabled, setAutoDeployEnabled] = useState(false);
+  const [autoDeploySaving, setAutoDeploySaving] = useState(false);
+  useEffect(() => {
+    if (autoDeployQ.data) setAutoDeployEnabled(autoDeployQ.data.autoDeployEnabled);
+  }, [autoDeployQ.data]);
+
   const [gitlabBranchOverride, setGitlabBranchOverride] = useState("");
   const [gitlabManualUrl, setGitlabManualUrl] = useState("");
   /** Manual URL fetch in progress (git-clone-stage). */
@@ -3611,6 +3614,40 @@ function ApplicationArchivePanel({
     } finally {
       if (byProject) setStagingProjectId(null);
       else setGitlabUrlStaging(false);
+    }
+  };
+
+  const saveAutoDeployToggle = async (
+    newEnabled: boolean,
+    provider: "github" | "gitlab",
+    repoId: string,
+    branch: string,
+  ) => {
+    setAutoDeployEnabled(newEnabled);
+    setAutoDeploySaving(true);
+    try {
+      await configureAutoDeployApi(serviceId, {
+        enabled: newEnabled,
+        branch: branch.trim() || "main",
+        gitProvider: provider,
+        repoId,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["auto-deploy", serviceId] });
+      toast({
+        title: newEnabled ? "Auto-deploy enabled" : "Auto-deploy disabled",
+        description: newEnabled
+          ? `Redeploy will now clone from ${provider} before deploying.`
+          : "Redeploy will use the existing code on the server.",
+      });
+    } catch (e) {
+      setAutoDeployEnabled(!newEnabled);
+      toast({
+        title: "Failed",
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setAutoDeploySaving(false);
     }
   };
 
@@ -4034,7 +4071,9 @@ function ApplicationArchivePanel({
               type="button"
               aria-expanded={showGithubPanel}
               aria-controls="github-deploy-panel"
-              onClick={() => setShowGithubPanel((v) => !v)}
+              onClick={() =>
+                setGitRepoDeployPanel((cur) => (cur === "github" ? null : "github"))
+              }
               className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
                 showGithubPanel
                   ? "border-sky-500/50 bg-sky-500/10 hover:bg-sky-500/15"
@@ -4064,7 +4103,9 @@ function ApplicationArchivePanel({
               type="button"
               aria-expanded={showGitlabPanel}
               aria-controls="gitlab-deploy-panel"
-              onClick={() => setShowGitlabPanel((v) => !v)}
+              onClick={() =>
+                setGitRepoDeployPanel((cur) => (cur === "gitlab" ? null : "gitlab"))
+              }
               className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
                 showGitlabPanel
                   ? "border-orange-500/50 bg-orange-500/10 hover:bg-orange-500/15"
@@ -4289,6 +4330,40 @@ function ApplicationArchivePanel({
                             "Fetch"
                           )}
                         </button>
+                        {(() => {
+                          const adRepoId = `${r.installation_id}:${r.full_name}`;
+                          const isAdActive = autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "github" && autoDeployQ.data?.autoDeployRepoId === adRepoId;
+                          return (
+                            <button
+                              type="button"
+                              disabled={autoDeploySaving}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const branchVal = githubBranchOverride.trim() || r.default_branch || "main";
+                                void saveAutoDeployToggle(!isAdActive, "github", adRepoId, branchVal);
+                              }}
+                              className={`inline-flex items-center justify-center gap-1 text-[10px] !py-1 !px-2.5 shrink-0 rounded-md font-medium transition-colors ${
+                                isAdActive
+                                  ? "border border-amber-500/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+                                  : "btn-secondary"
+                              }`}
+                            >
+                              {autoDeploySaving ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : isAdActive ? (
+                                <>
+                                  <CheckCircle className="h-3 w-3 opacity-90" aria-hidden />
+                                  Auto-deploy
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCw className="h-3 w-3 opacity-80" aria-hidden />
+                                  Auto-deploy
+                                </>
+                              )}
+                            </button>
+                          );
+                        })()}
                       </li>
                     );
                   })}
@@ -4374,6 +4449,7 @@ function ApplicationArchivePanel({
                   autoComplete="off"
                 />
               </div>
+              <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 disabled={
@@ -4384,19 +4460,51 @@ function ApplicationArchivePanel({
                   !githubManualUrl.trim()
                 }
                 onClick={() => void onGithubFetchManualUrl()}
-                className={`inline-flex items-center gap-2 text-xs !py-2 rounded-md font-medium transition-colors ${
+                className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors ${
                   githubManualUrlStaged && !githubUrlStaging
-                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 px-3"
-                    : "btn-primary"
+                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                    : "btn-primary !py-0"
                 }`}
               >
                 {githubUrlStaging ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                 ) : githubManualUrlStaged ? (
-                  <CheckCircle className="h-3.5 w-3.5 opacity-90" aria-hidden />
+                  <CheckCircle className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
                 ) : null}
                 {githubManualUrlStaged && !githubUrlStaging ? "Ready" : "Fetch repo"}
               </button>
+              <button
+                type="button"
+                disabled={
+                  autoDeploySaving ||
+                  githubUrlStaging ||
+                  !githubManualUrl.trim()
+                }
+                onClick={() => {
+                  const url = githubManualUrl.trim();
+                  if (!url) return;
+                  const branchVal = githubBranchOverride.trim() || "main";
+                  const isActive = autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "github" && autoDeployQ.data?.autoDeployRepoId === url;
+                  void saveAutoDeployToggle(!isActive, "github", url, branchVal);
+                }}
+                className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors ${
+                  autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "github" && autoDeployQ.data?.autoDeployRepoId === githubManualUrl.trim()
+                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                    : "btn-secondary !py-0"
+                }`}
+              >
+                {autoDeploySaving ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                ) : autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "github" && autoDeployQ.data?.autoDeployRepoId === githubManualUrl.trim() ? (
+                  <CheckCircle className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+                )}
+                {autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "github" && autoDeployQ.data?.autoDeployRepoId === githubManualUrl.trim()
+                  ? "Auto-deploy ON"
+                  : "Auto-deploy"}
+              </button>
+              </div>
             </div>
           </div>
           ) : null}
@@ -4513,6 +4621,40 @@ function ApplicationArchivePanel({
                           "Fetch"
                         )}
                       </button>
+                      {(() => {
+                        const adRepoId = String(p.id);
+                        const isAdActive = autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "gitlab" && autoDeployQ.data?.autoDeployRepoId === adRepoId;
+                        return (
+                          <button
+                            type="button"
+                            disabled={autoDeploySaving}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const branchVal = gitlabBranchOverride.trim() || p.default_branch || "main";
+                              void saveAutoDeployToggle(!isAdActive, "gitlab", adRepoId, branchVal);
+                            }}
+                            className={`inline-flex items-center justify-center gap-1 text-[10px] !py-1 !px-2.5 shrink-0 rounded-md font-medium transition-colors ${
+                              isAdActive
+                                ? "border border-amber-500/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+                                : "btn-secondary"
+                            }`}
+                          >
+                            {autoDeploySaving ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : isAdActive ? (
+                              <>
+                                <CheckCircle className="h-3 w-3 opacity-90" aria-hidden />
+                                Auto-deploy
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="h-3 w-3 opacity-80" aria-hidden />
+                                Auto-deploy
+                              </>
+                            )}
+                          </button>
+                        );
+                      })()}
                     </li>
                   ))}
                 </ul>
@@ -4595,6 +4737,7 @@ function ApplicationArchivePanel({
                   autoComplete="off"
                 />
               </div>
+              <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 disabled={
@@ -4605,19 +4748,51 @@ function ApplicationArchivePanel({
                   !gitlabManualUrl.trim()
                 }
                 onClick={() => void onGitlabFetchManualUrl()}
-                className={`inline-flex items-center gap-2 text-xs !py-2 rounded-md font-medium transition-colors ${
+                className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors ${
                   gitlabManualUrlStaged && !gitlabUrlStaging
-                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 px-3"
-                    : "btn-primary"
+                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                    : "btn-primary !py-0"
                 }`}
               >
                 {gitlabUrlStaging ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                 ) : gitlabManualUrlStaged ? (
-                  <CheckCircle className="h-3.5 w-3.5 opacity-90" aria-hidden />
+                  <CheckCircle className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
                 ) : null}
                 {gitlabManualUrlStaged && !gitlabUrlStaging ? "Ready" : "Fetch repo"}
               </button>
+              <button
+                type="button"
+                disabled={
+                  autoDeploySaving ||
+                  gitlabUrlStaging ||
+                  !gitlabManualUrl.trim()
+                }
+                onClick={() => {
+                  const url = gitlabManualUrl.trim();
+                  if (!url) return;
+                  const branchVal = gitlabBranchOverride.trim() || "main";
+                  const isActive = autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "gitlab" && autoDeployQ.data?.autoDeployRepoId === url;
+                  void saveAutoDeployToggle(!isActive, "gitlab", url, branchVal);
+                }}
+                className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors ${
+                  autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "gitlab" && autoDeployQ.data?.autoDeployRepoId === gitlabManualUrl.trim()
+                    ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                    : "btn-secondary !py-0"
+                }`}
+              >
+                {autoDeploySaving ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                ) : autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "gitlab" && autoDeployQ.data?.autoDeployRepoId === gitlabManualUrl.trim() ? (
+                  <CheckCircle className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden />
+                )}
+                {autoDeployEnabled && autoDeployQ.data?.autoDeployGitProvider === "gitlab" && autoDeployQ.data?.autoDeployRepoId === gitlabManualUrl.trim()
+                  ? "Auto-deploy ON"
+                  : "Auto-deploy"}
+              </button>
+              </div>
             </div>
           </div>
           ) : null}
@@ -5441,3 +5616,4 @@ function DomainsPanel({ service }: { service: Service }) {
     </div>
   );
 }
+

@@ -17,6 +17,7 @@ import { Project } from 'src/projects/entities/project.entity';
 import { randomBytes } from 'crypto';
 import * as os from 'os';
 import { ExecutorService } from '../executor/executor.service';
+import { emitDeployLog } from '../executor/executor-docker';
 import { execFile, spawn, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { Observable } from 'rxjs';
@@ -32,7 +33,12 @@ import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { DockerSecretsService } from 'src/dockersecrets/dockersecrets.service';
 import * as unzipper from 'unzipper';
-import { createBackupTempDir, getServiceDeploymentDir, removeBackupTempDir } from './deployment-paths';
+import {
+  createBackupTempDir,
+  getServiceDeploymentDir,
+  removeBackupTempDir,
+  toSafePathSegment,
+} from './deployment-paths';
 import type { EventEmitter } from 'events';
 import { DockerfileGeneratorService } from '../dockerfile-generator/dockerfile-generator.service';
 import type { DatabaseBackupConfig } from '../backup/database-backup.types';
@@ -50,6 +56,10 @@ import {
   parseIpv4Octets,
 } from '../common/magic-traefik-me';
 import { isLoopbackSshHost } from '../remote-servers/loopback-ssh-host';
+import {
+  RemoteServersService,
+  WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
+} from '../remote-servers/remote-servers.service';
 
 const execFileAsync = promisify(execFile);
 
@@ -75,6 +85,7 @@ export class ServicesService {
     private readonly s3Service: S3Service,
     private readonly gitService: GitService,
     private readonly traefikService: TraefikService,
+    private readonly remoteServersService: RemoteServersService,
   ) {}
 
   /** Ensures the service exists. */
@@ -1730,23 +1741,69 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   /**
    * Stream `docker compose logs -f` or `docker service logs -f` using the same paths and
    * stack names as deploy (see `ExecutorService`).
+   * When a deploy remote host is set, runs Docker on that host over SSH (same idea as the service terminal).
    */
   getServiceLogsStream(id: number, userId: number): Observable<{ data: string }> {
     return new Observable((observer) => {
       let child: ChildProcess | null = null;
+      let remoteCancel: (() => void) | null = null;
       let cancelled = false;
       let stderrBuf = '';
 
-      void this.assertServiceOwnedByUser(id, userId)
-        .then(async (service) => {
+      const shQ = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+      void (async () => {
+        try {
+          const service = await this.assertServiceOwnedByUser(id, userId);
           if (cancelled) return;
 
+          const sshTargets = await this.getDockerSshTargetIds(service.id);
+          const key = this.firstComposeServiceName(service.dockerConfig || '');
           const deployDir = getServiceDeploymentDir(
             service.appName,
             this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
           );
           const composeFile = path.join(deployDir, 'docker-compose.yml');
-          const key = this.firstComposeServiceName(service.dockerConfig || '');
+
+          if (sshTargets.remoteServerId != null) {
+            let bashBody: string;
+            if (
+              service.composeType === composeType.STACK ||
+              service.composeType === composeType.DATABASES
+            ) {
+              const stackServiceName = `${service.appName}_${key}`;
+              bashBody = `docker service logs -f --tail 50 ${shQ(stackServiceName)}`;
+            } else {
+              const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
+              const proj = shQ(service.appName);
+              bashBody = `cd ${shQ(persist)} && docker compose -f docker-compose.yml -p ${proj} logs -f --tail 50`;
+            }
+
+            const { cancel } =
+              await this.remoteServersService.streamDockerLogsFollowOnRemoteViaSsh(
+                sshTargets.remoteServerId,
+                userId,
+                bashBody,
+                (chunk) => {
+                  if (!cancelled) observer.next({ data: chunk });
+                },
+                (code) => {
+                  if (cancelled) return;
+                  if (code !== 0 && code != null) {
+                    observer.next({
+                      data: `\n[docker logs exited with code ${code}]\n`,
+                    });
+                  }
+                  observer.complete();
+                },
+              );
+            if (cancelled) {
+              cancel();
+              return;
+            }
+            remoteCancel = cancel;
+            return;
+          }
 
           let args: string[] = [];
           const spawnOpts: { cwd?: string } = {};
@@ -1805,11 +1862,14 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
             }
             observer.complete();
           });
-        })
-        .catch((err) => observer.error(err));
+        } catch (err) {
+          observer.error(err);
+        }
+      })();
 
       return () => {
         cancelled = true;
+        remoteCancel?.();
         if (child && !child.killed) {
           child.kill('SIGKILL');
         }
@@ -1827,6 +1887,24 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     } else {
       await this.findOne(id);
     }
+
+    if (mode === 'redeploy' || mode === 'deploy') {
+      const svc = await this.serviceRepository.findOne({ where: { id } });
+      if (
+        svc?.autoDeployEnabled &&
+        svc.autoDeployGitProvider &&
+        svc.autoDeployRepoId
+      ) {
+        this.log.log(
+          `Auto-deploy active for service #${id} — running clone+generate before deploy.`,
+        );
+        const adResult = await this.runAutoDeployCloneAndDeploy(id, {
+          deployLogEmitter: options?.deployLogEmitter,
+        });
+        return { success: adResult.success, output: adResult.output };
+      }
+    }
+
     const result = await this.executorService.execute(id, mode, options);
     if (result.success) {
       await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
@@ -2991,6 +3069,252 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     if (engine === 'mysql' || engine === 'mariadb') return 3306;
     if (engine === 'mongodb') return 27017;
     return 6379;
+  }
+
+  // ─── Auto-deploy ────────────────────────────────────────────────────────────
+
+  /** Configure auto-deploy for an application service (authenticated). */
+  async configureAutoDeploy(
+    serviceId: number,
+    userId: number,
+    opts: {
+      enabled: boolean;
+      branch?: string;
+      gitProvider?: string | null;
+      repoId?: string | null;
+    },
+  ): Promise<{
+    autoDeployEnabled: boolean;
+    autoDeployBranch: string;
+    autoDeployGitProvider: string | null;
+    autoDeployRepoId: string | null;
+  }> {
+    const service = await this.assertServiceOwnedByUser(serviceId, userId);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException(
+        'Auto-deploy is only available for application-type services.',
+      );
+    }
+
+    service.autoDeployEnabled = opts.enabled;
+    if (opts.branch !== undefined) {
+      service.autoDeployBranch = opts.branch.trim() || 'main';
+    }
+    if (opts.gitProvider !== undefined) {
+      service.autoDeployGitProvider = opts.gitProvider;
+    }
+    if (opts.repoId !== undefined) {
+      service.autoDeployRepoId = opts.repoId;
+    }
+
+    await this.serviceRepository.save(service);
+
+    try {
+      await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(
+        serviceId,
+      );
+    } catch {
+      /* best effort — auto-deploy toggle saved even if script refresh fails */
+    }
+
+    return {
+      autoDeployEnabled: service.autoDeployEnabled,
+      autoDeployBranch: service.autoDeployBranch,
+      autoDeployGitProvider: service.autoDeployGitProvider ?? null,
+      autoDeployRepoId: service.autoDeployRepoId ?? null,
+    };
+  }
+
+  /**
+   * Resolve the authenticated HTTPS clone URL for a GitLab project (token embedded).
+   * Used by the webhook env writer so the remote host can `git clone` private repos.
+   */
+  async resolveGitlabProjectCloneUrl(projectId: number): Promise<string | null> {
+    try {
+      const info = await this.gitService.gitlabCloneInfoForProject(projectId);
+      return info.cloneUrl || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolve an authenticated HTTPS clone URL for a manual GitLab URL.
+   * Injects the stored GitLab token when available (for private repos).
+   */
+  async resolveGitlabAuthenticatedUrl(httpUrl: string): Promise<string> {
+    return this.gitService.resolveGitlabHttpCloneUrl(httpUrl);
+  }
+
+  /**
+   * Return the GitHub App credentials (appId + PEM private key) so callers
+   * can write them to a remote env for self-service token generation.
+   */
+  async getGithubAppCredentials(): Promise<{ appId: string; privateKeyPem: string } | null> {
+    try {
+      return await this.gitService.getGithubAppPublicCredentials();
+    } catch {
+      return null;
+    }
+  }
+
+  /** For on-host tarball fallback when `git` is missing (GitLab API archive). */
+  async getGitlabArchiveApiCredentials(): Promise<{
+    apiBase: string;
+    privateToken: string;
+  } | null> {
+    return this.gitService.getGitlabArchiveApiCredentials();
+  }
+
+  /** Read auto-deploy settings (authenticated). */
+  async getAutoDeploySettings(serviceId: number, userId: number) {
+    const service = await this.assertServiceOwnedByUser(serviceId, userId);
+    return {
+      autoDeployEnabled: service.autoDeployEnabled ?? false,
+      autoDeployBranch: service.autoDeployBranch ?? 'main',
+      autoDeployGitProvider: service.autoDeployGitProvider ?? null,
+      autoDeployRepoId: service.autoDeployRepoId ?? null,
+    };
+  }
+
+  /**
+   * Called by {@link WebhooksService} when a redeploy webhook fires and the service
+   * has auto-deploy enabled. Clones the repo → re-generates the stack → deploys.
+   */
+  async runAutoDeployCloneAndDeploy(
+    serviceId: number,
+    options?: { deployLogEmitter?: EventEmitter },
+  ): Promise<{
+    success: boolean;
+    output: string;
+  }> {
+    const emit = (msg: string) =>
+      emitDeployLog(options?.deployLogEmitter, msg);
+    const service = await this.serviceRepository.findOne({
+      where: { id: serviceId },
+      relations: ['project', 'remoteServer', 'buildRemoteServer'],
+    });
+    if (!service) {
+      return { success: false, output: `Service #${serviceId} not found.` };
+    }
+    if (!service.autoDeployEnabled) {
+      return { success: false, output: 'Auto-deploy is not enabled.' };
+    }
+
+    const provider = service.autoDeployGitProvider;
+    const repoId = service.autoDeployRepoId;
+    const branch = service.autoDeployBranch || 'main';
+
+    if (!provider || !repoId) {
+      return {
+        success: false,
+        output: 'Auto-deploy git provider and repo id are not configured.',
+      };
+    }
+
+    let cloneOptions: {
+      gitlabProjectId?: number;
+      githubInstallationId?: number;
+      githubRepoFullName?: string;
+      httpUrlToRepo?: string;
+      branch?: string;
+    };
+
+    if (provider === 'github') {
+      const sep = repoId.indexOf(':');
+      if (sep < 0) {
+        return {
+          success: false,
+          output:
+            'Invalid GitHub auto-deploy repo id. Expected "installationId:owner/repo".',
+        };
+      }
+      const installationId = parseInt(repoId.slice(0, sep), 10);
+      const fullName = repoId.slice(sep + 1);
+      cloneOptions = {
+        githubInstallationId: installationId,
+        githubRepoFullName: fullName,
+        branch,
+      };
+    } else if (provider === 'gitlab') {
+      const projectId = parseInt(repoId, 10);
+      if (Number.isFinite(projectId) && projectId > 0) {
+        cloneOptions = { gitlabProjectId: projectId, branch };
+      } else {
+        cloneOptions = { httpUrlToRepo: repoId, branch };
+      }
+    } else {
+      return { success: false, output: `Unknown git provider: ${provider}` };
+    }
+
+    try {
+      emit(`[auto-deploy] Resolving git clone source (${provider})…\n`);
+      const { cloneUrl, branch: resolvedBranch } =
+        await this.resolveApplicationGitCloneSource(cloneOptions);
+
+      const deployDir = getServiceDeploymentDir(
+        service.appName,
+        this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      );
+      const sourceDir = path.join(deployDir, 'app-source');
+      await fs.mkdir(deployDir, { recursive: true });
+
+      emit(
+        `[auto-deploy] Cloning ${provider} repo (branch: ${resolvedBranch ?? branch})…\n`,
+      );
+      await this.cloneGitRepository(
+        cloneUrl,
+        sourceDir,
+        resolvedBranch ?? branch,
+      );
+      emit('[auto-deploy] Clone complete. Generating stack configuration…\n');
+
+      await this.applyApplicationSourceFromDirectory(
+        service,
+        sourceDir,
+        {},
+        'repository',
+      );
+      emit('[auto-deploy] Stack configuration generated.\n');
+
+      emit('[auto-deploy] Syncing files to deploy host…\n');
+      const mirrorResult = await this.pushApplicationMirrorToDeployHostIfConfigured(service.id, 1);
+      if (mirrorResult.status === 'failed') {
+        const warnMsg = `Auto-deploy mirror sync failed for service #${service.id}: ${mirrorResult.message}`;
+        this.log.warn(warnMsg);
+        emit(`[auto-deploy] Warning: ${warnMsg}\n`);
+      } else if (mirrorResult.status === 'synced') {
+        emit('[auto-deploy] Files synced to deploy host.\n');
+      } else {
+        emit('[auto-deploy] No remote deploy host — building locally.\n');
+      }
+
+      emit('[auto-deploy] Starting build & deploy…\n');
+      const result = await this.executorService.execute(service.id, 'redeploy', {
+        deployLogEmitter: options?.deployLogEmitter,
+      });
+      if (!result.success) {
+        return {
+          success: false,
+          output: result.output?.slice(0, 2000) || 'Deploy failed',
+        };
+      }
+
+      await this.serviceRepository.update(service.id, {
+        lastDeployedAt: new Date(),
+      });
+      emit('[auto-deploy] Deploy completed successfully.\n');
+      this.log.log(
+        `Auto-deploy: service #${service.id} deployed successfully.`,
+      );
+      return { success: true, output: 'Auto-deploy completed successfully.' };
+    } catch (e) {
+      const msg = getErrorMessage(e);
+      this.log.error(
+        `Auto-deploy failed for service #${service.id}: ${msg}`,
+      );
+      return { success: false, output: `Auto-deploy failed: ${msg}` };
+    }
   }
 }
 

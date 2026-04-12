@@ -97,6 +97,25 @@ export class Service {
   @Column({ type: 'boolean', default: false })
   buildOnLocalDockerHost!: boolean;
 
+  /** When true, pushes to {@link autoDeployBranch} trigger clone + generate + deploy automatically. */
+  @Column({ type: 'boolean', default: false })
+  autoDeployEnabled!: boolean;
+
+  /** Branch that triggers auto-deploy (default `main`). */
+  @Column({ type: 'varchar', length: 255, default: 'main' })
+  autoDeployBranch!: string;
+
+  /** Git source provider: `"github"` or `"gitlab"`. */
+  @Column({ type: 'varchar', length: 24, nullable: true })
+  autoDeployGitProvider?: string | null;
+
+  /**
+   * Provider-specific repo identifier.
+   * GitHub: `"installationId:owner/repo"`, GitLab: project id or HTTPS URL.
+   */
+  @Column({ type: 'varchar', length: 512, nullable: true })
+  autoDeployRepoId?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

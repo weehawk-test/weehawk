@@ -6,6 +6,7 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
+
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import * as path from 'path';
@@ -162,9 +163,96 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
     try {
       const svc = await this.servicesService.findOne(serviceId);
-      return [...base, ...onHostWebhookBundleEnvLines(svc)];
+      const autoDeploy = await this.resolveAutoDeployCloneInfo(serviceId);
+      return [...base, ...onHostWebhookBundleEnvLines(svc, autoDeploy)];
     } catch {
       return base;
+    }
+  }
+
+  /**
+   * If the service has auto-deploy enabled, resolve clone credentials so the
+   * remote bash script can `git clone` private (and public) repos without the API.
+   *
+   * - **GitLab**: returns authenticated HTTPS URL (long-lived token embedded).
+   * - **GitHub**: returns plain URL + App credentials (appId, installationId, PEM)
+   *   so the bash script can generate a fresh installation token on every run.
+   */
+  private async resolveAutoDeployCloneInfo(
+    serviceId: number | null | undefined,
+  ): Promise<{
+    cloneUrl: string;
+    branch: string;
+    githubAppId?: string;
+    githubInstallationId?: string;
+    githubPrivateKeyPem?: string;
+    gitlabProjectId?: string;
+    gitlabApiBase?: string;
+    gitlabPrivateToken?: string;
+  } | null> {
+    if (!serviceId || serviceId < 1) return null;
+    try {
+      const svc = await this.servicesService.findOne(serviceId);
+      if (
+        !svc.autoDeployEnabled ||
+        !svc.autoDeployGitProvider ||
+        !svc.autoDeployRepoId
+      ) {
+        return null;
+      }
+      const provider = svc.autoDeployGitProvider;
+      const repoId = svc.autoDeployRepoId;
+      const branch = svc.autoDeployBranch || 'main';
+
+      if (provider === 'github') {
+        const sep = repoId.indexOf(':');
+        const installIdStr = sep >= 0 ? repoId.slice(0, sep) : '';
+        const fullName = sep >= 0 ? repoId.slice(sep + 1) : repoId;
+        const cloneUrl = `https://github.com/${fullName}.git`;
+        const ghCreds = await this.servicesService.getGithubAppCredentials();
+        if (ghCreds && installIdStr) {
+          return {
+            cloneUrl,
+            branch,
+            githubAppId: ghCreds.appId,
+            githubInstallationId: installIdStr,
+            githubPrivateKeyPem: ghCreds.privateKeyPem,
+          };
+        }
+        return { cloneUrl, branch };
+      }
+      if (provider === 'gitlab') {
+        const projectId = parseInt(repoId, 10);
+        if (!Number.isFinite(projectId)) {
+          try {
+            const authUrl = await this.servicesService.resolveGitlabAuthenticatedUrl(repoId);
+            return { cloneUrl: authUrl, branch };
+          } catch {
+            return { cloneUrl: repoId, branch };
+          }
+        }
+        try {
+          const url = await this.servicesService.resolveGitlabProjectCloneUrl(projectId);
+          if (url) {
+            const glApi =
+              await this.servicesService.getGitlabArchiveApiCredentials();
+            if (glApi) {
+              return {
+                cloneUrl: url,
+                branch,
+                gitlabProjectId: String(projectId),
+                gitlabApiBase: glApi.apiBase,
+                gitlabPrivateToken: glApi.privateToken,
+              };
+            }
+            return { cloneUrl: url, branch };
+          }
+        } catch { /* fall through */ }
+        return null;
+      }
+      return null;
+    } catch {
+      return null;
     }
   }
 
@@ -899,14 +987,28 @@ export class WebhooksService implements OnApplicationBootstrap {
           action = 'no_action';
           output = 'No Docker action selected.';
         } else if (w.serviceAction === 'redeploy' && w.serviceId != null) {
-          action = 'redeploy';
-          const r = await this.servicesService.executeDeployment(
-            w.serviceId,
-            'redeploy',
-            { actingUserId: 1 },
-          );
-          success = Boolean(r.success);
-          output = String(r.output ?? '');
+          const svcRow = await this.servicesService.findOne(w.serviceId);
+          const useAutoDeploy =
+            svcRow?.autoDeployEnabled &&
+            svcRow.autoDeployGitProvider &&
+            svcRow.autoDeployRepoId;
+          if (useAutoDeploy) {
+            action = 'auto_deploy';
+            const r = await this.servicesService.runAutoDeployCloneAndDeploy(
+              w.serviceId,
+            );
+            success = r.success;
+            output = r.output;
+          } else {
+            action = 'redeploy';
+            const r = await this.servicesService.executeDeployment(
+              w.serviceId,
+              'redeploy',
+              { actingUserId: 1 },
+            );
+            success = Boolean(r.success);
+            output = String(r.output ?? '');
+          }
         } else if (
           w.serviceAction === 'volume_backup' &&
           w.volumeSource &&
@@ -1009,15 +1111,32 @@ export class WebhooksService implements OnApplicationBootstrap {
         ) {
           const useExecutorRedeploy =
             this.shouldRunExecutorRedeployForDockerWebhook(w);
-          action = useExecutorRedeploy ? 'redeploy' : 'docker_command';
           if (useExecutorRedeploy) {
-            const r = await this.servicesService.executeDeployment(
-              w.serviceId!,
-              'redeploy',
-              { actingUserId: 1 },
-            );
-            success = Boolean(r.success);
-            output = String(r.output ?? '');
+            const svcRowCmd = w.serviceId
+              ? await this.servicesService.findOne(w.serviceId)
+              : null;
+            const useAutoDeployCmd =
+              svcRowCmd?.autoDeployEnabled &&
+              svcRowCmd.autoDeployGitProvider &&
+              svcRowCmd.autoDeployRepoId;
+            if (useAutoDeployCmd) {
+              action = 'auto_deploy';
+              const r =
+                await this.servicesService.runAutoDeployCloneAndDeploy(
+                  w.serviceId!,
+                );
+              success = r.success;
+              output = r.output;
+            } else {
+              action = 'redeploy';
+              const r = await this.servicesService.executeDeployment(
+                w.serviceId!,
+                'redeploy',
+                { actingUserId: 1 },
+              );
+              success = Boolean(r.success);
+              output = String(r.output ?? '');
+            }
           } else {
             const scriptToRun =
               w.remoteServerId != null

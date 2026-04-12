@@ -1140,3 +1140,43 @@ export function parseServiceLogsSseData(raw: string): string {
   }
   return raw;
 }
+
+// ─── Auto-deploy ──────────────────────────────────────────────────────────────
+
+export type AutoDeploySettings = {
+  autoDeployEnabled: boolean;
+  autoDeployBranch: string;
+  autoDeployGitProvider: string | null;
+  autoDeployRepoId: string | null;
+};
+
+export async function fetchAutoDeploySettings(
+  serviceId: string,
+): Promise<AutoDeploySettings> {
+  const res = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/auto-deploy`,
+  );
+  const text = await res.text();
+  if (!res.ok)
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  return JSON.parse(text) as AutoDeploySettings;
+}
+
+export async function configureAutoDeployApi(
+  serviceId: string,
+  body: {
+    enabled: boolean;
+    branch?: string;
+    gitProvider?: string | null;
+    repoId?: string | null;
+  },
+): Promise<AutoDeploySettings> {
+  const res = await apiFetch(
+    `/api/services/${encodeURIComponent(serviceId)}/auto-deploy`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+  const text = await res.text();
+  if (!res.ok)
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  return JSON.parse(text) as AutoDeploySettings;
+}

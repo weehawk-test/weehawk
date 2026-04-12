@@ -42,6 +42,14 @@ export function firstComposeServiceName(config: string): string {
   return 'app';
 }
 
+/** Container port from `ports: - "host:container"` in stack compose (application services). */
+export function parseContainerPortFromComposeYaml(config: string): number | null {
+  const m = config.match(/^\s*-\s*"(\d+):(\d+)"/m);
+  if (!m) return null;
+  const c = parseInt(m[2], 10);
+  return Number.isFinite(c) && c > 0 ? c : null;
+}
+
 export function parseEnv(envString: string): Record<string, string> {
   const envVars: Record<string, string> = {};
   if (!envString) return envVars;

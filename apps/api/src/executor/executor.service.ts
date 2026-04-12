@@ -231,6 +231,7 @@ export class ExecutorService {
                 );
               }
               const dockerfilePosix = dockerfileRel.split(/[/\\]/).join('/');
+              emitChunk(`Building image on remote host #${buildRemoteServerId}…\n`);
               const buildResult = await this.remoteServersService.buildImageUsingDockerodeSsh(
                 buildRemoteServerId,
                 {
@@ -241,6 +242,7 @@ export class ExecutorService {
                 projectUserId,
               );
               buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
+              if (buildLogPrefix) emitChunk(buildLogPrefix);
             } else {
               const buildResult = await runIsolatedApplicationBuild(buildImages, {
                 serviceId: service.id,
@@ -259,6 +261,7 @@ export class ExecutorService {
             }
             if (registryPush?.trim()) {
               if (useRemoteDockerBuild && buildRemoteServerId != null) {
+                emitChunk(`Pushing image "${registryPush}" on remote host…\n`);
                 const pushAuth =
                   await this.registryService.getRegistryAuthConfigForImageRef(
                     registryPush,
@@ -274,8 +277,9 @@ export class ExecutorService {
                       projectUserId,
                     );
                   if (pushResult.output) {
-                    buildLogPrefix =
-                      (buildLogPrefix || '') + pushResult.output + '\n';
+                    const pushChunk = pushResult.output + '\n';
+                    buildLogPrefix = (buildLogPrefix || '') + pushChunk;
+                    emitChunk(pushChunk);
                   }
                 } catch (pushErr) {
                   if (mode === 'deploy') {
@@ -292,6 +296,7 @@ export class ExecutorService {
                   };
                 }
               } else {
+                emitChunk(`Pushing image "${registryPush}" locally…\n`);
                 const pushEsc = registryPush.replace(/"/g, '\\"');
                 const pushCmd = `docker push "${pushEsc}"`;
                 const pushEnv = envForLocalDockerCli(buildBase);
@@ -352,6 +357,7 @@ export class ExecutorService {
             localDockerConfigDir = dockerCfg.trim();
           }
           try {
+            emitChunk(`Deploying stack "${service.appName}" on remote host #${remoteDeployId}…\n`);
             const r = await this.remoteServersService.stackDeployViaSsh(
               remoteDeployId,
               projectUserId,
@@ -369,6 +375,7 @@ export class ExecutorService {
               .join('\n');
 
             if (mode === 'redeploy') {
+              emitChunk('Force-updating services for rolling restart…\n');
               const forced = await this.remoteServersService.forceRollingRestartStackViaSsh(
                 remoteDeployId,
                 projectUserId,

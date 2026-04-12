@@ -109,4 +109,27 @@ export class CreateServiceDto {
     @IsString()
     @MaxLength(512)
     registryPushImage?: string | null;
+
+    @ApiProperty({ required: false, default: false, description: 'Enable auto-deploy on git push to the configured branch.' })
+    @IsOptional()
+    @IsBoolean()
+    autoDeployEnabled?: boolean;
+
+    @ApiProperty({ required: false, default: 'main', description: 'Branch that triggers auto-deploy.' })
+    @IsOptional()
+    @IsString()
+    @MaxLength(255)
+    autoDeployBranch?: string;
+
+    @ApiProperty({ required: false, nullable: true, description: 'Git provider: "github" or "gitlab".' })
+    @IsOptional()
+    @IsString()
+    @MaxLength(24)
+    autoDeployGitProvider?: string | null;
+
+    @ApiProperty({ required: false, nullable: true, description: 'Provider-specific repo id (e.g. "installationId:owner/repo" for GitHub, project id for GitLab).' })
+    @IsOptional()
+    @IsString()
+    @MaxLength(512)
+    autoDeployRepoId?: string | null;
 }

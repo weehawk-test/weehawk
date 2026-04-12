@@ -352,6 +352,29 @@ export class GitService implements OnModuleInit {
     return { cloneUrl, defaultBranch };
   }
 
+  /**
+   * API origin + token for remote `curl` archive downloads.
+   * GitLab.com often returns 403 for browser-style `/-/archive/...` URLs with `oauth2:token@`;
+   * the REST archive endpoint with `PRIVATE-TOKEN` works reliably.
+   */
+  async getGitlabArchiveApiCredentials(): Promise<{
+    apiBase: string;
+    privateToken: string;
+  } | null> {
+    try {
+      const row = await this.gitlabSettingsRow();
+      const token = row.gitlabGroupAccessToken?.trim();
+      if (!token) return null;
+      const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
+        /\/+$/,
+        '',
+      );
+      return { apiBase: base, privateToken: token };
+    } catch {
+      return null;
+    }
+  }
+
   /** Public base URL of the web app (e.g. https://app.example.com). */
   private webOrigin(): string {
     return (
@@ -476,6 +499,22 @@ export class GitService implements OnModuleInit {
       );
     }
     return row;
+  }
+
+  /**
+   * Return the GitHub App credentials needed for remote self-service token generation.
+   * Returns null when the App is not configured (public repos only).
+   */
+  async getGithubAppPublicCredentials(): Promise<{ appId: string; privateKeyPem: string } | null> {
+    try {
+      const row = await this.githubAppCredentialsRow();
+      const appId = row.githubAppId?.trim();
+      const pem = row.githubPrivateKey?.trim();
+      if (!appId || !pem) return null;
+      return { appId, privateKeyPem: pem };
+    } catch {
+      return null;
+    }
   }
 
   private static base64UrlJson(obj: unknown): string {

@@ -13,7 +13,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { randomBytes } from 'crypto';
 import Dockerode from 'dockerode';
-import { Client } from 'ssh2';
+import { Client, type ClientChannel } from 'ssh2';
 import { RemoteServer } from './entities/remote-server.entity';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
 import { UpdateRemoteServerDto } from './dto/update-remote-server.dto';
@@ -396,6 +396,98 @@ export class RemoteServersService implements OnApplicationBootstrap {
     const p = this.getSshConnectParams(rs, pem);
     const script = `set -eu\n${bashScriptBody}`;
     return await this.execSshBashScriptCollectOutput(p, script, onChunk);
+  }
+
+  /**
+   * Stream `docker … logs -f` on the deploy host until {@link cancel} or remote disconnect.
+   * Used for service live logs when the API runs on a machine without local Docker (e.g. Windows).
+   */
+  async streamDockerLogsFollowOnRemoteViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    bashScriptBody: string,
+    onChunk: (s: string) => void,
+    onRemoteEnd?: (exitCode: number | null) => void,
+  ): Promise<{ cancel: () => void }> {
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const script = `set +e\n${bashScriptBody}\n`;
+
+    return await new Promise((resolveOuter, rejectOuter) => {
+      const client = new Client();
+      let streamRef: ClientChannel | null = null;
+      let settled = false;
+
+      const cancel = () => {
+        try {
+          streamRef?.close();
+        } catch {
+          /* ignore */
+        }
+        try {
+          client.end();
+        } catch {
+          /* ignore */
+        }
+      };
+
+      client
+        .once('ready', () => {
+          client.exec('bash -s', (err, stream) => {
+            if (err || !stream) {
+              if (!settled) {
+                settled = true;
+                rejectOuter(
+                  err ?? new InternalServerErrorException('SSH exec failed for remote docker logs'),
+                );
+              }
+              try {
+                client.end();
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
+            streamRef = stream;
+            stream.on('data', (d: Buffer) => onChunk(d.toString()));
+            stream.stderr.on('data', (d: Buffer) => onChunk(d.toString()));
+            stream.on('close', (code: number | null) => {
+              onRemoteEnd?.(code ?? null);
+              try {
+                client.end();
+              } catch {
+                /* ignore */
+              }
+            });
+            stream.write(script);
+            stream.end();
+            if (!settled) {
+              settled = true;
+              resolveOuter({ cancel });
+            }
+          });
+        })
+        .on('error', (err: Error) => {
+          if (!settled) {
+            settled = true;
+            rejectOuter(err);
+          }
+        })
+        .connect({
+          host: p.host,
+          port: p.port,
+          username: p.username,
+          privateKey: p.privateKey,
+          readyTimeout: 120_000,
+          hostVerifier: () => true,
+          ...(p.family != null ? { family: p.family } : {}),
+        });
+    });
   }
 
   /**

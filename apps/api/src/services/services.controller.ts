@@ -622,4 +622,29 @@ export class ServicesController {
   ) {
     return await this.servicesService.shutdownService(+id, this.uid(req));
   }
+
+  @Get(':id/auto-deploy')
+  @ApiOperation({ summary: 'Get auto-deploy settings for a service' })
+  getAutoDeploy(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.getAutoDeploySettings(+id, this.uid(req));
+  }
+
+  @Post(':id/auto-deploy')
+  @ApiOperation({ summary: 'Configure auto-deploy (enable/disable) for a service' })
+  configureAutoDeploy(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      enabled: boolean;
+      branch?: string;
+      gitProvider?: string | null;
+      repoId?: string | null;
+    },
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.servicesService.configureAutoDeploy(+id, this.uid(req), body);
+  }
 }
