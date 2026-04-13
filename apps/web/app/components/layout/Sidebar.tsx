@@ -2,16 +2,21 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
-  Webhook, FolderKanban, KeyRound, UserCircle, ChevronUp, ChevronLeft, ChevronRight,
+  Webhook, FolderKanban, KeyRound, ChevronLeft, ChevronRight,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, Server, CreditCard, LifeBuoy, Globe, Newspaper,
+  GitBranch, Server, CreditCard, Mail, Globe, Newspaper,
 } from "lucide-react";
-import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import { useMemo, useState } from "react";
-import { useAuth } from "@/contexts/auth-context";
+import { motion, LayoutGroup } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
+import type { PlatformNewsItem } from "@/(platform)/news/platform-news";
+import {
+  newsFeedHasUnread,
+  PLATFORM_NEWS_SEEN_EVENT,
+  PLATFORM_NEWS_SEEN_STORAGE_KEY,
+} from "@/lib/platform-news-read";
 import { isCloudEdition } from "@/lib/weehawk-edition";
 import type { LucideIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -33,7 +38,7 @@ type MainNavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
-  /** Opens in a new tab (docs, support, etc.). */
+  /** Opens in a new tab (docs, contact, etc.). */
   external?: boolean;
 };
 
@@ -74,9 +79,9 @@ function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
       items: [
         { href: "/news", label: "News", icon: Newspaper },
         {
-          href: "https://weehawk.io/support",
-          label: "Support",
-          icon: LifeBuoy,
+          href: "https://weehawk.io/contact",
+          label: "Contact us",
+          icon: Mail,
           external: true,
         },
       ],
@@ -92,6 +97,7 @@ function NavRow({
   icon: Icon,
   activeLayoutId,
   external,
+  showUnreadDot,
 }: {
   collapsed: boolean;
   href: string;
@@ -100,6 +106,8 @@ function NavRow({
   icon: LucideIcon;
   activeLayoutId: string;
   external?: boolean;
+  /** Red badge (e.g. new platform news). */
+  showUnreadDot?: boolean;
 }) {
   const className = cn(
     "relative flex items-center rounded-xl transition-colors duration-200 group",
@@ -117,12 +125,20 @@ function NavRow({
           transition={{ type: "spring", stiffness: 320, damping: 30 }}
         />
       )}
-      <Icon
-        className={cn(
-          "w-4 h-4 relative z-10 flex-shrink-0",
-          active ? "text-primary" : "text-foreground/90 group-hover:text-foreground",
-        )}
-      />
+      <span className="relative z-10 inline-flex flex-shrink-0">
+        <Icon
+          className={cn(
+            "w-4 h-4",
+            active ? "text-primary" : "text-foreground/90 group-hover:text-foreground",
+          )}
+        />
+        {showUnreadDot ? (
+          <span
+            className="absolute -right-1 -top-1 size-2 rounded-full bg-red-500 ring-2 ring-card dark:ring-zinc-950"
+            aria-hidden
+          />
+        ) : null}
+      </span>
       {!collapsed && <span className="font-medium relative z-10 text-sm">{label}</span>}
     </>
   );
@@ -149,6 +165,9 @@ function NavRow({
         <TooltipTrigger asChild>{link}</TooltipTrigger>
         <TooltipContent side="right" sideOffset={8}>
           {label}
+          {showUnreadDot ? (
+            <span className="block text-[10px] text-red-400 mt-0.5">New items</span>
+          ) : null}
           {external ? <span className="block text-[10px] text-muted-foreground mt-0.5">Opens in new tab</span> : null}
         </TooltipContent>
       </Tooltip>
@@ -161,22 +180,55 @@ function NavRow({
 export function Sidebar() {
   const { collapsed, toggle } = useSidebarLayout();
   const location = usePathname();
-  const router = useRouter();
-  const { user, logout } = useAuth();
-  const [profileOpen, setProfileOpen] = useState(false);
   const layoutGroupId = "sidebar-nav-main";
   const activeLayoutId = "active-nav-main";
 
-  const displayName = user
-    ? `${user.firstName} ${user.lastName}`.trim() || user.email
-    : "User";
-  const initials =
-    user && (user.firstName || user.lastName)
-      ? `${user.firstName?.[0] ?? ""}${user.lastName?.[0] ?? ""}`.toUpperCase()
-      : user?.email?.[0]?.toUpperCase() ?? "U";
+  const displayName = "Weehawk User";
+  const initials = "WU";
 
   const cloudUi = isCloudEdition();
   const mainNavSections = useMemo(() => buildMainNavSections(cloudUi), [cloudUi]);
+  const [newsUnread, setNewsUnread] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshNewsUnread() {
+      try {
+        const res = await fetch("/api/platform-news", { cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data: unknown = await res.json();
+        if (!Array.isArray(data) || cancelled) return;
+        setNewsUnread(newsFeedHasUnread(data as PlatformNewsItem[]));
+      } catch {
+        if (!cancelled) setNewsUnread(false);
+      }
+    }
+
+    void refreshNewsUnread();
+    const intervalId = window.setInterval(() => void refreshNewsUnread(), 90_000);
+    const onSeen = () => void refreshNewsUnread();
+    const onFocus = () => void refreshNewsUnread();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshNewsUnread();
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PLATFORM_NEWS_SEEN_STORAGE_KEY) void refreshNewsUnread();
+    };
+    window.addEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("storage", onStorage);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
   const consoleMatch = /^\/console\/([^/]+)/.exec(location);
   const onSecretsShell = location === "/secrets" || location.startsWith("/secrets/");
   const consoleNavBase =
@@ -393,6 +445,7 @@ export function Sidebar() {
                           icon={item.icon}
                           activeLayoutId={activeLayoutId}
                           external={item.external}
+                          showUnreadDot={item.href === "/news" && newsUnread}
                         />
                       );
                     })}
@@ -457,94 +510,30 @@ export function Sidebar() {
         </LayoutGroup>
       </nav>
 
-      {/* Profile */}
-      <div className="flex-shrink-0 border-t border-border p-2.5 relative">
-        <AnimatePresence>
-          {profileOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              transition={{ duration: 0.15 }}
-              className={cn(
-                "mb-2 p-2 rounded-xl bg-card/80 border border-border",
-                collapsed &&
-                  "absolute left-full bottom-2 ml-2 w-52 z-[60] shadow-xl bg-popover border-border backdrop-blur-xl",
-              )}
-            >
-              <Link
-                href="/profile"
-                scroll={false}
-                onClick={() => setProfileOpen(false)}
-                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  location === "/profile"
-                    ? "text-primary bg-accent"
-                    : "text-foreground/90 hover:text-foreground hover:bg-accent/70"
-                }`}
-              >
-                <UserCircle className="w-4 h-4" />
-                Profile
-              </Link>
-              <div className="h-px bg-border my-1" />
-              <button
-                type="button"
-                onClick={async () => {
-                  setProfileOpen(false);
-                  await logout();
-                  router.replace("/");
-                }}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-red-400/80 hover:text-red-400 hover:bg-red-500/5 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                Sign out
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
+      {/* Local user label (no auth session) */}
+      <div className="flex-shrink-0 border-t border-border p-2.5">
         {collapsed ? (
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => setProfileOpen((v) => !v)}
-                aria-expanded={profileOpen}
-                aria-haspopup="menu"
-                className="w-full flex justify-center items-center px-2 py-2 rounded-xl hover:bg-accent/70 transition-colors group"
-              >
+              <div className="w-full flex justify-center items-center px-2 py-2 rounded-xl">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-muted/40 border border-primary/20 flex items-center justify-center flex-shrink-0">
                   <span className="text-xs font-bold text-primary tracking-tight">{initials}</span>
                 </div>
-              </button>
+              </div>
             </TooltipTrigger>
             <TooltipContent side="right" sideOffset={8}>
               <span className="font-medium">{displayName}</span>
-              {user?.email ? <span className="block text-xs opacity-80 mt-0.5">{user.email}</span> : null}
             </TooltipContent>
           </Tooltip>
         ) : (
-          <button
-            type="button"
-            onClick={() => setProfileOpen((v) => !v)}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-accent/70 transition-colors group"
-          >
+          <div className="w-full flex items-center gap-3 px-3 py-2 rounded-xl">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-muted/40 border border-primary/20 flex items-center justify-center flex-shrink-0">
               <span className="text-xs font-bold text-primary tracking-tight">{initials}</span>
             </div>
             <div className="flex-1 text-left min-w-0">
               <p className="text-sm font-semibold text-foreground leading-none truncate">{displayName}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{user?.email ?? ""}</p>
             </div>
-            <motion.div
-              animate={{ rotate: profileOpen ? 0 : 180 }}
-              transition={{ duration: 0.2 }}
-              className="text-muted-foreground group-hover:text-foreground transition-colors"
-            >
-              <ChevronUp className="w-4 h-4" />
-            </motion.div>
-          </button>
+          </div>
         )}
       </div>
     </aside>

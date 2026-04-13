@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ChevronRight, Newspaper } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { MOCK_PLATFORM_NEWS } from "./mock-news";
+import { fetchPlatformNews } from "./platform-news";
 import {
   categoryBadgeClass,
   categoryLabel,
@@ -11,7 +11,9 @@ import {
 } from "./news-ui";
 import { cn } from "@/lib/utils";
 
-export default function NewsPage() {
+export default async function NewsPage() {
+  const news = await fetchPlatformNews();
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -21,13 +23,18 @@ export default function NewsPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">Platform news</h1>
           </div>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Product updates, maintenance notices, and highlights from the Weehawk team. Sample data for now.
+            Product updates, maintenance notices, and highlights from the Weehawk team.
           </p>
         </div>
       </div>
 
       <ul className="grid gap-4">
-        {MOCK_PLATFORM_NEWS.map((item) => (
+        {news.length === 0 ? (
+          <li className="rounded-xl border border-border/80 bg-card/40 px-4 py-8 text-center text-sm text-muted-foreground">
+            No news could be loaded right now. Try again later.
+          </li>
+        ) : null}
+        {news.map((item) => (
           <li key={item.id}>
             <Link href={`/news/${item.id}`} className={newsCardClassName("rounded-xl")}>
               <Card className="border-0 bg-transparent shadow-none">

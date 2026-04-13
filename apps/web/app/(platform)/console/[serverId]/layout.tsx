@@ -18,7 +18,7 @@ export default async function ConsoleServerLayout({
   if (target == null) notFound();
 
   const label =
-    serverId === "local" ? "Docker on the API host (local)" : `Remote server #${serverId}`;
+    serverId === "local" ? "Docker on the localhost" : `Remote server #${serverId}`;
 
   return (
     <div className="space-y-6">

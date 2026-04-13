@@ -228,7 +228,7 @@ export function WebhookDetailsClient({ initialWebhook }: Props) {
                         {webhook.serviceAction === "database_backup" && (
                           <p className="text-muted-foreground text-xs mb-1">Legacy command</p>
                         )}
-                        <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all min-h-[220px] max-h-[46vh] overflow-y-auto">
+                        <pre className="bg-black/40 dark:bg-black px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all min-h-[220px] max-h-[46vh] overflow-y-auto">
                           {webhook.dockerCommand}
                         </pre>
                       </div>
@@ -270,7 +270,7 @@ export function WebhookDetailsClient({ initialWebhook }: Props) {
               {webhook.notifyMessage && (
                 <div>
                   <p className="text-muted-foreground text-xs mb-1">Message</p>
-                  <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-28 overflow-y-auto">
+                  <pre className="bg-black/40 dark:bg-black px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-28 overflow-y-auto">
                     {webhook.notifyMessage}
                   </pre>
                 </div>

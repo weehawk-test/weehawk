@@ -260,11 +260,11 @@ export function CreateCronJobClient({
               </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
-                <div className="relative overflow-hidden rounded-xl border border-border bg-zinc-900">
+                <div className="relative overflow-hidden rounded-xl border border-border bg-zinc-900 dark:bg-black">
                   <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>
                     <div
                       ref={scriptLineNumbersRef}
-                      className="h-full w-12 shrink-0 overflow-hidden border-r border-zinc-800 bg-black px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
+                      className="h-full w-12 shrink-0 overflow-hidden border-r border-zinc-800 dark:border-neutral-900 bg-black px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
                     >
                       {Array.from({ length: scriptLines }, (_, i) => (
                         <div key={`ln-${i}`} className="leading-6">
@@ -272,7 +272,7 @@ export function CreateCronJobClient({
                         </div>
                       ))}
                     </div>
-                    <div className="relative min-h-0 flex-1 bg-zinc-800">
+                    <div className="relative min-h-0 flex-1 bg-zinc-800 dark:bg-black">
                       <pre
                         ref={scriptHighlightRef}
                         aria-hidden="true"
@@ -304,7 +304,7 @@ echo "Cron job done"`}
                   <button
                     type="button"
                     onMouseDown={handleScriptResizeStart}
-                    className="h-6 w-full border-t border-zinc-800 bg-black hover:bg-zinc-950 cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
+                    className="h-6 w-full border-t border-zinc-800 dark:border-neutral-900 bg-black dark:bg-black hover:bg-zinc-950 dark:hover:bg-black cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
                     aria-label="Resize script editor"
                     title="Drag to resize"
                   >

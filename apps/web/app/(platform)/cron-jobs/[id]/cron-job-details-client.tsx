@@ -170,7 +170,7 @@ export function CronJobDetailsClient({ initialCronJob }: Props) {
                     {cronJob.serviceAction === "database_backup" && (
                       <p className="text-xs text-muted-foreground mb-1">Legacy command</p>
                     )}
-                    <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all min-h-[220px] max-h-[46vh] overflow-y-auto">
+                    <pre className="bg-black/40 dark:bg-black px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all min-h-[220px] max-h-[46vh] overflow-y-auto">
                       {cronJob.dockerCommand}
                     </pre>
                   </div>
@@ -207,7 +207,7 @@ export function CronJobDetailsClient({ initialCronJob }: Props) {
               {cronJob.notifyMessage && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Message</p>
-                  <pre className="bg-black/40 px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-28 overflow-y-auto">
+                  <pre className="bg-black/40 dark:bg-black px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-28 overflow-y-auto">
                     {cronJob.notifyMessage}
                   </pre>
                 </div>

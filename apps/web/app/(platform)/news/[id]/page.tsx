@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { getPlatformNewsById } from "../mock-news";
+import { fetchPlatformNewsById } from "../platform-news";
 import {
   categoryBadgeClass,
   categoryLabel,
@@ -17,7 +17,7 @@ type Props = {
 
 export default async function NewsDetailPage({ params }: Props) {
   const { id } = await params;
-  const item = getPlatformNewsById(id);
+  const item = await fetchPlatformNewsById(id);
   if (!item) notFound();
 
   const paragraphs = splitNewsContent(item.content);

@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { PlatformNewsCategory } from "./mock-news";
+import type { PlatformNewsCategory } from "./platform-news";
 
 export const categoryLabel: Record<PlatformNewsCategory, string> = {
   product: "Product",
