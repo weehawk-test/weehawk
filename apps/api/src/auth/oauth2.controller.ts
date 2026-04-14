@@ -1,10 +1,31 @@
-import { Controller, Get, Req, Res, UseGuards } from '@nestjs/common';
+import {
+  ConflictException,
+  Controller,
+  ForbiddenException,
+  Get,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import type { Profile } from 'passport-google-oauth20';
+import { attachAuthCookies } from './auth-cookies';
 import { AuthService } from './auth.service';
 import { Public } from './decorators/public.decorator';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
+
+function oauthRedirectErrorMessage(e: unknown): string {
+  if (
+    e instanceof ConflictException ||
+    e instanceof ForbiddenException ||
+    e instanceof UnauthorizedException
+  ) {
+    return e.message;
+  }
+  return 'Sign-in could not be completed. Please try again.';
+}
 
 @Controller()
 export class Oauth2Controller {
@@ -46,22 +67,24 @@ export class Oauth2Controller {
       }
 
       const auth = await this.authService.loginWithGoogle(profile);
+      const secure =
+        (this.config.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '').toLowerCase() ===
+        'production';
+      attachAuthCookies(res, auth, secure);
       const qp = new URLSearchParams({
-        access_token: auth.accessToken,
-        refresh_token: auth.refreshToken ?? '',
         email: auth.email,
         user_id: String(auth.userId),
         first_name: auth.firstName ?? '',
         last_name: auth.lastName ?? '',
         role: String(auth.role ?? 'USER'),
         provider: String(auth.provider ?? 'GOOGLE'),
+        email_verified: String(auth.emailVerified ?? true),
       });
       if (auth.imageUrl) qp.set('image_url', auth.imageUrl);
 
       return res.redirect(`${frontendBase}/auth/callback?${qp.toString()}`);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'OAuth failed';
-      const qp = new URLSearchParams({ error: msg });
+      const qp = new URLSearchParams({ error: oauthRedirectErrorMessage(e) });
       return res.redirect(`${frontendBase}/login?${qp.toString()}`);
     }
   }

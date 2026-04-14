@@ -40,18 +40,21 @@ export function mapDockerSecretLsRow(r: Record<string, unknown>, index: number):
   return { id, name, createdAt };
 }
 
-export async function listDockerSecrets(): Promise<DockerSecretListItem[]> {
-  const raw = await request<unknown[]>("/api/docker-secrets");
+export async function listDockerSecrets(remoteServerId: number): Promise<DockerSecretListItem[]> {
+  const qs = new URLSearchParams({ remoteServerId: String(remoteServerId) });
+  const raw = await request<unknown[]>(`/api/docker-secrets?${qs.toString()}`);
   if (!Array.isArray(raw)) return [];
   return raw.map((row, i) => mapDockerSecretLsRow(row as Record<string, unknown>, i));
 }
 
 export async function fetchDockerSecretsPagedApi(
+  remoteServerId: number,
   page: number,
   pageSize: number,
   q: string,
 ): Promise<PaginatedSecretsResponse> {
   const params = new URLSearchParams({
+    remoteServerId: String(remoteServerId),
     page: String(Math.max(1, page)),
     pageSize: String(Math.max(1, pageSize)),
   });
@@ -60,28 +63,39 @@ export async function fetchDockerSecretsPagedApi(
   return request<PaginatedSecretsResponse>(`/api/docker-secrets/paged?${params.toString()}`);
 }
 
-export async function createDockerSecretApi(body: { name: string; value: string }) {
+export async function createDockerSecretApi(body: {
+  remoteServerId: number;
+  name: string;
+  value: string;
+}) {
   return request<{ success: boolean; name: string }>("/api/docker-secrets", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function deleteDockerSecretApi(name: string, force = false) {
+export async function deleteDockerSecretApi(remoteServerId: number, name: string, force = false) {
   const enc = encodeURIComponent(name);
-  const qs = force ? "?force=true" : "";
-  return request<{ success: boolean }>(`/api/docker-secrets/${enc}${qs}`, { method: "DELETE" });
+  const params = new URLSearchParams({ remoteServerId: String(remoteServerId) });
+  if (force) params.set("force", "true");
+  return request<{ success: boolean }>(`/api/docker-secrets/${enc}?${params.toString()}`, {
+    method: "DELETE",
+  });
 }
 
 /** Docker secrets are immutable; rotation = rm + create with same name. */
-export async function replaceDockerSecretApi(name: string, value: string) {
-  await deleteDockerSecretApi(name);
-  await createDockerSecretApi({ name, value });
+export async function replaceDockerSecretApi(
+  remoteServerId: number,
+  name: string,
+  value: string,
+) {
+  await deleteDockerSecretApi(remoteServerId, name);
+  await createDockerSecretApi({ remoteServerId, name, value });
 }
 
-export async function bulkImportSecretsApi(envText: string) {
+export async function bulkImportSecretsApi(remoteServerId: number, envText: string) {
   return request<{ message: string; created: string[]; failed: Array<{ key: string; error: string }> }>(
     "/api/docker-secrets/bulk-import",
-    { method: "POST", body: JSON.stringify({ envText }) },
+    { method: "POST", body: JSON.stringify({ remoteServerId, envText }) },
   );
 }

@@ -10,12 +10,21 @@ import { useDockerListUrl } from "@/hooks/use-docker-list-url";
 import { ListPagination } from "@/components/docker/ListPagination";
 import { formatSecretDate } from "@/lib/format-secret-date";
 
-function ServiceSecretsTabInner() {
+function ServiceSecretsTabInner({ remoteServerId }: { remoteServerId: number | null }) {
   const searchParams = useSearchParams();
   const urlPage = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
   const urlQ = searchParams.get("q") ?? "";
   const { page, q, localQ, setLocalQ, setPage, refresh } = useDockerListUrl(urlPage, urlQ);
-  const { data, isLoading, isError, error, refetch } = useDockerSecretsPaged(page, q);
+  const { data, isLoading, isError, error, refetch } = useDockerSecretsPaged(remoteServerId, page, q);
+
+  if (remoteServerId == null || remoteServerId < 1) {
+    return (
+      <div className="glass-panel rounded-xl border border-border p-5 text-sm text-muted-foreground space-y-2">
+        <p>Choose a deploy remote server on the Remote tab to list Swarm secrets for that host.</p>
+        <p className="text-xs">Secrets are read over SSH on the server where stacks run, not on the Weehawk API machine.</p>
+      </div>
+    );
+  }
 
   const items = data?.items ?? [];
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -48,7 +57,7 @@ function ServiceSecretsTabInner() {
             <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
-          <Link href="/secrets">
+          <Link href={`/secrets?server=${remoteServerId}`}>
             <button type="button" className="btn-primary flex items-center gap-2 text-sm">
               <KeyRound className="w-4 h-4" />
               Manage Secrets
@@ -58,8 +67,9 @@ function ServiceSecretsTabInner() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Docker Swarm secrets on the host (same list as the <span className="text-foreground font-medium">Secrets</span> page).
-        Values are never shown here.
+        Docker Swarm secrets on deploy server #{remoteServerId} (same scope as the{" "}
+        <span className="text-foreground font-medium">Secrets</span> page when that host is selected). Values are never
+        shown here.
       </p>
 
       {listError && (
@@ -89,7 +99,7 @@ function ServiceSecretsTabInner() {
               : "Create secrets on the Secrets page (requires Swarm). Values are never shown here."}
           </p>
           {!q.trim() && (
-            <Link href="/secrets">
+            <Link href={`/secrets?server=${remoteServerId}`}>
               <button type="button" className="btn-primary text-sm flex items-center gap-2">
                 <KeyRound className="w-4 h-4" />
                 Go to Docker Secrets
@@ -154,10 +164,10 @@ function SecretsTabFallback() {
 }
 
 /** Secrets list with URL pagination/search (aligned with `/secrets`). */
-export function ServiceSecretsTab() {
+export function ServiceSecretsTab({ remoteServerId }: { remoteServerId: number | null }) {
   return (
     <Suspense fallback={<SecretsTabFallback />}>
-      <ServiceSecretsTabInner />
+      <ServiceSecretsTabInner remoteServerId={remoteServerId} />
     </Suspense>
   );
 }

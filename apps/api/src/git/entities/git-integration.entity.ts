@@ -9,7 +9,7 @@ import {
 
 /**
  * Singleton row (id = 1) for platform-wide Git source integration (GitHub App, GitLab token).
- * Secrets are stored in plaintext like other integration entities; encrypt at rest later if needed.
+ * Secrets are stored encrypted at rest using app-level AES-GCM.
  */
 @Entity('git_integration_settings')
 @Index(['userId'], { unique: true })

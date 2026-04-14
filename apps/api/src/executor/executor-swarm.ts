@@ -1,11 +1,5 @@
-import { exec } from 'child_process';
-import type { EventEmitter } from 'events';
-import { promisify } from 'util';
 import { Service } from '../services/entities/service.entity';
 import { composeType } from '../services/entities/composeType.enum';
-import { spawnDockerSubcommand } from './executor-docker';
-
-const execAsync = promisify(exec);
 
 /** Swarm stack deploy path (same CLI as explicit Stack services + database-generated YAML). */
 export function isSwarmStackService(service: Service): boolean {
@@ -14,75 +8,4 @@ export function isSwarmStackService(service: Service): boolean {
     service.composeType === composeType.DATABASES ||
     service.composeType === composeType.APPLICATION
   );
-}
-
-/**
- * Rolling restart every Swarm service in a stack (same compose file, tasks recreated).
- */
-function execEnv(
-  extra?: NodeJS.ProcessEnv,
-): { env: NodeJS.ProcessEnv } | Record<string, never> {
-  if (!extra) return {};
-  return { env: { ...process.env, ...extra } };
-}
-
-export async function forceRollingRestartStackServices(
-  stackName: string,
-  dockerEnv?: NodeJS.ProcessEnv,
-  deployLogEmitter?: EventEmitter,
-): Promise<{
-  output: string;
-  stderr: string;
-}> {
-  const mergedEnv = dockerEnv ? { ...process.env, ...dockerEnv } : process.env;
-  const { stdout } = await spawnDockerSubcommand(
-    ['stack', 'services', stackName, '--format', '{{.Name}}'],
-    { env: mergedEnv, deployLogEmitter },
-  );
-  const names = stdout
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  const chunks: string[] = [];
-  let combinedStderr = '';
-  for (const name of names) {
-    const { stdout: uo, stderr: ue } = await spawnDockerSubcommand(
-      ['service', 'update', '--force', name],
-      { env: mergedEnv, deployLogEmitter },
-    );
-    chunks.push([uo, ue].filter((s) => s && String(s).trim()).join('\n'));
-    combinedStderr += ue ?? '';
-  }
-  return { output: chunks.join('\n'), stderr: combinedStderr };
-}
-
-/**
- * Swarm service names are `stackname_servicekey`, not the stack name alone.
- * Lists `docker stack services` and scales each to 0.
- */
-export async function scaleAllStackServicesToZero(
-  stackName: string,
-  dockerEnv?: NodeJS.ProcessEnv,
-): Promise<void> {
-  const envOpts = execEnv(dockerEnv);
-  let stdout: string;
-  try {
-    const r = await execAsync(
-      `docker stack services ${stackName} --format "{{.Name}}"`,
-      { maxBuffer: 10 * 1024 * 1024, ...envOpts },
-    );
-    stdout = r.stdout;
-  } catch {
-    return;
-  }
-  const names = stdout
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  for (const name of names) {
-    await execAsync(`docker service scale ${name}=0`, {
-      maxBuffer: 10 * 1024 * 1024,
-      ...envOpts,
-    });
-  }
 }

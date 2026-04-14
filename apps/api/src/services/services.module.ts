@@ -5,9 +5,7 @@ import { ServicesController } from './services.controller';
 import { Service } from './entities/service.entity';
 import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
 import { ProjectsModule } from 'src/projects/projects.module';
-import { ServiceTerminalGateway } from './service-terminal.gateway';
 import { DatabaseGeneratorService } from './database-generator.service';
-import { DockersecretsModule } from 'src/dockersecrets/dockersecrets.module';
 import { ExecutorModule } from '../executor/executor.module';
 import { DockerfileGeneratorModule } from '../dockerfile-generator/dockerfile-generator.module';
 import { S3Module } from '../s3/s3.module';
@@ -20,7 +18,6 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
   imports: [
     TypeOrmModule.forFeature([Service, RemoteServer]),
     ProjectsModule,
-    DockersecretsModule,
     DockerfileGeneratorModule,
     forwardRef(() => ExecutorModule),
     forwardRef(() => WebhooksModule),
@@ -30,7 +27,7 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
     TraefikModule,
   ],
   controllers: [ServicesController],
-  providers: [ServicesService, ServiceTerminalGateway, DatabaseGeneratorService],
+  providers: [ServicesService, DatabaseGeneratorService],
   exports: [
     ServicesService,
     DatabaseGeneratorService,

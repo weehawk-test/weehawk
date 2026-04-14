@@ -1,31 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import Link from "next/link";
 import { OnboardingPageShell } from "@/components/onboarding/page-shell";
 import { RegisterRemoteServerOnboarding } from "@/components/onboarding/register-remote-server-onboarding";
 import { writeServerDeployChoice } from "@/lib/server-deploy-preference";
+import { useAuth } from "@/contexts/auth-context";
+import { Loader2 } from "lucide-react";
 
 export default function OnboardingSshPage() {
   const router = useRouter();
-  const [token, setToken] = useState<string | null>(null);
+  const { accessToken, isReady } = useAuth();
 
   useEffect(() => {
-    setToken("local-session");
-  }, [router]);
+    if (isReady && !accessToken) router.replace("/login");
+  }, [isReady, accessToken, router]);
 
-  const finishAndEnter = useCallback(() => {
+  const finishAndEnter = () => {
     router.replace("/");
-  }, [router]);
+  };
 
-  const skipDeploySetupAndEnterApp = useCallback(() => {
+  const skipDeploySetupAndEnterApp = () => {
     writeServerDeployChoice("later");
     finishAndEnter();
-  }, [finishAndEnter]);
+  };
 
-  if (!token) {
+  if (!isReady || !accessToken) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -44,7 +45,7 @@ export default function OnboardingSshPage() {
           Back to step 1
         </Link>
       </p>
-      <RegisterRemoteServerOnboarding accessToken={token} />
+      <RegisterRemoteServerOnboarding accessToken={accessToken} />
       <div className="flex flex-col items-center gap-1 border-t border-white/10 pt-4 mt-4">
         <button
           type="button"

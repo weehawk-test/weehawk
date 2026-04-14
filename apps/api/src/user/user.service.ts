@@ -44,6 +44,7 @@ export class UserService {
       role: user.role,
       provider: user.provider,
       imageUrl: user.imageUrl ?? null,
+      hasPassword: Boolean(user.passwordHash),
       emailVerified: user.emailVerified,
       enabled: user.enabled,
       locked: user.locked,

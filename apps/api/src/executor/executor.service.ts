@@ -8,8 +8,6 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
 import { gzipSync } from 'zlib';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -20,8 +18,6 @@ import type { ServiceVolumesResponseDto } from '../services/dto/service-volume-m
 import { getServiceDeploymentDir, toSafePathSegment } from '../services/deployment-paths';
 import { resolveEffectiveDockerfileRel } from '../services/weehawk-build-paths';
 import { maybeRemoveApplicationSourceAfterDeploy } from './executor-app-source';
-import { runIsolatedApplicationBuild } from './executor-application-build';
-import { getApplicationBuildRuntimeImages } from './executor-build-config';
 import {
   firstComposeServiceName,
   firstImageRefFromComposeYaml,
@@ -29,23 +25,15 @@ import {
   parseEnv,
 } from './executor-compose-parse';
 import { removeDeploymentFolder } from './executor-deployment-fs';
-import {
-  emitDeployLog,
-  formatExecError,
-  spawnDockerSubcommand,
-  stderrIndicatesDockerFailure,
-} from './executor-docker';
+import { emitDeployLog, formatExecError, stderrIndicatesDockerFailure } from './executor-docker';
 import type { ExecuteDeployOptions } from './executor-types';
-import {
-  forceRollingRestartStackServices,
-  isSwarmStackService,
-  scaleAllStackServicesToZero,
-} from './executor-swarm';
+import { isSwarmStackService } from './executor-swarm';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
 import { runStructuredDatabaseBackup } from './executor-structured-db-backup';
-import { runStructuredDatabaseImport } from './executor-structured-db-import';
-import { runDockerVolumeBackup } from './executor-volume-backup';
-import { runDockerVolumeImport } from './executor-volume-import';
+import {
+  runStructuredDatabaseImport,
+  type StructuredDbImportDocker,
+} from './executor-structured-db-import';
 import {
   assertSafeComposeService,
   type DatabaseBackupConfig,
@@ -58,11 +46,12 @@ import { RegistryService } from '../registry/registry.service';
 
 export type { ExecuteDeployOptions } from './executor-types';
 
-const execAsync = promisify(exec);
-
 /** Swarm stacks are deployed over SSH; without a deploy host, do not call local `docker` (avoids Windows Docker Desktop / npipe errors on the API PC). */
 const SWARM_NEEDS_DEPLOY_HOST_MESSAGE =
   'Configure a deploy SSH server for this service (Remote / deploy host) first.';
+
+const COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE =
+  'No deploy host is set for this compose service. Choose a remote Deploy server under Remote Docker host, save, then try again.';
 
 function pickDockerSshEnv(
   env: NodeJS.ProcessEnv,
@@ -74,14 +63,6 @@ function pickDockerSshEnv(
   if (env.DOCKER_SSH_OPTS) {
     o.DOCKER_SSH_OPTS = env.DOCKER_SSH_OPTS;
   }
-  return o;
-}
-
-/** Isolated `docker run` builds must talk to the API host’s default daemon, not DOCKER_HOST from process.env / service.env. */
-function envForLocalDockerCli(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const o = { ...base };
-  delete o.DOCKER_HOST;
-  delete o.DOCKER_SSH_OPTS;
   return o;
 }
 
@@ -148,7 +129,7 @@ export class ExecutorService {
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
 
     await fs.mkdir(deployDir, { recursive: true });
@@ -176,8 +157,6 @@ export class ExecutorService {
     };
     const deployLogEmitter = options?.deployLogEmitter;
     const emitChunk = (chunk: string) => emitDeployLog(deployLogEmitter, chunk);
-    const buildImages = getApplicationBuildRuntimeImages(this.configService);
-
     try {
       if (isSwarmStackService(service)) {
         let buildLogPrefix = '';
@@ -248,92 +227,56 @@ export class ExecutorService {
               buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
               if (buildLogPrefix) emitChunk(buildLogPrefix);
             } else {
-              const buildResult = await runIsolatedApplicationBuild(buildImages, {
-                serviceId: service.id,
-                fullContextHostPath: fullContext,
-                dockerfilePathFromConfig: dockerfilePath,
-                imageName: imageTag,
-                execEnv: envForLocalDockerCli(buildBase),
-                deployLogEmitter,
-              });
-              buildLogPrefix = [buildResult.stdout, buildResult.stderr]
-                .filter((s) => s && String(s).trim())
-                .join('\n');
-              if (buildLogPrefix) {
-                buildLogPrefix += '\n';
+              if (mode === 'deploy') {
+                await removeDeploymentFolder(deployDir);
               }
+              return {
+                success: false,
+                output:
+                  'Configure a remote Build or Deploy SSH host for this service so `docker build` runs on that machine. The Weehawk API host does not run Docker.',
+              };
             }
             if (registryPush?.trim()) {
-              if (useRemoteDockerBuild && buildRemoteServerId != null) {
-                emitChunk(`Pushing image "${registryPush}" on remote host…\n`);
-                const pushAuth =
-                  await this.registryService.getRegistryAuthConfigForImageRef(
-                    registryPush,
-                  );
-                try {
-                  const pushResult =
-                    await this.remoteServersService.pushImageUsingDockerodeSsh(
-                      buildRemoteServerId,
-                      {
-                        imageRef: registryPush,
-                        auth: pushAuth,
-                      },
-                      projectUserId,
-                    );
-                  if (pushResult.output) {
-                    const pushChunk = pushResult.output + '\n';
-                    buildLogPrefix = (buildLogPrefix || '') + pushChunk;
-                    emitChunk(pushChunk);
-                  }
-                } catch (pushErr) {
-                  if (mode === 'deploy') {
-                    await removeDeploymentFolder(deployDir);
-                  }
-                  if (pushErr instanceof HttpException) {
-                    return { success: false, output: pushErr.message };
-                  }
-                  return {
-                    success: false,
-                    output:
-                      `Docker registry push failed for "${registryPush}". Check saved registry credentials for this host and project permissions.\n\n` +
-                      formatExecError(pushErr),
-                  };
+              if (!useRemoteDockerBuild || buildRemoteServerId == null) {
+                if (mode === 'deploy') {
+                  await removeDeploymentFolder(deployDir);
                 }
-              } else {
-                emitChunk(`Pushing image "${registryPush}" locally…\n`);
-                const pushEsc = registryPush.replace(/"/g, '\\"');
-                const pushCmd = `docker push "${pushEsc}"`;
-                const pushEnv = envForLocalDockerCli(buildBase);
-                const merged = await this.registryService.mergePushEnvForImageRef(
-                  registryPush,
-                  pushEnv,
+                return {
+                  success: false,
+                  output:
+                    'Registry push requires a remote Docker build host. Configure a Build or Deploy SSH server, then deploy again.',
+                };
+              }
+              emitChunk(`Pushing image "${registryPush}" on remote host…\n`);
+              const pushAuth =
+                await this.registryService.getRegistryAuthConfigForImageRef(registryPush);
+              try {
+                const pushResult = await this.remoteServersService.pushImageUsingDockerodeSsh(
+                  buildRemoteServerId,
+                  {
+                    imageRef: registryPush,
+                    auth: pushAuth,
+                  },
+                  projectUserId,
                 );
-                const mergedEnv = merged.env;
-                try {
-                  const { stdout: pu, stderr: pe } = await execAsync(pushCmd, {
-                    cwd: fullContext,
-                    env: mergedEnv,
-                    maxBuffer: 50 * 1024 * 1024,
-                  });
-                  const pushLog = [pu, pe]
-                    .filter((s) => s && String(s).trim())
-                    .join('\n');
-                  if (pushLog) {
-                    buildLogPrefix = (buildLogPrefix || '') + pushLog + '\n';
-                  }
-                } catch (pushErr) {
-                  if (mode === 'deploy') {
-                    await removeDeploymentFolder(deployDir);
-                  }
-                  return {
-                    success: false,
-                    output:
-                      `Docker registry push failed for "${registryPush}". Check saved registry credentials for this host and project permissions.\n\n` +
-                      formatExecError(pushErr),
-                  };
-                } finally {
-                  await merged.cleanup();
+                if (pushResult.output) {
+                  const pushChunk = pushResult.output + '\n';
+                  buildLogPrefix = (buildLogPrefix || '') + pushChunk;
+                  emitChunk(pushChunk);
                 }
+              } catch (pushErr) {
+                if (mode === 'deploy') {
+                  await removeDeploymentFolder(deployDir);
+                }
+                if (pushErr instanceof HttpException) {
+                  return { success: false, output: pushErr.message };
+                }
+                return {
+                  success: false,
+                  output:
+                    `Docker registry push failed for "${registryPush}". Check saved registry credentials for this host and project permissions.\n\n` +
+                    formatExecError(pushErr),
+                };
               }
             }
           }
@@ -412,75 +355,51 @@ export class ExecutorService {
           }
         }
 
-        try {
-          const { stdout, stderr } = await spawnDockerSubcommand(
-            [
-              'stack',
-              'deploy',
-              '-c',
-              composeFile,
-              '--with-registry-auth',
-              service.appName,
-            ],
-            {
-              cwd: execOpts.cwd,
-              env: stackDeployEnv,
-              deployLogEmitter,
-            },
-          );
-          let out = [buildLogPrefix, stdout, stderr].filter((s) => s && s.trim()).join('\n');
-          let err = [buildLogPrefix, stderr]
-            .filter((s) => s && String(s).trim())
-            .join('\n');
-
-          if (mode === 'redeploy') {
-            const forced = await forceRollingRestartStackServices(
-              service.appName,
-              pickDockerSshEnv(execOpts.env),
-              deployLogEmitter,
-            );
-            out = [out, forced.output].filter(Boolean).join('\n');
-            err += forced.stderr;
-          }
-
-          const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
-          const success = !stderrIndicatesFailure;
-          if (success) {
-            await maybeRemoveApplicationSourceAfterDeploy(
-              service,
-              deployDir,
-              this.configService,
-            );
-          }
-          return { success, output: out };
-        } finally {
-          await stackRegistryCleanup?.();
-        }
+        throw new InternalServerErrorException(
+          'Swarm deploy requires a deploy host; this should have been validated earlier.',
+        );
       }
 
+      const remoteComposeId = sshTargets.remoteServerId!;
+      const deployEnvCompose = parseEnv(service.env || '');
       if (mode === 'redeploy') {
         try {
-          await spawnDockerSubcommand(
-            ['compose', '-f', composeFile, '-p', service.appName, 'stop'],
-            { ...execOpts, deployLogEmitter },
+          await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+            remoteComposeId,
+            projectUserId,
+            {
+              projectName: service.appName,
+              composeArgvTail: ['stop'],
+              deployEnv: deployEnvCompose,
+              onChunk: deployLogEmitter ? emitChunk : undefined,
+            },
           );
         } catch {
           /* already stopped or nothing to stop */
         }
       }
-      const composeUpArgs =
+      const composeTail =
         mode === 'deploy' || mode === 'redeploy'
-          ? (['compose', '-f', composeFile, '-p', service.appName, 'up', '-d', '--build'] as const)
-          : (['compose', '-f', composeFile, '-p', service.appName, 'up', '-d', '--no-build'] as const);
-
-      const { stdout, stderr } = await spawnDockerSubcommand([...composeUpArgs], {
-        ...execOpts,
-        deployLogEmitter,
-      });
-      const out = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
-      const err = stderr ?? '';
+          ? (['up', '-d', '--build'] as const)
+          : (['up', '-d', '--no-build'] as const);
+      const cr = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+        remoteComposeId,
+        projectUserId,
+        {
+          projectName: service.appName,
+          composeArgvTail: [...composeTail],
+          deployEnv: deployEnvCompose,
+          onChunk: deployLogEmitter ? emitChunk : undefined,
+        },
+      );
+      const out = [cr.stdout, cr.stderr].filter((s) => s && s.trim()).join('\n');
+      const err = cr.stderr ?? '';
       const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
-      return { success: !stderrIndicatesFailure, output: out };
+      const success = !stderrIndicatesFailure;
+      if (success) {
+        await maybeRemoveApplicationSourceAfterDeploy(service, deployDir, this.configService);
+      }
+      return { success, output: out };
     } catch (error) {
       if (mode === 'deploy') {
         await removeDeploymentFolder(deployDir);
@@ -533,7 +452,7 @@ export class ExecutorService {
     }
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     await fs.mkdir(deployDir, { recursive: true });
     const composeFile = path.join(deployDir, 'docker-compose.yml');
@@ -652,7 +571,7 @@ export class ExecutorService {
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
 
@@ -662,40 +581,45 @@ export class ExecutorService {
       service.appName,
     );
     await fs.writeFile(composeFile, finalConfig);
-    const procEnv = await this.getProcessEnvForService(service);
-
-    const base = `docker compose -f "${composeFile}" -p ${service.appName}`;
+    const projectUserId: number | null = null;
+    await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
+      sshIds.remoteServerId,
+      projectUserId,
+      { localComposeAbsolutePath: composeFile, projectName: service.appName || 'service' },
+    );
+    const deployEnv = parseEnv(service.env || '');
     try {
-      const { stdout, stderr } = await execAsync(`${base} start`, {
-        cwd: deployDir,
-        env: procEnv,
-      });
-      const outStart = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
-      return { success: true, output: outStart };
+      const r = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
+        {
+          projectName: service.appName,
+          composeArgvTail: ['start'],
+          deployEnv,
+        },
+      );
+      return { success: true, output: [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n') };
     } catch {
-      try {
-        const { stdout, stderr } = await execAsync(`${base} up -d --no-build`, {
-          cwd: deployDir,
-          env: procEnv,
-        });
-        const outUp = [stdout, stderr].filter((s) => s && s.trim()).join('\n');
-        return { success: true, output: outUp };
-      } catch (error) {
-        throw new InternalServerErrorException(
-          `Start failed: ${error.message}`,
-        );
-      }
+      const r = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
+        {
+          projectName: service.appName,
+          composeArgvTail: ['up', '-d', '--no-build'],
+          deployEnv,
+        },
+      );
+      return { success: true, output: [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n') };
     }
   }
 
   async getRuntimeStatus(id: number): Promise<{ running: boolean }> {
     const service = await this.servicesService.findOne(id);
-    const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
 
@@ -724,17 +648,27 @@ export class ExecutorService {
         return { running };
       }
 
+      if (sshIds.remoteServerId == null) {
+        return { running: false };
+      }
+
       const exists = await fs
         .access(composeFile)
         .then(() => true)
         .catch(() => false);
       if (!exists) return { running: false };
 
-      const { stdout } = await execAsync(
-        `docker compose -f "${composeFile}" -p ${service.appName} ps --status running -q`,
-        { cwd: deployDir, env: procEnv },
+      const deployEnv = parseEnv(service.env || '');
+      const r = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
+        {
+          projectName: service.appName,
+          composeArgvTail: ['ps', '--status', 'running', '-q'],
+          deployEnv,
+        },
       );
-      return { running: stdout.trim().length > 0 };
+      return { running: r.stdout.trim().length > 0 };
     } catch {
       return { running: false };
     }
@@ -761,10 +695,9 @@ export class ExecutorService {
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
-    const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     let key: string;
@@ -818,11 +751,21 @@ export class ExecutorService {
         };
       }
 
-      const { stdout } = await execAsync(
-        `docker compose -f "${composeFile}" -p ${service.appName} ps -q --status running ${key}`,
-        { cwd: deployDir, env: procEnv },
+      if (sshIds.remoteServerId == null) {
+        return { error: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
+      }
+
+      const deployEnv = parseEnv(service.env || '');
+      const pr = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
+        {
+          projectName: service.appName,
+          composeArgvTail: ['ps', '-q', '--status', 'running', key],
+          deployEnv,
+        },
       );
-      const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
+      const cid = pr.stdout.trim().split(/\r?\n/).filter(Boolean)[0];
       if (!cid) {
         return {
           error:
@@ -838,12 +781,11 @@ export class ExecutorService {
 
   async stopAndRemove(id: number) {
     const service = await this.servicesService.findOne(id);
-    const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
 
@@ -858,35 +800,32 @@ export class ExecutorService {
           console.log(`Stack ${service.appName} removed from Swarm.`);
         } else {
           console.warn(
-            `stopAndRemove: Swarm service "${service.appName}" has no deploy host; skipped docker stack rm on API host (use a deploy SSH server for remote stacks).`,
+            `stopAndRemove: Swarm service "${service.appName}" has no deploy host; skipped stack removal.`,
           );
         }
-      } else {
+      } else if (sshIds.remoteServerId != null) {
         const fileExists = await fs
           .access(composeFile)
           .then(() => true)
           .catch(() => false);
         if (fileExists) {
-          await execAsync(
-            `docker compose -f ${composeFile} -p ${service.appName} down -v`,
+          const deployEnv = parseEnv(service.env || '');
+          await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+            sshIds.remoteServerId,
+            projectUserId,
             {
-              cwd: deployDir,
-              timeout: 30000,
-              env: procEnv,
+              projectName: service.appName,
+              composeArgvTail: ['down', '-v'],
+              deployEnv,
             },
           );
           console.log(
-            `Compose project ${service.appName} stopped and volumes removed.`,
+            `Compose project ${service.appName} stopped and volumes removed on deploy host.`,
           );
         }
       }
     } catch (error) {
-      console.error(
-        `Clean stop failed, attempting force removal: ${error.message}`,
-      );
-      await execAsync(`docker rm -f ${service.appName}`, {
-        env: procEnv,
-      }).catch(() => {});
+      console.error(`Clean stop failed: ${error.message}`);
     } finally {
       await removeDeploymentFolder(deployDir);
     }
@@ -904,7 +843,7 @@ export class ExecutorService {
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const composeFile = path.join(deployDir, 'docker-compose.yml');
     await fs.mkdir(deployDir, { recursive: true });
@@ -913,15 +852,29 @@ export class ExecutorService {
       service.appName,
     );
     await fs.writeFile(composeFile, finalConfig, 'utf8');
-    const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+    const projectUserId: number | null = null;
+    if (sshIds.remoteServerId == null) {
+      return {
+        items: [],
+        error: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE,
+      };
+    }
 
     try {
-      const { stdout } = await execAsync(
-        `docker compose -f "${composeFile}" -p ${service.appName} config --format json`,
+      await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
+        sshIds.remoteServerId,
+        projectUserId,
+        { localComposeAbsolutePath: composeFile, projectName: service.appName || 'service' },
+      );
+      const deployEnv = parseEnv(service.env || '');
+      const { stdout } = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
         {
-          cwd: deployDir,
-          env: procEnv,
-          maxBuffer: 20 * 1024 * 1024,
+          projectName: service.appName,
+          composeArgvTail: ['config', '--format', 'json'],
+          deployEnv,
         },
       );
       const cfg = JSON.parse(stdout) as Record<string, unknown>;
@@ -931,7 +884,7 @@ export class ExecutorService {
       const msg = error instanceof Error ? error.message : String(error);
       return {
         items: [],
-        error: `Could not parse compose volumes (is Docker available and the YAML valid?): ${msg}`,
+        error: `Could not parse compose volumes on the deploy host (is Docker available and the YAML valid?): ${msg}`,
       };
     }
   }
@@ -947,7 +900,7 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(serviceId);
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     await fs.mkdir(deployDir, { recursive: true });
     const composeFile = path.join(deployDir, 'docker-compose.yml');
@@ -965,13 +918,23 @@ export class ExecutorService {
       return { success: false, output: resolved.error };
     }
 
-    const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(serviceId);
+    if (sshIds.remoteServerId == null) {
+      return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
+    }
+    const projectUserId: number | null = null;
+    const runDocker = (argv: string[]) =>
+      this.remoteServersService.execDockerArgvBinaryOnRemoteViaSsh(
+        sshIds.remoteServerId!,
+        projectUserId,
+        argv,
+      );
     return runStructuredDatabaseBackup(
       deployDir,
       config,
       destDir,
       service.appName,
-      procEnv,
+      runDocker,
       resolved.id,
     );
   }
@@ -979,8 +942,31 @@ export class ExecutorService {
   async backupDockerVolume(
     volumeName: string,
     destDir: string,
+    remoteServerId: number,
+    projectUserId: number | null = null,
   ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
-    return runDockerVolumeBackup(volumeName, destDir);
+    try {
+      const { data, stderr } =
+        await this.remoteServersService.dockerNamedVolumeBackupArchiveFromRemote(
+          remoteServerId,
+          projectUserId,
+          volumeName,
+        );
+      await fs.mkdir(destDir, { recursive: true });
+      const safe = volumeName.trim();
+      const archiveBasename = `vol-${safe}-${Date.now()}.tar.gz`;
+      const fullPath = path.join(path.resolve(destDir), archiveBasename);
+      await fs.writeFile(fullPath, data);
+      const out = [stderr].filter((s) => s?.trim()).join('\n');
+      return {
+        success: true,
+        output: [out, `Archive: ${fullPath}`].filter(Boolean).join('\n'),
+        archiveBasename,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { success: false, output: msg };
+    }
   }
 
   /** Restore DB from an uploaded archive (sql / custom / mongodump, etc.). */
@@ -992,7 +978,7 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(serviceId);
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     await fs.mkdir(deployDir, { recursive: true });
     const composeFile = path.join(deployDir, 'docker-compose.yml');
@@ -1009,21 +995,66 @@ export class ExecutorService {
     if ('error' in resolved) {
       return { success: false, output: resolved.error };
     }
-    const procEnv = await this.getProcessEnvForService(service);
-    return runStructuredDatabaseImport(
-      config,
-      hostArchivePath,
-      procEnv,
-      resolved.id,
-    );
+    const sshIds = await this.servicesService.getDockerSshTargetIds(serviceId);
+    if (sshIds.remoteServerId == null) {
+      return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
+    }
+    const projectUserId: number | null = null;
+    const cid = resolved.id;
+    const docker: StructuredDbImportDocker = {
+      copyHostArchiveIntoContainer: (hostPath, destSpec) => {
+        const idx = destSpec.indexOf(':');
+        const pathInContainer = idx >= 0 ? destSpec.slice(idx + 1) : destSpec;
+        return this.remoteServersService.uploadHostFileAndDockerCpToContainer(
+          sshIds.remoteServerId!,
+          projectUserId,
+          hostPath,
+          cid,
+          pathInContainer,
+        );
+      },
+      execInContainer: async (innerSh) => {
+        const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+          sshIds.remoteServerId!,
+          projectUserId,
+          `docker exec ${JSON.stringify(cid)} sh -c ${JSON.stringify(innerSh)}`,
+        );
+        return { stdout: r.stdout, stderr: r.stderr };
+      },
+      removeInContainer: async (containerPath) => {
+        await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+          sshIds.remoteServerId!,
+          projectUserId,
+          `docker exec ${JSON.stringify(cid)} rm -f ${JSON.stringify(containerPath)}`,
+        );
+      },
+    };
+    return runStructuredDatabaseImport(config, hostArchivePath, docker, cid);
   }
 
   /** Restore a named volume from a .tar.gz produced by volume backup. */
   async importDockerVolume(
     volumeName: string,
     hostArchivePath: string,
+    remoteServerId: number,
+    projectUserId: number | null = null,
   ): Promise<{ success: boolean; output: string }> {
-    return runDockerVolumeImport(volumeName, hostArchivePath);
+    try {
+      const buf = await fs.readFile(hostArchivePath);
+      const base = path.basename(hostArchivePath);
+      const r = await this.remoteServersService.dockerNamedVolumeImportArchiveOnRemote(
+        remoteServerId,
+        projectUserId,
+        volumeName,
+        buf,
+        base,
+      );
+      const out = [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n');
+      return { success: true, output: (out || 'Volume import finished.').slice(0, 8000) };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { success: false, output: msg };
+    }
   }
 
   /**
@@ -1038,7 +1069,7 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(serviceId);
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     await fs.mkdir(deployDir, { recursive: true });
     let cmd = rawInput.trim().replace(/\s+/g, ' ');
@@ -1062,14 +1093,25 @@ export class ExecutorService {
           'Forbidden characters: use one docker command without ; | & ` $ or newlines.',
       };
     }
-    const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(serviceId);
+    if (sshIds.remoteServerId == null) {
+      return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
+    }
+    const projectUserId: number | null = null;
+    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
+    const persistQ = persist.replace(/'/g, `'\\''`);
+    const body = `set -euo pipefail
+cd '${persistQ}'
+${cmd}
+`;
     try {
-      const { stdout, stderr } = await execAsync(cmd, {
-        cwd: deployDir,
-        env: procEnv,
-        maxBuffer: 512 * 1024 * 1024,
-        timeout: 600_000,
-      });
+      const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
+        body,
+      );
+      const stdout = r.stdout ?? '';
+      const stderr = r.stderr ?? '';
       const err = stderr ?? '';
       const failed = stderrIndicatesDockerFailure(err);
       if (failed) {
@@ -1113,21 +1155,33 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(serviceId);
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     await fs.mkdir(deployDir, { recursive: true });
     const script = rawInput.trim();
     if (!script) {
       return { success: false, output: 'Script is empty.' };
     }
-    const procEnv = await this.getProcessEnvForService(service);
+    const sshIds = await this.servicesService.getDockerSshTargetIds(serviceId);
+    if (sshIds.remoteServerId == null) {
+      return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
+    }
+    const projectUserId: number | null = null;
+    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
+    const persistQ = persist.replace(/'/g, `'\\''`);
+    const body = `set -euo pipefail
+cd '${persistQ}'
+${script}
+`;
     try {
-      const out = await this.runBashScriptFromStdin(script, {
-        cwd: deployDir,
-        env: procEnv,
-        timeoutMs: 180_000,
-        maxOutputBytes: 10 * 1024 * 1024,
-      });
+      const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
+        body,
+      );
+      const out = [r.stdout, r.stderr]
+        .filter((s) => s && String(s).trim())
+        .join('\n');
       return { success: true, output: out || '(no output)' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1144,30 +1198,22 @@ export class ExecutorService {
     if (!script) {
       return { success: false, output: 'Script is empty.' };
     }
-    if (remoteServerId != null) {
-      try {
-        const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
-          remoteServerId,
-          projectUserId ?? null,
-          script,
-        );
-        const out = [r.stdout, r.stderr]
-          .filter((s) => s && String(s).trim())
-          .join('\n');
-        return { success: true, output: out || '(no output)' };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return { success: false, output: msg };
-      }
+    if (remoteServerId == null) {
+      return {
+        success: false,
+        output:
+          'A remote server id is required. Scripts run on the deploy/build host over SSH, not on the Weehawk API machine.',
+      };
     }
-    const workDir = this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR') || process.cwd();
     try {
-      const out = await this.runBashScriptFromStdin(script, {
-        cwd: workDir,
-        env: process.env,
-        timeoutMs: 180_000,
-        maxOutputBytes: 10 * 1024 * 1024,
-      });
+      const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId ?? null,
+        script,
+      );
+      const out = [r.stdout, r.stderr]
+        .filter((s) => s && String(s).trim())
+        .join('\n');
       return { success: true, output: out || '(no output)' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1175,105 +1221,45 @@ export class ExecutorService {
     }
   }
 
-  private async runBashScriptFromStdin(
-    script: string,
-    opts: {
-      cwd: string;
-      env: NodeJS.ProcessEnv;
-      timeoutMs: number;
-      maxOutputBytes: number;
-    },
-  ): Promise<string> {
-    return await new Promise((resolve, reject) => {
-      const child = spawn('bash', ['-s'], {
-        cwd: opts.cwd,
-        env: opts.env,
-      });
-      let stdout = '';
-      let stderr = '';
-      let done = false;
-      let totalBytes = 0;
-
-      const finish = (err?: Error, output?: string) => {
-        if (done) return;
-        done = true;
-        clearTimeout(timeout);
-        if (err) reject(err);
-        else resolve(output ?? '');
-      };
-
-      const appendChunk = (chunk: Buffer, target: 'stdout' | 'stderr') => {
-        totalBytes += chunk.length;
-        if (totalBytes > opts.maxOutputBytes) {
-          child.kill('SIGKILL');
-          finish(new Error('Script output exceeded limit.'));
-          return;
-        }
-        const text = chunk.toString();
-        if (target === 'stdout') stdout += text;
-        else stderr += text;
-      };
-
-      const timeout = setTimeout(() => {
-        child.kill('SIGKILL');
-        finish(new Error('Script execution timed out.'));
-      }, opts.timeoutMs);
-
-      child.stdout.on('data', (d: Buffer) => appendChunk(d, 'stdout'));
-      child.stderr.on('data', (d: Buffer) => appendChunk(d, 'stderr'));
-      child.on('error', (e) => finish(e));
-      child.on('close', (code) => {
-        if (code !== 0) {
-          finish(new Error((stderr || `Script exited with code ${code}`).trim()));
-          return;
-        }
-        finish(undefined, [stdout, stderr].filter((s) => s && s.trim()).join('\n'));
-      });
-
-      child.stdin.write(script, 'utf8', (err) => {
-        if (err) {
-          finish(err);
-          return;
-        }
-        child.stdin.end();
-      });
-    });
-  }
-
   async shutdown(id: number) {
     const service = await this.servicesService.findOne(id);
-    const procEnv = await this.getProcessEnvForService(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
 
     try {
       if (isSwarmStackService(service)) {
-        if (sshIds.remoteServerId != null) {
-          await this.remoteServersService.scaleAllStackServicesToZeroViaSsh(
-            sshIds.remoteServerId,
-            projectUserId,
-            service.appName,
-          );
-        } else {
-          await scaleAllStackServicesToZero(
-            service.appName,
-            pickDockerSshEnv(procEnv),
-          );
+        if (sshIds.remoteServerId == null) {
+          throw new BadRequestException(SWARM_NEEDS_DEPLOY_HOST_MESSAGE);
         }
-        return { success: true, message: 'Stack services scaled to 0 (Stopped)' };
-      } else {
-        const composeFile = path.join(deployDir, 'docker-compose.yml');
-        await execAsync(
-          `docker compose -f "${composeFile}" -p ${service.appName} stop`,
-          { env: procEnv },
+        await this.remoteServersService.scaleAllStackServicesToZeroViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          service.appName,
         );
-        return { success: true, message: 'Containers stopped' };
+        return { success: true, message: 'Stack services scaled to 0 (Stopped)' };
       }
+      if (sshIds.remoteServerId == null) {
+        throw new BadRequestException(COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE);
+      }
+      const deployEnv = parseEnv(service.env || '');
+      await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+        sshIds.remoteServerId,
+        projectUserId,
+        {
+          projectName: service.appName,
+          composeArgvTail: ['stop'],
+          deployEnv,
+        },
+      );
+      return { success: true, message: 'Containers stopped' };
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new InternalServerErrorException(
         `Shutdown failed: ${error.message}`,
       );

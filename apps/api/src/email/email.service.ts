@@ -71,8 +71,8 @@ export class EmailService {
   async sendEmailConfirmation(to: string, firstName: string, confirmationLink: string): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
-        <h2>مرحباً ${firstName}!</h2>
-        <p>اضغط على الزر لتأكيد بريدك الإلكتروني:</p>
+        <h2>Hello ${firstName}!</h2>
+        <p>Click the button below to confirm your email address:</p>
         <a href="${confirmationLink}" style="
           background-color: #4CAF50;
           color: white;
@@ -80,18 +80,18 @@ export class EmailService {
           text-decoration: none;
           border-radius: 4px;
           display: inline-block;">
-          تأكيد الإيميل
+          Confirm Email
         </a>
-        <p style="color: #888; margin-top: 20px;">صالح لمدة 24 ساعة فقط.</p>
+        <p style="color: #888; margin-top: 20px;">This link is valid for 24 hours only.</p>
       </div>`;
-    await this.sendHtml(to, 'تأكيد بريدك الإلكتروني', html);
+    await this.sendHtml(to, 'Confirm Your Email Address', html);
   }
 
   async sendPasswordReset(to: string, firstName: string, resetLink: string): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
-        <h2>مرحباً ${firstName}!</h2>
-        <p>طلبت إعادة تعيين كلمة المرور. اضغط على الزر:</p>
+        <h2>Hello ${firstName}!</h2>
+        <p>You requested a password reset. Click the button below:</p>
         <a href="${resetLink}" style="
           background-color: #e53935;
           color: white;
@@ -99,14 +99,14 @@ export class EmailService {
           text-decoration: none;
           border-radius: 4px;
           display: inline-block;">
-          إعادة تعيين كلمة المرور
+          Reset Password
         </a>
         <p style="color: #888; margin-top: 20px;">
-          صالح لمدة ساعة واحدة فقط.
-          إذا لم تطلب هذا، تجاهل الإيميل.
+          This link is valid for 1 hour only.
+          If you did not request this, please ignore this email.
         </p>
       </div>`;
-    await this.sendHtml(to, 'إعادة تعيين كلمة المرور', html);
+    await this.sendHtml(to, 'Reset Your Password', html);
   }
 
   async sendEmailChangeConfirmation(
@@ -116,14 +116,14 @@ export class EmailService {
   ): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>مرحباً ${firstName}!</h2>
-        <p>طلبت تغيير إيميلك. اضغط على الزر للتأكيد:</p>
+        <h2>Hello ${firstName}!</h2>
+        <p>You requested to change your email address. Click the button to confirm:</p>
         <a href="${confirmationLink}" style="background-color: #4CAF50; color: white; padding: 14px 20px;
           text-decoration: none; border-radius: 4px;">
-          تأكيد الإيميل الجديد
+          Confirm New Email
         </a>
-        <p>صالح لمدة 24 ساعة فقط.</p>
-        <p>إذا لم تطلب هذا، تجاهل الإيميل.</p>
+        <p>This link is valid for 24 hours only.</p>
+        <p>If you did not request this, please ignore this email.</p>
       </div>`;
     await this.sendHtml(to, 'Confirm your new email', html);
   }
@@ -131,9 +131,9 @@ export class EmailService {
   async sendEmailChangeNotification(to: string, firstName: string): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>مرحباً ${firstName}!</h2>
-        <p>تم طلب تغيير إيميل حسابك.</p>
-        <p style="color: red;">إذا لم تطلب هذا، يرجى التواصل معنا فوراً!</p>
+        <h2>Hello ${firstName}!</h2>
+        <p>A request was made to change your account email address.</p>
+        <p style="color: red;">If this was not you, please contact support immediately.</p>
       </div>`;
     await this.sendHtml(to, 'Security Alert: Email Change Requested', html);
   }
@@ -141,9 +141,9 @@ export class EmailService {
   async sendEmailChangedConfirmation(to: string, firstName: string): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>مرحباً ${firstName}!</h2>
-        <p>تم تغيير إيميل حسابك بنجاح</p>
-        <p style="color: red;">إذا لم تطلب هذا، يرجى التواصل معنا فوراً!</p>
+        <h2>Hello ${firstName}!</h2>
+        <p>Your account email address was changed successfully.</p>
+        <p style="color: red;">If this was not you, please contact support immediately.</p>
       </div>`;
     await this.sendHtml(to, 'Your email has been changed', html);
   }

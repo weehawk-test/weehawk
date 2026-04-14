@@ -53,6 +53,10 @@ import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.con
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
 import { toSafePathSegment } from '../services/deployment-paths';
 import { isLoopbackSshHost } from './loopback-ssh-host';
+import {
+  assertPublicRemoteIpv4Literal,
+  assertPublicRemoteSshHost,
+} from './remote-ssh-host-policy';
 
 /**
  * Bash-safe `export VAR='…'` lines so `docker stack deploy` can substitute `${VAR}` in the compose
@@ -295,6 +299,25 @@ export class RemoteServersService implements OnApplicationBootstrap {
     return String(s).trim();
   }
 
+  /**
+   * When false (default), SSH host / publicIpv4 must be publicly routable to reduce SSRF against the API host and cloud metadata.
+   */
+  private allowPrivateRemoteSshHosts(): boolean {
+    const raw =
+      this.configService.get<string>('WEEHAWK_ALLOW_PRIVATE_REMOTE_SSH_HOSTS') ?? '';
+    return /^(1|true|yes|on)$/i.test(String(raw).trim());
+  }
+
+  private async enforcePublicRemoteSshTargets(
+    host: string,
+    publicIpv4: string | null | undefined,
+  ): Promise<void> {
+    if (this.allowPrivateRemoteSshHosts()) return;
+    await assertPublicRemoteSshHost(host);
+    const pip = publicIpv4?.trim();
+    if (pip) assertPublicRemoteIpv4Literal(pip);
+  }
+
   toSafe(rs: RemoteServer): RemoteServerSafe {
     const hasEnc = !!(rs.privateKeyEncrypted && rs.privateKeyEncrypted.trim());
     const hasPath = !!(rs.privateKeyPath && rs.privateKeyPath.trim());
@@ -412,6 +435,308 @@ export class RemoteServersService implements OnApplicationBootstrap {
     const p = this.getSshConnectParams(rs, pem);
     const script = `set -eu\n${bashScriptBody}`;
     return await this.execSshBashScriptCollectOutput(p, script, onChunk);
+  }
+
+  /**
+   * Run `docker …` on the remote host and capture **binary** stdout (for `docker exec` dumps).
+   * Stderr is decoded as UTF-8 text for error messages.
+   */
+  async execDockerArgvBinaryOnRemoteViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    argv: string[],
+  ): Promise<{ stdout: Buffer; stderr: string }> {
+    if (argv.length === 0) {
+      throw new BadRequestException('docker argv is empty');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const cmd = argv.map((a) => shSingleQuoteRemote(String(a))).join(' ');
+    const script = `set -euo pipefail\ndocker ${cmd}\n`;
+    return await this.withSshClient(p, (client) =>
+      this.execSshBashScriptCollectOutputBinaryStdoutOnClient(client, script),
+    );
+  }
+
+  /**
+   * `docker compose` in the persistent mirror dir ({@link WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/&lt;project&gt;).
+   */
+  async composeInPersistentDeploymentViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    params: {
+      projectName: string;
+      /** Arguments after `docker compose -f docker-compose.yml -p &lt;project&gt;` (shell-quoted individually). */
+      composeArgvTail: string[];
+      deployEnv?: Record<string, string>;
+      onChunk?: (s: string) => void;
+    },
+  ): Promise<{ stdout: string; stderr: string }> {
+    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(params.projectName)}`;
+    const persistQ = shSingleQuoteRemote(persist);
+    const projQ = shSingleQuoteRemote(params.projectName);
+    const tail = params.composeArgvTail.map((a) => shSingleQuoteRemote(String(a))).join(' ');
+    const envBlock = bashExportBlockForStackDeploy(params.deployEnv ?? {});
+    const script = `set -euo pipefail
+${envBlock}
+PERSIST=${persistQ}
+cd "$PERSIST"
+if [ -d "$PERSIST/docker-config" ]; then export DOCKER_CONFIG="$PERSIST/docker-config"; fi
+docker compose -f docker-compose.yml -p ${projQ} ${tail}
+`;
+    return this.execDockerCliOnRemoteViaSsh(
+      remoteServerId,
+      projectUserId,
+      script,
+      params.onChunk,
+    );
+  }
+
+  /**
+   * Creates a `.tar.gz` of a named volume on the remote host and returns the bytes (API writes them under `destDir`).
+   */
+  async dockerNamedVolumeBackupArchiveFromRemote(
+    remoteServerId: number,
+    projectUserId: number | null,
+    volumeName: string,
+  ): Promise<{ data: Buffer; stderr: string }> {
+    const safe = volumeName.trim();
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(safe)) {
+      throw new BadRequestException('Invalid volume name.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const token = randomBytes(8).toString('hex');
+    const outDir = `/tmp/weehawk-vol-bk-${token}`;
+    const outDirQ = shSingleQuoteRemote(outDir);
+    const volQ = shSingleQuoteRemote(safe);
+    const script = `set -euo pipefail
+mkdir -p ${outDirQ}
+docker run --rm -v ${volQ}:/v:ro -v ${outDirQ}:/out alpine:3.19 tar czf /out/backup.tar.gz -C /v .
+`;
+    return await this.withSshClient(p, async (client) => {
+      await this.execSshBashScriptCollectOutputOnClient(client, script, undefined);
+      const buf = await this.sftpReadRemoteBuffer(client, `${outDir}/backup.tar.gz`);
+      await this.sshExecIgnoreFailure(client, `rm -rf ${outDirQ}`);
+      return { data: buf, stderr: '' };
+    });
+  }
+
+  /**
+   * Reads a file from the API host, uploads it to the deploy host, then `docker cp` into a container there.
+   */
+  async uploadHostFileAndDockerCpToContainer(
+    remoteServerId: number,
+    projectUserId: number | null,
+    localAbsolutePath: string,
+    containerId: string,
+    pathInContainer: string,
+  ): Promise<void> {
+    const buf = await fs.readFile(path.resolve(localAbsolutePath));
+    const base = path.basename(localAbsolutePath);
+    if (!/^[a-zA-Z0-9._-]+$/.test(base)) {
+      throw new BadRequestException('Invalid import file name.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const token = randomBytes(8).toString('hex');
+    const remoteDir = `/tmp/weehawk-dtcp-${token}`;
+    const remoteDirQ = shSingleQuoteRemote(remoteDir);
+    const remoteFile = `${remoteDir}/${base}`;
+    const destArg = JSON.stringify(`${containerId}:${pathInContainer}`);
+    await this.withSshClient(p, async (client) => {
+      await this.execSshBashScriptCollectOutputOnClient(
+        client,
+        `set -euo pipefail\nmkdir -p ${remoteDirQ}\n`,
+        undefined,
+      );
+      await this.sftpWriteRemoteBuffer(client, remoteFile, buf);
+      await this.execSshBashScriptCollectOutputOnClient(
+        client,
+        `set -euo pipefail\ndocker cp ${shSingleQuoteRemote(remoteFile)} ${destArg}\nrm -rf ${remoteDirQ}\n`,
+        undefined,
+      );
+    });
+  }
+
+  /**
+   * Uploads a local `.tar.gz` and extracts it into a named volume on the remote host.
+   */
+  async dockerNamedVolumeImportArchiveOnRemote(
+    remoteServerId: number,
+    projectUserId: number | null,
+    volumeName: string,
+    archiveBytes: Buffer,
+    archiveBasename: string,
+  ): Promise<{ stdout: string; stderr: string }> {
+    const safe = volumeName.trim();
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(safe)) {
+      throw new BadRequestException('Invalid volume name.');
+    }
+    const base = path.basename(archiveBasename);
+    if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/i.test(base)) {
+      throw new BadRequestException('Expected a .tar.gz archive.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const p = this.getSshConnectParams(rs, pem);
+    const token = randomBytes(8).toString('hex');
+    const inDir = `/tmp/weehawk-vol-im-${token}`;
+    const inDirQ = shSingleQuoteRemote(inDir);
+    const remoteFile = `${inDir}/${base}`;
+    const volQ = shSingleQuoteRemote(safe);
+    return await this.withSshClient(p, async (client) => {
+      await this.execSshBashScriptCollectOutputOnClient(
+        client,
+        `set -euo pipefail\nmkdir -p ${inDirQ}\n`,
+        undefined,
+      );
+      await this.sftpWriteRemoteBuffer(client, remoteFile, archiveBytes);
+      const run = `set -euo pipefail
+docker run --rm -v ${volQ}:/v -v ${inDirQ}:/in:ro alpine:3.19 sh -c 'cd /v && tar xzf /in/${base}'
+rm -rf ${inDirQ}
+`;
+      return await this.execSshBashScriptCollectOutputOnClient(client, run, undefined);
+    });
+  }
+
+  /**
+   * Detach a Swarm secret from all services on the remote manager, then remove it (same goal as local {@link DockerSecretsService.removePrune}).
+   */
+  async dockerSecretRemovePruneViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    secretName: string,
+  ): Promise<void> {
+    const name = secretName.trim();
+    if (!name) {
+      return;
+    }
+    const inspectId = await this.execDockerCliOnRemoteViaSsh(
+      remoteServerId,
+      projectUserId,
+      `docker secret inspect ${JSON.stringify(name)} --format '{{.ID}}' 2>/dev/null || true`,
+    );
+    const secretId = inspectId.stdout.trim();
+    if (!secretId) {
+      return;
+    }
+
+    const detach = async () => {
+      const listSvc = await this.execDockerCliOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId,
+        `docker service ls -q 2>/dev/null || true`,
+      );
+      const serviceIds = listSvc.stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      for (const serviceId of serviceIds) {
+        try {
+          const inspectOut = await this.execDockerCliOnRemoteViaSsh(
+            remoteServerId,
+            projectUserId,
+            `docker service inspect ${JSON.stringify(serviceId)}`,
+          );
+          const parsed = JSON.parse(inspectOut.stdout) as Array<{
+            Spec?: {
+              TaskTemplate?: {
+                ContainerSpec?: {
+                  Secrets?: Array<{
+                    SecretID?: string;
+                    SecretName?: string;
+                    File?: { Name?: string };
+                  }>;
+                };
+              };
+            };
+          }>;
+          const item = Array.isArray(parsed) ? parsed[0] : undefined;
+          const secrets = item?.Spec?.TaskTemplate?.ContainerSpec?.Secrets ?? [];
+          const matched = secrets.find((s) => {
+            if (secretId && s?.SecretID === secretId) return true;
+            if (s?.SecretName === name) return true;
+            if (s?.File?.Name === name) return true;
+            return false;
+          });
+          if (!matched) continue;
+          const rmCandidates = Array.from(
+            new Set(
+              [name, matched?.SecretName, matched?.File?.Name]
+                .map((v) => (v ?? '').trim())
+                .filter(Boolean),
+            ),
+          );
+          for (const rm of rmCandidates) {
+            try {
+              await this.execDockerCliOnRemoteViaSsh(
+                remoteServerId,
+                projectUserId,
+                `docker service update --secret-rm ${JSON.stringify(rm)} ${JSON.stringify(serviceId)}`,
+              );
+              break;
+            } catch {
+              /* try next */
+            }
+          }
+        } catch {
+          /* best effort */
+        }
+      }
+    };
+
+    await detach();
+    await new Promise((r) => setTimeout(r, 800));
+
+    let lastErr = '';
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      try {
+        await this.execDockerCliOnRemoteViaSsh(
+          remoteServerId,
+          projectUserId,
+          `docker secret rm ${JSON.stringify(name)}`,
+        );
+        return;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        lastErr = msg;
+        if (/in use|being used|currently in use/i.test(msg) && attempt < 6) {
+          if (attempt === 1) {
+            await detach();
+          }
+          await new Promise((r) => setTimeout(r, 1200 * attempt));
+          continue;
+        }
+        throw new InternalServerErrorException(
+          `Could not remove remote secret ${name}: ${msg}`,
+        );
+      }
+    }
+    throw new InternalServerErrorException(
+      `Could not remove remote secret ${name}: ${lastErr}`,
+    );
   }
 
   /**
@@ -1866,9 +2191,6 @@ done
       const row = await this.remoteServerRepository.findOne({ where: { id: rid } });
       this.assertRemoteServerMatchesProject(row, projectUserId);
     }
-    if (ids.buildOnLocalDockerHost === true) {
-      return base;
-    }
     const id = ids.buildRemoteServerId ?? ids.remoteServerId;
     if (id == null) {
       return base;
@@ -1990,6 +2312,7 @@ done
     const privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
 
     const hostTrimmed = dto.host.trim();
+    await this.enforcePublicRemoteSshTargets(hostTrimmed, dto.publicIpv4);
     const serverRole: 'deploy' | 'build' = isLoopbackSshHost(hostTrimmed)
       ? 'build'
       : dto.serverRole === 'build'
@@ -2102,6 +2425,9 @@ done
         );
       }
       merged.serverRole = 'build';
+    }
+    if (dto.host !== undefined || dto.publicIpv4 !== undefined) {
+      await this.enforcePublicRemoteSshTargets(merged.host, merged.publicIpv4);
     }
     const saved = await this.remoteServerRepository.save(merged);
     return this.toSafe(saved);
@@ -2768,6 +3094,76 @@ done
         stream.on('close', () => resolve());
         stream.resume();
         stream.stderr?.resume();
+      });
+    });
+  }
+
+  private async execSshBashScriptCollectOutputBinaryStdoutOnClient(
+    client: Client,
+    script: string,
+  ): Promise<{ stdout: Buffer; stderr: string }> {
+    return await new Promise((resolve, reject) => {
+      client.exec('bash -s', (err, stream) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        const stdoutChunks: Buffer[] = [];
+        let stderr = '';
+        stream.on('close', (code: number) => {
+          if (code === 0) {
+            resolve({
+              stdout: stdoutChunks.length ? Buffer.concat(stdoutChunks) : Buffer.alloc(0),
+              stderr,
+            });
+          } else {
+            reject(
+              new InternalServerErrorException(
+                stderr.trim()
+                  ? `Remote command failed (exit ${code}): ${stderr.trim().slice(0, 4000)}`
+                  : `Remote command exited with code ${code}`,
+              ),
+            );
+          }
+        });
+        stream.on('data', (d: Buffer) => {
+          stdoutChunks.push(Buffer.from(d));
+        });
+        stream.stderr.on('data', (d: Buffer) => {
+          stderr += d.toString();
+        });
+        stream.write(script);
+        stream.end();
+      });
+    });
+  }
+
+  private async sftpReadRemoteBuffer(client: Client, remotePath: string): Promise<Buffer> {
+    return await new Promise((resolve, reject) => {
+      client.sftp((err, sftp) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        const chunks: Buffer[] = [];
+        const rs = sftp.createReadStream(remotePath);
+        rs.on('data', (d: Buffer) => chunks.push(Buffer.from(d)));
+        rs.on('error', (e) => {
+          try {
+            sftp.end();
+          } catch {
+            /* ignore */
+          }
+          reject(e);
+        });
+        rs.on('end', () => {
+          try {
+            sftp.end();
+          } catch {
+            /* ignore */
+          }
+          resolve(chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0));
+        });
       });
     });
   }

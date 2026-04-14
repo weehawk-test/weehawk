@@ -11,17 +11,12 @@ type ThemeContextValue = {
 };
 
 const THEME_STORAGE_KEY = "weehawk-theme";
-const THEME_COOKIE_KEY = "weehawk-theme";
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function applyThemeClass(theme: Theme) {
   const root = document.documentElement;
   root.classList.toggle("dark", theme === "dark");
-}
-
-function writeThemeCookie(theme: Theme) {
-  document.cookie = `${THEME_COOKIE_KEY}=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`;
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -37,14 +32,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const nextTheme: Theme = stored === "light" ? "light" : "dark";
     setThemeState(nextTheme);
     applyThemeClass(nextTheme);
-    writeThemeCookie(nextTheme);
   }, []);
 
   const setTheme = (nextTheme: Theme) => {
     setThemeState(nextTheme);
     localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
     applyThemeClass(nextTheme);
-    writeThemeCookie(nextTheme);
   };
 
   const value = useMemo<ThemeContextValue>(

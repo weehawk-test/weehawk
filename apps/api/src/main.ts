@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WsAdapter } from '@nestjs/platform-ws';
+import { createSecretKeyMiddleware } from './common/middleware/secret-key.middleware';
 
 function resolveCorsOrigin(corsEnv: string | undefined): boolean | string[] {
   const raw = corsEnv?.trim();
@@ -44,12 +45,21 @@ async function bootstrap() {
     allowedHeaders: [
       'Content-Type',
       'Authorization',
+      'X-Weehawk-Api-Key',
       'Accept',
       'Origin',
       'X-Requested-With',
     ],
-    exposedHeaders: ['Content-Disposition'],
+    exposedHeaders: [
+      'Content-Disposition',
+      // Required so browser fetch() can read throttling / rate-limit headers cross-origin
+      'Retry-After',
+      'X-RateLimit-Limit',
+      'X-RateLimit-Remaining',
+      'X-RateLimit-Reset',
+    ],
   });
+  app.use(createSecretKeyMiddleware(configService));
 
   const config = new DocumentBuilder()
     .setTitle('weehawk api')
@@ -59,8 +69,11 @@ async function bootstrap() {
     .addTag('users')
     .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('swagger', app, document);
+  const env = (configService.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '').toLowerCase();
+  if (env !== 'production') {
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('swagger', app, document);
+  }
 
   await app.listen(process.env.PORT ?? 8080);
 }

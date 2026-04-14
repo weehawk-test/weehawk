@@ -5,9 +5,10 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { registerApi } from "@/lib/auth-api";
+import { AuthHttpError, registerApi } from "@/lib/auth-api";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
+import { useRateLimitCountdown } from "@/hooks/use-rate-limit-countdown";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { API_BASE } from "@/lib/api";
 
@@ -21,6 +22,8 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [blockedUntilMs, setBlockedUntilMs] = useState<number | null>(null);
+  const { secondsLeft, label } = useRateLimitCountdown(blockedUntilMs);
 
   useEffect(() => {
     if (isReady && accessToken) router.replace("/");
@@ -46,22 +49,33 @@ export default function RegisterPage() {
     }
     setSubmitting(true);
     try {
-      const { auth, user } = await registerApi({
+      const { user } = await registerApi({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         email: email.trim(),
         password,
       });
       setSession({
-        accessToken: auth.accessToken,
-        refreshToken: auth.refreshToken,
         userId: user.userId,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        provider: user.provider,
+        emailVerified: user.emailVerified,
+        imageUrl: user.imageUrl ?? null,
       });
       router.replace("/");
     } catch (err) {
+      if (err instanceof AuthHttpError && err.status === 429) {
+        const waitSec = err.retryAfterSeconds ?? 15 * 60;
+        setBlockedUntilMs(Date.now() + waitSec * 1000);
+        toast({
+          title: "Too many registration attempts",
+          description: "Please wait before trying again. A countdown is shown below.",
+          variant: "destructive",
+        });
+        return;
+      }
       toast({
         title: "Registration failed",
         description: err instanceof Error ? err.message : "Unknown error",
@@ -117,6 +131,19 @@ export default function RegisterPage() {
             <span className="bg-card px-2 text-muted-foreground">or</span>
           </div>
         </div>
+
+        {secondsLeft > 0 ? (
+          <div
+            className="rounded-xl border border-amber-500/35 bg-amber-500/10 dark:bg-amber-500/15 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="text-amber-900/90 dark:text-amber-50/90">
+              Too many attempts. Try again in{" "}
+            </span>
+            <span className="font-mono font-semibold tabular-nums">{label}</span>
+          </div>
+        ) : null}
 
         <form className="space-y-4" onSubmit={onSubmit}>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -177,7 +204,7 @@ export default function RegisterPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || secondsLeft > 0}
             className="btn-primary w-full flex items-center justify-center gap-2"
           >
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}

@@ -35,9 +35,9 @@ export class ChangeEmailService {
     if (await this.userRepo.exists({ where: { email: newEmail.toLowerCase() } })) {
       throw new ConflictException('Email already in use');
     }
-    this.tokenStore.delete(PREFIX + user.id);
+    await this.tokenStore.delete(PREFIX + user.id);
     const token = crypto.randomUUID();
-    this.tokenStore.set(PREFIX + token, currentEmail + SEPARATOR + newEmail.toLowerCase(), TTL_MS);
+    await this.tokenStore.set(PREFIX + token, currentEmail + SEPARATOR + newEmail.toLowerCase(), TTL_MS);
     const link = `${this.getFrontendBaseUrl()}/confirm-email-change?token=${token}`;
     await this.emailService.sendEmailChangeConfirmation(newEmail, user.firstName, link);
     if (user.emailVerified) {
@@ -46,7 +46,7 @@ export class ChangeEmailService {
   }
 
   async confirmEmailChange(token: string): Promise<void> {
-    const value = this.tokenStore.get(PREFIX + token);
+    const value = await this.tokenStore.get(PREFIX + token);
     if (!value) throw new NotFoundException('Invalid or expired token');
     const [currentEmail, newEmail] = value.split(SEPARATOR);
     const user = await this.userRepo.findOne({ where: { email: currentEmail } });
@@ -59,6 +59,6 @@ export class ChangeEmailService {
     if (wasVerified) {
       await this.emailService.sendEmailChangedConfirmation(currentEmail, user.firstName);
     }
-    this.tokenStore.delete(PREFIX + token);
+    await this.tokenStore.delete(PREFIX + token);
   }
 }

@@ -139,12 +139,14 @@ export async function fetchDockerNetworksPaged(
 }
 
 export async function fetchDockerSecretsPaged(
+  remoteServerId: number,
   page: number,
   pageSize: number,
   q: string,
 ): Promise<PaginatedSecretsResponse> {
   const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedSecretsResponse>(`/api/docker-secrets/paged?${qs}`);
+  const rid = `remoteServerId=${encodeURIComponent(String(remoteServerId))}`;
+  return fetchPaged<PaginatedSecretsResponse>(`/api/docker-secrets/paged?${rid}&${qs}`);
 }
 
 export const DOCKER_LIST_PAGE_SIZE = 10;

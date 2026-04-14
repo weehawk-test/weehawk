@@ -10,20 +10,21 @@ import {
 } from "@/lib/docker-secrets-api";
 import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 
-export function useDockerSecrets() {
+export function useDockerSecrets(remoteServerId: number | null) {
   return useQuery({
-    queryKey: ["docker-secrets"],
-    queryFn: listDockerSecrets,
+    queryKey: ["docker-secrets", remoteServerId],
+    queryFn: () => listDockerSecrets(remoteServerId!),
     staleTime: 15_000,
+    enabled: remoteServerId != null && remoteServerId > 0,
   });
 }
 
-export function useDockerSecretsPaged(page: number, q: string) {
-  return useDockerSecretsPagedWithInitial(page, q);
+export function useDockerSecretsPaged(remoteServerId: number | null, page: number, q: string) {
+  return useDockerSecretsPagedWithInitial(remoteServerId, page, q);
 }
 
-// Separated to keep backwards compatibility for existing callsites.
 function useDockerSecretsPagedWithInitial(
+  remoteServerId: number | null,
   page: number,
   q: string,
   options?: {
@@ -32,10 +33,12 @@ function useDockerSecretsPagedWithInitial(
   },
 ) {
   const hasInitial = options?.initialData !== undefined;
-  const enabled = options?.enabled ?? true;
+  const enabled =
+    (options?.enabled ?? true) && remoteServerId != null && remoteServerId > 0;
   return useQuery({
-    queryKey: ["docker-secrets-paged", page, q],
-    queryFn: () => fetchDockerSecretsPagedApi(page, DOCKER_LIST_PAGE_SIZE, q),
+    queryKey: ["docker-secrets-paged", remoteServerId, page, q],
+    queryFn: () =>
+      fetchDockerSecretsPagedApi(remoteServerId!, page, DOCKER_LIST_PAGE_SIZE, q),
     initialData: options?.initialData,
     initialDataUpdatedAt: hasInitial ? 0 : undefined,
     staleTime: hasInitial ? Infinity : 15_000,
@@ -44,8 +47,8 @@ function useDockerSecretsPagedWithInitial(
   });
 }
 
-// New overload: allow SSR-provided initial data.
 export function useDockerSecretsPagedWithInitialData(
+  remoteServerId: number | null,
   page: number,
   q: string,
   options?: {
@@ -53,14 +56,20 @@ export function useDockerSecretsPagedWithInitialData(
     enabled?: boolean;
   },
 ) {
-  return useDockerSecretsPagedWithInitial(page, q, options);
+  return useDockerSecretsPagedWithInitial(remoteServerId, page, q, options);
 }
 
-export function useCreateDockerSecret() {
+export function useCreateDockerSecret(remoteServerId: number | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: CreateDockerSecretInput) =>
-      createDockerSecretApi({ name: data.name.trim(), value: data.value }),
+    mutationFn: (data: CreateDockerSecretInput) => {
+      if (remoteServerId == null) throw new Error("remoteServerId is required");
+      return createDockerSecretApi({
+        remoteServerId,
+        name: data.name.trim(),
+        value: data.value,
+      });
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["docker-secrets"] });
       void qc.invalidateQueries({ queryKey: ["docker-secrets-paged"] });
@@ -68,10 +77,13 @@ export function useCreateDockerSecret() {
   });
 }
 
-export function useDeleteDockerSecret() {
+export function useDeleteDockerSecret(remoteServerId: number | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => deleteDockerSecretApi(name),
+    mutationFn: (name: string) => {
+      if (remoteServerId == null) throw new Error("remoteServerId is required");
+      return deleteDockerSecretApi(remoteServerId, name);
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["docker-secrets"] });
       void qc.invalidateQueries({ queryKey: ["docker-secrets-paged"] });
@@ -79,11 +91,13 @@ export function useDeleteDockerSecret() {
   });
 }
 
-export function useReplaceDockerSecret() {
+export function useReplaceDockerSecret(remoteServerId: number | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, value }: ReplaceDockerSecretInput) =>
-      replaceDockerSecretApi(name.trim(), value),
+    mutationFn: ({ name, value }: ReplaceDockerSecretInput) => {
+      if (remoteServerId == null) throw new Error("remoteServerId is required");
+      return replaceDockerSecretApi(remoteServerId, name.trim(), value);
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["docker-secrets"] });
       void qc.invalidateQueries({ queryKey: ["docker-secrets-paged"] });
@@ -91,10 +105,13 @@ export function useReplaceDockerSecret() {
   });
 }
 
-export function useBulkImportDockerSecrets() {
+export function useBulkImportDockerSecrets(remoteServerId: number | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (envText: string) => bulkImportSecretsApi(envText),
+    mutationFn: (envText: string) => {
+      if (remoteServerId == null) throw new Error("remoteServerId is required");
+      return bulkImportSecretsApi(remoteServerId, envText);
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["docker-secrets"] });
       void qc.invalidateQueries({ queryKey: ["docker-secrets-paged"] });

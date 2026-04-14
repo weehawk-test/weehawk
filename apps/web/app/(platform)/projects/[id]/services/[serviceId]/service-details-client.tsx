@@ -755,7 +755,8 @@ export default function ServiceDetails({
     }
   }, [initialService, serviceId, qc, user?.userId]);
 
-  const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(1, "", {
+  const secretsRemoteId = (service ?? initialService)?.remoteServerId ?? null;
+  const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(secretsRemoteId, 1, "", {
     initialData: initialSecretsPaged ?? undefined,
     enabled: (service ?? initialService)?.type !== "application",
   });
@@ -1426,7 +1427,7 @@ export default function ServiceDetails({
           {activeTab === "secrets" && (
             <motion.div key="secrets" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }} className="space-y-4">
-              <ServiceSecretsTab />
+              <ServiceSecretsTab remoteServerId={secretsRemoteId} />
             </motion.div>
           )}
 

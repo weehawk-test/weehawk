@@ -2,8 +2,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Update
 
 /**
  * Saved S3-compatible destination profiles; connection tests use @aws-sdk/client-s3.
- * `secretAccessKey` is stored in plaintext for now; encryption at rest can be added later
- * (e.g. app-level crypto or envelope encryption) without changing the API contract.
+ * `secretAccessKey` is stored encrypted at rest using app-level AES-GCM.
  */
 @Entity('s3_profiles')
 @Index(['userId', 'name'], { unique: true })

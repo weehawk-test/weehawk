@@ -217,7 +217,7 @@ export default function GitLabGitSettingsPage() {
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           Save GitLab
         </button>
-        {data?.updatedAt ? (
+        {data?.gitlab.groupAccessTokenSet && data.updatedAt ? (
           <p className="text-[11px] text-muted-foreground pt-1">
             Last updated {new Date(data.updatedAt).toLocaleString()}
           </p>

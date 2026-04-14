@@ -1,11 +1,14 @@
 import { API_BASE } from "./api";
 import { authFetch } from "./auth-fetch";
 
+export type AuthProvider = "LOCAL" | "GOOGLE";
+
 export type UserProfile = {
   userId: number;
   firstName: string;
   lastName: string;
   email: string;
+  provider: AuthProvider;
   emailVerified: boolean;
   imageUrl: string | null;
   createdAt: string;
@@ -24,29 +27,27 @@ async function errorBody(res: Response): Promise<string> {
   return text || res.statusText;
 }
 
-function authHeaders(_accessToken: string): HeadersInit {
-  return {
-    Accept: "application/json",
-  };
-}
+const jsonHeaders: HeadersInit = {
+  Accept: "application/json",
+};
 
-export async function getProfile(accessToken: string): Promise<UserProfile> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/user/profile`, {
+export async function getProfile(): Promise<UserProfile> {
+  const res = await authFetch(null, `${API_BASE}/api/user/profile`, {
     method: "GET",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders,
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
 
-export async function updateProfile(
-  accessToken: string,
-  body: { firstName: string; lastName: string },
-): Promise<UserProfile> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/user/profile`, {
+export async function updateProfile(body: {
+  firstName: string;
+  lastName: string;
+}): Promise<UserProfile> {
+  const res = await authFetch(null, `${API_BASE}/api/user/profile`, {
     method: "PUT",
     headers: {
-      ...authHeaders(accessToken),
+      ...jsonHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -55,14 +56,14 @@ export async function updateProfile(
   return res.json();
 }
 
-export async function changePassword(
-  accessToken: string,
-  body: { currentPassword: string; newPassword: string },
-): Promise<{ message: string }> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/user/password`, {
+export async function changePassword(body: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<{ message: string }> {
+  const res = await authFetch(null, `${API_BASE}/api/user/password`, {
     method: "PUT",
     headers: {
-      ...authHeaders(accessToken),
+      ...jsonHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),

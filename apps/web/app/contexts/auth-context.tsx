@@ -9,14 +9,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { API_BASE } from "@/lib/api";
 import { getProfile } from "@/lib/user-api";
 import { logoutApi } from "@/lib/auth-api";
 import {
   AUTH_CHANGE_EVENT,
-  clearStoredSession,
-  readStoredSession,
-  type StoredAuthUser,
-  writeStoredSession,
+  COOKIE_SESSION_MARKER,
+  notifyAuthChanged,
 } from "@/lib/auth-storage";
 
 export type AuthUser = {
@@ -24,30 +23,33 @@ export type AuthUser = {
   email: string;
   firstName: string;
   lastName: string;
+  provider?: "LOCAL" | "GOOGLE";
   emailVerified?: boolean;
   imageUrl?: string | null;
 };
 
-type LocalSessionResponse = {
-  accessToken: string;
-  refreshToken: string;
+export type AuthSessionInput = {
   userId: number;
   email: string;
   firstName: string;
   lastName: string;
+  provider?: "LOCAL" | "GOOGLE";
   emailVerified?: boolean;
   imageUrl?: string | null;
 };
 
 type AuthContextValue = {
+  /** `"cookie-session"` when the API session cookie is present; legacy call sites still pass this into `authFetch`. */
   accessToken: string | null;
   user: AuthUser | null;
   isReady: boolean;
-  setSession: (res: LocalSessionResponse) => void;
-  /** Refetch profile from the API (cookies) and update local user state. */
+  setSession: (res: AuthSessionInput) => void;
+  /** Refetch profile from the API and update local user state. */
   refreshSession: () => Promise<void>;
   updateUser: (
-    patch: Partial<Pick<AuthUser, "firstName" | "lastName" | "emailVerified" | "imageUrl">>,
+    patch: Partial<
+      Pick<AuthUser, "firstName" | "lastName" | "emailVerified" | "imageUrl" | "provider">
+    >,
   ) => void;
   logout: () => Promise<void>;
 };
@@ -59,80 +61,103 @@ export function AuthProvider({
   initialUser,
 }: {
   children: ReactNode;
-  /** From RootLayout SSR (`/api/user/profile`) — avoids a client-side profile fetch on load. */
+  /** From RootLayout SSR (`/api/user/profile`) when cookies are visible to the Next server. */
   initialUser: AuthUser | null;
 }) {
-  // Keep server/client initial render deterministic to avoid hydration mismatch.
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(() =>
+    initialUser ? COOKIE_SESSION_MARKER : null,
+  );
   const [user, setUser] = useState<AuthUser | null>(initialUser);
   const [isReady, setIsReady] = useState(false);
 
-  const syncFromStorage = useCallback(() => {
-    const session = readStoredSession();
-    if (!session) {
-      setAccessToken(null);
-      setUser(null);
-      return;
-    }
-    setAccessToken(session.accessToken);
-    setUser(session.user);
+  const applyProfile = useCallback((p: {
+    userId: number;
+    email: string;
+    firstName: string;
+    lastName: string;
+    provider: "LOCAL" | "GOOGLE";
+    emailVerified: boolean;
+    imageUrl: string | null;
+  }) => {
+    setUser({
+      userId: p.userId,
+      email: p.email,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      provider: p.provider,
+      emailVerified: p.emailVerified,
+      imageUrl: p.imageUrl,
+    });
+    setAccessToken(COOKIE_SESSION_MARKER);
   }, []);
 
+  const clearLocal = useCallback(() => {
+    setUser(null);
+    setAccessToken(null);
+  }, []);
+
+  const bootstrap = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/user/profile`, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (r.ok) {
+        applyProfile(await r.json());
+      } else {
+        clearLocal();
+      }
+    } catch {
+      clearLocal();
+    }
+  }, [applyProfile, clearLocal]);
+
   useEffect(() => {
-    syncFromStorage();
-    setIsReady(true);
-    const onAuthChange = () => syncFromStorage();
+    let cancelled = false;
+    (async () => {
+      await bootstrap();
+      if (!cancelled) setIsReady(true);
+    })();
+
+    const onAuthChange = () => {
+      void bootstrap().then(() => {
+        if (!cancelled) setIsReady(true);
+      });
+    };
     window.addEventListener(AUTH_CHANGE_EVENT, onAuthChange);
-    return () => window.removeEventListener(AUTH_CHANGE_EVENT, onAuthChange);
-  }, [syncFromStorage]);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(AUTH_CHANGE_EVENT, onAuthChange);
+    };
+  }, [bootstrap]);
 
   const refreshSession = useCallback(async () => {
-    if (!accessToken) {
-      setUser(null);
-      return;
+    try {
+      const profile = await getProfile();
+      applyProfile(profile);
+    } catch {
+      clearLocal();
     }
-    const profile = await getProfile(accessToken);
-    const stored = readStoredSession();
-    const nextUser: StoredAuthUser = {
-      userId: profile.userId,
-      email: profile.email,
-      firstName: profile.firstName,
-      lastName: profile.lastName,
-      emailVerified: profile.emailVerified,
-      imageUrl: profile.imageUrl,
-    };
-    if (stored) {
-      writeStoredSession({
-        accessToken: stored.accessToken,
-        refreshToken: stored.refreshToken,
-        user: nextUser,
-      });
-    }
-    setUser(nextUser);
-  }, [accessToken]);
+  }, [applyProfile, clearLocal]);
 
-  const setSession = useCallback((res: LocalSessionResponse) => {
-    const nextUser: StoredAuthUser = {
+  const setSession = useCallback((res: AuthSessionInput) => {
+    setUser({
       userId: res.userId,
       email: res.email,
       firstName: res.firstName,
       lastName: res.lastName,
+      provider: res.provider,
       emailVerified: res.emailVerified ?? false,
       imageUrl: res.imageUrl ?? null,
-    };
-    writeStoredSession({
-      accessToken: res.accessToken,
-      refreshToken: res.refreshToken,
-      user: nextUser,
     });
-    setAccessToken(res.accessToken);
-    setUser(nextUser);
+    setAccessToken(COOKIE_SESSION_MARKER);
   }, []);
 
   const updateUser = useCallback(
     (
       patch: Partial<
-        Pick<AuthUser, "firstName" | "lastName" | "emailVerified">
+        Pick<AuthUser, "firstName" | "lastName" | "emailVerified" | "imageUrl" | "provider">
       >,
     ) => {
       setUser((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -141,21 +166,14 @@ export function AuthProvider({
   );
 
   const logout = useCallback(async () => {
-    const session = readStoredSession();
-    if (session?.accessToken && session.refreshToken) {
-      try {
-        await logoutApi({
-          accessToken: session.accessToken,
-          refreshToken: session.refreshToken,
-        });
-      } catch {
-        // ignore logout network/server errors and clear local session anyway
-      }
+    try {
+      await logoutApi();
+    } catch {
+      // ignore logout network/server errors and clear local session anyway
     }
-    clearStoredSession();
-    setAccessToken(null);
-    setUser(null);
-  }, []);
+    clearLocal();
+    notifyAuthChanged();
+  }, [clearLocal]);
 
   const value = useMemo(
     () => ({
@@ -181,12 +199,9 @@ export function useAuth(): AuthContextValue {
 
 /**
  * Redirects to `/` when there is no session (sign-in UI is at `/`).
- * After a full reload, `useSyncExternalStore` can briefly expose an empty session during
- * hydration while localStorage already has tokens — redirecting immediately would send the user
- * to `/` or `/register`, then that page would see the token and send them to `/`. We defer one tick and
- * re-read storage before redirecting.
+ * Waits until the cookie probe against `/api/user/profile` has finished.
  */
 export function useRequireAuth() {
   const { accessToken, user, isReady } = useAuth();
-  return { accessToken, isReady, allowed: Boolean(accessToken || user) };
+  return { accessToken, isReady, allowed: Boolean(isReady && user) };
 }

@@ -9,6 +9,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { Oauth2Controller } from './oauth2.controller';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { TokenModule } from '../token/token.module';
 import { EmailModule } from '../email/email.module';
 
@@ -32,7 +33,7 @@ import { EmailModule } from '../email/email.module';
     TokenModule,
   ],
   controllers: [AuthController, Oauth2Controller],
-  providers: [AuthService, JwtStrategy, GoogleStrategy],
+  providers: [AuthService, JwtStrategy, GoogleStrategy, JwtAuthGuard],
   exports: [JwtModule, AuthService],
 })
 export class AuthModule {}

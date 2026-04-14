@@ -7,9 +7,15 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createSign } from 'crypto';
+import * as fs from 'fs/promises';
+import * as fss from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { Repository } from 'typeorm';
+import * as unzipper from 'unzipper';
 import { GitIntegrationSettings } from './entities/git-integration.entity';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
+import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
 
 export type GitSettingsPublic = {
   github: {
@@ -70,9 +76,73 @@ export class GitService implements OnModuleInit {
     return;
   }
 
+  private getEncryptionSecret(): string {
+    const s = this.config.get<string>('WEEHAWK_ENCRYPTION_KEY');
+    if (!s || !String(s).trim()) {
+      throw new BadRequestException(
+        'WEEHAWK_ENCRYPTION_KEY is not set. It is required for Git integration secrets.',
+      );
+    }
+    return String(s).trim();
+  }
+
+  private decryptSecretOrPlain(value: string | null | undefined): string | null {
+    if (!value?.trim()) return null;
+    try {
+      return decryptPrivateKey(value, this.getEncryptionSecret());
+    } catch {
+      // Backward compatibility with existing plaintext rows.
+      return value;
+    }
+  }
+
+  private encryptSecret(value: string): string {
+    return encryptPrivateKey(value, this.getEncryptionSecret());
+  }
+
+  private ensureEncryptedSecret(value: string | null | undefined): string | null {
+    const raw = value?.trim();
+    if (!raw) return null;
+    try {
+      decryptPrivateKey(raw, this.getEncryptionSecret());
+      return raw;
+    } catch {
+      try {
+        return this.encryptSecret(raw);
+      } catch {
+        return raw;
+      }
+    }
+  }
+
+  private async migrateRowSecrets(row: GitIntegrationSettings): Promise<GitIntegrationSettings> {
+    const nextGithubClientSecret = this.ensureEncryptedSecret(row.githubClientSecret);
+    const nextGithubPrivateKey = this.ensureEncryptedSecret(row.githubPrivateKey);
+    const nextGithubWebhookSecret = this.ensureEncryptedSecret(row.githubWebhookSecret);
+    const nextGitlabApplicationSecret = this.ensureEncryptedSecret(
+      row.gitlabApplicationSecret,
+    );
+    const nextGitlabGroupAccessToken = this.ensureEncryptedSecret(
+      row.gitlabGroupAccessToken,
+    );
+    const changed =
+      nextGithubClientSecret !== row.githubClientSecret ||
+      nextGithubPrivateKey !== row.githubPrivateKey ||
+      nextGithubWebhookSecret !== row.githubWebhookSecret ||
+      nextGitlabApplicationSecret !== row.gitlabApplicationSecret ||
+      nextGitlabGroupAccessToken !== row.gitlabGroupAccessToken;
+    if (!changed) return row;
+    row.githubClientSecret = nextGithubClientSecret;
+    row.githubPrivateKey = nextGithubPrivateKey;
+    row.githubWebhookSecret = nextGithubWebhookSecret;
+    row.gitlabApplicationSecret = nextGitlabApplicationSecret;
+    row.gitlabGroupAccessToken = nextGitlabGroupAccessToken;
+    return this.repo.save(row);
+  }
+
   private async settingsRowForUser(userId: number): Promise<GitIntegrationSettings> {
     let row = await this.repo.findOne({ where: { userId } });
-    if (row) return row;
+    if (row) return this.migrateRowSecrets(row);
     row = this.repo.create({
       id: userId,
       userId,
@@ -86,7 +156,8 @@ export class GitService implements OnModuleInit {
       gitlabApplicationSecret: null,
       gitlabGroupAccessToken: null,
     });
-    return this.repo.save(row);
+    const saved = await this.repo.save(row);
+    return this.migrateRowSecrets(saved);
   }
 
   private toPublic(row: GitIntegrationSettings): GitSettingsPublic {
@@ -94,13 +165,13 @@ export class GitService implements OnModuleInit {
       github: {
         appId: row.githubAppId,
         clientId: row.githubClientId,
-        clientSecretSet: Boolean(row.githubClientSecret?.trim()),
-        privateKeySet: Boolean(row.githubPrivateKey?.trim()),
-        webhookSecretSet: Boolean(row.githubWebhookSecret?.trim()),
+        clientSecretSet: Boolean(this.decryptSecretOrPlain(row.githubClientSecret)?.trim()),
+        privateKeySet: Boolean(this.decryptSecretOrPlain(row.githubPrivateKey)?.trim()),
+        webhookSecretSet: Boolean(this.decryptSecretOrPlain(row.githubWebhookSecret)?.trim()),
       },
       gitlab: {
         baseUrl: row.gitlabBaseUrl,
-        groupAccessTokenSet: Boolean(row.gitlabGroupAccessToken?.trim()),
+        groupAccessTokenSet: Boolean(this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim()),
       },
       updatedAt: row.updatedAt?.toISOString() ?? null,
     };
@@ -118,7 +189,7 @@ export class GitService implements OnModuleInit {
     if (incoming === undefined) return current;
     const t = incoming.trim();
     if (t === '') return null;
-    return t;
+    return this.encryptSecret(t);
   }
 
   async updateSettings(userId = 1, dto: UpdateGitSettingsDto): Promise<GitSettingsPublic> {
@@ -186,7 +257,7 @@ export class GitService implements OnModuleInit {
   /** HTTPS clone URL with embedded credentials (for server-side `git clone`). */
   async gitlabAuthenticatedCloneUrl(httpUrlToRepo: string): Promise<string> {
     const row = await this.gitlabSettingsRow();
-    const token = row.gitlabGroupAccessToken?.trim();
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!token) {
       throw new BadRequestException(
         'GitLab access token is not configured. Add a group or personal access token in Git → GitLab.',
@@ -204,7 +275,7 @@ export class GitService implements OnModuleInit {
    */
   async resolveGitlabHttpCloneUrl(httpUrlToRepo: string): Promise<string> {
     const row = await this.gitlabSettingsRow();
-    const token = row.gitlabGroupAccessToken?.trim();
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     const trimmed = httpUrlToRepo.trim();
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
       throw new BadRequestException('Only http(s) Git clone URLs are supported');
@@ -226,7 +297,7 @@ export class GitService implements OnModuleInit {
     search?: string;
   }): Promise<{ projects: GitlabProjectListItem[]; totalPages: number; page: number }> {
     const row = await this.gitlabSettingsRow(userId);
-    const token = row.gitlabGroupAccessToken?.trim();
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!token) {
       throw new BadRequestException(
         'GitLab access token is not configured. Add a group or personal access token with read_api (and read_repository for private repos) in Git → GitLab.',
@@ -294,7 +365,7 @@ export class GitService implements OnModuleInit {
     defaultBranch: string | null;
   }> {
     const row = await this.gitlabSettingsRow();
-    const token = row.gitlabGroupAccessToken?.trim();
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!token) {
       throw new BadRequestException(
         'GitLab access token is not configured. Add a group or personal access token in Git → GitLab.',
@@ -342,7 +413,7 @@ export class GitService implements OnModuleInit {
   } | null> {
     try {
       const row = await this.gitlabSettingsRow();
-      const token = row.gitlabGroupAccessToken?.trim();
+      const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
       if (!token) return null;
       const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
         /\/+$/,
@@ -408,9 +479,16 @@ export class GitService implements OnModuleInit {
     secret?: string;
   }): Promise<number> {
     const row = await this.githubAppCredentialsRow();
+    const appId = row.githubAppId?.trim();
+    const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+    if (!appId || !privateKey) {
+      throw new BadRequestException(
+        'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
+      );
+    }
     const appJwt = this.createGithubAppJwt(
-      row.githubAppId!.trim(),
-      row.githubPrivateKey!.trim(),
+      appId,
+      privateKey,
     );
     const instTok = await this.githubInstallationAccessToken(
       params.installationId,
@@ -466,9 +544,12 @@ export class GitService implements OnModuleInit {
   ): Promise<void> {
     try {
       const row = await this.githubAppCredentialsRow();
+      const appId = row.githubAppId?.trim();
+      const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+      if (!appId || !privateKey) return;
       const appJwt = this.createGithubAppJwt(
-        row.githubAppId!.trim(),
-        row.githubPrivateKey!.trim(),
+        appId,
+        privateKey,
       );
       const instTok = await this.githubInstallationAccessToken(
         installationId,
@@ -507,7 +588,7 @@ export class GitService implements OnModuleInit {
     token: string;
   }): Promise<number> {
     const row = await this.gitlabSettingsRow();
-    const privateToken = row.gitlabGroupAccessToken?.trim();
+    const privateToken = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!privateToken) {
       throw new BadRequestException(
         'GitLab token is not configured. Add it under Git → GitLab.',
@@ -569,7 +650,7 @@ export class GitService implements OnModuleInit {
     hookId: number,
   ): Promise<void> {
     const row = await this.gitlabSettingsRow();
-    const privateToken = row.gitlabGroupAccessToken?.trim();
+    const privateToken = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!privateToken) {
       return;
     }
@@ -642,13 +723,13 @@ export class GitService implements OnModuleInit {
       row.githubClientId = clientId.trim();
     }
     if (typeof clientSecret === 'string' && clientSecret.trim()) {
-      row.githubClientSecret = clientSecret.trim();
+      row.githubClientSecret = this.encryptSecret(clientSecret.trim());
     }
     if (typeof pem === 'string' && pem.trim()) {
-      row.githubPrivateKey = pem.trim();
+      row.githubPrivateKey = this.encryptSecret(pem.trim());
     }
     if (typeof webhookSecret === 'string' && webhookSecret.trim()) {
-      row.githubWebhookSecret = webhookSecret.trim();
+      row.githubWebhookSecret = this.encryptSecret(webhookSecret.trim());
     }
 
     await this.repo.save(row);
@@ -660,7 +741,7 @@ export class GitService implements OnModuleInit {
   private async githubAppCredentialsRow(userId = 1): Promise<GitIntegrationSettings> {
     const row = await this.gitlabSettingsRow(userId);
     const appId = row.githubAppId?.trim();
-    const pem = row.githubPrivateKey?.trim();
+    const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
     if (!appId || !pem) {
       throw new BadRequestException(
         'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
@@ -677,7 +758,7 @@ export class GitService implements OnModuleInit {
     try {
       const row = await this.githubAppCredentialsRow();
       const appId = row.githubAppId?.trim();
-      const pem = row.githubPrivateKey?.trim();
+      const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
       if (!appId || !pem) return null;
       return { appId, privateKeyPem: pem };
     } catch {
@@ -817,9 +898,16 @@ export class GitService implements OnModuleInit {
     fullName: string,
   ): Promise<{ cloneUrl: string; defaultBranch: string | null }> {
     const row = await this.githubAppCredentialsRow();
+    const appId = row.githubAppId?.trim();
+    const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+    if (!appId || !privateKey) {
+      throw new BadRequestException(
+        'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
+      );
+    }
     const appJwt = this.createGithubAppJwt(
-      row.githubAppId!.trim(),
-      row.githubPrivateKey!.trim(),
+      appId,
+      privateKey,
     );
     const instTok = await this.githubInstallationAccessToken(
       installationId,
@@ -870,9 +958,16 @@ export class GitService implements OnModuleInit {
     page: number;
   }> {
     const row = await this.githubAppCredentialsRow(userId);
+    const appId = row.githubAppId?.trim();
+    const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+    if (!appId || !privateKey) {
+      throw new BadRequestException(
+        'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
+      );
+    }
     const appJwt = this.createGithubAppJwt(
-      row.githubAppId!.trim(),
-      row.githubPrivateKey!.trim(),
+      appId,
+      privateKey,
     );
 
     const merged = new Map<number, GithubRepoListItem>();
@@ -977,5 +1072,364 @@ export class GitService implements OnModuleInit {
     const slice = list.slice((page - 1) * perPage, page * perPage);
 
     return { repositories: slice, totalPages, page };
+  }
+
+  private assertSingleGitApplicationSource(options: {
+    gitlabProjectId?: number;
+    httpUrlToRepo?: string;
+    githubInstallationId?: number;
+    githubRepoFullName?: string;
+  }): void {
+    const hasGitlabId =
+      options.gitlabProjectId != null && options.gitlabProjectId > 0;
+    const hasUrl = Boolean(options.httpUrlToRepo?.trim());
+    const ghInst =
+      options.githubInstallationId != null && options.githubInstallationId > 0;
+    const ghName = Boolean(options.githubRepoFullName?.trim());
+    if (ghInst !== ghName) {
+      throw new BadRequestException(
+        'githubInstallationId and githubRepoFullName must be sent together.',
+      );
+    }
+    const hasGithub = ghInst && ghName;
+    const modes = [hasGitlabId, hasUrl, hasGithub].filter(Boolean).length;
+    if (modes !== 1) {
+      throw new BadRequestException(
+        'Send exactly one source: gitlabProjectId, httpUrlToRepo, or githubInstallationId + githubRepoFullName.',
+      );
+    }
+  }
+
+  /**
+   * Fetches repository source via HTTP archive APIs (no `git` / child_process on the API host).
+   */
+  async materializeApplicationGitSource(
+    options: {
+      gitlabProjectId?: number;
+      httpUrlToRepo?: string;
+      githubInstallationId?: number;
+      githubRepoFullName?: string;
+      branch?: string;
+    },
+    destDir: string,
+    userId = 1,
+  ): Promise<{ refUsed: string }> {
+    this.assertSingleGitApplicationSource(options);
+    const branchOpt = options.branch?.trim() || null;
+
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'weehawk-git-'));
+    const zipPath = path.join(tempRoot, 'archive.zip');
+    const extractDir = path.join(tempRoot, 'extract');
+
+    try {
+      await fs.mkdir(extractDir, { recursive: true });
+      let refUsed: string;
+
+      if (options.gitlabProjectId != null && options.gitlabProjectId > 0) {
+        refUsed = await this.downloadGitlabProjectArchiveZip(
+          options.gitlabProjectId,
+          branchOpt,
+          userId,
+          zipPath,
+        );
+      } else if (
+        options.githubInstallationId != null &&
+        options.githubInstallationId > 0 &&
+        options.githubRepoFullName
+      ) {
+        refUsed = await this.downloadGithubInstallationArchiveZip(
+          options.githubInstallationId,
+          options.githubRepoFullName.trim(),
+          branchOpt,
+          userId,
+          zipPath,
+        );
+      } else if (options.httpUrlToRepo?.trim()) {
+        const trimmed = options.httpUrlToRepo.trim();
+        let host: string;
+        try {
+          host = new URL(trimmed).hostname.toLowerCase();
+        } catch {
+          throw new BadRequestException('Invalid clone URL');
+        }
+        if (host === 'github.com') {
+          refUsed = await this.downloadPublicGithubArchiveZip(
+            trimmed,
+            branchOpt,
+            zipPath,
+          );
+        } else {
+          refUsed = await this.downloadGitlabHttpArchiveZip(
+            trimmed,
+            branchOpt,
+            userId,
+            zipPath,
+          );
+        }
+      } else {
+        throw new BadRequestException('No git source resolved');
+      }
+
+      await this.extractZipSafely(zipPath, extractDir);
+      await this.hoistSingleRootDirectory(extractDir);
+      await fs.rm(destDir, { recursive: true, force: true });
+      await fs.mkdir(path.dirname(destDir), { recursive: true });
+      await fs.rename(extractDir, destDir);
+      return { refUsed };
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async downloadGitlabProjectArchiveZip(
+    projectId: number,
+    branch: string | null,
+    userId: number,
+    zipPath: string,
+  ): Promise<string> {
+    const row = await this.gitlabSettingsRow(userId);
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+    if (!token) {
+      throw new BadRequestException(
+        'GitLab access token is not configured. Add a group or personal access token in Git → GitLab.',
+      );
+    }
+    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
+      /\/+$/,
+      '',
+    );
+    let sha = branch;
+    if (!sha) {
+      const metaUrl = `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}`;
+      const res = await fetch(metaUrl, { headers: { 'PRIVATE-TOKEN': token } });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
+        );
+      }
+      const data = JSON.parse(text) as Record<string, unknown>;
+      sha =
+        typeof data.default_branch === 'string' ? data.default_branch : 'main';
+    }
+    const dl = `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/repository/archive.zip?sha=${encodeURIComponent(sha)}`;
+    const res = await fetch(dl, { headers: { 'PRIVATE-TOKEN': token } });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new BadRequestException(
+        text.trim().slice(0, 500) || `GitLab archive failed (${res.status})`,
+      );
+    }
+    await fs.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    return sha;
+  }
+
+  private async downloadGithubInstallationArchiveZip(
+    installationId: number,
+    fullName: string,
+    branch: string | null,
+    userId: number,
+    zipPath: string,
+  ): Promise<string> {
+    const row = await this.githubAppCredentialsRow(userId);
+    const appId = row.githubAppId?.trim();
+    const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+    if (!appId || !privateKey) {
+      throw new BadRequestException(
+        'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
+      );
+    }
+    const fn = fullName.trim();
+    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(fn)) {
+      throw new BadRequestException(
+        'githubRepoFullName must look like owner/repo (letters, numbers, ._-).',
+      );
+    }
+    const appJwt = this.createGithubAppJwt(appId, privateKey);
+    const instTok = await this.githubInstallationAccessToken(
+      installationId,
+      appJwt,
+    );
+    let ref = branch;
+    if (!ref) {
+      const apiUrl = `https://api.github.com/repos/${encodeURIComponent(fn)}`;
+      const { status, text } = await this.githubFetchJson(apiUrl, instTok);
+      if (!status.toString().startsWith('2')) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) || `GitHub repo error (${status})`,
+        );
+      }
+      const data = JSON.parse(text) as Record<string, unknown>;
+      ref =
+        typeof data.default_branch === 'string' ? data.default_branch : 'main';
+    }
+    const zipUrl = `https://api.github.com/repos/${fn}/zipball/${encodeURIComponent(ref)}`;
+    const res = await fetch(zipUrl, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        Authorization: `Bearer ${instTok}`,
+        'User-Agent': 'weehawk-api',
+      },
+      redirect: 'follow',
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new BadRequestException(
+        text.trim().slice(0, 500) || `GitHub archive failed (${res.status})`,
+      );
+    }
+    await fs.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    return ref;
+  }
+
+  private async downloadPublicGithubArchiveZip(
+    httpUrlToRepo: string,
+    branch: string | null,
+    zipPath: string,
+  ): Promise<string> {
+    const u = new URL(httpUrlToRepo);
+    const parts = u.pathname
+      .replace(/^\//, '')
+      .replace(/\.git$/i, '')
+      .split('/')
+      .filter(Boolean);
+    if (parts.length < 2) {
+      throw new BadRequestException('Could not parse owner/repo from GitHub URL');
+    }
+    const owner = parts[0];
+    const repo = parts[1];
+    let ref = branch;
+    if (!ref) {
+      const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+      const res = await fetch(apiUrl, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'weehawk-api',
+        },
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) || `GitHub repo error (${res.status})`,
+        );
+      }
+      const data = JSON.parse(text) as Record<string, unknown>;
+      ref =
+        typeof data.default_branch === 'string' ? data.default_branch : 'main';
+    }
+    const zipUrl = `https://api.github.com/repos/${owner}/${repo}/zipball/${encodeURIComponent(ref)}`;
+    const res = await fetch(zipUrl, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'weehawk-api',
+      },
+      redirect: 'follow',
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new BadRequestException(
+        text.trim().slice(0, 500) || `GitHub archive failed (${res.status})`,
+      );
+    }
+    await fs.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    return ref;
+  }
+
+  private async downloadGitlabHttpArchiveZip(
+    httpUrlToRepo: string,
+    branch: string | null,
+    userId: number,
+    zipPath: string,
+  ): Promise<string> {
+    const row = await this.gitlabSettingsRow(userId);
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+    const u = new URL(httpUrlToRepo);
+    const apiBase = u.origin;
+    const pathPart = u.pathname
+      .replace(/^\//, '')
+      .replace(/\.git$/i, '')
+      .replace(/\/+$/, '');
+    if (!pathPart) {
+      throw new BadRequestException('Invalid GitLab repository URL');
+    }
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['PRIVATE-TOKEN'] = token;
+    }
+    let sha = branch;
+    if (!sha) {
+      if (!token) {
+        throw new BadRequestException(
+          'GitLab access token is required to resolve the default branch for this URL.',
+        );
+      }
+      const metaUrl = `${apiBase}/api/v4/projects/${encodeURIComponent(pathPart)}`;
+      const res = await fetch(metaUrl, { headers: { 'PRIVATE-TOKEN': token } });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
+        );
+      }
+      const data = JSON.parse(text) as Record<string, unknown>;
+      sha =
+        typeof data.default_branch === 'string' ? data.default_branch : 'main';
+    }
+    const dl = `${apiBase}/api/v4/projects/${encodeURIComponent(pathPart)}/repository/archive.zip?sha=${encodeURIComponent(sha)}`;
+    const res = await fetch(dl, { headers });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new BadRequestException(
+        text.trim().slice(0, 500) ||
+          `GitLab archive failed (${res.status}). Configure Git → GitLab token for private repositories.`,
+      );
+    }
+    await fs.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    return sha;
+  }
+
+  private async extractZipSafely(zipPath: string, targetDir: string): Promise<void> {
+    const directory = await unzipper.Open.file(zipPath);
+    await fs.mkdir(targetDir, { recursive: true });
+    for (const entry of directory.files) {
+      const normalized = path.normalize(entry.path);
+      if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
+        continue;
+      }
+      const outPath = path.join(targetDir, normalized);
+      const relative = path.relative(targetDir, outPath);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        continue;
+      }
+      if (entry.type === 'Directory') {
+        await fs.mkdir(outPath, { recursive: true });
+      } else {
+        await fs.mkdir(path.dirname(outPath), { recursive: true });
+        await new Promise<void>((resolve, reject) => {
+          entry
+            .stream()
+            .pipe(fss.createWriteStream(outPath))
+            .on('finish', () => resolve())
+            .on('error', (e) => reject(e));
+        });
+      }
+    }
+  }
+
+  /** GitHub/GitLab zips contain a single top-level folder; flatten to match `git clone` layout. */
+  private async hoistSingleRootDirectory(dir: string): Promise<void> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    if (entries.length !== 1 || !entries[0].isDirectory()) {
+      return;
+    }
+    const inner = path.join(dir, entries[0].name);
+    const innerEntries = await fs.readdir(inner);
+    for (const name of innerEntries) {
+      await fs.rename(path.join(inner, name), path.join(dir, name));
+    }
+    await fs.rmdir(inner);
   }
 }

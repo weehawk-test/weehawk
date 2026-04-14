@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
-import { cookies } from "next/headers";
 import "./globals.css";
 import { Providers } from "@/providers";
 import { fetchUserProfileSSR } from "@/lib/ssr/fetch-user-profile";
@@ -18,7 +17,7 @@ const fontMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Weehawk Platform",
+  title: "Weehawk",
   description: "Webhook and deployment management",
 };
 
@@ -34,13 +33,12 @@ export default async function RootLayout({
         email: profile.email,
         firstName: profile.firstName,
         lastName: profile.lastName,
+        provider: profile.provider,
         emailVerified: profile.emailVerified ?? false,
-          imageUrl: profile.imageUrl ?? null,
+        imageUrl: profile.imageUrl ?? null,
       }
     : null;
-  const cookieStore = await cookies();
-  const themeCookie = cookieStore.get("weehawk-theme")?.value;
-  const initialThemeClass = themeCookie === "light" ? "" : "dark";
+  const initialThemeClass = "dark";
 
   return (
     <html

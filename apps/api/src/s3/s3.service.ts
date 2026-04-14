@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   DeleteObjectCommand,
@@ -24,6 +26,7 @@ import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
 import { S3Profile } from './entities/s3-profile.entity';
 import { inferS3ForcePathStyle } from './s3-force-path-style';
 import { getErrorMessage } from '../utils/error-message';
+import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
 
 const MAX_PROFILES = 50;
 
@@ -67,27 +70,77 @@ function createS3Client(input: NormalizedS3Credentials): S3Client {
   });
 }
 
-function rowToCredentials(row: S3Profile): NormalizedS3Credentials {
-  return {
-    name: row.name,
-    endpoint: row.endpoint,
-    region: row.region,
-    bucket: row.bucket,
-    accessKeyId: row.accessKeyId,
-    secretAccessKey: row.secretAccessKey,
-    forcePathStyle: row.forcePathStyle,
-  };
-}
-
 @Injectable()
 export class S3Service implements OnModuleInit {
   constructor(
     @InjectRepository(S3Profile)
     private readonly profileRepo: Repository<S3Profile>,
+    private readonly configService: ConfigService,
   ) {}
 
   async onModuleInit(): Promise<void> {
     await this.migrateFromLegacyJsonIfNeeded();
+    await this.migrateExistingPlaintextSecrets();
+  }
+
+  private async migrateExistingPlaintextSecrets(): Promise<void> {
+    let key: string;
+    try {
+      key = this.getEncryptionSecret();
+    } catch {
+      return;
+    }
+    const rows = await this.profileRepo.find();
+    const updates: S3Profile[] = [];
+    for (const row of rows) {
+      const raw = row.secretAccessKey?.trim();
+      if (!raw) continue;
+      try {
+        decryptPrivateKey(raw, key);
+      } catch {
+        row.secretAccessKey = encryptPrivateKey(raw, key);
+        updates.push(row);
+      }
+    }
+    if (updates.length > 0) {
+      await this.profileRepo.save(updates);
+    }
+  }
+
+  private getEncryptionSecret(): string {
+    const s = this.configService.get<string>('WEEHAWK_ENCRYPTION_KEY');
+    if (!s || !String(s).trim()) {
+      throw new ForbiddenException(
+        'WEEHAWK_ENCRYPTION_KEY is required to read/write encrypted S3 credentials.',
+      );
+    }
+    return String(s).trim();
+  }
+
+  private encryptSecretAccessKey(plaintext: string): string {
+    return encryptPrivateKey(plaintext, this.getEncryptionSecret());
+  }
+
+  private decryptSecretAccessKey(value: string): string {
+    if (!value?.trim()) return '';
+    try {
+      return decryptPrivateKey(value, this.getEncryptionSecret());
+    } catch {
+      // Backward compatibility with existing plaintext rows.
+      return value;
+    }
+  }
+
+  private rowToCredentials(row: S3Profile): NormalizedS3Credentials {
+    return {
+      name: row.name,
+      endpoint: row.endpoint,
+      region: row.region,
+      bucket: row.bucket,
+      accessKeyId: row.accessKeyId,
+      secretAccessKey: this.decryptSecretAccessKey(row.secretAccessKey),
+      forcePathStyle: row.forcePathStyle,
+    };
   }
 
   private async findProfileOrThrow(userId: number, name: string): Promise<S3Profile> {
@@ -146,7 +199,7 @@ export class S3Service implements OnModuleInit {
         region,
         bucket,
         accessKeyId,
-        secretAccessKey,
+        secretAccessKey: this.encryptSecretAccessKey(secretAccessKey),
         forcePathStyle: Boolean(p.forcePathStyle),
       });
       rows.push(row);
@@ -194,7 +247,7 @@ export class S3Service implements OnModuleInit {
   private resolveSecretForSave(input: UpsertS3ProfileDto, existing: S3Profile | null): string {
     const trimmed = input.secretAccessKey?.trim() ?? '';
     if (trimmed) return trimmed;
-    if (existing) return existing.secretAccessKey;
+    if (existing) return this.decryptSecretAccessKey(existing.secretAccessKey);
     throw new BadRequestException('secretAccessKey is required');
   }
 
@@ -221,7 +274,7 @@ export class S3Service implements OnModuleInit {
       forcePathStyle: row.forcePathStyle,
       createdAt: (row.createdAt ?? row.updatedAt).toISOString(),
       updatedAt: row.updatedAt.toISOString(),
-      secretAccessKeyMasked: this.maskSecret(row.secretAccessKey),
+      secretAccessKeyMasked: this.maskSecret(this.decryptSecretAccessKey(row.secretAccessKey)),
     };
   }
 
@@ -244,7 +297,7 @@ export class S3Service implements OnModuleInit {
       row.region = n.region;
       row.bucket = n.bucket;
       row.accessKeyId = n.accessKeyId;
-      row.secretAccessKey = n.secretAccessKey;
+      row.secretAccessKey = this.encryptSecretAccessKey(n.secretAccessKey);
       row.forcePathStyle = n.forcePathStyle;
     } else {
       row = this.profileRepo.create({
@@ -254,7 +307,7 @@ export class S3Service implements OnModuleInit {
         region: n.region,
         bucket: n.bucket,
         accessKeyId: n.accessKeyId,
-        secretAccessKey: n.secretAccessKey,
+        secretAccessKey: this.encryptSecretAccessKey(n.secretAccessKey),
         forcePathStyle: n.forcePathStyle,
       });
     }
@@ -358,7 +411,7 @@ export class S3Service implements OnModuleInit {
     continuationToken?: string;
   }> {
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const normalizedPrefix = this.normalizeListPrefix(prefixRaw);
     const client = createS3Client(input);
     try {
@@ -420,7 +473,7 @@ export class S3Service implements OnModuleInit {
     objectKey: string,
   ): Promise<{ success: boolean; key: string }> {
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
     try {
@@ -467,7 +520,7 @@ export class S3Service implements OnModuleInit {
       }
     }
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const client = createS3Client(input);
     try {
       const result = await client.send(
@@ -530,7 +583,7 @@ export class S3Service implements OnModuleInit {
     const PREFIX_SUMMARY_MAX_PAGES = 200;
     const prefix = this.normalizeFolderPrefix(prefixRaw);
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const client = createS3Client(input);
     let objectCount = 0;
     let totalSize = 0;
@@ -595,7 +648,7 @@ export class S3Service implements OnModuleInit {
     const MAX_LIST = 1_000_000;
     const prefix = this.normalizeFolderPrefix(prefixRaw);
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const client = createS3Client(input);
     const errors: { key: string; message: string }[] = [];
     let deletedCount = 0;
@@ -681,7 +734,7 @@ export class S3Service implements OnModuleInit {
     filename: string;
   }> {
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
     try {
@@ -728,7 +781,7 @@ export class S3Service implements OnModuleInit {
     objectKey: string,
   ): Promise<{ bucket: string; key: string }> {
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
     const resolvedPath = path.resolve(localAbsolutePath);
@@ -779,7 +832,7 @@ export class S3Service implements OnModuleInit {
     destAbsolutePath: string,
   ): Promise<void> {
     const row = await this.findProfileOrThrow(userId, profileName);
-    const input = rowToCredentials(row);
+    const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const resolvedPath = path.resolve(destAbsolutePath);
     const client = createS3Client(input);

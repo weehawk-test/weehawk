@@ -6,8 +6,13 @@ import { useCallback, useEffect, useState } from "react";
 /**
  * URL sync without `useSearchParams()` (which suspends and causes full-route flashes).
  * `urlPage` / `urlQ` come from the Server Component via `searchParams`.
+ * `persistentParams` are always re-applied (e.g. `server` on `/secrets`).
  */
-export function useDockerListUrl(urlPage: number, urlQ: string) {
+export function useDockerListUrl(
+  urlPage: number,
+  urlQ: string,
+  persistentParams?: Record<string, string | undefined>,
+) {
   const router = useRouter();
   const pathname = usePathname();
   const [page, setPageState] = useState(urlPage);
@@ -28,6 +33,11 @@ export function useDockerListUrl(urlPage: number, urlQ: string) {
     (nextPage: number, nextQ: string, mode: "replace" | "push") => {
       if (typeof window === "undefined") return;
       const params = new URLSearchParams();
+      if (persistentParams) {
+        for (const [key, val] of Object.entries(persistentParams)) {
+          if (val != null && val !== "") params.set(key, val);
+        }
+      }
       const trimmed = nextQ.trim();
       if (trimmed) params.set("q", trimmed);
       params.set("page", String(Math.max(1, nextPage)));
@@ -35,7 +45,7 @@ export function useDockerListUrl(urlPage: number, urlQ: string) {
       if (mode === "replace") window.history.replaceState(window.history.state, "", next);
       else window.history.pushState(window.history.state, "", next);
     },
-    [pathname],
+    [pathname, persistentParams],
   );
 
   useEffect(() => {

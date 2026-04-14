@@ -143,7 +143,8 @@ export function ServiceTerminalPanel({ serviceId }: Props) {
           <h2 className="text-base font-semibold tracking-tight">Terminal</h2>
         </div>
         <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-          Interactive shell inside this service&apos;s Docker container.
+          Interactive shell via SSH on your deploy host: <span className="font-mono">docker exec</span> into the running
+          container (requires a configured deploy remote and a running task).
         </p>
       </div>
 

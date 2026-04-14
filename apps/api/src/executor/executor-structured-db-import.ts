@@ -1,5 +1,3 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { DatabaseBackupConfig } from '../backup/database-backup.types';
@@ -7,7 +5,6 @@ import {
   assertSafeDbIdentifier,
   assertSafeComposeService,
 } from '../backup/database-backup.types';
-const execAsync = promisify(exec);
 
 const PG_CONTAINER_PASSWORD_SETUP =
   'if [ -n "${POSTGRES_PASSWORD_FILE:-}" ] && [ -z "${POSTGRES_PASSWORD:-}" ]; then ' +
@@ -22,14 +19,16 @@ function safeSqlUser(raw: string, fallback: string): string {
   return s;
 }
 
-function shQuoteForDockerExec(inner: string): string {
-  return JSON.stringify(inner);
-}
+export type StructuredDbImportDocker = {
+  copyHostArchiveIntoContainer: (hostArchivePath: string, containerPath: string) => Promise<void>;
+  execInContainer: (innerSh: string) => Promise<{ stdout: string; stderr: string }>;
+  removeInContainer: (containerPath: string) => Promise<void>;
+};
 
 export async function runStructuredDatabaseImport(
   config: DatabaseBackupConfig,
   hostArchivePath: string,
-  envMerged: NodeJS.ProcessEnv,
+  docker: StructuredDbImportDocker,
   containerId: string,
 ): Promise<{ success: boolean; output: string }> {
   const base = path.basename(hostArchivePath);
@@ -46,15 +45,9 @@ export async function runStructuredDatabaseImport(
   }
 
   const inside = `/tmp/weehawk-import-${Date.now()}`;
-  const execOpts = {
-    env: { ...process.env, ...envMerged },
-    maxBuffer: 50 * 1024 * 1024,
-    timeout: 600_000 as number,
-  };
 
-  const hostEsc = hostArchivePath.replace(/\\/g, '/');
   try {
-    await execAsync(`docker cp "${hostEsc.replace(/"/g, '\\"')}" ${containerId}:${inside}`, execOpts);
+    await docker.copyHostArchiveIntoContainer(hostArchivePath, `${containerId}:${inside}`);
   } catch (e) {
     return {
       success: false,
@@ -63,8 +56,7 @@ export async function runStructuredDatabaseImport(
   }
 
   const runExec = async (inner: string) => {
-    const cmd = `docker exec ${containerId} sh -c ${shQuoteForDockerExec(inner)}`;
-    const { stdout, stderr } = await execAsync(cmd, execOpts);
+    const { stdout, stderr } = await docker.execInContainer(inner);
     return { stdout: stdout?.toString() ?? '', stderr: stderr?.toString() ?? '' };
   };
 
@@ -99,13 +91,14 @@ export async function runStructuredDatabaseImport(
         const isMaria = config.engine === 'mariadb';
         const db = assertSafeDbIdentifier(config.databaseName ?? '');
         const user = safeSqlUser(config.dbUser ?? '', 'root');
-        const passVar = user === 'root'
-          ? isMaria
-            ? 'MARIADB_ROOT_PASSWORD'
-            : 'MYSQL_ROOT_PASSWORD'
-          : isMaria
-            ? 'MARIADB_PASSWORD'
-            : 'MYSQL_PASSWORD';
+        const passVar =
+          user === 'root'
+            ? isMaria
+              ? 'MARIADB_ROOT_PASSWORD'
+              : 'MYSQL_ROOT_PASSWORD'
+            : isMaria
+              ? 'MARIADB_PASSWORD'
+              : 'MYSQL_PASSWORD';
         const bl = base.toLowerCase();
         let inner: string;
         if (bl.endsWith('.sql.gz')) {
@@ -145,6 +138,6 @@ export async function runStructuredDatabaseImport(
     const msg = e instanceof Error ? e.message : String(e);
     return { success: false, output: msg.slice(0, 8000) };
   } finally {
-    await execAsync(`docker exec ${containerId} rm -f ${inside}`, execOpts).catch(() => {});
+    await docker.removeInContainer(inside).catch(() => {});
   }
 }

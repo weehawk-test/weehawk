@@ -31,7 +31,6 @@ import {
   type ReplaceDockerSecretInput,
   type DockerSecretListItem,
 } from "@/lib/schema";
-import { dockerPagedWsUrl } from "@/lib/docker-api";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -40,7 +39,7 @@ import { ListPagination } from "@/components/docker/ListPagination";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
 import { deleteDockerSecretApi } from "@/lib/docker-secrets-api";
 import { formatSecretDate } from "@/lib/format-secret-date";
-import { DOCKER_LIST_PAGE_SIZE, type PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
+import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -53,9 +52,9 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-function CreateSecretModal({ onClose }: { onClose: () => void }) {
+function CreateSecretModal({ remoteServerId, onClose }: { remoteServerId: number; onClose: () => void }) {
   const router = useRouter();
-  const create = useCreateDockerSecret();
+  const create = useCreateDockerSecret(remoteServerId);
   const { toast } = useToast();
   const {
     register,
@@ -94,7 +93,7 @@ function CreateSecretModal({ onClose }: { onClose: () => void }) {
           <h2 className="text-2xl font-bold">New Docker secret</h2>
         </div>
         <p className="text-muted-foreground text-sm mb-6">
-          Creates a secret on the Docker host (Swarm). The value is sent once and cannot be read back from Docker.
+          Creates a secret on remote server #{remoteServerId} (Swarm manager over SSH). The value is sent once and cannot be read back from Docker.
         </p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 relative z-10">
@@ -141,9 +140,17 @@ function CreateSecretModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function EditSecretModal({ secret, onClose }: { secret: DockerSecretListItem; onClose: () => void }) {
+function EditSecretModal({
+  remoteServerId,
+  secret,
+  onClose,
+}: {
+  remoteServerId: number;
+  secret: DockerSecretListItem;
+  onClose: () => void;
+}) {
   const router = useRouter();
-  const replace = useReplaceDockerSecret();
+  const replace = useReplaceDockerSecret(remoteServerId);
   const { toast } = useToast();
   const {
     register,
@@ -227,10 +234,10 @@ function EditSecretModal({ secret, onClose }: { secret: DockerSecretListItem; on
   );
 }
 
-function BulkImportPanel({ onClose }: { onClose: () => void }) {
+function BulkImportPanel({ remoteServerId, onClose }: { remoteServerId: number; onClose: () => void }) {
   const router = useRouter();
   const [text, setText] = useState("");
-  const bulk = useBulkImportDockerSecrets();
+  const bulk = useBulkImportDockerSecrets(remoteServerId);
   const { toast } = useToast();
 
   const run = () => {
@@ -283,12 +290,14 @@ function BulkImportPanel({ onClose }: { onClose: () => void }) {
 }
 
 function SecretRow({
+  remoteServerId,
   secret,
   onEdit,
   onForceDelete,
   selected,
   onToggleSelect,
 }: {
+  remoteServerId: number;
   secret: DockerSecretListItem;
   onEdit: (s: DockerSecretListItem) => void;
   onForceDelete: (s: DockerSecretListItem) => void;
@@ -296,7 +305,7 @@ function SecretRow({
   onToggleSelect: () => void;
 }) {
   const router = useRouter();
-  const deleteSecret = useDeleteDockerSecret();
+  const deleteSecret = useDeleteDockerSecret(remoteServerId);
   const { toast } = useToast();
   const confirm = useConfirm();
 
@@ -373,13 +382,14 @@ function SecretRow({
 }
 
 type Props = {
+  remoteServerId: number;
   data: PaginatedSecretsResponse | null;
   error: string | null;
   urlPage: number;
   urlQ: string;
 };
 
-export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
+export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ }: Props) {
   const router = useRouter();
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<DockerSecretListItem | null>(null);
@@ -387,7 +397,8 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
   const [bulkPending, setBulkPending] = useState(false);
   const [forceDialog, setForceDialog] = useState<DockerSecretListItem | null>(null);
   const [forcePending, setForcePending] = useState(false);
-  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
+  const listUrlPersistent = useMemo(() => ({ server: String(remoteServerId) }), [remoteServerId]);
+  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ, listUrlPersistent);
   const { toast } = useToast();
   const confirm = useConfirm();
   const [liveData, setLiveData] = useState<PaginatedSecretsResponse | null>(data);
@@ -397,47 +408,6 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
     setLiveData(data);
     setLiveError(error);
   }, [data, error, urlPage, urlQ]);
-
-  useEffect(() => {
-    let disposed = false;
-    let ws: WebSocket | null = null;
-    const connect = () => {
-      ws = new WebSocket(
-        dockerPagedWsUrl({
-          topic: "secrets.paged",
-          page,
-          pageSize: DOCKER_LIST_PAGE_SIZE,
-          q,
-          intervalMs: 2000,
-        }),
-      );
-      ws.onmessage = (ev) => {
-        if (disposed || typeof ev.data !== "string") return;
-        try {
-          const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
-          if (msg.type === "secrets.paged" && msg.data) {
-            setLiveData(msg.data as PaginatedSecretsResponse);
-            setLiveError(null);
-          } else if (msg.type === "error") {
-            setLiveError(msg.message ?? "WebSocket error");
-          }
-        } catch {}
-      };
-      ws.onclose = () => {
-        if (disposed) return;
-        setTimeout(() => {
-          if (!disposed) connect();
-        }, 1500);
-      };
-    };
-    connect();
-    return () => {
-      disposed = true;
-      try {
-        ws?.close();
-      } catch {}
-    };
-  }, [page, q]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -462,7 +432,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
     });
     if (!confirmed) return;
     setBulkPending(true);
-    const results = await Promise.allSettled(names.map((n) => deleteDockerSecretApi(n)));
+    const results = await Promise.allSettled(names.map((n) => deleteDockerSecretApi(remoteServerId, n)));
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - removed;
@@ -479,7 +449,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
     if (!forceDialog) return;
     setForcePending(true);
     try {
-      await deleteDockerSecretApi(forceDialog.name, true);
+      await deleteDockerSecretApi(remoteServerId, forceDialog.name, true);
       toast({ title: "Secret deleted (force)", description: forceDialog.name });
       setForceDialog(null);
       router.refresh();
@@ -498,15 +468,17 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
   return (
     <>
       <AnimatePresence>
-        {showCreate && <CreateSecretModal onClose={() => setShowCreate(false)} />}
-        {editing && <EditSecretModal secret={editing} onClose={() => setEditing(null)} />}
+        {showCreate && <CreateSecretModal remoteServerId={remoteServerId} onClose={() => setShowCreate(false)} />}
+        {editing && (
+          <EditSecretModal remoteServerId={remoteServerId} secret={editing} onClose={() => setEditing(null)} />
+        )}
       </AnimatePresence>
 
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-10">
         <div>
           <h1 className="text-3xl font-bold text-foreground mb-2">Docker Secrets</h1>
           <p className="text-muted-foreground max-w-2xl leading-relaxed">
-            <span className="block">Manage Swarm secrets on the Docker host.</span>
+            <span className="block">Manage Swarm secrets on remote server #{remoteServerId}.</span>
             <span className="block mt-1.5">
               Values are never shown after creation; you can rotate by replacing or delete secrets here.
             </span>
@@ -534,7 +506,9 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
         </div>
       </div>
 
-      <AnimatePresence>{showBulk && <BulkImportPanel onClose={() => setShowBulk(false)} />}</AnimatePresence>
+      <AnimatePresence>
+        {showBulk && <BulkImportPanel remoteServerId={remoteServerId} onClose={() => setShowBulk(false)} />}
+      </AnimatePresence>
 
       <div className="mb-3">
         <div className="relative min-w-0 w-full">
@@ -572,7 +546,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
             <p className="font-medium text-destructive">Could not load secrets</p>
             <p className="text-muted-foreground mt-1 whitespace-pre-wrap">{listError}</p>
             <p className="text-muted-foreground text-xs mt-2">
-              Docker Swarm must be initialized and the API must run where <code className="text-xs">docker secret</code> works.
+              The remote host must be a Swarm manager and reachable over SSH from the API.
             </p>
           </div>
         </div>
@@ -609,6 +583,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
               {items.map((secret) => (
                 <SecretRow
                   key={`${secret.id}-${secret.name}`}
+                  remoteServerId={remoteServerId}
                   secret={secret}
                   onEdit={setEditing}
                   onForceDelete={setForceDialog}
@@ -647,7 +622,7 @@ export function DockerSecretsClient({ data, error, urlPage, urlQ }: Props) {
                 </p>
                 {forceDialog && (
                   <div>
-                    <span className="text-xs font-medium text-foreground">Command on the API host:</span>
+                    <span className="text-xs font-medium text-foreground">Equivalent on the remote host:</span>
                     <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
                       docker secret rm {forceDialog.name}
                     </code>

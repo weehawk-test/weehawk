@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmProvider } from "@/components/confirm/ConfirmProvider";
+import { PageTitleManager } from "@/components/seo/page-title-manager";
 import { AuthProvider, type AuthUser } from "@/contexts/auth-context";
 import { ThemeProvider } from "@/contexts/theme-context";
 
@@ -33,6 +34,7 @@ export function Providers({
         <AuthProvider initialUser={initialUser}>
           <TooltipProvider>
             <ConfirmProvider>
+              <PageTitleManager />
               {children}
               <Toaster />
             </ConfirmProvider>

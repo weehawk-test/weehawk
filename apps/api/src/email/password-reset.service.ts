@@ -30,20 +30,20 @@ export class PasswordResetService {
   async sendResetPasswordEmail(email: string): Promise<void> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new NotFoundException('User not found');
-    this.tokenStore.delete(PREFIX + user.id);
+    await this.tokenStore.delete(PREFIX + user.id);
     const token = crypto.randomUUID();
-    this.tokenStore.set(PREFIX + token, String(user.id), TTL_MS);
+    await this.tokenStore.set(PREFIX + token, String(user.id), TTL_MS);
     const link = `${this.getFrontendBaseUrl()}/reset-password?token=${token}`;
     await this.emailService.sendPasswordReset(user.email, user.firstName, link);
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
-    const userId = this.tokenStore.get(PREFIX + token);
+    const userId = await this.tokenStore.get(PREFIX + token);
     if (!userId) throw new NotFoundException('Invalid or expired reset token');
     const user = await this.userRepo.findOne({ where: { id: parseInt(userId, 10) } });
     if (!user) throw new NotFoundException('User not found');
     user.passwordHash = await bcrypt.hash(newPassword, 10);
     await this.userRepo.save(user);
-    this.tokenStore.delete(PREFIX + token);
+    await this.tokenStore.delete(PREFIX + token);
   }
 }

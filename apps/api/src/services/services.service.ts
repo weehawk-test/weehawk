@@ -19,8 +19,6 @@ import { randomBytes } from 'crypto';
 import * as os from 'os';
 import { ExecutorService } from '../executor/executor.service';
 import { emitDeployLog } from '../executor/executor-docker';
-import { execFile, spawn, type ChildProcess } from 'child_process';
-import { promisify } from 'util';
 import { Observable } from 'rxjs';
 import { composeType } from './entities/composeType.enum';
 import * as path from 'path';
@@ -32,7 +30,6 @@ import {
 } from './database-generator.service';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
-import { DockerSecretsService } from 'src/dockersecrets/dockersecrets.service';
 import * as unzipper from 'unzipper';
 import {
   createBackupTempDir,
@@ -62,8 +59,6 @@ import {
   WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
 } from '../remote-servers/remote-servers.service';
 
-const execFileAsync = promisify(execFile);
-
 @Injectable()
 export class ServicesService {
   private readonly log = new Logger(ServicesService.name);
@@ -82,7 +77,6 @@ export class ServicesService {
     private readonly configService: ConfigService,
     private readonly databaseGenerator: DatabaseGeneratorService,
     private readonly dockerfileGenerator: DockerfileGeneratorService,
-    private readonly dockerSecrets: DockerSecretsService,
     private readonly s3Service: S3Service,
     private readonly gitService: GitService,
     private readonly traefikService: TraefikService,
@@ -1252,7 +1246,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     }
 
     const previousConfig = service.dockerConfig || '';
-    await this.removeObsoleteManagedSecrets(previousConfig, {});
+    await this.removeObsoleteManagedSecrets(service, previousConfig, {});
     const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
@@ -1295,90 +1289,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     return this.withMagicTraefikMeUrl(hydrated);
   }
 
-  private async cloneGitRepository(
-    cloneUrl: string,
-    dest: string,
-    branch?: string | null,
-  ): Promise<void> {
-    await fs.rm(dest, { recursive: true, force: true });
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    const args = ['clone', '--depth', '1'];
-    if (branch?.trim()) {
-      args.push('--branch', branch.trim());
-    }
-    args.push(cloneUrl, dest);
-    try {
-      await execFileAsync('git', args, {
-        maxBuffer: 50 * 1024 * 1024,
-        timeout: 600_000,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      });
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      throw new BadRequestException(`git clone failed: ${msg}`);
-    }
-  }
-
-  private async resolveApplicationGitCloneSource(options: {
-    gitlabProjectId?: number;
-    httpUrlToRepo?: string;
-    githubInstallationId?: number;
-    githubRepoFullName?: string;
-    branch?: string;
-  }): Promise<{ cloneUrl: string; branch: string | null | undefined }> {
-    const hasGitlabId =
-      options.gitlabProjectId != null && options.gitlabProjectId > 0;
-    const hasUrl = Boolean(options.httpUrlToRepo?.trim());
-    const ghInst =
-      options.githubInstallationId != null && options.githubInstallationId > 0;
-    const ghName = Boolean(options.githubRepoFullName?.trim());
-    if (ghInst !== ghName) {
-      throw new BadRequestException(
-        'githubInstallationId and githubRepoFullName must be sent together.',
-      );
-    }
-    const hasGithub = ghInst && ghName;
-    const modes = [hasGitlabId, hasUrl, hasGithub].filter(Boolean).length;
-    if (modes !== 1) {
-      throw new BadRequestException(
-        'Send exactly one source: gitlabProjectId, httpUrlToRepo, or githubInstallationId + githubRepoFullName.',
-      );
-    }
-
-    let cloneUrl: string;
-    let branch: string | null | undefined = options.branch?.trim() || null;
-
-    if (hasGitlabId) {
-      const info = await this.gitService.gitlabCloneInfoForProject(
-        options.gitlabProjectId!,
-      );
-      cloneUrl = info.cloneUrl;
-      if (!branch) branch = info.defaultBranch;
-    } else if (hasGithub) {
-      const info = await this.gitService.githubCloneInfoForInstallationRepo(
-        options.githubInstallationId!,
-        options.githubRepoFullName!.trim(),
-      );
-      cloneUrl = info.cloneUrl;
-      if (!branch) branch = info.defaultBranch;
-    } else {
-      const trimmed = options.httpUrlToRepo!.trim();
-      let host: string;
-      try {
-        host = new URL(trimmed).hostname.toLowerCase();
-      } catch {
-        throw new BadRequestException('Invalid clone URL');
-      }
-      if (host === 'github.com') {
-        cloneUrl = await this.gitService.resolveGithubHttpCloneUrl(trimmed);
-      } else {
-        cloneUrl = await this.gitService.resolveGitlabHttpCloneUrl(trimmed);
-      }
-    }
-
-    return { cloneUrl, branch };
-  }
-
   async uploadApplicationArchive(
     id: number,
     file: Express.Multer.File,
@@ -1409,7 +1319,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const sourceDir = path.join(deployDir, 'app-source');
     const zipPath = path.join(deployDir, 'upload.zip');
@@ -1462,17 +1372,18 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    const { cloneUrl, branch } =
-      await this.resolveApplicationGitCloneSource(options);
-
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const sourceDir = path.join(deployDir, 'app-source');
     await fs.mkdir(deployDir, { recursive: true });
 
-    await this.cloneGitRepository(cloneUrl, sourceDir, branch);
+    await this.gitService.materializeApplicationGitSource(
+      options,
+      sourceDir,
+      userId,
+    );
 
     const saved = await this.applyApplicationSourceFromDirectory(
       service,
@@ -1483,7 +1394,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
-      message: 'Repository cloned and application stack generated.',
+      message: 'Repository archive fetched and application stack generated.',
       service: saved,
       remoteMirror,
     };
@@ -1508,17 +1419,18 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    const { cloneUrl, branch } =
-      await this.resolveApplicationGitCloneSource(options);
-
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const sourceDir = path.join(deployDir, 'app-source');
     await fs.mkdir(deployDir, { recursive: true });
 
-    await this.cloneGitRepository(cloneUrl, sourceDir, branch);
+    await this.gitService.materializeApplicationGitSource(
+      options,
+      sourceDir,
+      userId,
+    );
 
     const fresh = await this.assertServiceOwnedByUser(id, userId);
     return {
@@ -1554,7 +1466,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
     const deployDir = getServiceDeploymentDir(
       service.appName,
-      this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+      undefined,
     );
     const sourceDir = path.join(deployDir, 'app-source');
     try {
@@ -1617,7 +1529,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const valuesMap = this.resolveApplicationValuesMap(parsedVars);
 
     const previousConfig = service.dockerConfig || '';
-    await this.removeObsoleteManagedSecrets(previousConfig, {});
+    await this.removeObsoleteManagedSecrets(service, previousConfig, {});
     const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
@@ -1746,10 +1658,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
    */
   getServiceLogsStream(id: number, userId: number): Observable<{ data: string }> {
     return new Observable((observer) => {
-      let child: ChildProcess | null = null;
       let remoteCancel: (() => void) | null = null;
       let cancelled = false;
-      let stderrBuf = '';
 
       const shQ = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
@@ -1760,11 +1670,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
           const sshTargets = await this.getDockerSshTargetIds(service.id);
           const key = this.firstComposeServiceName(service.dockerConfig || '');
-          const deployDir = getServiceDeploymentDir(
-            service.appName,
-            this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
-          );
-          const composeFile = path.join(deployDir, 'docker-compose.yml');
 
           if (sshTargets.remoteServerId != null) {
             let bashBody: string;
@@ -1806,63 +1711,11 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
             return;
           }
 
-          let args: string[] = [];
-          const spawnOpts: { cwd?: string } = {};
-
-          if (
-            service.composeType === composeType.STACK ||
-            service.composeType === composeType.DATABASES
-          ) {
-            const stackServiceName = `${service.appName}_${key}`;
-            args = ['service', 'logs', '-f', '--tail', '50', stackServiceName];
-          } else {
-            const exists = await fs.access(composeFile).then(() => true).catch(() => false);
-            if (!exists) {
-              observer.next({
-                data: `[compose] No deployment file at ${composeFile}. Deploy the service first.\n`,
-              });
-              observer.complete();
-              return;
-            }
-            args = [
-              'compose',
-              '-f',
-              composeFile,
-              '-p',
-              service.appName,
-              'logs',
-              '-f',
-              '--tail',
-              '50',
-            ];
-            spawnOpts.cwd = deployDir;
-          }
-
-          if (cancelled) return;
-
-          child = spawn('docker', args, spawnOpts);
-
-          child.stdout?.on('data', (data) => {
-            observer.next({ data: data.toString() });
+          observer.next({
+            data:
+              '[logs] No deploy host is set for this service. Choose a remote Deploy server under Remote Docker host, save, then open logs again.\n',
           });
-
-          child.stderr?.on('data', (data) => {
-            const errorMsg = data.toString();
-            stderrBuf += errorMsg;
-            if (!errorMsg.includes('Attaching to')) {
-              observer.next({ data: errorMsg });
-            }
-          });
-
-          child.on('error', (err) => observer.error(err));
-          child.on('close', (code) => {
-            if (code !== 0 && stderrBuf.trim()) {
-              observer.next({
-                data: `\n[docker logs exited with code ${code}]\n${stderrBuf}`,
-              });
-            }
-            observer.complete();
-          });
+          observer.complete();
         } catch (err) {
           observer.error(err);
         }
@@ -1871,9 +1724,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       return () => {
         cancelled = true;
         remoteCancel?.();
-        if (child && !child.killed) {
-          child.kill('SIGKILL');
-        }
       };
     });
   }
@@ -2047,10 +1897,18 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         if (!volumeSource) {
           throw new BadRequestException('volumeSource is required for volume backup.');
         }
+        const ssh = await this.getDockerSshTargetIds(serviceId);
+        if (ssh.remoteServerId == null) {
+          throw new BadRequestException(
+            'Set a deploy host for this service before running a volume backup (backups run on the remote Docker host).',
+          );
+        }
 
         const r = await this.executorService.backupDockerVolume(
           volumeSource,
           destDir,
+          ssh.remoteServerId,
+          null,
         );
         const final = await this.finalizeBackupWithS3(
           userId,
@@ -2137,7 +1995,18 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(vol)) {
           throw new BadRequestException('Invalid volume name.');
         }
-        const r = await this.executorService.importDockerVolume(vol, tmpPath);
+        const ssh = await this.getDockerSshTargetIds(serviceId);
+        if (ssh.remoteServerId == null) {
+          throw new BadRequestException(
+            'Set a deploy host for this service before importing a volume.',
+          );
+        }
+        const r = await this.executorService.importDockerVolume(
+          vol,
+          tmpPath,
+          ssh.remoteServerId,
+          null,
+        );
         return { ok: r.success, output: r.output };
       }
 
@@ -2213,7 +2082,18 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(vol)) {
           throw new BadRequestException('Invalid volume name.');
         }
-        const r = await this.executorService.importDockerVolume(vol, tmpPath);
+        const ssh = await this.getDockerSshTargetIds(serviceId);
+        if (ssh.remoteServerId == null) {
+          throw new BadRequestException(
+            'Set a deploy host for this service before importing a volume.',
+          );
+        }
+        const r = await this.executorService.importDockerVolume(
+          vol,
+          tmpPath,
+          ssh.remoteServerId,
+          null,
+        );
         return { ok: r.success, output: r.output };
       }
 
@@ -2481,7 +2361,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     await this.deleteAutoDeployExternalHooksIfAny(service);
     await this.webhooksService.removeAllForService(userId, id);
     await this.executorService.stopAndRemove(id);
-    await this.removeManagedSecretsForService(service.dockerConfig || '');
+    await this.removeManagedSecretsForService(service);
     await this.serviceRepository.remove(service);
     return { success: true };
   }
@@ -3016,10 +2896,11 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
   /**
    * When variables no longer reference a key (or the secret name changes), remove the
-   * previous Swarm secret via `docker secret rm` (see `DockerSecretsService.remove`).
+   * previous Swarm secret via `docker secret rm` on the deploy host over SSH.
    * `force` detaches the secret from services first when Swarm reports it is still in use.
    */
   private async removeObsoleteManagedSecrets(
+    service: Service,
     previousConfig: string,
     newRefs: Record<string, string>,
   ): Promise<void> {
@@ -3037,10 +2918,25 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       if (!newNames.has(name)) toRemove.add(name);
     }
 
+    if (toRemove.size === 0) {
+      return;
+    }
+
+    const ssh = await this.getDockerSshTargetIds(service.id);
+    if (ssh.remoteServerId == null) {
+      throw new BadRequestException(
+        'Set a deploy host for this service before removing obsolete Swarm secrets so they can be deleted on the remote manager.',
+      );
+    }
+    const projectUserId: number | null = null;
     const failures: string[] = [];
     for (const oldName of toRemove) {
       try {
-        await this.dockerSecrets.removePrune(oldName);
+        await this.remoteServersService.dockerSecretRemovePruneViaSsh(
+          ssh.remoteServerId,
+          projectUserId,
+          oldName,
+        );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         failures.push(`${oldName} (${msg})`);
@@ -3053,8 +2949,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     }
   }
 
-  private async removeManagedSecretsForService(rawConfig: string): Promise<void> {
-    await this.removeObsoleteManagedSecrets(rawConfig || '', {});
+  private async removeManagedSecretsForService(service: Service): Promise<void> {
+    await this.removeObsoleteManagedSecrets(service, service.dockerConfig || '', {});
   }
 
   private nonEmpty(v: string | undefined): string | null {
@@ -3609,26 +3505,22 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     }
 
     try {
-      emit(`[auto-deploy] Resolving git clone source (${provider})…\n`);
-      const { cloneUrl, branch: resolvedBranch } =
-        await this.resolveApplicationGitCloneSource(cloneOptions);
-
       const deployDir = getServiceDeploymentDir(
         service.appName,
-        this.configService.get<string>('WEEHAWK_DEPLOYMENTS_DIR'),
+        undefined,
       );
       const sourceDir = path.join(deployDir, 'app-source');
       await fs.mkdir(deployDir, { recursive: true });
 
-      emit(
-        `[auto-deploy] Cloning ${provider} repo (branch: ${resolvedBranch ?? branch})…\n`,
-      );
-      await this.cloneGitRepository(
-        cloneUrl,
+      emit(`[auto-deploy] Fetching ${provider} repository archive…\n`);
+      const { refUsed } = await this.gitService.materializeApplicationGitSource(
+        cloneOptions,
         sourceDir,
-        resolvedBranch ?? branch,
+        service.project?.userId ?? 1,
       );
-      emit('[auto-deploy] Clone complete. Generating stack configuration…\n');
+      emit(
+        `[auto-deploy] Source extracted (ref: ${refUsed}). Generating stack configuration…\n`,
+      );
 
       await this.applyApplicationSourceFromDirectory(
         service,

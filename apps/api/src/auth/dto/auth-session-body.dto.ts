@@ -1,7 +1,8 @@
 import { AuthProvider } from '../entities/auth-provider.enum';
 import { Role } from '../entities/role.enum';
 
-export class UserProfileResponseDto {
+/** Returned in JSON on login/register/refresh — tokens are HttpOnly cookies only. */
+export class AuthSessionBodyDto {
   userId!: number;
   firstName!: string;
   lastName!: string;
@@ -9,11 +10,5 @@ export class UserProfileResponseDto {
   role!: Role;
   provider!: AuthProvider;
   imageUrl!: string | null;
-  /** True when the account has a local password (false for pure OAuth accounts). */
-  hasPassword!: boolean;
   emailVerified!: boolean;
-  enabled!: boolean;
-  locked!: boolean;
-  createdAt!: Date;
-  lastLogin!: Date | null;
 }

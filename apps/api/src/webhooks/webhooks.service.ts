@@ -6,9 +6,11 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
+import * as net from 'net';
 import * as path from 'path';
 import { Like, Repository } from 'typeorm';
 import { NotificationService } from '../notifications/notification.service';
@@ -26,6 +28,10 @@ import {
   RemoteServersService,
   WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR,
 } from '../remote-servers/remote-servers.service';
+import {
+  isRemoteSshIpBlocked,
+  REMOTE_SSH_HOST_POLICY_HINT,
+} from '../remote-servers/remote-ssh-host-policy';
 import { buildRemoteNotificationEnvLinesFromChannel } from '../common/remote-wrapped-script-install';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
@@ -81,7 +87,14 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly notificationsService: NotificationService,
     private readonly s3Service: S3Service,
     private readonly remoteServersService: RemoteServersService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private allowPrivateHooksPublicHosts(): boolean {
+    const raw =
+      this.configService.get<string>('WEEHAWK_ALLOW_PRIVATE_REMOTE_SSH_HOSTS') ?? '';
+    return /^(1|true|yes|on)$/i.test(String(raw).trim());
+  }
 
   /** Deploy hosts cannot reach the developer machine via localhost; never persist loopback as callback origin. */
   private isLoopbackApiHostname(hostname: string): boolean {
@@ -356,6 +369,14 @@ export class WebhooksService implements OnApplicationBootstrap {
       )
     ) {
       throw new BadRequestException('hooksPublicHost does not look like a valid hostname.');
+    }
+    if (!this.allowPrivateHooksPublicHosts()) {
+      const v = net.isIP(t);
+      if ((v === 4 || v === 6) && isRemoteSshIpBlocked(t)) {
+        throw new BadRequestException(
+          `hooksPublicHost must use a publicly reachable address. ${REMOTE_SSH_HOST_POLICY_HINT}`,
+        );
+      }
     }
   }
 
@@ -1051,9 +1072,17 @@ export class WebhooksService implements OnApplicationBootstrap {
             let destDir: string | null = null;
             try {
               destDir = await createBackupTempDir();
+              const ssh = await this.servicesService.getDockerSshTargetIds(w.serviceId);
+              if (ssh.remoteServerId == null) {
+                success = false;
+                output =
+                  'This service has no deploy host; volume backup runs on the remote Docker machine. Set Remote Docker host on the service, then try again.';
+              } else {
               const r = await this.executorService.backupDockerVolume(
                 w.volumeSource,
                 destDir,
+                ssh.remoteServerId,
+                null,
               );
               const final = await this.finalizeBackupWithS3(
                 1,
@@ -1064,6 +1093,7 @@ export class WebhooksService implements OnApplicationBootstrap {
               );
               success = final.success;
               output = final.output;
+              }
             } finally {
               if (destDir) {
                 await removeBackupTempDir(destDir).catch(() => {

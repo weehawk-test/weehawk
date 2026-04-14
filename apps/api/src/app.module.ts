@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ServicesModule } from './services/services.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ProjectsModule } from './projects/projects.module';
 import { DockersecretsModule } from './dockersecrets/dockersecrets.module';
-import { DockerModule } from './docker/docker.module';
 import { UserModule } from './user/user.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -15,12 +16,30 @@ import { GitModule } from './git/git.module';
 import { TraefikModule } from './traefik/traefik.module';
 import { RemoteServersModule } from './remote-servers/remote-servers.module';
 import { AuthModule } from './auth/auth.module';
+import { RedisModule } from './common/redis/redis.module';
+import { RedisService } from './common/redis/redis.service';
+import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
 
 @Module({
   imports: [
     ServicesModule,
+    RedisModule,
     ConfigModule.forRoot({
       isGlobal: true,
+    }),
+    ThrottlerModule.forRootAsync({
+      imports: [RedisModule],
+      inject: [RedisService],
+      useFactory: (redisService: RedisService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: 60 * 1000,
+            limit: 120,
+          },
+        ],
+        storage: new RedisThrottlerStorage(redisService),
+      }),
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -28,7 +47,6 @@ import { AuthModule } from './auth/auth.module';
       useFactory: (configService: ConfigService) => {
         const dbType = (configService.get<string>('DB_TYPE') ?? 'postgres').trim().toLowerCase();
         const synchronize = (configService.get<string>('DB_SYNCHRONIZE') ?? 'true').toLowerCase() === 'true';
-        const dropSchema = (configService.get<string>('DB_DROP_SCHEMA') ?? 'false').toLowerCase() === 'true';
         return {
           type: dbType as any,
           host: configService.get<string>('DB_HOST', 'localhost'),
@@ -43,7 +61,6 @@ import { AuthModule } from './auth/auth.module';
     }),
     ProjectsModule,
     DockersecretsModule,
-    DockerModule,
     UserModule,
     NotificationsModule,
     WebhooksModule,
@@ -56,6 +73,11 @@ import { AuthModule } from './auth/auth.module';
     AuthModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

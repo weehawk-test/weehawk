@@ -9,11 +9,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { execFile, spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { promisify } from 'util';
 import { encryptPrivateKey, decryptPrivateKey } from '../remote-servers/ssh-key-crypto';
 import { RegistryAccount } from './entities/registry-account.entity';
 import type { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
@@ -21,15 +19,6 @@ import {
   normalizeProviderUrl,
   registryHostFromImageRef,
 } from './registry-host-from-image';
-import { assertLocalHostDockerAllowed } from '../common/weehawk-edition';
-
-const execFileAsync = promisify(execFile);
-
-type ProcessResult = {
-  code: number;
-  stdout: string;
-  stderr: string;
-};
 
 export type RegistryAccountSafe = {
   id: number;
@@ -65,50 +54,41 @@ export class RegistryService {
     return String(s).trim();
   }
 
-  private async runDockerWithOptionalStdin(
-    args: string[],
-    stdinPayload?: string,
-    env: NodeJS.ProcessEnv = process.env,
-  ): Promise<ProcessResult> {
-    assertLocalHostDockerAllowed(this.configService);
-    return new Promise((resolve, reject) => {
-      const child = spawn('docker', args, {
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env,
-      });
+  /** Docker Registry HTTP V2 root (no local `docker` CLI on the API host). */
+  private registryV2Origin(providerUrl: string): string {
+    const p = normalizeProviderUrl(providerUrl);
+    if (p === 'docker.io') {
+      return 'https://registry-1.docker.io';
+    }
+    if (p.includes('://')) {
+      return p.replace(/\/+$/, '');
+    }
+    return `https://${p}`;
+  }
 
-      let stdout = '';
-      let stderr = '';
-
-      child.stdout.on('data', (chunk: Buffer | string) => {
-        stdout += chunk.toString();
-      });
-
-      child.stderr.on('data', (chunk: Buffer | string) => {
-        stderr += chunk.toString();
-      });
-
-      child.on('error', (err) => reject(err));
-
-      child.on('close', (code) => {
-        resolve({
-          code: code ?? 1,
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
-        });
-      });
-
-      if (stdinPayload != null) {
-        if (!child.stdin) {
-          reject(new InternalServerErrorException('Docker stdin is unavailable'));
-          return;
-        }
-        child.stdin.write(stdinPayload);
-      }
-
-      child.stdin?.end();
+  private async assertRegistryCredentialsValid(
+    providerUrl: string,
+    username: string,
+    password: string,
+  ): Promise<void> {
+    const origin = this.registryV2Origin(providerUrl);
+    const auth = Buffer.from(`${username}:${password}`, 'utf8').toString('base64');
+    const res = await fetch(`${origin}/v2/`, {
+      method: 'GET',
+      headers: { Authorization: `Basic ${auth}` },
     });
+    if (res.status === 401 || res.status === 403) {
+      const t = (await res.text()).trim().slice(0, 500);
+      throw new UnauthorizedException(
+        t || `Registry rejected credentials (${res.status}) for ${origin}`,
+      );
+    }
+    if (!res.ok) {
+      const t = (await res.text()).trim().slice(0, 800);
+      throw new UnauthorizedException(
+        t || `Registry check failed (${res.status}) for ${origin}`,
+      );
+    }
   }
 
   toSafe(row: RegistryAccount): RegistryAccountSafe {
@@ -138,21 +118,8 @@ export class RegistryService {
     const username = dto.username.trim();
     const password = dto.password;
 
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'weehawk-reg-'));
     try {
-      const isolatedEnv = { ...process.env, DOCKER_CONFIG: tmp };
-      const result = await this.runDockerWithOptionalStdin(
-        ['login', providerUrl, '--username', username, '--password-stdin'],
-        `${password}\n`,
-        isolatedEnv,
-      );
-      if (result.code !== 0) {
-        throw new UnauthorizedException(
-          result.stderr ||
-            result.stdout ||
-            `Docker login failed for registry "${providerUrl}"`,
-        );
-      }
+      await this.assertRegistryCredentialsValid(providerUrl, username, password);
 
       const enc = encryptPrivateKey(password, this.getEncryptionSecret());
       const existing = await this.registryAccountRepository.findOne({
@@ -186,8 +153,6 @@ export class RegistryService {
       }
       const message = e instanceof Error ? e.message : String(e);
       throw new InternalServerErrorException(`Registry save failed: ${message}`);
-    } finally {
-      await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
   }
 
@@ -306,19 +271,11 @@ export class RegistryService {
     const safePassword = this.assertNonEmpty(password, 'password');
 
     try {
-      const result = await this.runDockerWithOptionalStdin(
-        ['login', safeProviderUrl, '--username', safeUsername, '--password-stdin'],
-        `${safePassword}\n`,
-        process.env,
+      await this.assertRegistryCredentialsValid(
+        safeProviderUrl,
+        safeUsername,
+        safePassword,
       );
-
-      if (result.code !== 0) {
-        throw new UnauthorizedException(
-          result.stderr ||
-            result.stdout ||
-            `Docker login failed for registry "${safeProviderUrl}"`,
-        );
-      }
 
       return {
         success: true,
@@ -340,31 +297,14 @@ export class RegistryService {
   }
 
   async logout(providerUrl: string) {
-    assertLocalHostDockerAllowed(this.configService);
     const safeProviderUrl = normalizeProviderUrl(
       this.assertNonEmpty(providerUrl, 'providerUrl'),
     );
-
-    try {
-      const { stdout, stderr } = await execFileAsync('docker', [
-        'logout',
-        safeProviderUrl,
-      ]);
-
-      return {
-        success: true,
-        providerUrl: safeProviderUrl,
-        output: `${stdout ?? ''}${stderr ?? ''}`.trim(),
-      };
-    } catch (error) {
-      if (error instanceof ForbiddenException) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      throw new InternalServerErrorException(
-        `Registry logout failed: ${message}`,
-      );
-    }
+    return {
+      success: true,
+      providerUrl: safeProviderUrl,
+      output: 'Credentials are not cached on the API host (remote-only mode).',
+    };
   }
 
   async verifyConnection(providerUrl: string, username: string, password: string) {
@@ -374,27 +314,12 @@ export class RegistryService {
     const safeUsername = this.assertNonEmpty(username, 'username');
     const safePassword = this.assertNonEmpty(password, 'password');
 
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'weehawk-reg-verify-'));
     try {
-      const isolatedEnv = { ...process.env, DOCKER_CONFIG: tmp };
-      const result = await this.runDockerWithOptionalStdin(
-        [
-          'login',
-          safeProviderUrl,
-          '--username',
-          safeUsername,
-          '--password-stdin',
-        ],
-        `${safePassword}\n`,
-        isolatedEnv,
+      await this.assertRegistryCredentialsValid(
+        safeProviderUrl,
+        safeUsername,
+        safePassword,
       );
-      if (result.code !== 0) {
-        throw new UnauthorizedException(
-          result.stderr ||
-            result.stdout ||
-            `Docker login failed for registry "${safeProviderUrl}"`,
-        );
-      }
       return {
         success: true,
         message: 'Registry credentials are valid',
@@ -410,8 +335,6 @@ export class RegistryService {
       throw new InternalServerErrorException(
         `Registry verify failed: ${message}`,
       );
-    } finally {
-      await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
   }
 }

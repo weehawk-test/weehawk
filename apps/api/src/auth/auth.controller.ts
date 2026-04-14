@@ -1,10 +1,29 @@
-import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiBody, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
+import {
+  attachAuthCookies,
+  clearAuthCookies,
+  parseCookieHeader,
+  AUTH_REFRESH_COOKIE,
+} from './auth-cookies';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { AuthResponseDto } from './dto/auth-response.dto';
+import type { AuthResponseDto } from './dto/auth-response.dto';
+import { AuthSessionBodyDto } from './dto/auth-session-body.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -12,15 +31,35 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { EmailConfirmationService } from '../email/email-confirmation.service';
 import { PasswordResetService } from '../email/password-reset.service';
 import { Public } from './decorators/public.decorator';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @ApiTags('Auth')
 @Controller('/api/auth')
+@UseGuards(JwtAuthGuard)
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly emailConfirmationService: EmailConfirmationService,
     private readonly passwordResetService: PasswordResetService,
+    private readonly config: ConfigService,
   ) {}
+
+  private isSecureCookie(): boolean {
+    return (this.config.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+  }
+
+  private sessionBody(auth: AuthResponseDto): AuthSessionBodyDto {
+    return {
+      userId: auth.userId,
+      firstName: auth.firstName,
+      lastName: auth.lastName,
+      email: auth.email,
+      role: auth.role,
+      provider: auth.provider,
+      imageUrl: auth.imageUrl,
+      emailVerified: auth.emailVerified,
+    };
+  }
 
   @Post('/register')
   @Public()
@@ -32,8 +71,10 @@ export class AuthController {
     },
   })
   @ApiBody({ type: RegisterDto })
-  async register(@Body() dto: RegisterDto): Promise<AuthResponseDto> {
-    return this.authService.register(dto);
+  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response): Promise<AuthSessionBodyDto> {
+    const auth = await this.authService.register(dto);
+    attachAuthCookies(res, auth, this.isSecureCookie());
+    return this.sessionBody(auth);
   }
 
   @Post('/login')
@@ -46,21 +87,43 @@ export class AuthController {
     },
   })
   @ApiBody({ type: LoginDto })
-  async login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
-    return this.authService.login(dto);
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response): Promise<AuthSessionBodyDto> {
+    const auth = await this.authService.login(dto);
+    attachAuthCookies(res, auth, this.isSecureCookie());
+    return this.sessionBody(auth);
   }
 
   @Post('/refresh')
   @Public()
   @ApiBody({ type: RefreshTokenDto })
-  async refresh(@Body() dto: RefreshTokenDto): Promise<AuthResponseDto> {
-    return this.authService.refresh(dto.refreshToken);
+  async refresh(
+    @Body() dto: RefreshTokenDto,
+    @Req() req: { headers?: { cookie?: string } },
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthSessionBodyDto> {
+    const rawCookie = req.headers?.cookie;
+    const cookies = parseCookieHeader(typeof rawCookie === 'string' ? rawCookie : undefined);
+    const refreshToken = dto.refreshToken?.trim() || cookies[AUTH_REFRESH_COOKIE];
+    if (!refreshToken) throw new UnauthorizedException('Missing refresh token');
+    const auth = await this.authService.refresh(refreshToken);
+    attachAuthCookies(res, auth, this.isSecureCookie());
+    return this.sessionBody(auth);
   }
 
   @Post('/logout')
   @ApiBody({ type: RefreshTokenDto })
-  async logout(@Body() dto: RefreshTokenDto, @Req() req: any): Promise<{ message: string }> {
-    await this.authService.logout(req.user?.email, dto.refreshToken);
+  async logout(
+    @Body() dto: RefreshTokenDto,
+    @Req() req: { user?: { email: string }; headers?: { cookie?: string } },
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ message: string }> {
+    const rawCookie = req.headers?.cookie;
+    const cookies = parseCookieHeader(typeof rawCookie === 'string' ? rawCookie : undefined);
+    const refreshToken = dto.refreshToken?.trim() || cookies[AUTH_REFRESH_COOKIE];
+    if (refreshToken && req.user?.email) {
+      await this.authService.logout(req.user.email, refreshToken);
+    }
+    clearAuthCookies(res, this.isSecureCookie());
     return { message: 'Logged out successfully' };
   }
 
@@ -105,5 +168,13 @@ export class AuthController {
   async resetPassword(@Body() dto: ResetPasswordDto): Promise<{ message: string }> {
     await this.passwordResetService.resetPassword(dto.token, dto.newPassword);
     return { message: 'Password reset successfully!' };
+  }
+
+  /** Clears HttpOnly auth cookies when refresh fails or the client cannot call logout (no JWT). */
+  @Post('/session/abort')
+  @Public()
+  sessionAbort(@Res({ passthrough: true }) res: Response): { ok: true } {
+    clearAuthCookies(res, this.isSecureCookie());
+    return { ok: true };
   }
 }

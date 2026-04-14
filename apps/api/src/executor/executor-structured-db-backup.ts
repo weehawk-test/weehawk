@@ -1,5 +1,3 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { gzipSync } from 'zlib';
@@ -10,8 +8,6 @@ import {
   resolveBackupFormat,
 } from '../backup/database-backup.types';
 import { stderrIndicatesDockerFailure } from './executor-docker';
-
-const execFileAsync = promisify(execFile) as any;
 
 function safeSqlUser(raw: string, fallback: string): string {
   const s = (raw ?? '').trim() || fallback;
@@ -43,17 +39,10 @@ function formatEmptyStdout(tool: string, stderr: string): string {
   return `${hint} Check database name and DB user match the cluster. For password auth, ensure POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE is set in the database container.`;
 }
 
-type ExecFileError = Error & { stderr?: string | Buffer; stdout?: string | Buffer };
-
-function formatExecFileError(e: unknown): string {
-  const err = e as ExecFileError;
+function formatRunError(e: unknown): string {
+  const err = e as Error & { stderr?: string };
   let msg = e instanceof Error ? e.message : String(e);
-  const stderr =
-    err.stderr != null
-      ? Buffer.isBuffer(err.stderr)
-        ? err.stderr.toString('utf8')
-        : String(err.stderr)
-      : '';
+  const stderr = typeof err.stderr === 'string' ? err.stderr : '';
   if (stderr.trim()) {
     msg = `${msg}\n${stderr.trim()}`;
   }
@@ -65,12 +54,11 @@ export async function runStructuredDatabaseBackup(
   config: DatabaseBackupConfig,
   destDir: string,
   appNameForFile: string,
-  execEnv: NodeJS.ProcessEnv,
+  runDocker: (argv: string[]) => Promise<{ stdout: Buffer; stderr: string }>,
   containerId: string,
 ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
   const composeFile = path.join(deployDir, 'docker-compose.yml');
   assertSafeComposeService(config.composeService);
-  const envMerged = { ...process.env, ...execEnv };
 
   try {
     await fs.access(composeFile);
@@ -82,15 +70,6 @@ export async function runStructuredDatabaseBackup(
   const outDir = path.resolve(destDir);
   const ts = Date.now();
 
-  // Use Buffer for all modes so binary pg_dump output is handled correctly.
-  const optsBuf = {
-    cwd: deployDir,
-    env: envMerged,
-    maxBuffer: 512 * 1024 * 1024, // 512MB
-    timeout: 600_000,
-    encoding: 'buffer' as const,
-  };
-
   try {
     switch (config.engine) {
       case 'postgres': {
@@ -100,24 +79,20 @@ export async function runStructuredDatabaseBackup(
         const u = shQuoteSingle(user);
         const d = shQuoteSingle(db);
 
-        // Build the dump command for the selected format.
         let dumpCmd = `pg_dump -w -U '${u}'`;
         if (fmt === 'postgres_custom_gzip') {
-          dumpCmd += ` -Fc`; // Custom format (compressed by default)
+          dumpCmd += ` -Fc`;
         } else if (fmt === 'postgres_tar_gzip') {
-          dumpCmd += ` -Ft`; // Tar format
+          dumpCmd += ` -Ft`;
         }
-        // Plain SQL needs no extra format flag; output goes to stdout.
-
         dumpCmd += ` '${d}'`;
 
         const inner = PG_CONTAINER_PASSWORD_SETUP + `exec ${dumpCmd}`;
-        const args = dockerExecArgs(containerId, ['sh', '-c', inner]);
-        
-        // Run the command and capture stdout as a Buffer.
-        const r = await execFileAsync('docker', args, optsBuf);
-        const stdout = r.stdout as Buffer;
-        const stderr = r.stderr ? r.stderr.toString('utf8') : '';
+        const argv = dockerExecArgs(containerId, ['sh', '-c', inner]);
+
+        const r = await runDocker(argv);
+        const stdout = r.stdout;
+        const stderr = r.stderr ?? '';
 
         if (stderrIndicatesDockerFailure(stderr)) {
           return { success: false, output: [stderr].filter(Boolean).join('\n') };
@@ -137,7 +112,6 @@ export async function runStructuredDatabaseBackup(
         const archiveBasename = `db-${appNameForFile}-${ts}.${ext}`;
         const fullPath = path.join(outDir, archiveBasename);
 
-        // Gzip plain SQL ourselves; other formats are written as returned by pg_dump.
         if (fmt === 'postgres_sql_gzip') {
           await fs.writeFile(fullPath, gzipSync(stdout));
         } else {
@@ -158,17 +132,18 @@ export async function runStructuredDatabaseBackup(
         const db = assertSafeDbIdentifier(config.databaseName ?? '');
         const user = safeSqlUser(config.dbUser ?? '', 'root');
         const passEnv = isMaria ? 'MARIADB_ROOT_PASSWORD' : 'MYSQL_ROOT_PASSWORD';
-        
-        const extra = (fmt === 'mysql_sql_extended_gzip' || fmt === 'mariadb_sql_extended_gzip')
+
+        const extra =
+          fmt === 'mysql_sql_extended_gzip' || fmt === 'mariadb_sql_extended_gzip'
             ? ' --single-transaction --routines --triggers --events'
             : '';
 
         const inner = `mysqldump -u ${user} -p"$\{${passEnv}\}"${extra} ${db}`;
-        const args = dockerExecArgs(containerId, ['sh', '-c', inner]);
-        
-        const r = await execFileAsync('docker', args, optsBuf);
-        const stdout = r.stdout as Buffer;
-        const stderr = r.stderr ? r.stderr.toString('utf8') : '';
+        const argv = dockerExecArgs(containerId, ['sh', '-c', inner]);
+
+        const r = await runDocker(argv);
+        const stdout = r.stdout;
+        const stderr = r.stderr ?? '';
 
         if (stderrIndicatesDockerFailure(stderr)) {
           return { success: false, output: stderr || `(${config.engine} failed)` };
@@ -195,11 +170,11 @@ export async function runStructuredDatabaseBackup(
           fmt === 'mongodb_archive_plain'
             ? ['mongodump', `--db=${db}`, '--archive']
             : ['mongodump', `--db=${db}`, '--archive', '--gzip'];
-            
-        const args = dockerExecArgs(containerId, dumpArgs);
-        const r = await execFileAsync('docker', args, optsBuf);
-        const stdout = r.stdout as Buffer;
-        const stderr = r.stderr ? r.stderr.toString('utf8') : '';
+
+        const argv = dockerExecArgs(containerId, dumpArgs);
+        const r = await runDocker(argv);
+        const stdout = r.stdout;
+        const stderr = r.stderr ?? '';
 
         if (stderrIndicatesDockerFailure(stderr)) {
           return { success: false, output: stderr || '(mongodump failed)' };
@@ -221,10 +196,10 @@ export async function runStructuredDatabaseBackup(
       }
 
       case 'redis': {
-        const args = dockerExecArgs(containerId, ['redis-cli', '--rdb', '-']);
-        const r = await execFileAsync('docker', args, optsBuf);
-        const stdout = r.stdout as Buffer;
-        const stderr = r.stderr ? r.stderr.toString('utf8') : '';
+        const argv = dockerExecArgs(containerId, ['redis-cli', '--rdb', '-']);
+        const r = await runDocker(argv);
+        const stdout = r.stdout;
+        const stderr = r.stderr ?? '';
 
         if (stderrIndicatesDockerFailure(stderr)) {
           return { success: false, output: stderr || '(redis-cli failed)' };
@@ -248,6 +223,6 @@ export async function runStructuredDatabaseBackup(
         return { success: false, output: 'Unsupported database engine.' };
     }
   } catch (e) {
-    return { success: false, output: formatExecFileError(e) };
+    return { success: false, output: formatRunError(e) };
   }
 }

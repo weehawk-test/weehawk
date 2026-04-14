@@ -8,7 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { QueryFailedError, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from './entities/user.entity';
 import { AuthProvider } from './entities/auth-provider.enum';
@@ -20,6 +20,12 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { RefreshTokenService } from '../token/refresh-token.service';
 import { EmailConfirmationService } from '../email/email-confirmation.service';
 import type { Profile } from 'passport-google-oauth20';
+
+function isPostgresUniqueViolation(err: unknown): boolean {
+  if (!(err instanceof QueryFailedError)) return false;
+  const q = err as QueryFailedError & { code?: string; driverError?: { code?: string } };
+  return q.code === '23505' || q.driverError?.code === '23505';
+}
 
 @Injectable()
 export class AuthService {
@@ -125,7 +131,10 @@ export class AuthService {
     const familyName = profile.name?.familyName ?? '';
     const imageUrl = profile.photos?.[0]?.value ?? null;
 
-    let user = await this.userRepo.findOne({ where: { email } });
+    let user =
+      (await this.userRepo.findOne({ where: { email } })) ??
+      (providerId ? await this.userRepo.findOne({ where: { providerId } }) : null);
+
     if (user) {
       if (user.provider !== AuthProvider.GOOGLE) {
         throw new ConflictException(
@@ -133,17 +142,16 @@ export class AuthService {
         );
       }
       if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
-
-      user.providerId = providerId ?? user.providerId;
-      if (imageUrl && !user.imageUrl) user.imageUrl = imageUrl;
-      if (givenName && !user.firstName) user.firstName = givenName;
-      if (familyName && !user.lastName) user.lastName = familyName;
-      user.emailVerified = true;
-      user.lastLogin = new Date();
-      user = await this.userRepo.save(user);
+      user = await this.mergeGoogleProfileIntoUser(user, {
+        email,
+        providerId,
+        givenName,
+        familyName,
+        imageUrl,
+      });
     } else {
       const now = new Date();
-      user = this.userRepo.create({
+      const candidate = this.userRepo.create({
         firstName: givenName || 'Google',
         lastName: familyName || 'User',
         email,
@@ -158,12 +166,55 @@ export class AuthService {
         createdAt: now,
         updatedAt: now,
       });
-      user = await this.userRepo.save(user);
+      try {
+        user = await this.userRepo.save(candidate);
+      } catch (e) {
+        if (!isPostgresUniqueViolation(e)) throw e;
+        user =
+          (await this.userRepo.findOne({ where: { email } })) ??
+          (providerId ? await this.userRepo.findOne({ where: { providerId } }) : null);
+        if (!user) throw e;
+        if (user.provider !== AuthProvider.GOOGLE) {
+          throw new ConflictException(
+            `Account is linked to ${user.provider}. Please sign in with that provider.`,
+          );
+        }
+        if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+        user = await this.mergeGoogleProfileIntoUser(user, {
+          email,
+          providerId,
+          givenName,
+          familyName,
+          imageUrl,
+        });
+      }
     }
 
     const accessToken = this.generateAccessToken(user);
     const refreshToken = await this.refreshTokenService.createRefreshToken(user);
     return this.buildAuthResponse(user, accessToken, refreshToken.token);
+  }
+
+  private async mergeGoogleProfileIntoUser(
+    user: User,
+    p: {
+      email: string;
+      providerId: string | null;
+      givenName: string;
+      familyName: string;
+      imageUrl: string | null;
+    },
+  ): Promise<User> {
+    user.providerId = p.providerId ?? user.providerId;
+    if (p.email && user.email !== p.email) {
+      user.email = p.email;
+    }
+    if (p.imageUrl && !user.imageUrl) user.imageUrl = p.imageUrl;
+    if (p.givenName && !user.firstName) user.firstName = p.givenName;
+    if (p.familyName && !user.lastName) user.lastName = p.familyName;
+    user.emailVerified = true;
+    user.lastLogin = new Date();
+    return this.userRepo.save(user);
   }
 
   private generateAccessToken(user: User): string {
@@ -185,6 +236,7 @@ export class AuthService {
       role: user.role,
       provider: user.provider,
       imageUrl: user.imageUrl ?? null,
+      emailVerified: user.emailVerified,
     };
   }
 }

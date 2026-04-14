@@ -19,24 +19,24 @@ export default async function ConsoleSecretsPage({
   const consoleTarget = parseConsoleServerSlug(serverId);
   if (consoleTarget == null) notFound();
 
-  if (consoleTarget !== "local") {
+  if (consoleTarget === "local") {
     return (
-      <div className="glass-panel rounded-xl border border-border p-6 space-y-3">
+      <div className="glass-panel rounded-xl border border-border p-6 space-y-3 max-w-xl">
         <p className="text-sm text-foreground/90">
-          Docker Swarm secrets are managed globally from the platform secrets page, not from per-server remote
-          console views.
+          This platform does not run Docker on the API host. Swarm secrets are listed per remote deploy server.
         </p>
         <p className="text-sm text-muted-foreground">
           Open{" "}
           <Link href="/secrets" className="text-primary hover:underline">
             /secrets
           </Link>{" "}
-          to list and create secrets.
+          or use <span className="font-mono text-xs">/console/&lt;remote id&gt;/secrets</span> (numeric server id).
         </p>
       </div>
     );
   }
 
+  const remoteServerId = consoleTarget;
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
@@ -44,10 +44,18 @@ export default async function ConsoleSecretsPage({
   let data: PaginatedSecretsResponse | null = null;
   let error: string | null = null;
   try {
-    data = await fetchDockerSecretsPaged(page, DOCKER_LIST_PAGE_SIZE, q);
+    data = await fetchDockerSecretsPaged(remoteServerId, page, DOCKER_LIST_PAGE_SIZE, q);
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
 
-  return <DockerSecretsClient data={data} error={error} urlPage={page} urlQ={q} />;
+  return (
+    <DockerSecretsClient
+      remoteServerId={remoteServerId}
+      data={data}
+      error={error}
+      urlPage={page}
+      urlQ={q}
+    />
+  );
 }

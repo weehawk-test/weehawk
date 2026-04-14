@@ -16,7 +16,20 @@ export class LocalSessionGuard implements CanActivate {
 
     const authHeader = req.headers?.authorization;
     const bearer = Array.isArray(authHeader) ? authHeader[0] : authHeader;
-    const token = bearer?.startsWith('Bearer ') ? bearer.slice(7).trim() : '';
+    const cookieHeaderRaw = req.headers?.cookie;
+    const cookieHeader = Array.isArray(cookieHeaderRaw)
+      ? cookieHeaderRaw.join('; ')
+      : (cookieHeaderRaw ?? '');
+    const cookieToken = cookieHeader
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith('weehawk_access_token='))
+      ?.slice('weehawk_access_token='.length);
+    const tokenFromCookie = cookieToken ? decodeURIComponent(cookieToken).trim() : '';
+    const token =
+      bearer?.startsWith('Bearer ') && bearer.slice(7).trim()
+        ? bearer.slice(7).trim()
+        : tokenFromCookie;
     if (!token) throw new UnauthorizedException('Missing bearer token');
 
     const secret = this.configService.get<string>('auth.jwtSecret', 'change-me-in-production');

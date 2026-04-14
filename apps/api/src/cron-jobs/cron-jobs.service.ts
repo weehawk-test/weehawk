@@ -684,19 +684,28 @@ export class CronJobsService {
             let destDir: string | null = null;
             try {
               destDir = await createBackupTempDir();
-              const r = await this.executorService.backupDockerVolume(
-                job.volumeSource,
-                destDir,
-              );
-              const final = await this.finalizeBackupWithS3(
-                1,
-                job.id,
-                job.backupS3ProfileName,
-                destDir,
-                r,
-              );
-              success = final.success;
-              output = final.output;
+              const ssh = await this.servicesService.getDockerSshTargetIds(job.serviceId);
+              if (ssh.remoteServerId == null) {
+                success = false;
+                output =
+                  'This service has no deploy host; volume backup runs on the remote Docker machine. Set Remote Docker host on the service.';
+              } else {
+                const r = await this.executorService.backupDockerVolume(
+                  job.volumeSource,
+                  destDir,
+                  ssh.remoteServerId,
+                  null,
+                );
+                const final = await this.finalizeBackupWithS3(
+                  1,
+                  job.id,
+                  job.backupS3ProfileName,
+                  destDir,
+                  r,
+                );
+                success = final.success;
+                output = final.output;
+              }
             } finally {
               if (destDir) {
                 await removeBackupTempDir(destDir).catch(() => {

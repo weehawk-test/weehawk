@@ -12,4 +12,5 @@ export class AuthResponseDto {
   role!: Role;
   provider!: AuthProvider;
   imageUrl!: string | null;
+  emailVerified!: boolean;
 }

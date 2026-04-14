@@ -40,9 +40,10 @@ export default async function ServiceDetailsPage({
     initialService = await fetchServiceSSR(safeServiceId);
     initialRuntime = await fetchServiceRuntimeSSR(safeServiceId);
 
-    if (initialService?.type !== "application") {
+    const rsId = initialService?.remoteServerId;
+    if (initialService?.type !== "application" && typeof rsId === "number" && rsId > 0) {
       try {
-        initialSecretsPaged = await fetchDockerSecretsPaged(1, DOCKER_LIST_PAGE_SIZE, "");
+        initialSecretsPaged = await fetchDockerSecretsPaged(rsId, 1, DOCKER_LIST_PAGE_SIZE, "");
       } catch {
         initialSecretsPaged = null;
       }

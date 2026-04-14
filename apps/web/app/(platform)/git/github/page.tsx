@@ -99,15 +99,6 @@ export default function GitHubGitSettingsPage() {
             Create GitHub App on GitHub
             <ExternalLink className="w-4 h-4 opacity-80" />
           </a>
-          <p className="text-[11px] text-muted-foreground/90 leading-relaxed border-t border-white/5 pt-4">
-            GitHub must be able to fetch your manifest URL:{" "}
-            <code className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-foreground dark:bg-black/40 dark:text-primary/90">
-              {API_BASE}/api/git/github/manifest
-            </code>
-            . For local development, use a tunnel (e.g. ngrok) for both the API and the web app, and
-            set <code className="text-[10px]">WEB_ORIGIN</code> and <code className="text-[10px]">API_PUBLIC_URL</code>{" "}
-            on the API to match your public URLs. Auto-deploy registers per-repo webhooks pointing to your remote deploy server so pushes trigger builds even when this PC is off.
-          </p>
         </div>
       </div>
 
@@ -121,7 +112,7 @@ export default function GitHubGitSettingsPage() {
             {data.github.appId ? (
               <span className="text-muted-foreground ml-2">· App ID {data.github.appId}</span>
             ) : null}
-            {data.updatedAt ? (
+            {connected && data.updatedAt ? (
               <span className="block text-[11px] text-muted-foreground/80 mt-1">
                 Last updated {new Date(data.updatedAt).toLocaleString()}
               </span>
