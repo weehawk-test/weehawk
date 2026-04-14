@@ -1,4 +1,5 @@
 import {
+  UnauthorizedException,
   Body,
   Controller,
   Delete,
@@ -24,7 +25,7 @@ import { PagedLogsQueryDto } from './dto/paged-logs-query.dto';
 import { BulkDeleteLogsDto } from './dto/bulk-delete-logs.dto';
 import { BulkDeleteChannelsDto } from './dto/bulk-delete-channels.dto';
 
-type AuthedReq = { user?: { email: string } };
+type AuthedReq = { user?: { email: string; userId: number } };
 
 @ApiTags('Notifications')
 @ApiBearerAuth()
@@ -40,19 +41,21 @@ type AuthedReq = { user?: { email: string } };
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationService) {}
 
-  private userId(_req?: unknown): number {
-    return 1;
+  private userId(req?: AuthedReq): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
   }
 
   @Get('channels')
   listChannels(@Req() req: AuthedReq) {
-    return this.notificationsService.listChannels(this.userId());
+    return this.notificationsService.listChannels(this.userId(req));
   }
 
   @Get('channels/paged')
   listChannelsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
     return this.notificationsService.listChannelsPaged(
-      this.userId(),
+      this.userId(req),
       q.page,
       q.pageSize,
       q.q,
@@ -65,7 +68,7 @@ export class NotificationsController {
     @Body() dto: BulkDeleteChannelsDto,
   ) {
     return this.notificationsService.bulkDeleteChannels(
-      this.userId(),
+      this.userId(req),
       dto.ids,
     );
   }
@@ -76,7 +79,7 @@ export class NotificationsController {
     @Body() dto: TestTelegramCredentialsDto,
   ) {
     return this.notificationsService.testTelegramCredentials(
-      this.userId(),
+      this.userId(req),
       dto.botToken,
       dto.chatId,
       dto.channelName,
@@ -88,7 +91,7 @@ export class NotificationsController {
     @Req() req: AuthedReq,
     @Body() dto: CreateNotificationChannelDto,
   ) {
-    return this.notificationsService.createChannel(this.userId(), dto);
+    return this.notificationsService.createChannel(this.userId(req), dto);
   }
 
   @Patch('channels/:id')
@@ -97,7 +100,7 @@ export class NotificationsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateNotificationChannelDto,
   ) {
-    return this.notificationsService.updateChannel(this.userId(), id, dto);
+    return this.notificationsService.updateChannel(this.userId(req), id, dto);
   }
 
   @Delete('channels/:id')
@@ -105,24 +108,24 @@ export class NotificationsController {
     @Req() req: AuthedReq,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    await this.notificationsService.deleteChannel(this.userId(), id);
+    await this.notificationsService.deleteChannel(this.userId(req), id);
     return { ok: true };
   }
 
   @Post('channels/:id/test')
   testChannel(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
-    return this.notificationsService.testChannel(this.userId(), id);
+    return this.notificationsService.testChannel(this.userId(req), id);
   }
 
   @Get('logs')
   listLogs(@Req() req: AuthedReq) {
-    return this.notificationsService.listLogs(this.userId());
+    return this.notificationsService.listLogs(this.userId(req));
   }
 
   @Get('logs/paged')
   listLogsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
     return this.notificationsService.listLogsPaged(
-      this.userId(),
+      this.userId(req),
       q.page,
       q.pageSize,
       q.q,
@@ -134,19 +137,19 @@ export class NotificationsController {
     @Req() req: AuthedReq,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    await this.notificationsService.deleteLog(this.userId(), id);
+    await this.notificationsService.deleteLog(this.userId(req), id);
     return { ok: true };
   }
 
   @Post('logs/bulk-delete')
   async bulkDeleteLogs(@Req() req: AuthedReq, @Body() dto: BulkDeleteLogsDto) {
-    return this.notificationsService.bulkDeleteLogs(this.userId(), dto.ids);
+    return this.notificationsService.bulkDeleteLogs(this.userId(req), dto.ids);
   }
 
   @Post('send')
   send(@Req() req: AuthedReq, @Body() dto: SendNotificationDto) {
     return this.notificationsService.sendMessage(
-      this.userId(),
+      this.userId(req),
       dto.channelId,
       dto.message,
     );

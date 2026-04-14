@@ -12,6 +12,9 @@ export class Notification {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
+  @Column({ name: 'user_id', type: 'int' })
+  userId!: number;
+
   @Column({ type: 'varchar', length: 500 })
   title!: string;
 

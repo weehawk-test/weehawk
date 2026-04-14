@@ -1,4 +1,6 @@
 import {
+  Req,
+  UnauthorizedException,
   Controller,
   Delete,
   Get,
@@ -20,12 +22,18 @@ import { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
 export class RegistryAccountsController {
   constructor(private readonly registryService: RegistryService) {}
 
+  private uid(req?: { user?: { userId?: number } }): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
+  }
+
   @Get()
   @ApiOperation({
     summary: 'List saved registry credentials (passwords never returned; Dokploy-style DB storage)',
   })
-  list() {
-    return this.registryService.listAccounts();
+  list(@Req() req: { user?: { userId: number } }) {
+    return this.registryService.listAccounts(this.uid(req));
   }
 
   @Post()
@@ -33,13 +41,13 @@ export class RegistryAccountsController {
     summary:
       'Verify login in an isolated Docker config, then store encrypted credentials for push/pull automation',
   })
-  create(@Body() dto: CreateRegistryAccountDto) {
-    return this.registryService.createAccount(dto);
+  create(@Req() req: { user?: { userId: number } }, @Body() dto: CreateRegistryAccountDto) {
+    return this.registryService.createAccount(this.uid(req), dto);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Remove a saved registry account' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.registryService.removeAccount(id);
+  remove(@Req() req: { user?: { userId: number } }, @Param('id', ParseIntPipe) id: number) {
+    return this.registryService.removeAccount(this.uid(req), id);
   }
 }

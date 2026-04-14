@@ -1,20 +1,16 @@
-import {
-  BadRequestException,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import * as bcrypt from 'bcrypt';
-import { User } from './entities/user.entity';
-import { UserProfileResponseDto } from './dto/user-profile-response.dto';
-import { UpdateProfileRequestDto } from './dto/update-profile-request.dto';
-import { ChangePasswordDto } from './dto/change-password.dto';
+import { User } from '../auth/entities/user.entity';
+import { UserProfileResponseDto } from '../auth/dto/user-profile-response.dto';
+import { UpdateProfileRequestDto } from '../auth/dto/update-profile-request.dto';
+import { RefreshTokenService } from '../token/refresh-token.service';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
+    private readonly refreshTokenService: RefreshTokenService,
   ) {}
 
   async getProfile(email: string): Promise<UserProfileResponseDto> {
@@ -23,10 +19,7 @@ export class UserService {
     return this.toProfileResponse(user);
   }
 
-  async updateProfile(
-    email: string,
-    dto: UpdateProfileRequestDto,
-  ): Promise<UserProfileResponseDto> {
+  async updateProfile(email: string, dto: UpdateProfileRequestDto): Promise<UserProfileResponseDto> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     user.firstName = dto.firstName;
@@ -35,46 +28,25 @@ export class UserService {
     return this.toProfileResponse(user);
   }
 
-  async changePassword(
-    email: string,
-    dto: ChangePasswordDto,
-  ): Promise<{ message: string }> {
-    const user = await this.userRepo.findOne({ where: { email } });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (user.passwordHash == null) {
-      throw new BadRequestException(
-        'This account does not have a password configured.',
-      );
-    }
-    const match = await bcrypt.compare(dto.currentPassword, user.passwordHash);
-    if (!match) {
-      throw new UnauthorizedException('Current password is incorrect');
-    }
-    if (dto.currentPassword === dto.newPassword) {
-      throw new BadRequestException(
-        'New password must be different from your current password.',
-      );
-    }
-    user.passwordHash = await bcrypt.hash(dto.newPassword, 10);
-    await this.userRepo.save(user);
-    return {
-      message: 'Password updated.',
-    };
-  }
-
   async deleteAccount(email: string): Promise<void> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
+    await this.refreshTokenService.deleteByUserId(user.id);
     await this.userRepo.remove(user);
   }
 
   toProfileResponse(user: User): UserProfileResponseDto {
     return {
+      userId: user.id,
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
+      role: user.role,
+      provider: user.provider,
       imageUrl: user.imageUrl ?? null,
       emailVerified: user.emailVerified,
+      enabled: user.enabled,
+      locked: user.locked,
       createdAt: user.createdAt,
       lastLogin: user.lastLogin ?? null,
     };

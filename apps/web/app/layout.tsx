@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
+import { cookies } from "next/headers";
 import "./globals.css";
 import { Providers } from "@/providers";
 import { fetchUserProfileSSR } from "@/lib/ssr/fetch-user-profile";
@@ -34,13 +35,17 @@ export default async function RootLayout({
         firstName: profile.firstName,
         lastName: profile.lastName,
         emailVerified: profile.emailVerified ?? false,
+          imageUrl: profile.imageUrl ?? null,
       }
     : null;
+  const cookieStore = await cookies();
+  const themeCookie = cookieStore.get("weehawk-theme")?.value;
+  const initialThemeClass = themeCookie === "light" ? "" : "dark";
 
   return (
     <html
       lang="en"
-      className={`${fontSans.variable} ${fontMono.variable} h-full`}
+      className={`${fontSans.variable} ${fontMono.variable} h-full ${initialThemeClass}`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background">

@@ -1,4 +1,6 @@
 import {
+  Req,
+  UnauthorizedException,
   Body,
   Controller,
   Get,
@@ -20,6 +22,12 @@ import { ExchangeGithubManifestDto } from './dto/exchange-github-manifest.dto';
 @Controller('api/git')
 export class GitController {
   constructor(private readonly gitService: GitService) {}
+
+  private uid(req?: { user?: { userId?: number } }): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
+  }
 
   /**
    * GitHub fetches this when the user opens Register GitHub App with a manifest URL.
@@ -46,8 +54,8 @@ export class GitController {
   @ApiOperation({
     summary: 'Get Git integration settings (secrets returned as booleans only)',
   })
-  async getSettings() {
-    return this.gitService.getSettings();
+  async getSettings(@Req() req: { user?: { userId: number } }) {
+    return this.gitService.getSettings(this.uid(req));
   }
 
   @Get('gitlab/projects')
@@ -58,11 +66,12 @@ export class GitController {
       'List GitLab projects (requires personal or group access token in Git settings)',
   })
   async listGitlabProjects(
+    @Req() req: { user?: { userId: number } },
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
   ) {
-    return this.gitService.listGitlabProjects({
+    return this.gitService.listGitlabProjects(this.uid(req), {
       page: page ? parseInt(page, 10) : undefined,
       perPage: perPage ? parseInt(perPage, 10) : undefined,
       search,
@@ -77,11 +86,12 @@ export class GitController {
       'List GitHub repositories accessible to the configured GitHub App (across all installations)',
   })
   async listGithubRepositories(
+    @Req() req: { user?: { userId: number } },
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
   ) {
-    return this.gitService.listGithubRepositories({
+    return this.gitService.listGithubRepositories(this.uid(req), {
       page: page ? parseInt(page, 10) : undefined,
       perPage: perPage ? parseInt(perPage, 10) : undefined,
       search,
@@ -101,8 +111,8 @@ export class GitController {
       forbidNonWhitelisted: true,
     }),
   )
-  async updateSettings(@Body() dto: UpdateGitSettingsDto) {
-    return this.gitService.updateSettings(dto);
+  async updateSettings(@Req() req: { user?: { userId: number } }, @Body() dto: UpdateGitSettingsDto) {
+    return this.gitService.updateSettings(this.uid(req), dto);
   }
 
   @Post('github/exchange')
@@ -118,7 +128,7 @@ export class GitController {
       forbidNonWhitelisted: true,
     }),
   )
-  async exchangeGithubManifest(@Body() dto: ExchangeGithubManifestDto) {
-    return this.gitService.exchangeGithubManifestCode(dto.code);
+  async exchangeGithubManifest(@Req() req: { user?: { userId: number } }, @Body() dto: ExchangeGithubManifestDto) {
+    return this.gitService.exchangeGithubManifestCode(this.uid(req), dto.code);
   }
 }

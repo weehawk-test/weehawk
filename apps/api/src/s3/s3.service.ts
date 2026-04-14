@@ -90,6 +90,14 @@ export class S3Service implements OnModuleInit {
     await this.migrateFromLegacyJsonIfNeeded();
   }
 
+  private async findProfileOrThrow(userId: number, name: string): Promise<S3Profile> {
+    const safe = name?.trim();
+    if (!safe) throw new BadRequestException('S3 profile name is required.');
+    const row = await this.profileRepo.findOne({ where: { userId, name: safe } });
+    if (!row) throw new NotFoundException(`S3 profile "${safe}" not found`);
+    return row;
+  }
+
   private async migrateFromLegacyJsonIfNeeded(): Promise<void> {
     const legacyPath = legacyProfilesFilePath();
     let raw: string;
@@ -217,17 +225,18 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  async listProfiles() {
+  async listProfiles(userId: number) {
     const rows = await this.profileRepo.find({
+      where: { userId },
       order: { updatedAt: 'DESC' },
       take: MAX_PROFILES,
     });
     return rows.map((p) => this.toPublicProfile(p));
   }
 
-  async saveProfile(dto: UpsertS3ProfileDto) {
+  async saveProfile(userId: number, dto: UpsertS3ProfileDto) {
     const base = this.normalizeProfileFields(dto);
-    let row = await this.profileRepo.findOne({ where: { name: base.name } });
+    let row = await this.profileRepo.findOne({ where: { userId, name: base.name } });
     const secretAccessKey = this.resolveSecretForSave(dto, row);
     const n: NormalizedS3Credentials = { ...base, secretAccessKey };
     if (row) {
@@ -239,6 +248,7 @@ export class S3Service implements OnModuleInit {
       row.forcePathStyle = n.forcePathStyle;
     } else {
       row = this.profileRepo.create({
+        userId,
         name: n.name,
         endpoint: n.endpoint,
         region: n.region,
@@ -250,12 +260,12 @@ export class S3Service implements OnModuleInit {
     }
     await this.profileRepo.save(row);
 
-    const all = await this.profileRepo.find({ order: { updatedAt: 'DESC' } });
+    const all = await this.profileRepo.find({ where: { userId }, order: { updatedAt: 'DESC' } });
     if (all.length > MAX_PROFILES) {
       await this.profileRepo.remove(all.slice(MAX_PROFILES));
     }
 
-    const saved = await this.profileRepo.findOne({ where: { name: n.name } });
+    const saved = await this.profileRepo.findOne({ where: { userId, name: n.name } });
     if (!saved) {
       throw new InternalServerErrorException('Failed to persist S3 profile');
     }
@@ -265,9 +275,9 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  async deleteProfile(name: string) {
+  async deleteProfile(userId: number, name: string) {
     const safeName = this.assertNonEmpty(name, 'name');
-    await this.profileRepo.delete({ name: safeName });
+    await this.profileRepo.delete({ userId, name: safeName });
     return { success: true, name: safeName };
   }
 
@@ -298,12 +308,12 @@ export class S3Service implements OnModuleInit {
     }
   }
 
-  async assertProfileExists(name: string): Promise<void> {
+  async assertProfileExists(name: string, userId?: number): Promise<void> {
     const safe = name?.trim();
     if (!safe) {
       throw new BadRequestException('S3 profile name is required.');
     }
-    const row = await this.profileRepo.findOne({ where: { name: safe } });
+    const row = await this.profileRepo.findOne({ where: userId != null ? { userId, name: safe } : { name: safe } });
     if (!row) {
       throw new BadRequestException(`S3 profile "${safe}" not found.`);
     }
@@ -335,6 +345,7 @@ export class S3Service implements OnModuleInit {
    * List “folders” (common prefixes) and objects at one level under `prefix` (virtual directories via delimiter).
    */
   async listBucketObjects(
+    userId: number,
     profileName: string,
     prefixRaw: string | undefined,
     continuationToken: string | undefined,
@@ -346,14 +357,7 @@ export class S3Service implements OnModuleInit {
     isTruncated: boolean;
     continuationToken?: string;
   }> {
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const normalizedPrefix = this.normalizeListPrefix(prefixRaw);
     const client = createS3Client(input);
@@ -411,17 +415,11 @@ export class S3Service implements OnModuleInit {
   }
 
   async deleteObject(
+    userId: number,
     profileName: string,
     objectKey: string,
   ): Promise<{ success: boolean; key: string }> {
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
@@ -446,16 +444,13 @@ export class S3Service implements OnModuleInit {
    * Delete up to 1000 objects in one S3 DeleteObjects call.
    */
   async deleteObjectsBatch(
+    userId: number,
     profileName: string,
     keys: string[],
   ): Promise<{
     deleted: string[];
     errors: { key: string; message: string }[];
   }> {
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
     if (!Array.isArray(keys) || keys.length === 0) {
       throw new BadRequestException('keys must be a non-empty array.');
     }
@@ -471,10 +466,7 @@ export class S3Service implements OnModuleInit {
         sanitized.push(k);
       }
     }
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const client = createS3Client(input);
     try {
@@ -526,6 +518,7 @@ export class S3Service implements OnModuleInit {
    * Stops after PREFIX_SUMMARY_MAX_PAGES pages; sets isPartialSummary if more keys remain.
    */
   async summarizePrefix(
+    userId: number,
     profileName: string,
     prefixRaw: string,
   ): Promise<{
@@ -535,15 +528,8 @@ export class S3Service implements OnModuleInit {
     isPartialSummary: boolean;
   }> {
     const PREFIX_SUMMARY_MAX_PAGES = 200;
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
     const prefix = this.normalizeFolderPrefix(prefixRaw);
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const client = createS3Client(input);
     let objectCount = 0;
@@ -599,6 +585,7 @@ export class S3Service implements OnModuleInit {
    * List and delete every object whose key starts with `prefix` (recursive). Streams in batches to limit memory.
    */
   async deleteObjectsUnderPrefix(
+    userId: number,
     profileName: string,
     prefixRaw: string,
   ): Promise<{
@@ -606,15 +593,8 @@ export class S3Service implements OnModuleInit {
     errors: { key: string; message: string }[];
   }> {
     const MAX_LIST = 1_000_000;
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
     const prefix = this.normalizeFolderPrefix(prefixRaw);
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const client = createS3Client(input);
     const errors: { key: string; message: string }[] = [];
@@ -691,6 +671,7 @@ export class S3Service implements OnModuleInit {
    * Stream object bytes for download (caller must consume the stream; client is destroyed when the stream ends or errors).
    */
   async getObjectStream(
+    userId: number,
     profileName: string,
     objectKey: string,
   ): Promise<{
@@ -699,14 +680,7 @@ export class S3Service implements OnModuleInit {
     contentLength?: number;
     filename: string;
   }> {
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
@@ -748,18 +722,12 @@ export class S3Service implements OnModuleInit {
   }
 
   async uploadLocalFile(
+    userId: number,
     profileName: string,
     localAbsolutePath: string,
     objectKey: string,
   ): Promise<{ bucket: string; key: string }> {
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
@@ -805,18 +773,12 @@ export class S3Service implements OnModuleInit {
    * Download an object to a local file path (writes the full object, then returns).
    */
   async downloadObjectToFile(
+    userId: number,
     profileName: string,
     objectKey: string,
     destAbsolutePath: string,
   ): Promise<void> {
-    const safeName = profileName?.trim();
-    if (!safeName) {
-      throw new BadRequestException('S3 profile name is required.');
-    }
-    const row = await this.profileRepo.findOne({ where: { name: safeName } });
-    if (!row) {
-      throw new NotFoundException(`S3 profile "${safeName}" not found`);
-    }
+    const row = await this.findProfileOrThrow(userId, profileName);
     const input = rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const resolvedPath = path.resolve(destAbsolutePath);

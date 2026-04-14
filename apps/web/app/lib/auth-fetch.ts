@@ -1,24 +1,45 @@
 import { API_BASE } from "./api";
-export const AUTH_CHANGE_EVENT = "weehawk-auth-storage";
+import {
+  clearStoredSession,
+  readStoredSession,
+  updateStoredAccessToken,
+  writeStoredSession,
+} from "./auth-storage";
 
-let refreshInFlight: Promise<boolean> | null = null;
+let refreshInFlight: Promise<string | null> | null = null;
 
 /** Single-flight refresh so parallel 401s share one /refresh call. */
-async function refreshTokensOnce(): Promise<boolean> {
+async function refreshTokensOnce(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
     try {
+      const current = readStoredSession();
+      if (!current?.refreshToken) return null;
       const r = await fetch(`${API_BASE}/api/auth/refresh`, {
         method: "POST",
-        headers: { Accept: "application/json" },
-        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refreshToken: current.refreshToken }),
       });
-      if (!r.ok) return false;
-      window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
-      return true;
+      if (!r.ok) {
+        clearStoredSession();
+        return null;
+      }
+      const next = (await r.json()) as {
+        accessToken: string;
+        refreshToken: string;
+      };
+      writeStoredSession({
+        accessToken: next.accessToken,
+        refreshToken: next.refreshToken,
+        user: current.user,
+      });
+      return next.accessToken;
     } catch {
-      return false;
+      return null;
     } finally {
       refreshInFlight = null;
     }
@@ -28,32 +49,34 @@ async function refreshTokensOnce(): Promise<boolean> {
 }
 
 /**
- * Authenticated fetch: on 401, tries POST /api/auth/refresh once (cookies),
+ * Authenticated fetch: on 401, tries POST /api/auth/refresh once,
  * then retries so expired JWTs do not strand the UI.
  */
 export async function authFetch(
-  _accessToken: string,
+  accessToken: string,
   url: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const run = () => {
+  const run = (token: string) => {
     const headers = new Headers(init.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
-    return fetch(url, { ...init, headers, credentials: "include" });
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    return fetch(url, { ...init, headers });
   };
 
-  let res = await run();
+  let res = await run(accessToken);
   if (res.status !== 401 || typeof window === "undefined") return res;
 
-  const ok = await refreshTokensOnce();
-  if (!ok) return res;
+  const nextAccessToken = await refreshTokensOnce();
+  if (!nextAccessToken) return res;
 
-  res = await run();
+  updateStoredAccessToken(nextAccessToken);
+  res = await run(nextAccessToken);
   return res;
 }
 
 /**
- * POST `multipart/form-data` with cookie auth and optional upload progress (browser only).
+ * POST `multipart/form-data` with bearer auth and optional upload progress (browser only).
  * Mirrors {@link authFetch} 401 → refresh → retry once. Returns response body text.
  */
 export async function authFormDataUploadWithProgress(
@@ -68,9 +91,12 @@ export async function authFormDataUploadWithProgress(
   const send = (isRetry: boolean): Promise<string> =>
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.withCredentials = true;
       xhr.open("POST", url);
       xhr.setRequestHeader("Accept", "application/json");
+      const token = readStoredSession()?.accessToken ?? "";
+      if (token) {
+        xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      }
       xhr.upload.onprogress = (e) => {
         if (!onUploadProgress) return;
         if (e.lengthComputable && e.total > 0) {
@@ -81,8 +107,8 @@ export async function authFormDataUploadWithProgress(
       };
       xhr.onload = () => {
         if (xhr.status === 401 && !isRetry) {
-          void refreshTokensOnce().then((ok) => {
-            if (ok) {
+          void refreshTokensOnce().then((nextToken) => {
+            if (nextToken) {
               void send(true).then(resolve).catch(reject);
             } else {
               reject(new Error(xhr.responseText || "Session expired (401)."));

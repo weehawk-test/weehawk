@@ -23,19 +23,15 @@ export default async function ConsoleSecretsPage({
     return (
       <div className="glass-panel rounded-xl border border-border p-6 space-y-3">
         <p className="text-sm text-foreground/90">
-          Docker Swarm secrets in this UI are managed on the Weehawk API host (local engine), not over the remote
-          SSH console.
+          Docker Swarm secrets are managed globally from the platform secrets page, not from per-server remote
+          console views.
         </p>
         <p className="text-sm text-muted-foreground">
           Open{" "}
-          <Link href="/console/local/secrets" className="text-primary hover:underline">
-            Local console → Secrets
-          </Link>{" "}
-          to list and create secrets, or continue using the global{" "}
           <Link href="/secrets" className="text-primary hover:underline">
             /secrets
           </Link>{" "}
-          page.
+          to list and create secrets.
         </p>
       </div>
     );

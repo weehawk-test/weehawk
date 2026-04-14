@@ -9,8 +9,6 @@ import {
   WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
 } from './traefik.constants';
 
-const SINGLETON_ID = 1;
-
 @Injectable()
 export class TraefikService {
   constructor(
@@ -18,11 +16,12 @@ export class TraefikService {
     private readonly repo: Repository<TraefikSettings>,
   ) {}
 
-  async getSettings(): Promise<TraefikSettings> {
-    let row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
+  async getSettings(userId = 1): Promise<TraefikSettings> {
+    let row = await this.repo.findOne({ where: { userId } });
     if (!row) {
       row = this.repo.create({
-        id: SINGLETON_ID,
+        id: userId,
+        userId,
         acmeEmail: 'admin@example.com',
         platformDomain: null,
         acmeStorageHostPath: '/var/www/weehawk/traefik/data/acme.json',
@@ -44,8 +43,8 @@ export class TraefikService {
     return row;
   }
 
-  async updateSettings(dto: UpdateTraefikSettingsDto): Promise<TraefikSettings> {
-    const current = await this.getSettings();
+  async updateSettings(userId = 1, dto: UpdateTraefikSettingsDto): Promise<TraefikSettings> {
+    const current = await this.getSettings(userId);
     if (dto.acmeEmail !== undefined) current.acmeEmail = dto.acmeEmail.trim();
     if (dto.platformDomain !== undefined) {
       const t = dto.platformDomain.trim();
@@ -229,8 +228,8 @@ providers:
 `;
   }
 
-  async getResponsePayload() {
-    const s = await this.getSettings();
+  async getResponsePayload(userId = 1) {
+    const s = await this.getSettings(userId);
     return {
       ...this.toPlain(s),
       generatedStackCompose: this.buildStackComposeYaml(s),

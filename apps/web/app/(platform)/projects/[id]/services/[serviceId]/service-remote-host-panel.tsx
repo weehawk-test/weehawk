@@ -29,9 +29,6 @@ import {
 } from "@/components/ui/collapsible";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 
-/** Select value: build with the API host’s local Docker daemon (not SSH). */
-const BUILD_ON_API_VALUE = "__local_api__";
-
 /** Keep in sync with `WEEHAWK_REMOTE_DEPLOYMENTS_BASE` in apps/api remote-servers.service. */
 const REMOTE_DEPLOYMENTS_DIR = "/opt/weehawk-deployments";
 
@@ -147,11 +144,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   );
 
   const [buildValue, setBuildValue] = useState<string>(() =>
-    service.buildOnLocalDockerHost
-      ? BUILD_ON_API_VALUE
-      : service.buildRemoteServerId != null
-        ? String(service.buildRemoteServerId)
-        : "",
+    service.buildRemoteServerId != null ? String(service.buildRemoteServerId) : "",
   );
 
   const [registryValue, setRegistryValue] = useState<string>(() => service.registryPushImage ?? "");
@@ -194,14 +187,8 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   }, [savedDeployServerId]);
 
   useEffect(() => {
-    setBuildValue(
-      currentBuildOnApi
-        ? BUILD_ON_API_VALUE
-        : savedBuildServerId != null
-          ? String(savedBuildServerId)
-          : "",
-    );
-  }, [savedBuildServerId, currentBuildOnApi]);
+    setBuildValue(savedBuildServerId != null ? String(savedBuildServerId) : "");
+  }, [savedBuildServerId]);
 
   useEffect(() => {
     setRegistryValue(service.registryPushImage ?? "");
@@ -270,29 +257,22 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     if (isPrebuiltImageMode) return false;
     const deployId = value === "" ? null : Number(value);
     if (deployId === null) return false;
-    const buildOnApi = buildValue === BUILD_ON_API_VALUE;
-    const effectiveBuildId = buildOnApi
-      ? null
-      : buildValue === ""
+    const effectiveBuildId =
+      buildValue === ""
         ? deployId
         : Number.isFinite(Number(buildValue))
           ? Number(buildValue)
           : null;
-    return buildOnApi || effectiveBuildId !== deployId;
+    return effectiveBuildId !== deployId;
   }, [isApplication, isPrebuiltImageMode, value, buildValue]);
 
   const selectedDeployServerId = value === "" ? null : coerceServerId(value);
   const deployDirty = selectedDeployServerId !== savedDeployServerId;
-  const desiredBuildOnApi = buildValue === BUILD_ON_API_VALUE;
-  const desiredDedicatedBuildId =
-    desiredBuildOnApi || buildValue === ""
-      ? null
-      : coerceServerId(buildValue);
+  const desiredDedicatedBuildId = buildValue === "" ? null : coerceServerId(buildValue);
   const buildDirty =
     isApplication &&
     !isPrebuiltImageMode &&
-    (desiredBuildOnApi !== currentBuildOnApi ||
-      (!desiredBuildOnApi && desiredDedicatedBuildId !== savedBuildServerId));
+    (currentBuildOnApi || desiredDedicatedBuildId !== savedBuildServerId);
   const currentRegistry = (service.registryPushImage ?? "").trim();
   const registryDirty =
     showRegistryImageField && registryValue.trim() !== currentRegistry;
@@ -334,7 +314,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     if (value === "") {
       toast({
         title: "Remote host required",
-        description: "Deploy host must be a remote Deploy server. Local server is build-only.",
+        description: "Deploy host must be a remote Deploy server.",
         variant: "destructive",
       });
       return;
@@ -406,18 +386,13 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         value === "" ? null : Number.isFinite(Number(value)) ? Number(value) : null;
     }
     if (buildDirty) {
-      if (buildValue === BUILD_ON_API_VALUE) {
-        patch.buildOnLocalDockerHost = true;
-        patch.buildRemoteServerId = null;
-      } else {
-        patch.buildOnLocalDockerHost = false;
-        patch.buildRemoteServerId =
-          buildValue === ""
-            ? null
-            : Number.isFinite(Number(buildValue))
-              ? Number(buildValue)
-              : null;
-      }
+      patch.buildOnLocalDockerHost = false;
+      patch.buildRemoteServerId =
+        buildValue === ""
+          ? null
+          : Number.isFinite(Number(buildValue))
+            ? Number(buildValue)
+            : null;
     }
     if (registryDirty) {
       const t = registryValue.trim();
@@ -806,7 +781,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                     <option value="">
                       Same as deploy host
                     </option>
-                    <option value={BUILD_ON_API_VALUE}>Build on this server (API Docker)</option>
                     {buildOptions.map((r) => (
                       <option key={r.id} value={String(r.id)}>
                         {r.name} — {r.sshUser}@{r.host}
@@ -863,7 +837,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           !q.isLoading &&
           !q.isError && (
             <p className="text-xs text-amber-200/90 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2">
-              Only <strong>Build</strong> hosts here—add a <strong>Deploy</strong> host. Local server is build-only.
+              Only <strong>Build</strong> hosts here - add a <strong>Deploy</strong> host.
             </p>
           )}
       </div>

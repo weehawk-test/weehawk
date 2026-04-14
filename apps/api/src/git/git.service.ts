@@ -11,8 +11,6 @@ import { Repository } from 'typeorm';
 import { GitIntegrationSettings } from './entities/git-integration.entity';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
 
-const SINGLETON_ID = 1;
-
 export type GitSettingsPublic = {
   github: {
     appId: string | null;
@@ -69,23 +67,26 @@ export class GitService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    if (!row) {
-      await this.repo.save(
-        this.repo.create({
-          id: SINGLETON_ID,
-          githubAppId: null,
-          githubClientId: null,
-          githubClientSecret: null,
-          githubPrivateKey: null,
-          githubWebhookSecret: null,
-          gitlabBaseUrl: null,
-          gitlabApplicationId: null,
-          gitlabApplicationSecret: null,
-          gitlabGroupAccessToken: null,
-        }),
-      );
-    }
+    return;
+  }
+
+  private async settingsRowForUser(userId: number): Promise<GitIntegrationSettings> {
+    let row = await this.repo.findOne({ where: { userId } });
+    if (row) return row;
+    row = this.repo.create({
+      id: userId,
+      userId,
+      githubAppId: null,
+      githubClientId: null,
+      githubClientSecret: null,
+      githubPrivateKey: null,
+      githubWebhookSecret: null,
+      gitlabBaseUrl: null,
+      gitlabApplicationId: null,
+      gitlabApplicationSecret: null,
+      gitlabGroupAccessToken: null,
+    });
+    return this.repo.save(row);
   }
 
   private toPublic(row: GitIntegrationSettings): GitSettingsPublic {
@@ -105,15 +106,8 @@ export class GitService implements OnModuleInit {
     };
   }
 
-  async getSettings(): Promise<GitSettingsPublic> {
-    let row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    if (!row) {
-      await this.onModuleInit();
-      row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    }
-    if (!row) {
-      throw new InternalServerErrorException('Git settings unavailable');
-    }
+  async getSettings(userId = 1): Promise<GitSettingsPublic> {
+    const row = await this.settingsRowForUser(userId);
     return this.toPublic(row);
   }
 
@@ -127,15 +121,8 @@ export class GitService implements OnModuleInit {
     return t;
   }
 
-  async updateSettings(dto: UpdateGitSettingsDto): Promise<GitSettingsPublic> {
-    let row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    if (!row) {
-      await this.onModuleInit();
-      row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    }
-    if (!row) {
-      throw new InternalServerErrorException('Git settings row missing');
-    }
+  async updateSettings(userId = 1, dto: UpdateGitSettingsDto): Promise<GitSettingsPublic> {
+    const row = await this.settingsRowForUser(userId);
 
     if (dto.githubAppId !== undefined) {
       const v = dto.githubAppId.trim();
@@ -178,16 +165,8 @@ export class GitService implements OnModuleInit {
     return this.toPublic(row);
   }
 
-  private async gitlabSettingsRow(): Promise<GitIntegrationSettings> {
-    let row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    if (!row) {
-      await this.onModuleInit();
-      row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    }
-    if (!row) {
-      throw new InternalServerErrorException('Git settings row missing');
-    }
-    return row;
+  private async gitlabSettingsRow(userId = 1): Promise<GitIntegrationSettings> {
+    return this.settingsRowForUser(userId);
   }
 
   /**
@@ -241,12 +220,12 @@ export class GitService implements OnModuleInit {
    * Without this, GitLab returns a broad “visible” list including many public projects unrelated to the user.
    * Requires a personal or group access token.
    */
-  async listGitlabProjects(params: {
+  async listGitlabProjects(userId = 1, params: {
     page?: number;
     perPage?: number;
     search?: string;
   }): Promise<{ projects: GitlabProjectListItem[]; totalPages: number; page: number }> {
-    const row = await this.gitlabSettingsRow();
+    const row = await this.gitlabSettingsRow(userId);
     const token = row.gitlabGroupAccessToken?.trim();
     if (!token) {
       throw new BadRequestException(
@@ -617,7 +596,7 @@ export class GitService implements OnModuleInit {
    * Exchanges the temporary code from GitHub after manifest registration and persists credentials.
    * @see https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-a-github-app-from-a-manifest
    */
-  async exchangeGithubManifestCode(code: string): Promise<GitSettingsPublic> {
+  async exchangeGithubManifestCode(userId = 1, code: string): Promise<GitSettingsPublic> {
     const trimmed = code?.trim();
     if (!trimmed) {
       throw new BadRequestException('Missing manifest code');
@@ -654,14 +633,7 @@ export class GitService implements OnModuleInit {
     const pem = data['pem'];
     const webhookSecret = data['webhook_secret'];
 
-    let row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    if (!row) {
-      await this.onModuleInit();
-      row = await this.repo.findOne({ where: { id: SINGLETON_ID } });
-    }
-    if (!row) {
-      throw new InternalServerErrorException('Git settings row missing');
-    }
+    const row = await this.settingsRowForUser(userId);
 
     if (typeof id === 'number' || typeof id === 'string') {
       row.githubAppId = String(id);
@@ -685,8 +657,8 @@ export class GitService implements OnModuleInit {
 
   // ─── GitHub App (installation token + repo list + clone) ─────────────────
 
-  private async githubAppCredentialsRow(): Promise<GitIntegrationSettings> {
-    const row = await this.gitlabSettingsRow();
+  private async githubAppCredentialsRow(userId = 1): Promise<GitIntegrationSettings> {
+    const row = await this.gitlabSettingsRow(userId);
     const appId = row.githubAppId?.trim();
     const pem = row.githubPrivateKey?.trim();
     if (!appId || !pem) {
@@ -888,7 +860,7 @@ export class GitService implements OnModuleInit {
   /**
    * Repositories across all installations of this GitHub App (paginated after merge + optional search).
    */
-  async listGithubRepositories(params: {
+  async listGithubRepositories(userId = 1, params: {
     page?: number;
     perPage?: number;
     search?: string;
@@ -897,7 +869,7 @@ export class GitService implements OnModuleInit {
     totalPages: number;
     page: number;
   }> {
-    const row = await this.githubAppCredentialsRow();
+    const row = await this.githubAppCredentialsRow(userId);
     const appJwt = this.createGithubAppJwt(
       row.githubAppId!.trim(),
       row.githubPrivateKey!.trim(),

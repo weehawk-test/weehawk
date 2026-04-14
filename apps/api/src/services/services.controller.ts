@@ -1,4 +1,5 @@
 import {
+  UnauthorizedException,
   Controller,
   Get,
   Post,
@@ -46,8 +47,10 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 export class ServicesController {
   constructor(private readonly servicesService: ServicesService) {}
 
-  private uid(_req?: unknown): number {
-    return 1;
+  private uid(req?: { user?: { userId?: number } }): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
   }
 
   private parseEngineOrThrow(engine: string): DatabaseEngine {

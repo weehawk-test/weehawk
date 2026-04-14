@@ -1,4 +1,5 @@
 import {
+  UnauthorizedException,
   Body,
   Controller,
   Delete,
@@ -18,7 +19,7 @@ import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJobsService } from './cron-jobs.service';
 
-type AuthedReq = { user?: { email: string } };
+type AuthedReq = { user?: { email: string; userId: number } };
 
 @ApiTags('Cron Jobs')
 @ApiBearerAuth()
@@ -34,23 +35,25 @@ type AuthedReq = { user?: { email: string } };
 export class CronJobsController {
   constructor(private readonly cronJobsService: CronJobsService) {}
 
-  private uid(_req?: unknown): number {
-    return 1;
+  private uid(req?: AuthedReq): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
   }
 
   @Post()
   create(@Req() req: AuthedReq, @Body() dto: CreateCronJobDto) {
-    return this.cronJobsService.create(this.uid(), dto);
+    return this.cronJobsService.create(this.uid(req), dto);
   }
 
   @Get()
   list(@Req() req: AuthedReq) {
-    return this.cronJobsService.list(this.uid());
+    return this.cronJobsService.list(this.uid(req));
   }
 
   @Get(':id')
   findOne(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
-    return this.cronJobsService.findOne(this.uid(), id);
+    return this.cronJobsService.findOne(this.uid(req), id);
   }
 
   @Patch(':id')
@@ -59,12 +62,12 @@ export class CronJobsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateCronJobDto,
   ) {
-    return this.cronJobsService.update(this.uid(), id, dto);
+    return this.cronJobsService.update(this.uid(req), id, dto);
   }
 
   @Delete(':id')
   async remove(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
-    await this.cronJobsService.remove(this.uid(), id);
+    await this.cronJobsService.remove(this.uid(req), id);
     return { ok: true };
   }
 }

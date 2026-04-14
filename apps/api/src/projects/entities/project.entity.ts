@@ -10,13 +10,16 @@ import {
 import { Service } from 'src/services/entities/service.entity';
 
 @Entity('projects')
-@Index(['name'], { unique: true })
+@Index(['userId', 'name'], { unique: true })
 export class Project {
   @PrimaryGeneratedColumn()
   id!: number;
 
   @Column({ type: 'varchar', length: 100 })
   name!: string;
+
+  @Column({ name: 'user_id', type: 'int' })
+  userId!: number;
 
   @Column({ type: 'text', nullable: true })
   description?: string;

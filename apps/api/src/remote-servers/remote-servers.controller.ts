@@ -1,4 +1,5 @@
 import {
+  UnauthorizedException,
   Body,
   Controller,
   DefaultValuePipe,
@@ -32,8 +33,10 @@ export class RemoteServersController {
     private readonly remoteServerProvisionService: RemoteServerProvisionService,
   ) {}
 
-  private uid(_req?: unknown): number {
-    return 1;
+  private uid(req?: { user?: { userId?: number } }): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
   }
 
   @Get()

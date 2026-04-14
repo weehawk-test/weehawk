@@ -121,14 +121,15 @@ export class RegistryService {
     };
   }
 
-  async listAccounts(): Promise<RegistryAccountSafe[]> {
+  async listAccounts(userId: number): Promise<RegistryAccountSafe[]> {
     const rows = await this.registryAccountRepository.find({
+      where: { userId },
       order: { name: 'ASC' },
     });
     return rows.map((r) => this.toSafe(r));
   }
 
-  async createAccount(dto: CreateRegistryAccountDto): Promise<RegistryAccountSafe> {
+  async createAccount(userId: number, dto: CreateRegistryAccountDto): Promise<RegistryAccountSafe> {
     const providerUrl = normalizeProviderUrl(dto.providerUrl);
     if (!providerUrl) {
       throw new BadRequestException('providerUrl is required');
@@ -155,7 +156,7 @@ export class RegistryService {
 
       const enc = encryptPrivateKey(password, this.getEncryptionSecret());
       const existing = await this.registryAccountRepository.findOne({
-        where: { providerUrl },
+        where: { userId, providerUrl },
       });
       if (existing) {
         existing.name = name;
@@ -166,6 +167,7 @@ export class RegistryService {
         return this.toSafe(saved);
       }
       const created = this.registryAccountRepository.create({
+        userId,
         name,
         providerUrl,
         username,
@@ -189,8 +191,8 @@ export class RegistryService {
     }
   }
 
-  async removeAccount(id: number): Promise<{ success: true }> {
-    const row = await this.registryAccountRepository.findOne({ where: { id } });
+  async removeAccount(userId: number, id: number): Promise<{ success: true }> {
+    const row = await this.registryAccountRepository.findOne({ where: { id, userId } });
     if (!row) throw new NotFoundException(`Registry account #${id} not found`);
     await this.registryAccountRepository.remove(row);
     return { success: true };

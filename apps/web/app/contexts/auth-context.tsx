@@ -4,10 +4,20 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
+import { getProfile } from "@/lib/user-api";
+import { logoutApi } from "@/lib/auth-api";
+import {
+  AUTH_CHANGE_EVENT,
+  clearStoredSession,
+  readStoredSession,
+  type StoredAuthUser,
+  writeStoredSession,
+} from "@/lib/auth-storage";
 
 export type AuthUser = {
   userId: number;
@@ -15,14 +25,18 @@ export type AuthUser = {
   firstName: string;
   lastName: string;
   emailVerified?: boolean;
+  imageUrl?: string | null;
 };
 
 type LocalSessionResponse = {
+  accessToken: string;
+  refreshToken: string;
   userId: number;
   email: string;
   firstName: string;
   lastName: string;
   emailVerified?: boolean;
+  imageUrl?: string | null;
 };
 
 type AuthContextValue = {
@@ -33,7 +47,7 @@ type AuthContextValue = {
   /** Refetch profile from the API (cookies) and update local user state. */
   refreshSession: () => Promise<void>;
   updateUser: (
-    patch: Partial<Pick<AuthUser, "firstName" | "lastName" | "emailVerified">>,
+    patch: Partial<Pick<AuthUser, "firstName" | "lastName" | "emailVerified" | "imageUrl">>,
   ) => void;
   logout: () => Promise<void>;
 };
@@ -48,33 +62,71 @@ export function AuthProvider({
   /** From RootLayout SSR (`/api/user/profile`) — avoids a client-side profile fetch on load. */
   initialUser: AuthUser | null;
 }) {
-  const localUser = useMemo<AuthUser>(
-    () =>
-      initialUser ?? {
-        userId: 1,
-        email: "desktop@local.weehawk",
-        firstName: "Desktop",
-        lastName: "User",
-        emailVerified: true,
-      },
-    [initialUser],
-  );
-  const [accessToken] = useState<string | null>("desktop-local-session");
-  const [user, setUser] = useState<AuthUser | null>(localUser);
-  const [isReady] = useState(true);
+  // Keep server/client initial render deterministic to avoid hydration mismatch.
+  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(initialUser);
+  const [isReady, setIsReady] = useState(false);
 
-  const refreshSession = useCallback(async () => {
-    setUser((prev) => prev ?? localUser);
+  const syncFromStorage = useCallback(() => {
+    const session = readStoredSession();
+    if (!session) {
+      setAccessToken(null);
+      setUser(null);
+      return;
+    }
+    setAccessToken(session.accessToken);
+    setUser(session.user);
   }, []);
 
+  useEffect(() => {
+    syncFromStorage();
+    setIsReady(true);
+    const onAuthChange = () => syncFromStorage();
+    window.addEventListener(AUTH_CHANGE_EVENT, onAuthChange);
+    return () => window.removeEventListener(AUTH_CHANGE_EVENT, onAuthChange);
+  }, [syncFromStorage]);
+
+  const refreshSession = useCallback(async () => {
+    if (!accessToken) {
+      setUser(null);
+      return;
+    }
+    const profile = await getProfile(accessToken);
+    const stored = readStoredSession();
+    const nextUser: StoredAuthUser = {
+      userId: profile.userId,
+      email: profile.email,
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      emailVerified: profile.emailVerified,
+      imageUrl: profile.imageUrl,
+    };
+    if (stored) {
+      writeStoredSession({
+        accessToken: stored.accessToken,
+        refreshToken: stored.refreshToken,
+        user: nextUser,
+      });
+    }
+    setUser(nextUser);
+  }, [accessToken]);
+
   const setSession = useCallback((res: LocalSessionResponse) => {
-    setUser({
+    const nextUser: StoredAuthUser = {
       userId: res.userId,
       email: res.email,
       firstName: res.firstName,
       lastName: res.lastName,
       emailVerified: res.emailVerified ?? false,
+      imageUrl: res.imageUrl ?? null,
+    };
+    writeStoredSession({
+      accessToken: res.accessToken,
+      refreshToken: res.refreshToken,
+      user: nextUser,
     });
+    setAccessToken(res.accessToken);
+    setUser(nextUser);
   }, []);
 
   const updateUser = useCallback(
@@ -89,8 +141,21 @@ export function AuthProvider({
   );
 
   const logout = useCallback(async () => {
-    setUser(localUser);
-  }, [localUser]);
+    const session = readStoredSession();
+    if (session?.accessToken && session.refreshToken) {
+      try {
+        await logoutApi({
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+        });
+      } catch {
+        // ignore logout network/server errors and clear local session anyway
+      }
+    }
+    clearStoredSession();
+    setAccessToken(null);
+    setUser(null);
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -122,6 +187,6 @@ export function useAuth(): AuthContextValue {
  * re-read storage before redirecting.
  */
 export function useRequireAuth() {
-  const { accessToken, isReady } = useAuth();
-  return { accessToken, isReady, allowed: true };
+  const { accessToken, user, isReady } = useAuth();
+  return { accessToken, isReady, allowed: Boolean(accessToken || user) };
 }

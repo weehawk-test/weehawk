@@ -60,7 +60,7 @@ export class Service {
   isActive!: boolean;
 
   /** Set when `POST .../execute` completes successfully (Docker deploy ran). */
-  @Column({ type: 'datetime', nullable: true })
+  @Column({ type: 'timestamptz', nullable: true })
   lastDeployedAt?: Date | null;
 
   @ManyToOne(() => Project, (project) => project.services, {

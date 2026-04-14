@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -9,9 +10,13 @@ import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik.constants';
 
 /** Singleton row (`id` = 1): Traefik / ACME defaults for generated compose snippets and app labels. */
 @Entity('traefik_settings')
+@Index(['userId'], { unique: true })
 export class TraefikSettings {
   @PrimaryColumn({ type: 'int' })
   id!: number;
+
+  @Column({ name: 'user_id', type: 'int' })
+  userId!: number;
 
   @Column({ type: 'varchar', length: 254, default: 'admin@example.com' })
   acmeEmail!: string;

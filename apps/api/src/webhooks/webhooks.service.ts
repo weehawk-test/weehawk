@@ -546,6 +546,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
     try {
       const { bucket, key: uploadedKey } = await this.s3Service.uploadLocalFile(
+        userId,
         trimmed,
         localPath,
         key,
@@ -654,6 +655,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
 
     const w = this.webhookRepo.create({
+      userId,
       secretToken,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
@@ -718,7 +720,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         serviceAction: 'docker_command',
       },
     });
-    const userId = 1;
+    const userId = service.project?.userId ?? 0;
     for (const w of rows) {
       if (w.remoteServerId == null) continue;
       if (!looksLikeGeneratedOnHostRedeployScript(w.dockerCommand)) continue;
@@ -747,9 +749,9 @@ export class WebhooksService implements OnApplicationBootstrap {
   ): Promise<WebhookListRow[]> {
     const includeHidden = opts?.includeHidden === true;
     const list = includeHidden
-      ? await this.webhookRepo.find({ order: { createdAt: 'DESC' } })
+      ? await this.webhookRepo.find({ where: { userId }, order: { createdAt: 'DESC' } })
       : await this.webhookRepo.find({
-          where: { hiddenFromWebhooksList: false },
+          where: { userId, hiddenFromWebhooksList: false },
           order: { createdAt: 'DESC' },
         });
     return await Promise.all(list.map((w) => this.toListRow(userId, w)));
@@ -761,16 +763,17 @@ export class WebhooksService implements OnApplicationBootstrap {
    */
   async findWebhooksForService(
     serviceId: number,
+    userId: number,
   ): Promise<WebhookListRow[]> {
     const rows = await this.webhookRepo.find({
-      where: { serviceId },
+      where: { serviceId, userId },
       order: { createdAt: 'DESC' },
     });
-    return await Promise.all(rows.map((w) => this.toListRow(1, w)));
+    return await Promise.all(rows.map((w) => this.toListRow(userId, w)));
   }
 
   async findOne(userId: number, id: number): Promise<WebhookDetailRow> {
-    const w = await this.webhookRepo.findOne({ where: { id } });
+    const w = await this.webhookRepo.findOne({ where: { id, userId } });
     if (!w) throw new NotFoundException('Webhook not found');
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
     return this.toDetailRow(w, remoteTriggerUrl);
@@ -781,7 +784,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     id: number,
     dto: UpdateWebhookDto,
   ): Promise<WebhookDetailRow> {
-    const w = await this.webhookRepo.findOne({ where: { id } });
+    const w = await this.webhookRepo.findOne({ where: { id, userId } });
     if (!w) throw new NotFoundException('Webhook not found');
 
     const beforeRemote = w.remoteServerId;
@@ -967,7 +970,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   }
 
   async remove(userId: number, id: number): Promise<void> {
-    const w = await this.webhookRepo.findOne({ where: { id } });
+    const w = await this.webhookRepo.findOne({ where: { id, userId } });
     if (!w) throw new NotFoundException('Webhook not found');
     const remoteId = w.remoteServerId;
     if (
@@ -979,7 +982,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         .removeRemoteWebhookScript(w.remoteServerId, userId, w.secretToken)
         .catch(() => undefined);
     }
-    const res = await this.webhookRepo.delete({ id });
+    const res = await this.webhookRepo.delete({ id, userId });
     if (!res.affected) throw new NotFoundException('Webhook not found');
     await this.syncWebhookAgentForRemoteServer(remoteId, userId);
   }
@@ -989,7 +992,7 @@ export class WebhooksService implements OnApplicationBootstrap {
    * Called when a service is removed so tokens and scripts do not linger.
    */
   async removeAllForService(userId: number, serviceId: number): Promise<void> {
-    const rows = await this.webhookRepo.find({ where: { serviceId } });
+    const rows = await this.webhookRepo.find({ where: { serviceId, userId } });
     for (const w of rows) {
       await this.remove(userId, w.id);
     }
@@ -1029,7 +1032,7 @@ export class WebhooksService implements OnApplicationBootstrap {
             const r = await this.servicesService.executeDeployment(
               w.serviceId,
               'redeploy',
-              { actingUserId: 1 },
+              { actingUserId: w.userId },
             );
             success = Boolean(r.success);
             output = String(r.output ?? '');

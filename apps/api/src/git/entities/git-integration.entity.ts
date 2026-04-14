@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   PrimaryColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -11,9 +12,13 @@ import {
  * Secrets are stored in plaintext like other integration entities; encrypt at rest later if needed.
  */
 @Entity('git_integration_settings')
+@Index(['userId'], { unique: true })
 export class GitIntegrationSettings {
   @PrimaryColumn({ type: 'int' })
   id!: number;
+
+  @Column({ name: 'user_id', type: 'int' })
+  userId!: number;
 
   @Column({ type: 'varchar', length: 64, nullable: true })
   githubAppId!: string | null;
@@ -42,9 +47,9 @@ export class GitIntegrationSettings {
   @Column({ type: 'text', nullable: true })
   gitlabGroupAccessToken!: string | null;
 
-  @CreateDateColumn({ type: 'datetime' })
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'datetime' })
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
 }

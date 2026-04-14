@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { HardDrive, Loader2, AlertCircle, RefreshCw, FolderOpen, Lock, Archive } from "lucide-react";
 import { motion } from "framer-motion";
@@ -8,7 +7,6 @@ import { useServiceVolumes } from "@/hooks/use-services";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
-import { isCloudEdition } from "@/lib/weehawk-edition";
 
 type Props = {
   serviceId: string;
@@ -27,7 +25,6 @@ function rowSupportsBackup(mountType: string): boolean {
 }
 
 export function ServiceVolumesTab({ serviceId, enabled }: Props) {
-  const showLocalDockerVolumesLink = !isCloudEdition();
   const qc = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -66,14 +63,6 @@ export function ServiceVolumesTab({ serviceId, enabled }: Props) {
             {isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Refresh
           </button>
-          {showLocalDockerVolumesLink ? (
-            <Link href="/console/local/volumes" prefetch={false}>
-              <button type="button" className="btn-primary flex items-center gap-2 text-sm">
-                <HardDrive className="w-4 h-4" />
-                Docker volumes
-              </button>
-            </Link>
-          ) : null}
         </div>
       </div>
 

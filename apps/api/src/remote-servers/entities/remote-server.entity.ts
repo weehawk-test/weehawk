@@ -14,6 +14,9 @@ export class RemoteServer {
   @Column({ type: 'varchar', length: 120 })
   name!: string;
 
+  @Column({ name: 'user_id', type: 'int' })
+  userId!: number;
+
   @Column({ type: 'varchar', length: 255 })
   host!: string;
 

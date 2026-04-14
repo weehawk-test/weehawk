@@ -1,4 +1,5 @@
 import {
+  UnauthorizedException,
   Controller,
   Get,
   Post,
@@ -24,8 +25,10 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
-  private uid(_req?: unknown): number {
-    return 1;
+  private uid(req?: { user?: { userId?: number } }): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
   }
 
   @Post()
@@ -34,7 +37,7 @@ export class ProjectsController {
     @Body() createProjectDto: CreateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.create(createProjectDto, this.uid());
+    return this.projectsService.create(createProjectDto, this.uid(req));
   }
 
   @Get()
@@ -58,7 +61,7 @@ export class ProjectsController {
       page,
       limit,
       q ?? '',
-      this.uid(),
+      this.uid(req),
     );
   }
 
@@ -68,7 +71,7 @@ export class ProjectsController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.findOne(+id, this.uid());
+    return this.projectsService.findOne(+id, this.uid(req));
   }
 
   @Patch(':id')
@@ -78,12 +81,12 @@ export class ProjectsController {
     @Body() updateProjectDto: UpdateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.update(+id, updateProjectDto, this.uid());
+    return this.projectsService.update(+id, updateProjectDto, this.uid(req));
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'delete project' })
   remove(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
-    return this.projectsService.remove(+id, this.uid());
+    return this.projectsService.remove(+id, this.uid(req));
   }
 }

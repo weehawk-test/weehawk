@@ -29,9 +29,10 @@ export class ProjectsService {
     private readonly dockerSecrets: DockerSecretsService,
   ) {}
 
-  async create(createProjectDto: CreateProjectDto, _userId: number) {
+  async create(createProjectDto: CreateProjectDto, userId: number) {
     const existing = await this.projectRepository.findOneBy({
       name: createProjectDto.name,
+      userId,
     });
     if (existing) {
       throw new ConflictException('Project name already exists');
@@ -39,6 +40,7 @@ export class ProjectsService {
 
     const project = this.projectRepository.create({
       ...createProjectDto,
+      userId,
     });
     return await this.projectRepository.save(project);
   }
@@ -47,14 +49,15 @@ export class ProjectsService {
     page: number,
     limit: number,
     q: string | undefined,
-    _userId: number,
+    userId: number,
   ) {
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 9));
     const trimmed = (q ?? '').trim().toLowerCase();
 
     const countQb = this.projectRepository
-      .createQueryBuilder('project');
+      .createQueryBuilder('project')
+      .where('project.userId = :userId', { userId });
     if (trimmed) {
       countQb.andWhere(
         '(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, \'\')) LIKE :q)',
@@ -65,6 +68,7 @@ export class ProjectsService {
 
     const dataQb = this.projectRepository
       .createQueryBuilder('project')
+      .where('project.userId = :userId', { userId })
       .loadRelationCountAndMap('project.serviceCount', 'project.services');
 
     if (trimmed) {
@@ -88,9 +92,9 @@ export class ProjectsService {
     };
   }
 
-  async findOne(id: number, _userId: number) {
+  async findOne(id: number, userId: number) {
     const project = await this.projectRepository.findOne({
-      where: { id },
+      where: { id, userId },
       relations: ['services'],
     });
 

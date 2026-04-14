@@ -19,12 +19,12 @@ const nextConfig: NextConfig = {
       { source: "/docker/traefik", destination: "/traefik", permanent: true },
       {
         source: "/docker",
-        destination: "/console/local/images",
+        destination: "/remote-server",
         permanent: true,
       },
       {
         source: "/docker/:path*",
-        destination: "/console/local/:path*",
+        destination: "/remote-server",
         permanent: true,
       },
       { source: "/auth", destination: "/", permanent: true },

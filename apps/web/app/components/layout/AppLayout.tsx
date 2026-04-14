@@ -1,8 +1,11 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { SidebarLayoutProvider } from "@/contexts/sidebar-layout-context";
+import { useRequireAuth } from "@/contexts/auth-context";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -13,6 +16,22 @@ interface AppLayoutProps {
  * When signed in, renders sidebar + main content.
  */
 export function AppLayout({ children }: AppLayoutProps) {
+  const { isReady, allowed } = useRequireAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isReady || allowed) return;
+    router.replace("/login");
+  }, [isReady, allowed, router]);
+
+  if (!allowed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <SidebarLayoutProvider>
       <div className="flex min-h-screen bg-background relative overflow-hidden">

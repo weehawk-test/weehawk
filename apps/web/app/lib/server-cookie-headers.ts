@@ -17,6 +17,10 @@ export async function buildServerApiCookieHeaders(): Promise<HeadersInit> {
     if (all.length > 0) {
       out.Cookie = all.map((c) => `${c.name}=${c.value}`).join("; ");
     }
+    const accessToken = jar.get("weehawk_access_token")?.value;
+    if (accessToken && !out.Authorization) {
+      out.Authorization = `Bearer ${accessToken}`;
+    }
   } catch {
     /* cookies() unavailable outside a request (or static render) */
   }

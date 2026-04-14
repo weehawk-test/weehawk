@@ -12,7 +12,7 @@ export function isCloudEditionFromProcessEnv(): boolean {
 export const LOCAL_HOST_DOCKER_FORBIDDEN_MESSAGE =
   'Local Docker access is enabled.';
 
-/** Backward-compatible no-op for desktop-only mode. */
+/** Backward-compatible no-op for local-only mode. */
 export function assertLocalHostDockerAllowed(_configService?: unknown): void {
   return;
 }

@@ -18,6 +18,7 @@ import { RemoteServer } from './entities/remote-server.entity';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
 import { UpdateRemoteServerDto } from './dto/update-remote-server.dto';
 import { Service } from '../services/entities/service.entity';
+import { Project } from '../projects/entities/project.entity';
 import type {
   PaginatedContainersDto,
   PaginatedImagesDto,
@@ -259,16 +260,29 @@ export class RemoteServersService implements OnApplicationBootstrap {
    */
   assertRemoteServerMatchesProject(
     rs: RemoteServer | null | undefined,
-    _projectUserId: number | null,
+    projectUserId: number | null,
   ): void {
     if (!rs) {
+      throw new NotFoundException('Remote server not found');
+    }
+    if (projectUserId != null && rs.userId !== projectUserId) {
       throw new NotFoundException('Remote server not found');
     }
     return;
   }
 
   private async resolveProjectUserId(service: Service): Promise<number | null> {
-    return null;
+    if (service.project?.userId != null) return service.project.userId;
+    const projectId =
+      typeof (service as Service & { projectId?: number }).projectId === 'number'
+        ? (service as Service & { projectId?: number }).projectId
+        : (service.project as { id?: number } | undefined)?.id;
+    if (!projectId) return null;
+    const project = await this.remoteServerRepository.manager.getRepository(Project).findOne({
+      where: { id: projectId },
+      select: { userId: true },
+    });
+    return project?.userId ?? null;
   }
 
   private getEncryptionSecret(): string {
@@ -1900,6 +1914,7 @@ done
 
   async findAll(userId: number): Promise<RemoteServerSafe[]> {
     const rows = await this.remoteServerRepository.find({
+      where: { userId },
       order: { name: 'ASC' },
     });
     return rows.map((r) => this.toSafe(r));
@@ -1963,7 +1978,7 @@ done
   }
 
   private async findEntityOrFail(id: number, userId: number): Promise<RemoteServer> {
-    const rs = await this.remoteServerRepository.findOne({ where: { id } });
+    const rs = await this.remoteServerRepository.findOne({ where: { id, userId } });
     if (!rs) {
       throw new NotFoundException(`Remote server #${id} not found`);
     }
@@ -1982,6 +1997,7 @@ done
         : 'deploy';
 
     const entity = this.remoteServerRepository.create({
+      userId,
       name: dto.name.trim(),
       host: hostTrimmed,
       port: dto.port ?? 22,

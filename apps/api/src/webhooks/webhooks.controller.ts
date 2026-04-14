@@ -1,4 +1,5 @@
 import {
+  UnauthorizedException,
   Body,
   Controller,
   DefaultValuePipe,
@@ -21,7 +22,7 @@ import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
 import { WebhooksService } from './webhooks.service';
 
-type AuthedReq = { user?: { email: string } };
+type AuthedReq = { user?: { email: string; userId: number } };
 
 @ApiTags('Triggers')
 @ApiBearerAuth()
@@ -37,13 +38,15 @@ type AuthedReq = { user?: { email: string } };
 export class WebhooksController {
   constructor(private readonly webhooksService: WebhooksService) {}
 
-  private uid(_req?: unknown): number {
-    return 1;
+  private uid(req?: AuthedReq): number {
+    const id = req?.user?.userId;
+    if (!id) throw new UnauthorizedException('User context missing');
+    return id;
   }
 
   @Post()
   create(@Req() req: AuthedReq, @Body() dto: CreateWebhookDto) {
-    return this.webhooksService.create(this.uid(), dto);
+    return this.webhooksService.create(this.uid(req), dto);
   }
 
   @Get()
@@ -52,12 +55,12 @@ export class WebhooksController {
     @Query('includeHidden', new DefaultValuePipe(false), ParseBoolPipe)
     includeHidden: boolean,
   ) {
-    return this.webhooksService.list(this.uid(), { includeHidden });
+    return this.webhooksService.list(this.uid(req), { includeHidden });
   }
 
   @Get(':id')
   findOne(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
-    return this.webhooksService.findOne(this.uid(), id);
+    return this.webhooksService.findOne(this.uid(req), id);
   }
 
   @Patch(':id')
@@ -66,12 +69,12 @@ export class WebhooksController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateWebhookDto,
   ) {
-    return this.webhooksService.update(this.uid(), id, dto);
+    return this.webhooksService.update(this.uid(req), id, dto);
   }
 
   @Delete(':id')
   async remove(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
-    await this.webhooksService.remove(this.uid(), id);
+    await this.webhooksService.remove(this.uid(req), id);
     return { ok: true };
   }
 }

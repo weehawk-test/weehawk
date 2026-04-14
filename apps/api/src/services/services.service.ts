@@ -92,10 +92,10 @@ export class ServicesService {
   /** Ensures the service exists. */
   async assertServiceOwnedByUser(
     serviceId: number,
-    _userId: number,
+    userId: number,
   ): Promise<Service> {
     const service = await this.serviceRepository.findOne({
-      where: { id: serviceId },
+      where: { id: serviceId, project: { userId } },
       relations: ['project', 'remoteServer', 'buildRemoteServer'],
     });
     if (!service) {
@@ -106,9 +106,9 @@ export class ServicesService {
 
   private async assertProjectOwnedByUser(
     projectId: number,
-    _userId: number,
+    userId: number,
   ): Promise<Project> {
-    const project = await this.projectRepository.findOneBy({ id: projectId });
+    const project = await this.projectRepository.findOneBy({ id: projectId, userId });
     if (!project) {
       throw new NotFoundException('Project not found');
     }
@@ -2002,6 +2002,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     try {
       const { bucket, key: uploadedKey } =
         await this.s3Service.uploadLocalFile(
+          userId,
           trimmed,
           localPath,
           key,
@@ -2198,7 +2199,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wh-import-s3-'));
     const tmpPath = path.join(tmpDir, safeName);
     try {
-      await this.s3Service.downloadObjectToFile(profile, key, tmpPath);
+      await this.s3Service.downloadObjectToFile(userId, profile, key, tmpPath);
       const st = await fs.stat(tmpPath);
       if (st.size === 0) {
         throw new BadRequestException('Downloaded object is empty.');
@@ -2264,6 +2265,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
   async findAll(_userId: number) {
     const rows = await this.serviceRepository.find({
+      where: { project: { userId: _userId } },
       relations: ['project', 'remoteServer'],
       order: { createdAt: 'DESC' },
     });
@@ -3341,7 +3343,10 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   private async resolveRemoteRedeployWebhookTriggerUrl(
     service: Service,
   ): Promise<string | null> {
-    const webhooks = await this.webhooksService.findWebhooksForService(service.id);
+    const webhooks = await this.webhooksService.findWebhooksForService(
+      service.id,
+      service.project.userId,
+    );
     for (const w of webhooks) {
       if (
         w.serviceAction === 'docker_command' &&
@@ -3356,7 +3361,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
   /**
    * When auto-deploy is toggled, registers or removes webhooks on GitHub/GitLab
-   * pointing directly to the **remote server's webhook agent** — not the desktop API.
+   * pointing directly to the **remote server's webhook agent** — not the local API process.
    * This way auto-deploy works even when the user's PC is off.
    */
   private async syncAutoDeployExternalHooks(

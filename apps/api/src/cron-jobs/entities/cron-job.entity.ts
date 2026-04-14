@@ -16,6 +16,9 @@ export class CronJob {
   @Column({ type: 'varchar', length: 200 })
   name!: string;
 
+  @Column({ name: 'user_id', type: 'int' })
+  userId!: number;
+
   @Column({ type: 'text', nullable: true })
   description: string | null = null;
 

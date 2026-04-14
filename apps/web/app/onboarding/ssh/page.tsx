@@ -13,7 +13,7 @@ export default function OnboardingSshPage() {
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    setToken("desktop-local-session");
+    setToken("local-session");
   }, [router]);
 
   const finishAndEnter = useCallback(() => {

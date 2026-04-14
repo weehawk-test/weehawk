@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
 /**
  * Saved S3-compatible destination profiles; connection tests use @aws-sdk/client-s3.
@@ -6,11 +6,15 @@ import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateCol
  * (e.g. app-level crypto or envelope encryption) without changing the API contract.
  */
 @Entity('s3_profiles')
+@Index(['userId', 'name'], { unique: true })
 export class S3Profile {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ type: 'varchar', length: 191, unique: true })
+  @Column({ name: 'user_id', type: 'int' })
+  userId!: number;
+
+  @Column({ type: 'varchar', length: 191 })
   name!: string;
 
   @Column({ type: 'varchar', length: 512 })
@@ -31,9 +35,9 @@ export class S3Profile {
   @Column({ type: 'boolean', default: false })
   forcePathStyle!: boolean;
 
-  @CreateDateColumn({ type: 'datetime' })
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
 
-  @UpdateDateColumn({ type: 'datetime' })
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
 }

@@ -447,6 +447,7 @@ export class CronJobsService {
     const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
     try {
       const { bucket, key: uploadedKey } = await this.s3Service.uploadLocalFile(
+        userId,
         trimmed,
         localPath,
         key,
@@ -487,6 +488,7 @@ export class CronJobsService {
     }
 
     const job = this.cronJobRepo.create({
+      userId,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
       isActive: true,
@@ -543,13 +545,14 @@ export class CronJobsService {
 
   async list(userId: number): Promise<CronJobListRow[]> {
     const list = await this.cronJobRepo.find({
+      where: { userId },
       order: { createdAt: 'DESC' },
     });
     return list.map((w) => this.toListRow(w));
   }
 
   async findOne(userId: number, id: number): Promise<CronJobDetailRow> {
-    const job = await this.cronJobRepo.findOne({ where: { id } });
+    const job = await this.cronJobRepo.findOne({ where: { id, userId } });
     if (!job) throw new NotFoundException('Cron job not found');
     return this.toDetailRow(job);
   }
@@ -559,7 +562,7 @@ export class CronJobsService {
     id: number,
     dto: UpdateCronJobDto,
   ): Promise<CronJobDetailRow> {
-    const job = await this.cronJobRepo.findOne({ where: { id } });
+    const job = await this.cronJobRepo.findOne({ where: { id, userId } });
     if (!job) throw new NotFoundException('Cron job not found');
     const previousJob = this.cronJobRepo.create({ ...job });
 
@@ -641,10 +644,10 @@ export class CronJobsService {
   }
 
   async remove(userId: number, id: number): Promise<void> {
-    const existing = await this.cronJobRepo.findOne({ where: { id } });
+    const existing = await this.cronJobRepo.findOne({ where: { id, userId } });
     if (!existing) throw new NotFoundException('Cron job not found');
     await this.removeCrontabEntry(existing);
-    const res = await this.cronJobRepo.delete({ id });
+    const res = await this.cronJobRepo.delete({ id, userId });
     if (!res.affected) throw new NotFoundException('Cron job not found');
   }
 
@@ -663,7 +666,7 @@ export class CronJobsService {
           const r = await this.servicesService.executeDeployment(
             job.serviceId,
             'redeploy',
-            { actingUserId: 1 },
+            { actingUserId: job.userId },
           );
           success = Boolean(r.success);
           output = String(r.output ?? '');

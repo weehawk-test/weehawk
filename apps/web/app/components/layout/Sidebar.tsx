@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, FolderKanban, KeyRound, ChevronLeft, ChevronRight,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, Server, CreditCard, Mail, Globe, Newspaper,
+  GitBranch, Server, Mail, Globe, Newspaper, LogOut, UserCog, ChevronDown,
 } from "lucide-react";
 import { motion, LayoutGroup } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
@@ -17,11 +17,17 @@ import {
   PLATFORM_NEWS_SEEN_EVENT,
   PLATFORM_NEWS_SEEN_STORAGE_KEY,
 } from "@/lib/platform-news-read";
-import { isCloudEdition } from "@/lib/weehawk-edition";
 import type { LucideIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 function buildDockerNavItems(base: string): { href: string; label: string; icon: LucideIcon }[] {
   return [
@@ -47,7 +53,7 @@ type MainNavSection = {
   items: MainNavItem[];
 };
 
-function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
+function buildMainNavSections(): MainNavSection[] {
   return [
     {
       label: "General",
@@ -55,7 +61,6 @@ function buildMainNavSections(cloudEdition: boolean): MainNavSection[] {
         { href: "/", label: "Projects", icon: FolderKanban },
         { href: "/remote-server", label: "Servers", icon: Server },
         { href: "/domains", label: "Domains", icon: Globe },
-        ...(cloudEdition ? [{ href: "/subscription", label: "Subscription", icon: CreditCard }] : []),
       ],
     },
     {
@@ -179,15 +184,25 @@ function NavRow({
 
 export function Sidebar() {
   const { collapsed, toggle } = useSidebarLayout();
+  const { user, logout } = useAuth();
+  const router = useRouter();
   const location = usePathname();
   const layoutGroupId = "sidebar-nav-main";
   const activeLayoutId = "active-nav-main";
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
-  const displayName = "Weehawk User";
-  const initials = "WU";
+  const nameParts = [user?.firstName?.trim(), user?.lastName?.trim()].filter(Boolean);
+  const displayName = nameParts.length > 0 ? nameParts.join(" ") : user?.email ?? "Weehawk User";
+  const displayEmail = user?.email ?? "No email";
+  const avatarUrl = user?.imageUrl?.trim() ? user.imageUrl : null;
+  const initials = displayName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "WU";
 
-  const cloudUi = isCloudEdition();
-  const mainNavSections = useMemo(() => buildMainNavSections(cloudUi), [cloudUi]);
+  const mainNavSections = useMemo(() => buildMainNavSections(), []);
   const [newsUnread, setNewsUnread] = useState(false);
 
   useEffect(() => {
@@ -230,13 +245,10 @@ export function Sidebar() {
     };
   }, []);
   const consoleMatch = /^\/console\/([^/]+)/.exec(location);
-  const onSecretsShell = location === "/secrets" || location.startsWith("/secrets/");
   const consoleNavBase =
     consoleMatch != null
       ? `/console/${consoleMatch[1]}`
-      : onSecretsShell && !cloudUi
-        ? "/console/local"
-        : null;
+      : null;
   const dockerNavDynamic =
     consoleNavBase != null ? buildDockerNavItems(consoleNavBase) : [];
 
@@ -262,25 +274,24 @@ export function Sidebar() {
       return location === "/git" || location.startsWith("/git/");
     }
     if (href === "/remote-server") {
-      return (
-        location === "/remote-server" ||
-        location.startsWith("/remote-server/") ||
-        (!cloudUi && location.startsWith("/console/local"))
-      );
-    }
-    if (href === "/subscription") {
-      return location === "/subscription" || location.startsWith("/subscription/");
+      return location === "/remote-server" || location.startsWith("/remote-server/");
     }
     if (href.includes("/secrets")) {
       if (location === href || location.startsWith(`${href}/`)) return true;
-      if (
-        href === "/console/local/secrets" &&
-        (location === "/secrets" || location.startsWith("/secrets/"))
-      )
-        return true;
       return false;
     }
     return location.startsWith(href);
+  };
+
+  const handleEditProfile = () => {
+    setProfileMenuOpen(false);
+    router.push("/profile");
+  };
+
+  const handleLogout = async () => {
+    setProfileMenuOpen(false);
+    await logout();
+    router.replace("/login");
   };
 
   return (
@@ -312,7 +323,7 @@ export function Sidebar() {
               <div className="min-w-0 flex-1 pt-0.5">
                 <h1 className="font-bold text-lg text-foreground tracking-tight leading-none">Weehawk</h1>
                 <p className="text-[10px] text-muted-foreground tracking-widest uppercase font-mono mt-1">
-                  DESKTOP
+                  CLOUD
                 </p>
               </div>
             </Link>
@@ -512,29 +523,84 @@ export function Sidebar() {
 
       {/* Local user label (no auth session) */}
       <div className="flex-shrink-0 border-t border-border p-2.5">
-        {collapsed ? (
-          <Tooltip delayDuration={0}>
-            <TooltipTrigger asChild>
-              <div className="w-full flex justify-center items-center px-2 py-2 rounded-xl">
+        <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            {collapsed ? (
+              <button
+                type="button"
+                className="w-full flex justify-center items-center px-2 py-2 rounded-xl hover:bg-accent/70 data-[state=open]:bg-accent/80 transition-colors outline-none focus-visible:outline-none focus-visible:ring-0"
+                aria-label="Open user menu"
+              >
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-muted/40 border border-primary/20 flex items-center justify-center flex-shrink-0">
-                  <span className="text-xs font-bold text-primary tracking-tight">{initials}</span>
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={displayName}
+                      className="h-full w-full rounded-xl object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span className="text-xs font-bold text-primary tracking-tight">{initials}</span>
+                  )}
                 </div>
-              </div>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={8}>
-              <span className="font-medium">{displayName}</span>
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          <div className="w-full flex items-center gap-3 px-3 py-2 rounded-xl">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-muted/40 border border-primary/20 flex items-center justify-center flex-shrink-0">
-              <span className="text-xs font-bold text-primary tracking-tight">{initials}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-accent/70 data-[state=open]:bg-accent/80 transition-colors outline-none focus-visible:outline-none focus-visible:ring-0"
+                aria-label="Open user menu"
+              >
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-muted/40 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={displayName}
+                      className="h-full w-full rounded-xl object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span className="text-xs font-bold text-primary tracking-tight">{initials}</span>
+                  )}
+                </div>
+                <div className="flex-1 text-left min-w-0">
+                  <p className="text-sm font-semibold text-foreground leading-tight truncate">{displayName}</p>
+                  <p className="text-xs text-muted-foreground mt-1 truncate">{displayEmail}</p>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    "w-4 h-4 text-muted-foreground transition-transform duration-200",
+                    profileMenuOpen && "rotate-180",
+                  )}
+                />
+              </button>
+            )}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            side={collapsed ? "right" : "top"}
+            align={collapsed ? "start" : "end"}
+            sideOffset={8}
+            className={cn(
+              "rounded-2xl border-border/60 p-2 shadow-2xl data-[state=open]:duration-300 data-[state=closed]:duration-200",
+              collapsed ? "w-56" : "w-[var(--radix-dropdown-menu-trigger-width)]",
+            )}
+          >
+            <div className="px-2.5 py-2">
+              <p className="text-base font-semibold leading-tight truncate">{displayName}</p>
+              <p className="text-sm text-muted-foreground mt-1 truncate">{displayEmail}</p>
             </div>
-            <div className="flex-1 text-left min-w-0">
-              <p className="text-sm font-semibold text-foreground leading-none truncate">{displayName}</p>
-            </div>
-          </div>
-        )}
+            <DropdownMenuItem onSelect={handleEditProfile}>
+              <UserCog className="w-4 h-4" />
+              Edit profile
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => void handleLogout()}
+              className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300 focus:bg-red-500/10"
+            >
+              <LogOut className="w-4 h-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </aside>
   );

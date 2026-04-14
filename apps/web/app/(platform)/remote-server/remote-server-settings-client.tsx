@@ -23,7 +23,6 @@ import {
   createRemoteServerApi,
   deleteRemoteServerApi,
   fetchRemoteServers,
-  localTerminalWsUrl,
   generateRemoteSshKeypairApi,
   remoteTerminalWsUrl,
   testRemoteServerApi,
@@ -34,7 +33,6 @@ import {
 } from "@/lib/remote-servers-api";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
-import { isCloudEdition } from "@/lib/weehawk-edition";
 import { isLoopbackSshHost } from "@/lib/loopback-ssh-host";
 
 function emptyForm() {
@@ -72,7 +70,6 @@ function emptyEditDraft(): EditDraft {
 }
 
 export function RemoteServerSettingsClient() {
-  const hideLocalDockerHost = isCloudEdition();
   const { accessToken, user } = useAuth();
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -92,7 +89,6 @@ export function RemoteServerSettingsClient() {
   const [editDraft, setEditDraft] = useState<EditDraft>(emptyEditDraft);
   const [testModalRow, setTestModalRow] = useState<RemoteServerRow | null>(null);
   const [terminalModalRow, setTerminalModalRow] = useState<RemoteServerRow | null>(null);
-  const [localTerminalOpen, setLocalTerminalOpen] = useState(false);
   const terminalContainerRef = useRef<HTMLDivElement>(null);
   const terminalFailureNotifiedRef = useRef(false);
   const [terminalError, setTerminalError] = useState<string | null>(null);
@@ -258,7 +254,7 @@ export function RemoteServerSettingsClient() {
   });
   useEffect(() => {
     const row = terminalModalRow;
-    const open = localTerminalOpen || row != null;
+    const open = row != null;
     const el = terminalContainerRef.current;
     if (!open || !el) return;
 
@@ -313,7 +309,7 @@ export function RemoteServerSettingsClient() {
       ro = new ResizeObserver(onResize);
       ro.observe(el);
 
-      ws = new WebSocket(row ? remoteTerminalWsUrl(row.id) : localTerminalWsUrl());
+      ws = new WebSocket(remoteTerminalWsUrl(row.id));
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
         if (disposed) return;
@@ -389,7 +385,7 @@ export function RemoteServerSettingsClient() {
       ws?.close();
       term?.dispose();
     };
-  }, [terminalModalRow, localTerminalOpen, toast]);
+  }, [terminalModalRow, toast]);
 
   if (!accessToken) {
     return (
@@ -455,50 +451,6 @@ export function RemoteServerSettingsClient() {
         </div>
 
         <div className="space-y-2">
-          {!hideLocalDockerHost ? (
-            <div className="glass-panel rounded-xl border border-border overflow-hidden">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="font-medium text-sm truncate">Local Server</p>
-                    <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
-                      Local
-                    </span>
-                    <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100">
-                      Build
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    This local host is build-only. Use a remote Deploy host to run containers/services.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Link
-                    href="/console/local/images"
-                    scroll={false}
-                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
-                    title="Open Docker console for this host"
-                  >
-                    <Container className="size-3.5" />
-                    Docker Manager
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTerminalModalRow(null);
-                      setLocalTerminalOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
-                    title="Open local terminal"
-                  >
-                    <Terminal className="size-3.5" />
-                    Terminal
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
           {(list.data ?? []).length === 0 && !creating ? (
             <p className="text-sm text-muted-foreground py-8 text-center border border-dashed border-border rounded-xl">
               No remote hosts yet. Add a host and paste a private key, or generate a new pair.
@@ -583,7 +535,6 @@ export function RemoteServerSettingsClient() {
                         disabled={!row.hasPrivateKey}
                         onClick={() => {
                           setTerminalModalRow(row);
-                          setLocalTerminalOpen(false);
                         }}
                         className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
                         title="Open remote SSH terminal"
@@ -1027,13 +978,12 @@ export function RemoteServerSettingsClient() {
             document.body,
           )
         : null}
-      {typeof document !== "undefined" && (terminalModalRow || localTerminalOpen)
+      {typeof document !== "undefined" && terminalModalRow
         ? createPortal(
             <div
               className="fixed inset-0 z-[120] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4"
               onClick={() => {
                 setTerminalModalRow(null);
-                setLocalTerminalOpen(false);
               }}
             >
               <div
@@ -1044,16 +994,13 @@ export function RemoteServerSettingsClient() {
                   <div>
                     <h3 className="text-base font-semibold">Remote Terminal</h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {terminalModalRow
-                        ? `${terminalModalRow.sshUser}@${terminalModalRow.host}${terminalModalRow.port !== 22 ? `:${terminalModalRow.port}` : ""}`
-                        : "Local Server"}
+                      {`${terminalModalRow.sshUser}@${terminalModalRow.host}${terminalModalRow.port !== 22 ? `:${terminalModalRow.port}` : ""}`}
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
                       setTerminalModalRow(null);
-                      setLocalTerminalOpen(false);
                     }}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
                     aria-label="Close terminal dialog"
