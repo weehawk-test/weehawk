@@ -69,13 +69,20 @@ function dbPortByEngine(engine?: CreateServiceInput["databaseEngine"]): number {
 }
 
 /** Dot + label under the type badge: Running / Stopped. */
-function ServiceRuntimeStatus({ serviceId }: { serviceId: string }) {
+function ServiceRuntimeStatus({
+  serviceId,
+}: {
+  serviceId: string;
+}) {
   const { data, isPending, isError } = useServiceRuntime(serviceId);
   if (isPending) {
     return (
-      <div className="flex w-full items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
+      <div
+        className="flex w-full items-center justify-center gap-1.5 text-[10px] text-muted-foreground"
+        title="Checking runtime status..."
+      >
         <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/40 animate-pulse" aria-hidden />
-        <span className="font-medium tabular-nums">…</span>
+        <span className="font-medium tabular-nums">Checking...</span>
       </div>
     );
   }
@@ -705,17 +712,8 @@ export default function ProjectsIdClient({
     }
   };
 
-  if (projectLoading) {
-    return (
-      <>
-        <div className="flex items-center justify-center h-64">
-          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-        </div>
-      </>
-    );
-  }
-
   if (!project) {
+    if (projectLoading) return null;
     return (
       <>
         <div className="text-center py-20">
@@ -730,11 +728,14 @@ export default function ProjectsIdClient({
     );
   }
 
+  const projectRouteId = project.publicId ?? projectId;
+  const projectNumericId = project.id;
+
   return (
     <>
       {showCreate ? (
         <CreateServiceModal
-          projectId={projectId}
+          projectId={projectNumericId}
           onClose={() => setShowCreate(false)}
           onCreated={() => router.refresh()}
         />
@@ -954,7 +955,7 @@ export default function ProjectsIdClient({
                           </div>
 
                           <Link
-                            href={`/projects/${projectId}/services/${service.id}`}
+                            href={`/projects/${projectRouteId}/services/${service.publicId ?? service.id}`}
                             prefetch
                             className="ml-auto inline-flex items-center gap-0.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
                           >

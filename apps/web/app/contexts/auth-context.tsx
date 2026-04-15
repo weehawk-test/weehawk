@@ -203,5 +203,7 @@ export function useAuth(): AuthContextValue {
  */
 export function useRequireAuth() {
   const { accessToken, user, isReady } = useAuth();
-  return { accessToken, isReady, allowed: Boolean(isReady && user) };
+  // If SSR already provided a user, allow rendering immediately to avoid
+  // layout flash while the client-side profile probe finishes.
+  return { accessToken, isReady, allowed: Boolean(user) };
 }

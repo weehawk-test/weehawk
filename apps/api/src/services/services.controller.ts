@@ -53,6 +53,10 @@ export class ServicesController {
     return id;
   }
 
+  private async sid(id: string, req: { user?: { userId: number } }): Promise<number> {
+    return this.servicesService.resolveServiceIdForUser(id, this.uid(req));
+  }
+
   private parseEngineOrThrow(engine: string): DatabaseEngine {
     const e = engine.toLowerCase();
     if (
@@ -87,7 +91,9 @@ export class ServicesController {
     @Body() dto: DatabaseSetupDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.applyPostgresDatabase(+id, dto, this.uid(req));
+    return this.sid(id, req).then((resolvedId) =>
+      this.servicesService.applyPostgresDatabase(resolvedId, dto, this.uid(req)),
+    );
   }
 
   @Post(':id/database/:engine')
@@ -102,11 +108,13 @@ export class ServicesController {
     @Body() dto: DatabaseSetupDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.applyDatabase(
-      +id,
-      this.parseEngineOrThrow(engine),
-      dto,
-      this.uid(req),
+    return this.sid(id, req).then((resolvedId) =>
+      this.servicesService.applyDatabase(
+        resolvedId,
+        this.parseEngineOrThrow(engine),
+        dto,
+        this.uid(req),
+      ),
     );
   }
 
@@ -121,7 +129,9 @@ export class ServicesController {
     @Body() dto: PostgresStackUpdateDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.updatePostgresStack(+id, dto, this.uid(req));
+    return this.sid(id, req).then((resolvedId) =>
+      this.servicesService.updatePostgresStack(resolvedId, dto, this.uid(req)),
+    );
   }
 
   @Patch(':id/database/:engine/stack')
@@ -136,11 +146,13 @@ export class ServicesController {
     @Body() dto: PostgresStackUpdateDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.updateDatabaseStack(
-      +id,
-      this.parseEngineOrThrow(engine),
-      dto,
-      this.uid(req),
+    return this.sid(id, req).then((resolvedId) =>
+      this.servicesService.updateDatabaseStack(
+        resolvedId,
+        this.parseEngineOrThrow(engine),
+        dto,
+        this.uid(req),
+      ),
     );
   }
 
@@ -157,9 +169,11 @@ export class ServicesController {
     const m = body?.mode;
     const mode =
       m === 'reload' ? 'reload' : m === 'redeploy' ? 'redeploy' : 'deploy';
-    return this.servicesService.executeDeployment(+id, mode, {
-      actingUserId: this.uid(req!),
-    });
+    return this.sid(id, req!).then((resolvedId) =>
+      this.servicesService.executeDeployment(resolvedId, mode, {
+        actingUserId: this.uid(req!),
+      }),
+    );
   }
 
   @Post(':id/sync-remote-deployment-mirror')
@@ -171,7 +185,9 @@ export class ServicesController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.syncRemoteDeploymentMirror(+id, this.uid(req));
+    return this.sid(id, req).then((resolvedId) =>
+      this.servicesService.syncRemoteDeploymentMirror(resolvedId, this.uid(req)),
+    );
   }
 
   /**
@@ -183,11 +199,12 @@ export class ServicesController {
     summary:
       'Deploy with streamed log output (SSE). Chunks use `{ data: string }`; final message `{ done, success, output }`.',
   })
-  streamDeploy(
+  async streamDeploy(
     @Param('id') id: string,
     @Query('mode') modeRaw: string | undefined,
     @Req() req: { user?: { userId: number } },
-  ): Observable<MessageEvent> {
+  ): Promise<Observable<MessageEvent>> {
+    const resolvedId = await this.sid(id, req);
     const mode =
       modeRaw === 'reload' ? 'reload' : modeRaw === 'redeploy' ? 'redeploy' : 'deploy';
     return new Observable((observer) => {
@@ -196,7 +213,7 @@ export class ServicesController {
         observer.next({ data: JSON.stringify({ data: chunk }) } as MessageEvent);
       });
       void this.servicesService
-        .executeDeployment(+id, mode, {
+        .executeDeployment(resolvedId, mode, {
           actingUserId: this.uid(req),
           deployLogEmitter: emitter,
         })
@@ -228,14 +245,15 @@ export class ServicesController {
   @ApiOperation({
     summary: 'Run one-off volume or database backup and upload to S3',
   })
-  backupNow(
+  async backupNow(
     @Param('id') id: string,
     @Body() dto: RunServiceBackupDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.runServiceBackupNow(
       this.uid(req),
-      +id,
+      resolvedId,
       dto,
     );
   }
@@ -248,7 +266,7 @@ export class ServicesController {
     summary:
       'Import a database dump or a volume .tar.gz backup (multipart file; runs on host)',
   })
-  importBackup(
+  async importBackup(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body()
@@ -259,6 +277,7 @@ export class ServicesController {
     },
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     if (!file) {
       throw new BadRequestException('file is required.');
     }
@@ -270,7 +289,7 @@ export class ServicesController {
     }
     return this.servicesService.runServiceImportBackup(
       this.uid(req),
-      +id,
+      resolvedId,
       file,
       action,
       body.databaseBackupConfig,
@@ -284,13 +303,14 @@ export class ServicesController {
     summary:
       'Import database or volume backup from an object in a saved S3 profile (server downloads then imports)',
   })
-  importBackupFromS3(
+  async importBackupFromS3(
     @Param('id') id: string,
     @Body() dto: ImportServiceBackupFromS3Dto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.runServiceImportBackupFromS3(
-      +id,
+      resolvedId,
       dto,
       this.uid(req),
     );
@@ -303,12 +323,13 @@ export class ServicesController {
     summary:
       'Upload application ZIP, extract source, generate stack config (Dockerfile auto-detect or Cloud Native Buildpacks)',
   })
-  uploadApplicationZip(
+  async uploadApplicationZip(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body() dto: UploadApplicationZipDto,
     @Req() req: Request & { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     const raw = req.body as Record<string, unknown>;
     const fromDto =
       typeof dto.networksJson === 'string' && dto.networksJson.trim()
@@ -331,7 +352,7 @@ export class ServicesController {
     const stackNetworks = stkFromDto ?? stkFromRaw;
 
     return this.servicesService.uploadApplicationArchive(
-      +id,
+      resolvedId,
       file,
       this.uid(req),
       {
@@ -355,13 +376,14 @@ export class ServicesController {
     summary:
       'Clone a GitLab repository into app source (requires `git` on the API host; GitLab personal/group token in Git settings)',
   })
-  uploadApplicationGitClone(
+  async uploadApplicationGitClone(
     @Param('id') id: string,
     @Body() dto: ApplicationGitCloneDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.uploadApplicationFromGitClone(
-      +id,
+      resolvedId,
       dto,
       this.uid(req),
     );
@@ -379,13 +401,14 @@ export class ServicesController {
     summary:
       'Clone Git repository into app source only (no stack yet). Then POST generate-from-source with port/env.',
   })
-  stageApplicationGitClone(
+  async stageApplicationGitClone(
     @Param('id') id: string,
     @Body() dto: ApplicationGitCloneStageDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.stageApplicationGitClone(
-      +id,
+      resolvedId,
       dto,
       this.uid(req),
     );
@@ -403,13 +426,14 @@ export class ServicesController {
     summary:
       'Generate application stack from existing app-source (after git-clone-stage or to re-apply options)',
   })
-  generateApplicationFromSource(
+  async generateApplicationFromSource(
     @Param('id') id: string,
     @Body() dto: ApplicationGenerateFromSourceDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.generateApplicationFromSource(
-      +id,
+      resolvedId,
       dto,
       this.uid(req),
     );
@@ -421,13 +445,14 @@ export class ServicesController {
     summary:
       'Update application networks (multiple external + multiple stack overlays) and regenerate compose YAML',
   })
-  patchApplicationNetworks(
+  async patchApplicationNetworks(
     @Param('id') id: string,
     @Body() dto: PatchApplicationNetworksDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.patchApplicationNetworks(
-      +id,
+      resolvedId,
       dto,
       this.uid(req),
     );
@@ -439,13 +464,14 @@ export class ServicesController {
     summary:
       'Configure application stack to run a pre-built Docker image (no source ZIP; deploy skips docker build)',
   })
-  patchApplicationImage(
+  async patchApplicationImage(
     @Param('id') id: string,
     @Body() dto: PatchApplicationImageDeployDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.setApplicationImageDeploy(
-      +id,
+      resolvedId,
       dto,
       this.uid(req),
     );
@@ -459,7 +485,8 @@ export class ServicesController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return await this.servicesService.startService(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return await this.servicesService.startService(resolvedId, this.uid(req));
   }
 
   @Get()
@@ -481,7 +508,7 @@ export class ServicesController {
     description:
       'If true with projectId, return full array (no pagination). Omit for paged list.',
   })
-  findAll(
+  async findAll(
     @Query('projectId') projectId?: string,
     @Query('page') pageStr?: string,
     @Query('limit') limitStr?: string,
@@ -491,21 +518,18 @@ export class ServicesController {
   ) {
     const uid = this.uid(req!);
     if (projectId !== undefined && projectId !== '') {
-      const n = Number(projectId);
-      if (!Number.isFinite(n)) {
-        throw new BadRequestException('Invalid projectId');
-      }
+      const resolvedProjectId = await this.servicesService.resolveProjectIdForUser(projectId, uid);
       const all =
         allStr === '1' ||
         allStr === 'true' ||
         String(allStr).toLowerCase() === 'yes';
       if (all) {
-        return this.servicesService.findByProjectId(n, uid);
+        return this.servicesService.findByProjectId(resolvedProjectId, uid);
       }
       const page = parseInt(pageStr ?? '1', 10);
       const limit = parseInt(limitStr ?? '8', 10);
       return this.servicesService.findByProjectIdPaginated(
-        n,
+        resolvedProjectId,
         page,
         limit,
         q ?? '',
@@ -523,7 +547,8 @@ export class ServicesController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return await this.servicesService.getRuntimeStatus(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return await this.servicesService.getRuntimeStatus(resolvedId, this.uid(req));
   }
 
   @Get(':id/volumes')
@@ -535,7 +560,8 @@ export class ServicesController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return await this.servicesService.getServiceVolumes(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return await this.servicesService.getServiceVolumes(resolvedId, this.uid(req));
   }
 
   @Post(':id/magic-traefik-me/roll')
@@ -544,13 +570,14 @@ export class ServicesController {
     summary:
       'Roll a Magic traefik.me hostname (manual opt-in). Optional body.publicIpv4 is saved on the service. Regenerates stack YAML when an application stack exists.',
   })
-  rollMagicTraefikMe(
+  async rollMagicTraefikMe(
     @Param('id') id: string,
     @Body() body: RollMagicTraefikMeDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService.rollMagicTraefikMeDomain(
-      +id,
+      resolvedId,
       this.uid(req),
       body,
     );
@@ -560,11 +587,12 @@ export class ServicesController {
   @ApiOperation({
     summary: 'Remove Magic traefik.me hostname from this service (updates stack YAML when present)',
   })
-  clearMagicTraefikMe(
+  async clearMagicTraefikMe(
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.clearMagicTraefikMeDomain(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.clearMagicTraefikMeDomain(resolvedId, this.uid(req));
   }
 
   @Get(':id')
@@ -573,8 +601,9 @@ export class ServicesController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
+    const resolvedId = await this.sid(id, req);
     const s = await this.servicesService.assertServiceOwnedByUser(
-      +id,
+      resolvedId,
       this.uid(req),
     );
     return this.servicesService.withMagicTraefikMeUrl(s);
@@ -582,31 +611,34 @@ export class ServicesController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update service configuration' })
-  update(
+  async update(
     @Param('id') id: string,
     @Body() updateServiceDto: UpdateServiceDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.update(+id, updateServiceDto, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.update(resolvedId, updateServiceDto, this.uid(req));
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Stop and delete service' })
-  remove(
+  async remove(
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.remove(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.remove(resolvedId, this.uid(req));
   }
 
   @Sse(':id/logs/stream')
   @ApiOperation({ summary: 'Real-time log streaming' })
-  streamLogs(
+  async streamLogs(
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
-  ): Observable<MessageEvent> {
+  ): Promise<Observable<MessageEvent>> {
+    const resolvedId = await this.sid(id, req);
     return this.servicesService
-      .getServiceLogsStream(+id, this.uid(req))
+      .getServiceLogsStream(resolvedId, this.uid(req))
       .pipe(
       map(
         (log) =>
@@ -623,21 +655,23 @@ export class ServicesController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return await this.servicesService.shutdownService(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return await this.servicesService.shutdownService(resolvedId, this.uid(req));
   }
 
   @Get(':id/auto-deploy')
   @ApiOperation({ summary: 'Get auto-deploy settings for a service' })
-  getAutoDeploy(
+  async getAutoDeploy(
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.getAutoDeploySettings(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.getAutoDeploySettings(resolvedId, this.uid(req));
   }
 
   @Post(':id/auto-deploy')
   @ApiOperation({ summary: 'Configure auto-deploy (enable/disable) for a service' })
-  configureAutoDeploy(
+  async configureAutoDeploy(
     @Param('id') id: string,
     @Body()
     body: {
@@ -648,15 +682,17 @@ export class ServicesController {
     },
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.configureAutoDeploy(+id, this.uid(req), body);
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.configureAutoDeploy(resolvedId, this.uid(req), body);
   }
 
   @Post(':id/auto-deploy/resync')
   @ApiOperation({ summary: 'Re-register auto-deploy hooks on GitHub/GitLab after webhook URL changes' })
-  resyncAutoDeployHooks(
+  async resyncAutoDeployHooks(
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.servicesService.resyncAutoDeployHooks(+id, this.uid(req));
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.resyncAutoDeployHooks(resolvedId, this.uid(req));
   }
 }

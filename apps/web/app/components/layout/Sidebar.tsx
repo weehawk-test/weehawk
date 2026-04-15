@@ -206,6 +206,11 @@ export function Sidebar() {
   const [newsUnread, setNewsUnread] = useState(false);
 
   useEffect(() => {
+    if (!user?.userId) {
+      setNewsUnread(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function refreshNewsUnread() {
@@ -221,29 +226,21 @@ export function Sidebar() {
     }
 
     void refreshNewsUnread();
-    const intervalId = window.setInterval(() => void refreshNewsUnread(), 90_000);
-    const onSeen = () => void refreshNewsUnread();
-    const onFocus = () => void refreshNewsUnread();
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void refreshNewsUnread();
-    };
+    const onSeen = () => setNewsUnread(false);
     const onStorage = (e: StorageEvent) => {
-      if (e.key === PLATFORM_NEWS_SEEN_STORAGE_KEY) void refreshNewsUnread();
+      if (e.key === PLATFORM_NEWS_SEEN_STORAGE_KEY) {
+        setNewsUnread(false);
+      }
     };
     window.addEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
-    window.addEventListener("focus", onFocus);
     window.addEventListener("storage", onStorage);
-    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
       window.removeEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
-      window.removeEventListener("focus", onFocus);
       window.removeEventListener("storage", onStorage);
-      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, []);
+  }, [user?.userId]);
   const consoleMatch = /^\/console\/([^/]+)/.exec(location);
   const consoleNavBase =
     consoleMatch != null

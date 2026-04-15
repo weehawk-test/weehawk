@@ -1,15 +1,20 @@
 import {
+  BeforeInsert,
   Column,
   CreateDateColumn,
   Entity,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { generatePublicId } from '../../common/public-id';
 
 @Entity('remote_servers')
 export class RemoteServer {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  @Column({ type: 'varchar', length: 40, unique: true, nullable: true })
+  publicId!: string;
 
   @Column({ type: 'varchar', length: 120 })
   name!: string;
@@ -71,4 +76,9 @@ export class RemoteServer {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+
+  @BeforeInsert()
+  ensurePublicId() {
+    if (!this.publicId) this.publicId = generatePublicId('rsv');
+  }
 }

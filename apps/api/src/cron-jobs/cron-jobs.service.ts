@@ -28,6 +28,7 @@ import { describeDatabaseBackupPreview } from '../backup/database-backup.types';
 import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
+import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 export type CronJobListRow = {
   id: number;
@@ -68,6 +69,22 @@ export class CronJobsService {
     private readonly s3Service: S3Service,
     private readonly remoteServersService: RemoteServersService,
   ) {}
+
+  private async ensurePublicId(row: CronJob): Promise<CronJob> {
+    if (row.publicId) return row;
+    row.publicId = generatePublicId('crn');
+    return this.cronJobRepo.save(row);
+  }
+
+  private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<CronJob> {
+    const raw = String(idOrPublicId).trim();
+    const where = isLikelyNumericId(raw)
+      ? [{ id: Number(raw), userId }, { publicId: raw, userId }]
+      : [{ publicId: raw, userId }];
+    const row = await this.cronJobRepo.findOne({ where });
+    if (!row) throw new NotFoundException('Cron job not found');
+    return this.ensurePublicId(row);
+  }
 
   private shQuote(value: string): string {
     return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -488,6 +505,7 @@ export class CronJobsService {
     }
 
     const job = this.cronJobRepo.create({
+      publicId: generatePublicId('crn'),
       userId,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
@@ -551,19 +569,17 @@ export class CronJobsService {
     return list.map((w) => this.toListRow(w));
   }
 
-  async findOne(userId: number, id: number): Promise<CronJobDetailRow> {
-    const job = await this.cronJobRepo.findOne({ where: { id, userId } });
-    if (!job) throw new NotFoundException('Cron job not found');
+  async findOne(userId: number, idOrPublicId: string | number): Promise<CronJobDetailRow> {
+    const job = await this.resolveEntity(userId, idOrPublicId);
     return this.toDetailRow(job);
   }
 
   async update(
     userId: number,
-    id: number,
+    idOrPublicId: string | number,
     dto: UpdateCronJobDto,
   ): Promise<CronJobDetailRow> {
-    const job = await this.cronJobRepo.findOne({ where: { id, userId } });
-    if (!job) throw new NotFoundException('Cron job not found');
+    const job = await this.resolveEntity(userId, idOrPublicId);
     const previousJob = this.cronJobRepo.create({ ...job });
 
     if (dto.name !== undefined) job.name = dto.name.trim();
@@ -643,11 +659,10 @@ export class CronJobsService {
     return this.toDetailRow(saved);
   }
 
-  async remove(userId: number, id: number): Promise<void> {
-    const existing = await this.cronJobRepo.findOne({ where: { id, userId } });
-    if (!existing) throw new NotFoundException('Cron job not found');
+  async remove(userId: number, idOrPublicId: string | number): Promise<void> {
+    const existing = await this.resolveEntity(userId, idOrPublicId);
     await this.removeCrontabEntry(existing);
-    const res = await this.cronJobRepo.delete({ id, userId });
+    const res = await this.cronJobRepo.delete({ id: existing.id, userId });
     if (!res.affected) throw new NotFoundException('Cron job not found');
   }
 

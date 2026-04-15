@@ -57,7 +57,9 @@ export function useServicesPage(
     page === ssrPage &&
     trimmed === ssrTrim;
 
-  const useSsrData = hasSsrInitial && user?.userId != null;
+  // Keep SSR data on first paint even before auth context finishes hydration,
+  // so refreshing the project page doesn't flash a client-side loading state.
+  const useSsrData = hasSsrInitial;
 
   return useQuery({
     queryKey: ["services", "list", ownerKey, projectId, page, trimmed],

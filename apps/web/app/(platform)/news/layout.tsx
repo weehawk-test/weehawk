@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
+import { fetchPlatformNews } from "./platform-news";
 import { PlatformNewsReadSync } from "./platform-news-read-sync";
 
-export default function NewsLayout({ children }: { children: ReactNode }) {
+export default async function NewsLayout({ children }: { children: ReactNode }) {
+  const initialFeed = await fetchPlatformNews();
   return (
     <>
-      <PlatformNewsReadSync />
+      <PlatformNewsReadSync initialFeed={initialFeed} />
       {children}
     </>
   );

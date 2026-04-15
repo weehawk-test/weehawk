@@ -69,17 +69,25 @@ function emptyEditDraft(): EditDraft {
   };
 }
 
-export function RemoteServerSettingsClient() {
+export function RemoteServerSettingsClient({
+  initialRemoteServers,
+}: {
+  initialRemoteServers?: RemoteServerRow[];
+}) {
   const { accessToken, user } = useAuth();
   const { toast } = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
   const remoteServersQueryKey = ["remote-servers"] as const;
+  const hasInitialRemoteServers = initialRemoteServers !== undefined;
 
   const list = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && !hasInitialRemoteServers,
+    initialData: initialRemoteServers,
+    staleTime: hasInitialRemoteServers ? Infinity : 10_000,
+    refetchOnMount: hasInitialRemoteServers ? false : undefined,
   });
 
   const [creating, setCreating] = useState(false);
@@ -503,7 +511,7 @@ export function RemoteServerSettingsClient() {
                     <div className="flex items-center gap-2 shrink-0">
                       {row.hasPrivateKey ? (
                         <Link
-                          href={`/console/${row.id}/images`}
+                          href={`/console/${row.publicId ?? row.id}/images`}
                           scroll={false}
                           className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
                           title="Open Docker console for this host (full Docker UI)"

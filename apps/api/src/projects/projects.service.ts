@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
   ConflictException,
@@ -8,6 +9,7 @@ import { Repository } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 @Injectable()
 export class ProjectsService {
@@ -15,6 +17,16 @@ export class ProjectsService {
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
   ) {}
+
+  private async ensureProjectPublicId(project: Project): Promise<Project> {
+    if (project.publicId) return project;
+    project.publicId = generatePublicId('prj');
+    return this.projectRepository.save(project);
+  }
+
+  private async ensureProjectPublicIds(rows: Project[]): Promise<Project[]> {
+    return Promise.all(rows.map((row) => this.ensureProjectPublicId(row)));
+  }
 
   async create(createProjectDto: CreateProjectDto, userId: number) {
     const existing = await this.projectRepository.findOneBy({
@@ -28,6 +40,7 @@ export class ProjectsService {
     const project = this.projectRepository.create({
       ...createProjectDto,
       userId,
+      publicId: generatePublicId('prj'),
     });
     return await this.projectRepository.save(project);
   }
@@ -72,33 +85,41 @@ export class ProjectsService {
       .getMany();
 
     return {
-      data,
+      data: await this.ensureProjectPublicIds(data),
       total,
       page: safePage,
       limit: safeLimit,
     };
   }
 
-  async findOne(id: number, userId: number) {
+  async resolveProjectByIdentifier(identifier: string, userId: number): Promise<Project> {
+    const trimmed = String(identifier).trim();
+    if (!trimmed) throw new BadRequestException('Project identifier is required');
+    const where = isLikelyNumericId(trimmed)
+      ? [{ id: Number(trimmed), userId }, { publicId: trimmed, userId }]
+      : [{ publicId: trimmed, userId }];
     const project = await this.projectRepository.findOne({
-      where: { id, userId },
+      where,
       relations: ['services'],
     });
-
     if (!project) {
-      throw new NotFoundException(`Project with ID ${id} not found`);
+      throw new NotFoundException(`Project not found`);
     }
-    return project;
+    return this.ensureProjectPublicId(project);
   }
 
-  async update(id: number, updateProjectDto: UpdateProjectDto, userId: number) {
-    const project = await this.findOne(id, userId);
+  async findOne(idOrPublicId: string, userId: number) {
+    return this.resolveProjectByIdentifier(idOrPublicId, userId);
+  }
+
+  async update(idOrPublicId: string, updateProjectDto: UpdateProjectDto, userId: number) {
+    const project = await this.findOne(idOrPublicId, userId);
     const updated = this.projectRepository.merge(project, updateProjectDto);
     return await this.projectRepository.save(updated);
   }
 
-  async remove(id: number, userId: number) {
-    const project = await this.findOne(id, userId);
+  async remove(idOrPublicId: string, userId: number) {
+    const project = await this.findOne(idOrPublicId, userId);
     const services = project.services ?? [];
     if (services.length > 0) {
       throw new ConflictException(

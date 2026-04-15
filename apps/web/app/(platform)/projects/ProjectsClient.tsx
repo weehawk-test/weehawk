@@ -366,7 +366,7 @@ export default function ProjectsClient({
                     <Clock className="w-3 h-3" />
                     {format(new Date(project.createdAt), "MMM d, yyyy")}
                   </div>
-                  <Link href={`/projects/${project.id}`}>
+                  <Link href={`/projects/${project.publicId ?? project.id}`}>
                     <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                       View <ChevronRight className="w-3 h-3" />
                     </span>

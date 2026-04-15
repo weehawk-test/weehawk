@@ -146,7 +146,7 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
       names.map((n) =>
         consoleTarget === "local"
           ? deleteDockerNetwork(n)
-          : deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as number, n),
+          : deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as string, n),
       ),
     );
     setBulkPending(false);
@@ -174,7 +174,7 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
         if (consoleTarget === "local") {
           await deleteDockerNetwork(name);
         } else {
-          await deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as number, name);
+          await deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as string, name);
         }
         toast({ title: "Network removed", description: name });
         void listQuery.refetch();
@@ -195,7 +195,7 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
       if (consoleTarget === "local") {
         await deleteDockerNetwork(forceDialog, true);
       } else {
-        await deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as number, forceDialog);
+        await deleteRemoteConsoleNetwork(accessToken ?? "", consoleTarget as string, forceDialog);
       }
       toast({ title: "Network removed (force)", description: forceDialog });
       setForceDialog(null);

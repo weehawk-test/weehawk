@@ -58,6 +58,7 @@ import {
   RemoteServersService,
   WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
 } from '../remote-servers/remote-servers.service';
+import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 @Injectable()
 export class ServicesService {
@@ -83,6 +84,47 @@ export class ServicesService {
     private readonly remoteServersService: RemoteServersService,
   ) {}
 
+  private async ensureServicePublicId(service: Service): Promise<Service> {
+    if (service.publicId) return service;
+    service.publicId = generatePublicId('svc');
+    return this.serviceRepository.save(service);
+  }
+
+  private async ensureServicePublicIds(rows: Service[]): Promise<Service[]> {
+    return Promise.all(rows.map((row) => this.ensureServicePublicId(row)));
+  }
+
+  private async ensureProjectPublicId(project: Project): Promise<Project> {
+    if (project.publicId) return project;
+    project.publicId = generatePublicId('prj');
+    return this.projectRepository.save(project);
+  }
+
+  async resolveProjectIdForUser(identifier: string, userId: number): Promise<number> {
+    const trimmed = String(identifier).trim();
+    const where = isLikelyNumericId(trimmed)
+      ? [{ id: Number(trimmed), userId }, { publicId: trimmed, userId }]
+      : [{ publicId: trimmed, userId }];
+    const project = await this.projectRepository.findOne({ where });
+    if (!project) throw new NotFoundException('Project not found');
+    const ensured = await this.ensureProjectPublicId(project);
+    return ensured.id;
+  }
+
+  async resolveServiceIdForUser(identifier: string, userId: number): Promise<number> {
+    const trimmed = String(identifier).trim();
+    const where = isLikelyNumericId(trimmed)
+      ? [{ id: Number(trimmed), project: { userId } }, { publicId: trimmed, project: { userId } }]
+      : [{ publicId: trimmed, project: { userId } }];
+    const service = await this.serviceRepository.findOne({
+      where,
+      relations: ['project'],
+    });
+    if (!service) throw new NotFoundException('Service not found');
+    const ensured = await this.ensureServicePublicId(service);
+    return ensured.id;
+  }
+
   /** Ensures the service exists. */
   async assertServiceOwnedByUser(
     serviceId: number,
@@ -95,7 +137,7 @@ export class ServicesService {
     if (!service) {
       throw new NotFoundException(`Service #${serviceId} not found`);
     }
-    return service;
+    return this.ensureServicePublicId(service);
   }
 
   private async assertProjectOwnedByUser(
@@ -106,7 +148,7 @@ export class ServicesService {
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    return project;
+    return this.ensureProjectPublicId(project);
   }
 
   async create(createServiceDto: CreateServiceDto, userId: number) {
@@ -137,6 +179,7 @@ export class ServicesService {
     const service = this.serviceRepository.create({
       ...serviceData,
       appName: uniqueAppName,
+      publicId: generatePublicId('svc'),
       project: project,
     });
 
@@ -2149,7 +2192,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       relations: ['project', 'remoteServer'],
       order: { createdAt: 'DESC' },
     });
-    return Promise.all(rows.map((s) => this.withMagicTraefikMeUrl(s)));
+    const ensured = await this.ensureServicePublicIds(rows);
+    return Promise.all(ensured.map((s) => this.withMagicTraefikMeUrl(s)));
   }
 
   async findByProjectId(projectId: number, userId: number) {
@@ -2159,7 +2203,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       relations: ['project', 'remoteServer'],
       order: { createdAt: 'DESC' },
     });
-    return Promise.all(rows.map((s) => this.withMagicTraefikMeUrl(s)));
+    const ensured = await this.ensureServicePublicIds(rows);
+    return Promise.all(ensured.map((s) => this.withMagicTraefikMeUrl(s)));
   }
 
   async findByProjectIdPaginated(
@@ -2206,8 +2251,9 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       .take(safeLimit)
       .getMany();
 
+    const ensured = await this.ensureServicePublicIds(data);
     const enriched = await Promise.all(
-      data.map((s) => this.withMagicTraefikMeUrl(s)),
+      ensured.map((s) => this.withMagicTraefikMeUrl(s)),
     );
 
     return {
@@ -2269,7 +2315,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       relations: ['project', 'remoteServer', 'buildRemoteServer'] 
     });
     if (!service) throw new NotFoundException(`Service #${id} not found`);
-    return service;
+    return this.ensureServicePublicId(service);
   }
 
   /**

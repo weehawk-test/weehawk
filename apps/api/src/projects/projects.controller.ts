@@ -71,7 +71,7 @@ export class ProjectsController {
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.findOne(+id, this.uid(req));
+    return this.projectsService.findOne(id, this.uid(req));
   }
 
   @Patch(':id')
@@ -81,12 +81,12 @@ export class ProjectsController {
     @Body() updateProjectDto: UpdateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.update(+id, updateProjectDto, this.uid(req));
+    return this.projectsService.update(id, updateProjectDto, this.uid(req));
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'delete project' })
   remove(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
-    return this.projectsService.remove(+id, this.uid(req));
+    return this.projectsService.remove(id, this.uid(req));
   }
 }

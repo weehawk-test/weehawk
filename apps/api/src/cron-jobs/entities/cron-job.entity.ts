@@ -1,4 +1,5 @@
 import {
+  BeforeInsert,
   Column,
   CreateDateColumn,
   Entity,
@@ -7,11 +8,15 @@ import {
 } from 'typeorm';
 import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
 import type { WebhookServiceAction, WebhookTargetMode } from '../../webhooks/entities/webhook.entity';
+import { generatePublicId } from '../../common/public-id';
 
 @Entity({ name: 'cron_jobs' })
 export class CronJob {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  @Column({ type: 'varchar', length: 40, unique: true, nullable: true })
+  publicId!: string;
 
   @Column({ type: 'varchar', length: 200 })
   name!: string;
@@ -71,4 +76,9 @@ export class CronJob {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  @BeforeInsert()
+  ensurePublicId() {
+    if (!this.publicId) this.publicId = generatePublicId('crn');
+  }
 }

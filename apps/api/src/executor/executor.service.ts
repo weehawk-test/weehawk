@@ -53,6 +53,9 @@ const SWARM_NEEDS_DEPLOY_HOST_MESSAGE =
 const COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE =
   'No deploy host is set for this compose service. Choose a remote Deploy server under Remote Docker host, save, then try again.';
 
+/** Keep runtime checks snappy when a deploy host is offline/unreachable. */
+const RUNTIME_STATUS_TIMEOUT_MS = 1_000;
+
 function pickDockerSshEnv(
   env: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv | undefined {
@@ -94,6 +97,18 @@ export class ExecutorService {
       ids.remoteServerId,
       projectUserId,
     );
+  }
+
+  private async withRuntimeTimeout<T>(op: Promise<T>): Promise<T> {
+    return await Promise.race([
+      op,
+      new Promise<T>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('Runtime check timed out')),
+          RUNTIME_STATUS_TIMEOUT_MS,
+        );
+      }),
+    ]);
   }
 
   /**
@@ -629,10 +644,12 @@ export class ExecutorService {
         if (sshIds.remoteServerId != null) {
           const stackQ = service.appName.replace(/'/g, `'\\''`);
           try {
-            const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
-              sshIds.remoteServerId,
-              projectUserId,
-              `docker stack services '${stackQ}' --format "{{.Replicas}}" 2>/dev/null || true`,
+            const r = await this.withRuntimeTimeout(
+              this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                sshIds.remoteServerId,
+                projectUserId,
+                `docker stack services '${stackQ}' --format "{{.Replicas}}" 2>/dev/null || true`,
+              ),
             );
             stdout = r.stdout;
           } catch {
@@ -659,14 +676,16 @@ export class ExecutorService {
       if (!exists) return { running: false };
 
       const deployEnv = parseEnv(service.env || '');
-      const r = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
-        sshIds.remoteServerId,
-        projectUserId,
-        {
-          projectName: service.appName,
-          composeArgvTail: ['ps', '--status', 'running', '-q'],
-          deployEnv,
-        },
+      const r = await this.withRuntimeTimeout(
+        this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['ps', '--status', 'running', '-q'],
+            deployEnv,
+          },
+        ),
       );
       return { running: r.stdout.trim().length > 0 };
     } catch {

@@ -5,6 +5,7 @@ import { databaseEngineIdSchema } from "./database-engines";
 
 export const projectSchema = z.object({
   id: z.string().min(1, "Invalid id"),
+  publicId: z.string().min(1).optional(),
   name: z.string().min(1, "Name is required").max(100),
   description: z.string().optional().default(""),
   createdAt: z.string(),
@@ -36,7 +37,9 @@ export type TraefikRouteRule = z.infer<typeof traefikRouteRuleSchema>;
 
 export const serviceSchema = z.object({
   id: z.string().min(1),
+  publicId: z.string().min(1).optional(),
   projectId: z.string().min(1),
+  projectPublicId: z.string().min(1).optional(),
   name: z.string().min(1, "Name is required").max(100),
   type: serviceTypeSchema,
   config: z.string().default(""),

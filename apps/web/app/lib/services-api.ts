@@ -162,6 +162,7 @@ export function mapApiServiceToService(row: unknown): Service {
   const s = row as Record<string, unknown>;
   const project = s.project as { id?: number } | undefined;
   const pid = project?.id;
+  const projectPublicIdRaw = (project as { publicId?: unknown } | undefined)?.publicId;
   const created = s.createdAt;
   let createdAt: string;
   if (created instanceof Date) createdAt = created.toISOString();
@@ -202,7 +203,15 @@ export function mapApiServiceToService(row: unknown): Service {
 
   return {
     id: String(s.id ?? ""),
+    publicId:
+      s.publicId == null || String(s.publicId).trim() === ""
+        ? undefined
+        : String(s.publicId),
     projectId: pid != null ? String(pid) : "",
+    projectPublicId:
+      projectPublicIdRaw == null || String(projectPublicIdRaw).trim() === ""
+        ? undefined
+        : String(projectPublicIdRaw),
     name: String(s.name ?? ""),
     type: composeTypeFromApi(String(s.composeType ?? "COMPOSE")),
     config: cfg,

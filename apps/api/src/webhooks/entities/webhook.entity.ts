@@ -1,4 +1,5 @@
 import {
+  BeforeInsert,
   Column,
   CreateDateColumn,
   Entity,
@@ -6,6 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
+import { generatePublicId } from '../../common/public-id';
 
 /** service = run Docker action on a service */
 export type WebhookTargetMode = 'service';
@@ -25,6 +27,9 @@ export type WebhookRemoteTriggerUrlScheme = 'http' | 'https';
 export class Webhook {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  @Column({ type: 'varchar', length: 40, unique: true, nullable: true })
+  publicId!: string;
 
   /** Secret segment in public URL */
   @Column({ name: 'secret_token', type: 'varchar', length: 96, unique: true })
@@ -125,4 +130,9 @@ export class Webhook {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  @BeforeInsert()
+  ensurePublicId() {
+    if (!this.publicId) this.publicId = generatePublicId('whk');
+  }
 }

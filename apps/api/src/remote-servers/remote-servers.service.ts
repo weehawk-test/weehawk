@@ -12,6 +12,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { randomBytes } from 'crypto';
+import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 import Dockerode from 'dockerode';
 import { Client, type ClientChannel } from 'ssh2';
 import { RemoteServer } from './entities/remote-server.entity';
@@ -171,6 +172,7 @@ function buildTraefikHostRuleForWebhookAgent(hosts: string[]): string {
 
 export type RemoteServerSafe = {
   id: number;
+  publicId?: string;
   name: string;
   host: string;
   port: number;
@@ -330,6 +332,7 @@ export class RemoteServersService implements OnApplicationBootstrap {
     }
     return {
       id: rs.id,
+      publicId: rs.publicId,
       name: rs.name,
       host: rs.host,
       port: rs.port,
@@ -2239,12 +2242,23 @@ done
       where: { userId },
       order: { name: 'ASC' },
     });
-    return rows.map((r) => this.toSafe(r));
+    return Promise.all(rows.map((r) => this.ensurePublicId(r).then((row) => this.toSafe(row))));
   }
 
-  async findOne(id: number, userId: number): Promise<RemoteServerSafe> {
+  async findOne(id: number | string, userId: number): Promise<RemoteServerSafe> {
     const rs = await this.findEntityOrFail(id, userId);
     return this.toSafe(rs);
+  }
+
+  private async ensurePublicId(row: RemoteServer): Promise<RemoteServer> {
+    if (row.publicId) return row;
+    row.publicId = generatePublicId('rsv');
+    return this.remoteServerRepository.save(row);
+  }
+
+  async resolveServerIdForUser(idOrPublicId: string, userId: number): Promise<number> {
+    const row = await this.findEntityOrFail(idOrPublicId, userId);
+    return row.id;
   }
 
   async assertDeployServerById(
@@ -2299,12 +2313,16 @@ done
     return { connect: p };
   }
 
-  private async findEntityOrFail(id: number, userId: number): Promise<RemoteServer> {
-    const rs = await this.remoteServerRepository.findOne({ where: { id, userId } });
+  private async findEntityOrFail(id: number | string, userId: number): Promise<RemoteServer> {
+    const raw = String(id).trim();
+    const where = isLikelyNumericId(raw)
+      ? [{ id: Number(raw), userId }, { publicId: raw, userId }]
+      : [{ publicId: raw, userId }];
+    const rs = await this.remoteServerRepository.findOne({ where });
     if (!rs) {
       throw new NotFoundException(`Remote server #${id} not found`);
     }
-    return rs;
+    return this.ensurePublicId(rs);
   }
 
   async create(dto: CreateRemoteServerDto, userId: number): Promise<RemoteServerSafe> {
@@ -2320,6 +2338,7 @@ done
         : 'deploy';
 
     const entity = this.remoteServerRepository.create({
+      publicId: generatePublicId('rsv'),
       userId,
       name: dto.name.trim(),
       host: hostTrimmed,

@@ -151,7 +151,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         const ref = dockerImageDeleteRef(img);
         return consoleTarget === "local"
           ? deleteDockerImage(ref)
-          : deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as number, ref);
+          : deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as string, ref);
       }),
     );
     setBulkPending(false);
@@ -190,7 +190,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         if (consoleTarget === "local") {
           await deleteDockerImage(ref);
         } else {
-          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as number, ref);
+          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as string, ref);
         }
         toast({ title: "Image removed", description: ref });
         void listQuery.refetch();
@@ -215,7 +215,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         if (consoleTarget === "local") {
           await deleteDockerImage(ref);
         } else {
-          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as number, ref);
+          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as string, ref);
         }
         toast({ title: "Image removed (force)", description: ref });
         setForceDialog(null);

@@ -39,6 +39,10 @@ export class RemoteServersController {
     return id;
   }
 
+  private rid(id: string, req: { user?: { userId: number } }): Promise<number> {
+    return this.remoteServersService.resolveServerIdForUser(id, this.uid(req));
+  }
+
   @Get()
   @ApiOperation({ summary: 'List SSH / Docker remote hosts' })
   list(@Req() req: { user?: { userId: number } }) {
@@ -116,17 +120,18 @@ export class RemoteServersController {
 
   @Get(':id/console/containers/paged')
   @ApiOperation({ summary: 'Remote WeeDocker: paginated containers (Dockerode/SSH)' })
-  consoleContainersPaged(
+  async consoleContainersPaged(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('q') q?: string,
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleContainersPaged(
-      id,
+      rid,
       this.uid(req),
       page,
       pageSize,
@@ -136,14 +141,15 @@ export class RemoteServersController {
 
   @Get(':id/console/containers/:containerId/logs')
   @ApiOperation({ summary: 'Remote WeeDocker: container logs' })
-  consoleContainerLogs(
+  async consoleContainerLogs(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Param('containerId') containerId: string,
     @Query('tail', new DefaultValuePipe(500), ParseIntPipe) tail: number,
   ) {
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleContainerLogs(
-      id,
+      rid,
       this.uid(req),
       containerId,
       tail,
@@ -152,15 +158,16 @@ export class RemoteServersController {
 
   @Delete(':id/console/containers/:containerId')
   @ApiOperation({ summary: 'Remote WeeDocker: remove container' })
-  consoleRemoveContainer(
+  async consoleRemoveContainer(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Param('containerId') containerId: string,
     @Query('force') forceStr?: string,
   ) {
     const force = (forceStr ?? '').toLowerCase() === 'true';
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleRemoveContainer(
-      id,
+      rid,
       this.uid(req),
       containerId,
       force,
@@ -169,17 +176,18 @@ export class RemoteServersController {
 
   @Get(':id/console/images/paged')
   @ApiOperation({ summary: 'Remote WeeDocker: paginated images' })
-  consoleImagesPaged(
+  async consoleImagesPaged(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('q') q?: string,
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleImagesPaged(
-      id,
+      rid,
       this.uid(req),
       page,
       pageSize,
@@ -189,13 +197,14 @@ export class RemoteServersController {
 
   @Delete(':id/console/images')
   @ApiOperation({ summary: 'Remote WeeDocker: remove image by ref' })
-  consoleRemoveImage(
+  async consoleRemoveImage(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Query('ref') ref: string,
   ) {
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleRemoveImage(
-      id,
+      rid,
       this.uid(req),
       decodeURIComponent(ref ?? ''),
     );
@@ -203,17 +212,18 @@ export class RemoteServersController {
 
   @Get(':id/console/volumes/paged')
   @ApiOperation({ summary: 'Remote WeeDocker: paginated volumes' })
-  consoleVolumesPaged(
+  async consoleVolumesPaged(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('q') q?: string,
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleVolumesPaged(
-      id,
+      rid,
       this.uid(req),
       page,
       pageSize,
@@ -223,15 +233,16 @@ export class RemoteServersController {
 
   @Delete(':id/console/volumes/:name')
   @ApiOperation({ summary: 'Remote WeeDocker: remove volume' })
-  consoleRemoveVolume(
+  async consoleRemoveVolume(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Param('name') name: string,
     @Query('force') forceStr?: string,
   ) {
     const force = (forceStr ?? '').toLowerCase() === 'true';
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleRemoveVolume(
-      id,
+      rid,
       this.uid(req),
       name,
       force,
@@ -240,17 +251,18 @@ export class RemoteServersController {
 
   @Get(':id/console/networks/paged')
   @ApiOperation({ summary: 'Remote WeeDocker: paginated networks' })
-  consoleNetworksPaged(
+  async consoleNetworksPaged(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('q') q?: string,
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleNetworksPaged(
-      id,
+      rid,
       this.uid(req),
       page,
       pageSize,
@@ -260,13 +272,14 @@ export class RemoteServersController {
 
   @Delete(':id/console/networks/:networkId')
   @ApiOperation({ summary: 'Remote WeeDocker: remove network' })
-  consoleRemoveNetwork(
+  async consoleRemoveNetwork(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Param('networkId') networkId: string,
   ) {
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleRemoveNetwork(
-      id,
+      rid,
       this.uid(req),
       networkId,
     );
@@ -274,17 +287,18 @@ export class RemoteServersController {
 
   @Get(':id/console/services/paged')
   @ApiOperation({ summary: 'Remote WeeDocker: paginated swarm services' })
-  consoleServicesPaged(
+  async consoleServicesPaged(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Query('page') pageStr?: string,
     @Query('pageSize') pageSizeStr?: string,
     @Query('q') q?: string,
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleServicesPaged(
-      id,
+      rid,
       this.uid(req),
       page,
       pageSize,
@@ -294,14 +308,15 @@ export class RemoteServersController {
 
   @Get(':id/console/services/:serviceId/logs')
   @ApiOperation({ summary: 'Remote WeeDocker: service logs' })
-  consoleServiceLogs(
+  async consoleServiceLogs(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Param('serviceId') serviceId: string,
     @Query('tail', new DefaultValuePipe(500), ParseIntPipe) tail: number,
   ) {
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleServiceLogs(
-      id,
+      rid,
       this.uid(req),
       serviceId,
       tail,
@@ -310,15 +325,16 @@ export class RemoteServersController {
 
   @Delete(':id/console/services/:serviceId')
   @ApiOperation({ summary: 'Remote WeeDocker: remove swarm service' })
-  consoleRemoveService(
+  async consoleRemoveService(
     @Req() req: { user?: { userId: number } },
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Param('serviceId') serviceId: string,
     @Query('force') forceStr?: string,
   ) {
     const force = (forceStr ?? '').toLowerCase() === 'true';
+    const rid = await this.rid(id, req);
     return this.remoteServersService.remoteConsoleRemoveService(
-      id,
+      rid,
       this.uid(req),
       serviceId,
       force,

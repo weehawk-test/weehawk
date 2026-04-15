@@ -10,7 +10,11 @@ import {
   updateRemoteServerApi,
   type RemoteServerRow,
 } from "@/lib/remote-servers-api";
-import { fetchTraefikSettings, updateTraefikSettings } from "@/lib/traefik-api";
+import {
+  fetchTraefikSettings,
+  updateTraefikSettings,
+  type TraefikSettingsPayload,
+} from "@/lib/traefik-api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -304,33 +308,53 @@ function ServerDomainsCard({
   );
 }
 
-export function DeployDomainsClient() {
+export function DeployDomainsClient({
+  initialRemoteServers,
+  initialTraefikSettings,
+}: {
+  initialRemoteServers?: RemoteServerRow[];
+  initialTraefikSettings?: TraefikSettingsPayload | null;
+}) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const hasInitialRemoteServers = initialRemoteServers !== undefined;
+  const hasInitialTraefik = initialTraefikSettings !== undefined;
 
   const traefikQ = useQuery({
     queryKey: TRAEFIK_SETTINGS_QK,
     queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && !hasInitialTraefik,
+    initialData: initialTraefikSettings ?? undefined,
+    staleTime: hasInitialTraefik ? Infinity : 10_000,
+    refetchOnMount: hasInitialTraefik ? false : undefined,
   });
 
   const q = useQuery({
     queryKey: REMOTE_SERVERS_QK,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && !hasInitialRemoteServers,
+    initialData: initialRemoteServers,
+    staleTime: hasInitialRemoteServers ? Infinity : 10_000,
+    refetchOnMount: hasInitialRemoteServers ? false : undefined,
   });
 
-  const [acmeEmailLocal, setAcmeEmailLocal] = useState("");
+  const [acmeEmailLocal, setAcmeEmailLocal] = useState(
+    initialTraefikSettings?.acmeEmail ?? "",
+  );
   const [acmeEmailDirty, setAcmeEmailDirty] = useState(false);
 
   const [acmeOpen, setAcmeOpen] = useState(false);
-  const [certResolver, setCertResolver] = useState("letsencrypt");
-  const [acmeStorage, setAcmeStorage] = useState("/var/www/weehawk/traefik/data/acme.json");
-  const [httpEp, setHttpEp] = useState("web");
-  const [httpsEp, setHttpsEp] = useState("websecure");
-  const [redirectHttp, setRedirectHttp] = useState(true);
-  const [traefikImage, setTraefikImage] = useState("traefik:v2.11");
+  const [certResolver, setCertResolver] = useState(
+    initialTraefikSettings?.certResolverName ?? "letsencrypt",
+  );
+  const [acmeStorage, setAcmeStorage] = useState(
+    initialTraefikSettings?.acmeStorageHostPath ?? "/var/www/weehawk/traefik/data/acme.json",
+  );
+  const [httpEp, setHttpEp] = useState(initialTraefikSettings?.httpEntrypoint ?? "web");
+  const [httpsEp, setHttpsEp] = useState(initialTraefikSettings?.httpsEntrypoint ?? "websecure");
+  const [redirectHttp, setRedirectHttp] = useState(initialTraefikSettings?.redirectHttpToHttps ?? true);
+  const [traefikImage, setTraefikImage] = useState(initialTraefikSettings?.traefikImage ?? "traefik:v2.11");
   const [acmeAdvDirty, setAcmeAdvDirty] = useState(false);
 
   useEffect(() => {

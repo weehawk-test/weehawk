@@ -2,7 +2,6 @@
 
 import { ReactNode, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { SidebarLayoutProvider } from "@/contexts/sidebar-layout-context";
 import { useRequireAuth } from "@/contexts/auth-context";
@@ -25,11 +24,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   }, [isReady, allowed, router]);
 
   if (!allowed) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground">
-        <Loader2 className="w-6 h-6 animate-spin" />
-      </div>
-    );
+    return null;
   }
 
   return (

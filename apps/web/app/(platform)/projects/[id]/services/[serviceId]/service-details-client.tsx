@@ -4533,9 +4533,6 @@ function ApplicationArchivePanel({
               <div className="space-y-2">
                 <div>
                   <p className="text-[11px] font-medium text-foreground">Projects you can fetch</p>
-                  <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
-                    Fetch downloads source to the server (like choosing a ZIP). Then set port and env and click Generate stack from source. Use Search to filter by name or path. Auto-deploy registers a GitLab push hook automatically pointing to the remote deploy server — works even when this PC is off.
-                  </p>
                 </div>
                 <div className="flex flex-wrap gap-2 items-center max-w-xl">
                   <input

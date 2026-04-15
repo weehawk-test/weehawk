@@ -5,6 +5,7 @@ import type { Project, Service } from "./schema";
 import type { NotificationChannel } from "./notifications-api";
 import type { S3ProfilePublic, S3BucketListResponse, S3PrefixSummaryResponse } from "./s3-api";
 import type { RemoteServerRow } from "./remote-servers-api";
+import type { TraefikSettingsPayload } from "./traefik-api";
 import {
   mapApiServiceToService,
   parseServicesPageResponse,
@@ -18,6 +19,8 @@ import {
   type ProjectsPageResponse,
 } from "./projects-api";
 import { getServerApiBase } from "./server-api";
+
+const SERVICE_RUNTIME_SSR_TIMEOUT_MS = 1_200;
 
 async function cookieHeaders(): Promise<HeadersInit> {
   return buildServerApiCookieHeaders();
@@ -164,13 +167,22 @@ export async function fetchServiceSSR(id: string): Promise<Service | null> {
 export async function fetchServiceRuntimeSSR(
   id: string,
 ): Promise<{ running: boolean } | null> {
-  const res = await fetch(`${apiBase()}/api/services/${encodeURIComponent(id)}/runtime`, {
-    headers: await cookieHeaders(),
-    cache: "no-store",
-  });
-  if (!res.ok) return null;
-  const j = (await res.json()) as { running?: boolean };
-  return { running: j.running === true };
+  const timeoutSignal =
+    typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+      ? AbortSignal.timeout(SERVICE_RUNTIME_SSR_TIMEOUT_MS)
+      : undefined;
+  try {
+    const res = await fetch(`${apiBase()}/api/services/${encodeURIComponent(id)}/runtime`, {
+      headers: await cookieHeaders(),
+      cache: "no-store",
+      ...(timeoutSignal ? { signal: timeoutSignal } : {}),
+    });
+    if (!res.ok) return null;
+    const j = (await res.json()) as { running?: boolean };
+    return { running: j.running === true };
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchNotificationChannelsSSR(): Promise<NotificationChannel[]> {
@@ -202,6 +214,15 @@ export async function fetchRemoteServersSSR(): Promise<RemoteServerRow[]> {
   const data = (await res.json()) as unknown;
   if (!Array.isArray(data)) return [];
   return data as RemoteServerRow[];
+}
+
+export async function fetchTraefikSettingsSSR(): Promise<TraefikSettingsPayload | null> {
+  const res = await fetch(`${apiBase()}/api/traefik/settings`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as TraefikSettingsPayload;
 }
 
 /** Server-only: bucket listing at root prefix (no client Network tab on first paint). */

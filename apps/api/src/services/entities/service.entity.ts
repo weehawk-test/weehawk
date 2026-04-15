@@ -1,4 +1,5 @@
 import {
+  BeforeInsert,
   Column,
   Entity,
   PrimaryGeneratedColumn,
@@ -12,11 +13,15 @@ import { composeType } from './composeType.enum';
 import { Project } from 'src/projects/entities/project.entity';
 import { RemoteServer } from 'src/remote-servers/entities/remote-server.entity';
 import type { ServiceTraefikRoute } from './service-traefik-route.types';
+import { generatePublicId } from '../../common/public-id';
 
 @Entity('services')
 export class Service {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  @Column({ type: 'varchar', length: 40, unique: true, nullable: true })
+  publicId!: string;
 
   @Column({ type: 'varchar', length: 50 })
   name!: string;
@@ -133,4 +138,9 @@ export class Service {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+
+  @BeforeInsert()
+  ensurePublicId() {
+    if (!this.publicId) this.publicId = generatePublicId('svc');
+  }
 }

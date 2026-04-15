@@ -7,6 +7,7 @@ export type RemoteServerRole = "deploy" | "build";
 
 export type RemoteServerRow = {
   id: number;
+  publicId?: string;
   name: string;
   host: string;
   port: number;
@@ -58,6 +59,10 @@ function mapRemoteServer(row: unknown): RemoteServerRow {
   const serverRole: RemoteServerRole = sr === "build" ? "build" : "deploy";
   return {
     id: typeof r.id === "number" ? r.id : Number(r.id),
+    publicId:
+      r.publicId == null || String(r.publicId).trim() === ""
+        ? undefined
+        : String(r.publicId),
     name: String(r.name ?? ""),
     host: String(r.host ?? ""),
     port: typeof r.port === "number" ? r.port : 22,
@@ -133,7 +138,7 @@ export async function createRemoteServerApi(
 
 export async function updateRemoteServerApi(
   accessToken: string,
-  id: number,
+  id: string | number,
   patch: Partial<{
     name: string;
     host: string;
@@ -158,7 +163,7 @@ export async function updateRemoteServerApi(
   return mapRemoteServer(JSON.parse(text));
 }
 
-export async function deleteRemoteServerApi(accessToken: string, id: number): Promise<void> {
+export async function deleteRemoteServerApi(accessToken: string, id: string | number): Promise<void> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}`, {
     method: "DELETE",
   });
@@ -170,7 +175,7 @@ export async function deleteRemoteServerApi(accessToken: string, id: number): Pr
 
 export async function testRemoteServerApi(
   accessToken: string,
-  id: number,
+  id: string | number,
 ): Promise<{ success: boolean; output: string }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}/test`, {
     method: "POST",
@@ -185,7 +190,7 @@ export async function testRemoteServerApi(
 /** SSH only (ssh2 + shell); does not call remote Docker API. */
 export async function testRemoteServerSshApi(
   accessToken: string,
-  id: number,
+  id: string | number,
 ): Promise<{ success: boolean; output: string }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}/test-ssh`, {
     method: "POST",
@@ -199,7 +204,7 @@ export async function testRemoteServerSshApi(
 
 export async function runRemoteServerTerminalCommandApi(
   accessToken: string,
-  id: number,
+  id: string | number,
   command: string,
 ): Promise<{ success: boolean; output: string }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}/terminal`, {
@@ -215,7 +220,7 @@ export async function runRemoteServerTerminalCommandApi(
 }
 
 /** WebSocket: `GET /ws/remote-terminal?serverId=` — interactive SSH shell. */
-export function remoteTerminalWsUrl(serverId: number): string {
+export function remoteTerminalWsUrl(serverId: string | number): string {
   const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
   return `${wsBase}/ws/remote-terminal?serverId=${encodeURIComponent(String(serverId))}`;
 }
@@ -279,7 +284,7 @@ export type ProvisionJobRow = {
 
 export async function enqueueRemoteProvisionApi(
   accessToken: string,
-  serverId: number,
+  serverId: string | number,
 ): Promise<{ jobId: string }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${serverId}/provision`, {
     method: "POST",
@@ -297,7 +302,7 @@ export async function enqueueRemoteProvisionApi(
 
 export async function enqueueRemoteDockerPurgeApi(
   accessToken: string,
-  serverId: number,
+  serverId: string | number,
 ): Promise<{ jobId: string }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${serverId}/docker-purge`, {
     method: "POST",

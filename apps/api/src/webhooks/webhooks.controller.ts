@@ -7,7 +7,6 @@ import {
   Get,
   Param,
   ParseBoolPipe,
-  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -59,21 +58,21 @@ export class WebhooksController {
   }
 
   @Get(':id')
-  findOne(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
+  findOne(@Req() req: AuthedReq, @Param('id') id: string) {
     return this.webhooksService.findOne(this.uid(req), id);
   }
 
   @Patch(':id')
   update(
     @Req() req: AuthedReq,
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Body() dto: UpdateWebhookDto,
   ) {
     return this.webhooksService.update(this.uid(req), id, dto);
   }
 
   @Delete(':id')
-  async remove(@Req() req: AuthedReq, @Param('id', ParseIntPipe) id: number) {
+  async remove(@Req() req: AuthedReq, @Param('id') id: string) {
     await this.webhooksService.remove(this.uid(req), id);
     return { ok: true };
   }

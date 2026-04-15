@@ -1,4 +1,5 @@
 import {
+  BeforeInsert,
   Column,
   CreateDateColumn,
   Entity,
@@ -8,12 +9,16 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Service } from 'src/services/entities/service.entity';
+import { generatePublicId } from '../../common/public-id';
 
 @Entity('projects')
 @Index(['userId', 'name'], { unique: true })
 export class Project {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  @Column({ type: 'varchar', length: 40, unique: true, nullable: true })
+  publicId!: string;
 
   @Column({ type: 'varchar', length: 100 })
   name!: string;
@@ -35,4 +40,9 @@ export class Project {
 
   @UpdateDateColumn()
   updatedAt!: Date;
+
+  @BeforeInsert()
+  ensurePublicId() {
+    if (!this.publicId) this.publicId = generatePublicId('prj');
+  }
 }

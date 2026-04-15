@@ -165,7 +165,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
           ? await fetchDockerServiceLogs(logTarget.id, logTail)
           : await fetchRemoteConsoleServiceLogs(
               accessToken ?? "",
-              consoleTarget as number,
+              consoleTarget as string,
               logTarget.id,
               logTail,
             );
@@ -202,7 +202,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
       targets.map((c) =>
         consoleTarget === "local"
           ? deleteDockerService(c.id, true)
-          : deleteRemoteConsoleService(accessToken ?? "", consoleTarget as number, c.id, true),
+          : deleteRemoteConsoleService(accessToken ?? "", consoleTarget as string, c.id, true),
       ),
     );
     setBulkPending(false);
@@ -230,7 +230,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
         if (consoleTarget === "local") {
           await deleteDockerService(id, false);
         } else {
-          await deleteRemoteConsoleService(accessToken ?? "", consoleTarget as number, id, false);
+          await deleteRemoteConsoleService(accessToken ?? "", consoleTarget as string, id, false);
         }
         toast({ title: "Service removed", description: name });
         void listQuery.refetch();
@@ -253,7 +253,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
       } else {
         await deleteRemoteConsoleService(
           accessToken ?? "",
-          consoleTarget as number,
+          consoleTarget as string,
           forceDialog.id,
           true,
         );

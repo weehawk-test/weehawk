@@ -42,6 +42,7 @@ import {
   looksLikeGeneratedOnHostRedeployScript,
   onHostWebhookBundleEnvLines,
 } from '../common/on-host-redeploy-script';
+import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 export type WebhookListRow = {
   id: number;
@@ -89,6 +90,22 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly remoteServersService: RemoteServersService,
     private readonly configService: ConfigService,
   ) {}
+
+  private async ensurePublicId(w: Webhook): Promise<Webhook> {
+    if (w.publicId) return w;
+    w.publicId = generatePublicId('whk');
+    return this.webhookRepo.save(w);
+  }
+
+  private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<Webhook> {
+    const raw = String(idOrPublicId).trim();
+    const where = isLikelyNumericId(raw)
+      ? [{ id: Number(raw), userId }, { publicId: raw, userId }]
+      : [{ publicId: raw, userId }];
+    const row = await this.webhookRepo.findOne({ where });
+    if (!row) throw new NotFoundException('Webhook not found');
+    return this.ensurePublicId(row);
+  }
 
   private allowPrivateHooksPublicHosts(): boolean {
     const raw =
@@ -676,6 +693,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
 
     const w = this.webhookRepo.create({
+      publicId: generatePublicId('whk'),
       userId,
       secretToken,
       name: dto.name.trim(),
@@ -793,20 +811,18 @@ export class WebhooksService implements OnApplicationBootstrap {
     return await Promise.all(rows.map((w) => this.toListRow(userId, w)));
   }
 
-  async findOne(userId: number, id: number): Promise<WebhookDetailRow> {
-    const w = await this.webhookRepo.findOne({ where: { id, userId } });
-    if (!w) throw new NotFoundException('Webhook not found');
+  async findOne(userId: number, idOrPublicId: string | number): Promise<WebhookDetailRow> {
+    const w = await this.resolveEntity(userId, idOrPublicId);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
     return this.toDetailRow(w, remoteTriggerUrl);
   }
 
   async update(
     userId: number,
-    id: number,
+    idOrPublicId: string | number,
     dto: UpdateWebhookDto,
   ): Promise<WebhookDetailRow> {
-    const w = await this.webhookRepo.findOne({ where: { id, userId } });
-    if (!w) throw new NotFoundException('Webhook not found');
+    const w = await this.resolveEntity(userId, idOrPublicId);
 
     const beforeRemote = w.remoteServerId;
     const beforeDocker = w.dockerCommand;
@@ -990,9 +1006,8 @@ export class WebhooksService implements OnApplicationBootstrap {
     return this.toDetailRow(saved, remoteTriggerUrl);
   }
 
-  async remove(userId: number, id: number): Promise<void> {
-    const w = await this.webhookRepo.findOne({ where: { id, userId } });
-    if (!w) throw new NotFoundException('Webhook not found');
+  async remove(userId: number, idOrPublicId: string | number): Promise<void> {
+    const w = await this.resolveEntity(userId, idOrPublicId);
     const remoteId = w.remoteServerId;
     if (
       w.serviceAction === 'docker_command' &&
@@ -1003,7 +1018,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         .removeRemoteWebhookScript(w.remoteServerId, userId, w.secretToken)
         .catch(() => undefined);
     }
-    const res = await this.webhookRepo.delete({ id, userId });
+    const res = await this.webhookRepo.delete({ id: w.id, userId });
     if (!res.affected) throw new NotFoundException('Webhook not found');
     await this.syncWebhookAgentForRemoteServer(remoteId, userId);
   }

@@ -43,7 +43,7 @@ async function authJson<T>(accessToken: string, path: string, init?: RequestInit
 
 export async function fetchRemoteConsoleContainersPaged(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   page: number,
   pageSize: number,
   q: string,
@@ -57,7 +57,7 @@ export async function fetchRemoteConsoleContainersPaged(
 
 export async function fetchRemoteConsoleImagesPaged(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   page: number,
   pageSize: number,
   q: string,
@@ -71,7 +71,7 @@ export async function fetchRemoteConsoleImagesPaged(
 
 export async function fetchRemoteConsoleServicesPaged(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   page: number,
   pageSize: number,
   q: string,
@@ -85,7 +85,7 @@ export async function fetchRemoteConsoleServicesPaged(
 
 export async function fetchRemoteConsoleVolumesPaged(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   page: number,
   pageSize: number,
   q: string,
@@ -99,7 +99,7 @@ export async function fetchRemoteConsoleVolumesPaged(
 
 export async function fetchRemoteConsoleNetworksPaged(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   page: number,
   pageSize: number,
   q: string,
@@ -113,7 +113,7 @@ export async function fetchRemoteConsoleNetworksPaged(
 
 export async function fetchRemoteConsoleContainerLogs(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   containerId: string,
   tail: number,
 ): Promise<string> {
@@ -127,7 +127,7 @@ export async function fetchRemoteConsoleContainerLogs(
 
 export async function fetchRemoteConsoleServiceLogs(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   serviceId: string,
   tail: number,
 ): Promise<string> {
@@ -149,7 +149,7 @@ async function authDelete(accessToken: string, path: string): Promise<void> {
 
 export async function deleteRemoteConsoleContainer(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   idOrName: string,
   force = false,
 ): Promise<void> {
@@ -162,7 +162,7 @@ export async function deleteRemoteConsoleContainer(
 
 export async function deleteRemoteConsoleImage(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   ref: string,
 ): Promise<void> {
   await authDelete(
@@ -173,7 +173,7 @@ export async function deleteRemoteConsoleImage(
 
 export async function deleteRemoteConsoleVolume(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   name: string,
   force = false,
 ): Promise<void> {
@@ -186,7 +186,7 @@ export async function deleteRemoteConsoleVolume(
 
 export async function deleteRemoteConsoleNetwork(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   idOrName: string,
 ): Promise<void> {
   await authDelete(
@@ -197,7 +197,7 @@ export async function deleteRemoteConsoleNetwork(
 
 export async function deleteRemoteConsoleService(
   accessToken: string,
-  serverId: number,
+  serverId: string,
   idOrName: string,
   force = false,
 ): Promise<void> {

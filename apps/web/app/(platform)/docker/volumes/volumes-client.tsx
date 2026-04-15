@@ -147,7 +147,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
       names.map((n) =>
         consoleTarget === "local"
           ? deleteDockerVolume(n)
-          : deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as number, n, false),
+          : deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as string, n, false),
       ),
     );
     setBulkPending(false);
@@ -175,7 +175,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
         if (consoleTarget === "local") {
           await deleteDockerVolume(name);
         } else {
-          await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as number, name, false);
+          await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as string, name, false);
         }
         toast({ title: "Volume removed", description: name });
         void listQuery.refetch();
@@ -196,7 +196,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
       if (consoleTarget === "local") {
         await deleteDockerVolume(forceDialog, true);
       } else {
-        await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as number, forceDialog, true);
+        await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as string, forceDialog, true);
       }
       toast({ title: "Volume removed (force)", description: forceDialog });
       setForceDialog(null);

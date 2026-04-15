@@ -21,6 +21,8 @@ export const metadata: Metadata = {
   description: "Webhook and deployment management",
 };
 
+const THEME_INIT_SCRIPT = `(function(){try{var t=localStorage.getItem('weehawk-theme');var dark=t!=='light';document.documentElement.classList.toggle('dark',dark);}catch(_e){document.documentElement.classList.remove('dark');}})();`;
+
 export default async function RootLayout({
   children,
 }: Readonly<{
@@ -38,14 +40,16 @@ export default async function RootLayout({
         imageUrl: profile.imageUrl ?? null,
       }
     : null;
-  const initialThemeClass = "dark";
 
   return (
     <html
       lang="en"
-      className={`${fontSans.variable} ${fontMono.variable} h-full ${initialThemeClass}`}
+      className={`${fontSans.variable} ${fontMono.variable} h-full`}
       suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="min-h-full flex flex-col bg-background">
         <Providers initialUser={initialUser}>{children}</Providers>
       </body>

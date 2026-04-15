@@ -161,7 +161,7 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
           ? await fetchDockerContainerLogs(logTarget.id, logTail)
           : await fetchRemoteConsoleContainerLogs(
               accessToken ?? "",
-              consoleTarget as number,
+              consoleTarget as string,
               logTarget.id,
               logTail,
             );
@@ -201,7 +201,7 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
       targets.map((c) =>
         consoleTarget === "local"
           ? deleteDockerContainer(c.id, true)
-          : deleteRemoteConsoleContainer(accessToken ?? "", consoleTarget as number, c.id, true),
+          : deleteRemoteConsoleContainer(accessToken ?? "", consoleTarget as string, c.id, true),
       ),
     );
     setBulkPending(false);
@@ -232,7 +232,7 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
         if (consoleTarget === "local") {
           await deleteDockerContainer(id, false);
         } else {
-          await deleteRemoteConsoleContainer(accessToken ?? "", consoleTarget as number, id, false);
+          await deleteRemoteConsoleContainer(accessToken ?? "", consoleTarget as string, id, false);
         }
         toast({ title: "Container removed", description: name });
         void listQuery.refetch();
@@ -255,7 +255,7 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
       } else {
         await deleteRemoteConsoleContainer(
           accessToken ?? "",
-          consoleTarget as number,
+          consoleTarget as string,
           forceDialog.id,
           true,
         );

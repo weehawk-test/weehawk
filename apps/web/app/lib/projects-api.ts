@@ -60,6 +60,10 @@ export function mapApiProjectToProject(raw: unknown): Project {
 
   return {
     id: String(row.id ?? ""),
+    publicId:
+      row.publicId == null || String(row.publicId).trim() === ""
+        ? undefined
+        : String(row.publicId),
     name: String(row.name ?? ""),
     description: typeof row.description === "string" ? row.description : "",
     createdAt,
