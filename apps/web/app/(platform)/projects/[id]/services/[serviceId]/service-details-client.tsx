@@ -3607,9 +3607,11 @@ function ApplicationArchivePanel({
           "Source is on the server. Set env and networks below, then click Generate stack from source.",
       });
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const isRateLimit = /rate limit|too many times|too many requests|429/i.test(msg);
       toast({
-        title: "Fetch failed",
-        description: e instanceof Error ? e.message : String(e),
+        title: isRateLimit ? "GitLab rate limit" : "Fetch failed",
+        description: msg,
         variant: "destructive",
       });
     } finally {

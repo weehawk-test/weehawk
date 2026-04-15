@@ -6,10 +6,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { execFile } from 'child_process';
 import { createSign } from 'crypto';
 import * as fs from 'fs/promises';
 import * as fss from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 import * as unzipper from 'unzipper';
@@ -1074,6 +1074,241 @@ export class GitService implements OnModuleInit {
     return { repositories: slice, totalPages, page };
   }
 
+  /** Web UI base (may include subpath, e.g. https://company.com/gitlab). */
+  private normalizeGitlabWebBase(raw: string): string {
+    const t = (raw?.trim() || 'https://gitlab.com').replace(/\/+$/, '');
+    const u = new URL(t.startsWith('http') ? t : `https://${t}`);
+    const p = u.pathname.replace(/\/+$/, '');
+    const path = !p || p === '/' ? '' : p;
+    return `${u.origin}${path}`;
+  }
+
+  private gitlabJsonHeaders(token: string): Record<string, string> {
+    return {
+      'PRIVATE-TOKEN': token,
+      Accept: 'application/json',
+      'User-Agent': 'weehawk-api',
+    };
+  }
+
+  /**
+   * Header sets for archive GETs. GitLab.com / some proxies return 406 unless Accept is broad;
+   * OAuth PATs sometimes work only as Bearer on newer instances.
+   */
+  private gitlabArchiveHeaderVariants(
+    token: string | null,
+  ): Array<Record<string, string>> {
+    const curlUa = 'curl/8.4.0';
+    const v: Array<Record<string, string>> = [];
+    if (token) {
+      v.push({
+        'PRIVATE-TOKEN': token,
+        Accept: '*/*',
+        'User-Agent': curlUa,
+      });
+      v.push({ 'PRIVATE-TOKEN': token, Accept: '*/*' });
+      v.push({
+        Authorization: `Bearer ${token}`,
+        Accept: '*/*',
+        'User-Agent': curlUa,
+      });
+      v.push({ Authorization: `Bearer ${token}`, Accept: '*/*' });
+    } else {
+      v.push({ Accept: '*/*', 'User-Agent': curlUa });
+      v.push({ Accept: '*/*' });
+    }
+    return v;
+  }
+
+  /** Try `/archive?format=zip` (modern) then `archive.zip` (legacy); with sha first when set. */
+  private gitlabArchiveCandidateUrls(
+    apiBase: string,
+    projectSpecEncoded: string,
+    sha: string | null,
+  ): string[] {
+    const b = `${apiBase}/api/v4/projects/${projectSpecEncoded}/repository`;
+    const urls: string[] = [];
+    const add = (u: string) => {
+      if (!urls.includes(u)) urls.push(u);
+    };
+    if (sha) {
+      add(`${b}/archive?format=zip&sha=${encodeURIComponent(sha)}`);
+      add(`${b}/archive?format=zip&ref=${encodeURIComponent(sha)}`);
+      add(`${b}/archive.zip?sha=${encodeURIComponent(sha)}`);
+    }
+    add(`${b}/archive?format=zip`);
+    add(`${b}/archive.zip`);
+    return urls;
+  }
+
+  private gitlabRateLimitWaitMs(res: Response): number | null {
+    const retryAfter = res.headers.get('retry-after')?.trim();
+    if (retryAfter) {
+      const secs = parseInt(retryAfter, 10);
+      if (Number.isFinite(secs) && secs > 0) {
+        return secs * 1000;
+      }
+      const when = Date.parse(retryAfter);
+      if (Number.isFinite(when)) {
+        return Math.max(0, when - Date.now());
+      }
+    }
+    const resetRaw = res.headers.get('ratelimit-reset')?.trim();
+    if (resetRaw) {
+      const resetUnix = parseInt(resetRaw, 10);
+      if (Number.isFinite(resetUnix) && resetUnix > 0) {
+        return Math.max(0, resetUnix * 1000 - Date.now());
+      }
+    }
+    return null;
+  }
+
+  private humanizeDurationMs(ms: number): string {
+    const totalSec = Math.max(1, Math.ceil(ms / 1000));
+    const hours = Math.floor(totalSec / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  }
+
+  private gitlabErrorText(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    try {
+      const data = JSON.parse(trimmed) as Record<string, unknown>;
+      const msg = data.message;
+      if (typeof msg === 'string') return msg.trim();
+      if (msg && typeof msg === 'object') {
+        const nested = (msg as Record<string, unknown>).error;
+        if (typeof nested === 'string') return nested.trim();
+      }
+    } catch {
+      // keep raw text below
+    }
+    return trimmed.slice(0, 600);
+  }
+
+  private async gitlabDownloadProjectArchive(
+    apiBase: string,
+    projectSpecEncoded: string,
+    sha: string | null,
+    token: string | null,
+    zipPath: string,
+  ): Promise<void> {
+    const urls = this.gitlabArchiveCandidateUrls(
+      apiBase,
+      projectSpecEncoded,
+      sha,
+    );
+    const headerVariants = this.gitlabArchiveHeaderVariants(token);
+    let lastStatus = 0;
+    let lastText = '';
+    let lastRateLimitWaitMs: number | null = null;
+    const softFail = (s: number) =>
+      s === 406 || s === 404 || s === 415 || s === 401 || s === 403 || s === 429;
+
+    for (const headers of headerVariants) {
+      for (const url of urls) {
+        const res = await fetch(url, { headers, redirect: 'follow' });
+        if (res.ok) {
+          await fs.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+          return;
+        }
+        lastStatus = res.status;
+        lastText = await res.text();
+        if (res.status === 429) {
+          lastRateLimitWaitMs = this.gitlabRateLimitWaitMs(res);
+        }
+        if (!softFail(res.status)) {
+          break;
+        }
+      }
+    }
+    if (lastStatus === 429) {
+      const waitHint =
+        lastRateLimitWaitMs != null
+          ? ` Please retry after about ${this.humanizeDurationMs(lastRateLimitWaitMs)}.`
+          : ' Please retry later.';
+      throw new BadRequestException(
+        `GitLab rate limit reached for archive downloads.${waitHint} Avoid repeated Fetch clicks because each attempt may trigger multiple archive requests.`,
+      );
+    }
+    const hint =
+      lastStatus === 406
+        ? ' GitLab rejected the archive (406). Confirm Git → GitLab base URL, use a token with read_repository (and read_api), and try the exact default branch name.'
+        : '';
+    const normalized = this.gitlabErrorText(lastText);
+    throw new BadRequestException(
+      (normalized || `GitLab archive failed (${lastStatus}).`) + hint,
+    );
+  }
+
+  /**
+   * API root for v4 (same host as configured Git → GitLab base when host matches clone URL).
+   * Manual clone URLs on subdirectory installs were using `origin` only and hit the wrong path.
+   */
+  private resolveGitlabApiRootFromCloneUrl(
+    row: GitIntegrationSettings,
+    cloneUrl: string,
+  ): string {
+    let clone: URL;
+    try {
+      clone = new URL(cloneUrl);
+    } catch {
+      throw new BadRequestException('Invalid GitLab URL');
+    }
+    const configured = this.normalizeGitlabWebBase(
+      row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+    );
+    let cfgParsed: URL;
+    try {
+      cfgParsed = new URL(configured);
+    } catch {
+      return clone.origin;
+    }
+    if (clone.hostname.toLowerCase() !== cfgParsed.hostname.toLowerCase()) {
+      return clone.origin;
+    }
+    return configured;
+  }
+
+  /** Strip GitLab relative URL root from repo path (e.g. /gitlab/ns/r → ns/r). */
+  private gitlabProjectPathFromClonePathname(
+    row: GitIntegrationSettings,
+    cloneUrl: string,
+  ): string {
+    const u = new URL(cloneUrl);
+    let pathPart = u.pathname
+      .replace(/^\//, '')
+      .replace(/\.git$/i, '')
+      .replace(/\/+$/, '');
+    if (!pathPart) {
+      throw new BadRequestException('Invalid GitLab repository URL');
+    }
+    const configured = this.normalizeGitlabWebBase(
+      row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+    );
+    let cfgParsed: URL;
+    try {
+      cfgParsed = new URL(configured);
+    } catch {
+      return pathPart;
+    }
+    if (u.hostname.toLowerCase() !== cfgParsed.hostname.toLowerCase()) {
+      return pathPart;
+    }
+    const mount = cfgParsed.pathname.replace(/\/+$/, '').replace(/^\//, '');
+    if (
+      mount &&
+      pathPart.toLowerCase().startsWith(mount.toLowerCase() + '/')
+    ) {
+      pathPart = pathPart.slice(mount.length + 1);
+    }
+    return pathPart;
+  }
+
   private assertSingleGitApplicationSource(options: {
     gitlabProjectId?: number;
     httpUrlToRepo?: string;
@@ -1101,8 +1336,98 @@ export class GitService implements OnModuleInit {
   }
 
   /**
-   * Fetches repository source via HTTP archive APIs (no `git` / child_process on the API host).
+   * Materialize app source using real Git sync (clone/fetch/checkout).
    */
+  private async runGit(
+    args: string[],
+    cwd?: string,
+  ): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      execFile(
+        'git',
+        args,
+        {
+          cwd,
+          windowsHide: true,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            const msg = String(stderr || stdout || error.message || 'git failed')
+              .trim()
+              .slice(0, 1000);
+            reject(new BadRequestException(msg || 'Git command failed'));
+            return;
+          }
+          resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
+        },
+      );
+    });
+  }
+
+  private async ensureGitInstalled(): Promise<void> {
+    try {
+      await this.runGit(['--version']);
+    } catch {
+      throw new BadRequestException(
+        'Git is not installed on the API host. Install git (or configure remote on-host auto-deploy) and retry.',
+      );
+    }
+  }
+
+  private async resolveGitlabDefaultBranchFromHttpUrl(
+    httpUrlToRepo: string,
+    userId: number,
+  ): Promise<string | null> {
+    const row = await this.gitlabSettingsRow(userId);
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+    if (!token) return null;
+    const apiBase = this.resolveGitlabApiRootFromCloneUrl(row, httpUrlToRepo);
+    const pathPart = this.gitlabProjectPathFromClonePathname(row, httpUrlToRepo);
+    const metaUrl = `${apiBase}/api/v4/projects/${encodeURIComponent(pathPart)}`;
+    const res = await fetch(metaUrl, { headers: this.gitlabJsonHeaders(token) });
+    const text = await res.text();
+    if (!res.ok) {
+      return null;
+    }
+    try {
+      const data = JSON.parse(text) as Record<string, unknown>;
+      return typeof data.default_branch === 'string' ? data.default_branch : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async resolvePublicGithubDefaultBranch(
+    httpUrlToRepo: string,
+  ): Promise<string | null> {
+    try {
+      const u = new URL(httpUrlToRepo);
+      const parts = u.pathname
+        .replace(/^\//, '')
+        .replace(/\.git$/i, '')
+        .split('/')
+        .filter(Boolean);
+      if (parts.length < 2) return null;
+      const owner = parts[0];
+      const repo = parts[1];
+      const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+      const res = await fetch(apiUrl, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'weehawk-api',
+        },
+      });
+      const text = await res.text();
+      if (!res.ok) return null;
+      const data = JSON.parse(text) as Record<string, unknown>;
+      return typeof data.default_branch === 'string' ? data.default_branch : null;
+    } catch {
+      return null;
+    }
+  }
+
   async materializeApplicationGitSource(
     options: {
       gitlabProjectId?: number;
@@ -1115,70 +1440,77 @@ export class GitService implements OnModuleInit {
     userId = 1,
   ): Promise<{ refUsed: string }> {
     this.assertSingleGitApplicationSource(options);
-    const branchOpt = options.branch?.trim() || null;
+    await this.ensureGitInstalled();
+    const requestedBranch = options.branch?.trim() || null;
+    let cloneUrl = '';
+    let refUsed = requestedBranch || 'main';
 
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'weehawk-git-'));
-    const zipPath = path.join(tempRoot, 'archive.zip');
-    const extractDir = path.join(tempRoot, 'extract');
-
-    try {
-      await fs.mkdir(extractDir, { recursive: true });
-      let refUsed: string;
-
-      if (options.gitlabProjectId != null && options.gitlabProjectId > 0) {
-        refUsed = await this.downloadGitlabProjectArchiveZip(
-          options.gitlabProjectId,
-          branchOpt,
-          userId,
-          zipPath,
-        );
-      } else if (
-        options.githubInstallationId != null &&
-        options.githubInstallationId > 0 &&
-        options.githubRepoFullName
-      ) {
-        refUsed = await this.downloadGithubInstallationArchiveZip(
-          options.githubInstallationId,
-          options.githubRepoFullName.trim(),
-          branchOpt,
-          userId,
-          zipPath,
-        );
-      } else if (options.httpUrlToRepo?.trim()) {
-        const trimmed = options.httpUrlToRepo.trim();
-        let host: string;
-        try {
-          host = new URL(trimmed).hostname.toLowerCase();
-        } catch {
-          throw new BadRequestException('Invalid clone URL');
-        }
-        if (host === 'github.com') {
-          refUsed = await this.downloadPublicGithubArchiveZip(
-            trimmed,
-            branchOpt,
-            zipPath,
-          );
-        } else {
-          refUsed = await this.downloadGitlabHttpArchiveZip(
-            trimmed,
-            branchOpt,
-            userId,
-            zipPath,
-          );
-        }
-      } else {
-        throw new BadRequestException('No git source resolved');
+    if (options.gitlabProjectId != null && options.gitlabProjectId > 0) {
+      const info = await this.gitlabCloneInfoForProject(options.gitlabProjectId);
+      cloneUrl = info.cloneUrl;
+      refUsed = requestedBranch || info.defaultBranch || 'main';
+    } else if (
+      options.githubInstallationId != null &&
+      options.githubInstallationId > 0 &&
+      options.githubRepoFullName
+    ) {
+      const info = await this.githubCloneInfoForInstallationRepo(
+        options.githubInstallationId,
+        options.githubRepoFullName.trim(),
+      );
+      cloneUrl = info.cloneUrl;
+      refUsed = requestedBranch || info.defaultBranch || 'main';
+    } else if (options.httpUrlToRepo?.trim()) {
+      const trimmed = options.httpUrlToRepo.trim();
+      let host: string;
+      try {
+        host = new URL(trimmed).hostname.toLowerCase();
+      } catch {
+        throw new BadRequestException('Invalid clone URL');
       }
-
-      await this.extractZipSafely(zipPath, extractDir);
-      await this.hoistSingleRootDirectory(extractDir);
-      await fs.rm(destDir, { recursive: true, force: true });
-      await fs.mkdir(path.dirname(destDir), { recursive: true });
-      await fs.rename(extractDir, destDir);
-      return { refUsed };
-    } finally {
-      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+      if (host === 'github.com') {
+        cloneUrl = await this.resolveGithubHttpCloneUrl(trimmed);
+        refUsed =
+          requestedBranch || (await this.resolvePublicGithubDefaultBranch(trimmed)) || 'main';
+      } else {
+        cloneUrl = await this.resolveGitlabHttpCloneUrl(trimmed);
+        refUsed =
+          requestedBranch ||
+          (await this.resolveGitlabDefaultBranchFromHttpUrl(trimmed, userId)) ||
+          'main';
+      }
+    } else {
+      throw new BadRequestException('No git source resolved');
     }
+
+    const gitDir = path.join(destDir, '.git');
+    const hasGitDir = await fs
+      .stat(gitDir)
+      .then((s) => s.isDirectory())
+      .catch(() => false);
+    await fs.mkdir(path.dirname(destDir), { recursive: true });
+
+    if (!hasGitDir) {
+      await fs.rm(destDir, { recursive: true, force: true });
+      await this.runGit([
+        'clone',
+        '--depth',
+        '1',
+        '--branch',
+        refUsed,
+        '--single-branch',
+        cloneUrl,
+        destDir,
+      ]);
+      return { refUsed };
+    }
+
+    await this.runGit(['-C', destDir, 'remote', 'set-url', 'origin', cloneUrl]);
+    await this.runGit(['-C', destDir, 'fetch', '--depth', '1', 'origin', refUsed]);
+    await this.runGit(['-C', destDir, 'checkout', '-B', refUsed, `origin/${refUsed}`]);
+    await this.runGit(['-C', destDir, 'reset', '--hard', `origin/${refUsed}`]);
+    await this.runGit(['-C', destDir, 'clean', '-fdx']);
+    return { refUsed };
   }
 
   private async downloadGitlabProjectArchiveZip(
@@ -1194,14 +1526,13 @@ export class GitService implements OnModuleInit {
         'GitLab access token is not configured. Add a group or personal access token in Git → GitLab.',
       );
     }
-    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
-      /\/+$/,
-      '',
+    const base = this.normalizeGitlabWebBase(
+      row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
     );
     let sha = branch;
     if (!sha) {
       const metaUrl = `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}`;
-      const res = await fetch(metaUrl, { headers: { 'PRIVATE-TOKEN': token } });
+      const res = await fetch(metaUrl, { headers: this.gitlabJsonHeaders(token) });
       const text = await res.text();
       if (!res.ok) {
         throw new BadRequestException(
@@ -1212,15 +1543,13 @@ export class GitService implements OnModuleInit {
       sha =
         typeof data.default_branch === 'string' ? data.default_branch : 'main';
     }
-    const dl = `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/repository/archive.zip?sha=${encodeURIComponent(sha)}`;
-    const res = await fetch(dl, { headers: { 'PRIVATE-TOKEN': token } });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new BadRequestException(
-        text.trim().slice(0, 500) || `GitLab archive failed (${res.status})`,
-      );
-    }
-    await fs.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    await this.gitlabDownloadProjectArchive(
+      base,
+      encodeURIComponent(String(projectId)),
+      sha,
+      token,
+      zipPath,
+    );
     return sha;
   }
 
@@ -1346,19 +1675,8 @@ export class GitService implements OnModuleInit {
   ): Promise<string> {
     const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
-    const u = new URL(httpUrlToRepo);
-    const apiBase = u.origin;
-    const pathPart = u.pathname
-      .replace(/^\//, '')
-      .replace(/\.git$/i, '')
-      .replace(/\/+$/, '');
-    if (!pathPart) {
-      throw new BadRequestException('Invalid GitLab repository URL');
-    }
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['PRIVATE-TOKEN'] = token;
-    }
+    const apiBase = this.resolveGitlabApiRootFromCloneUrl(row, httpUrlToRepo);
+    const pathPart = this.gitlabProjectPathFromClonePathname(row, httpUrlToRepo);
     let sha = branch;
     if (!sha) {
       if (!token) {
@@ -1367,7 +1685,7 @@ export class GitService implements OnModuleInit {
         );
       }
       const metaUrl = `${apiBase}/api/v4/projects/${encodeURIComponent(pathPart)}`;
-      const res = await fetch(metaUrl, { headers: { 'PRIVATE-TOKEN': token } });
+      const res = await fetch(metaUrl, { headers: this.gitlabJsonHeaders(token) });
       const text = await res.text();
       if (!res.ok) {
         throw new BadRequestException(
@@ -1378,16 +1696,13 @@ export class GitService implements OnModuleInit {
       sha =
         typeof data.default_branch === 'string' ? data.default_branch : 'main';
     }
-    const dl = `${apiBase}/api/v4/projects/${encodeURIComponent(pathPart)}/repository/archive.zip?sha=${encodeURIComponent(sha)}`;
-    const res = await fetch(dl, { headers });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new BadRequestException(
-        text.trim().slice(0, 500) ||
-          `GitLab archive failed (${res.status}). Configure Git → GitLab token for private repositories.`,
-      );
-    }
-    await fs.writeFile(zipPath, Buffer.from(await res.arrayBuffer()));
+    await this.gitlabDownloadProjectArchive(
+      apiBase,
+      encodeURIComponent(pathPart),
+      sha,
+      token || null,
+      zipPath,
+    );
     return sha;
   }
 

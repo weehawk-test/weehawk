@@ -55,6 +55,35 @@ docker_install_weehawk() {
 }
 `.trim();
 
+/** Install Git on common Linux distros (needed for clone/fetch auto-deploy flow). */
+const BASH_GIT_INSTALL_FN = `
+git_install_weehawk() {
+  if command -v git >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    $SUDO_CMD apt-get update -y
+    $SUDO_CMD apt-get install -y git
+    return 0
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    $SUDO_CMD dnf install -y git
+    return 0
+  fi
+  if command -v yum >/dev/null 2>&1; then
+    $SUDO_CMD yum install -y git
+    return 0
+  fi
+  if command -v apk >/dev/null 2>&1; then
+    $SUDO_CMD apk add --no-cache git
+    return 0
+  fi
+  echo "Could not install git automatically. Please install git and re-run."
+  return 1
+}
+`.trim();
+
 /**
  * Traefik v2.11 static args (single place — keep in sync with RemoteServersService Swarm labels: web + websecure).
  * Includes ACME (Let's Encrypt) resolver so `tls.certresolver=letsencrypt` labels actually obtain real certificates.
@@ -283,6 +312,7 @@ fi
 command_exists() { command -v "$@" >/dev/null 2>&1; }
 
 ${BASH_DOCKER_INSTALL_FN}
+${BASH_GIT_INSTALL_FN}
 
 if ! command_exists curl; then
   if command_exists apt-get; then
@@ -306,6 +336,13 @@ else
     echo "Docker install failed; see https://docs.docker.com/engine/install/"
     exit 1
   }
+fi
+
+if command_exists git; then
+  echo "Git already installed."
+else
+  echo "Installing Git..."
+  git_install_weehawk || exit 1
 fi
 
 $SUDO_CMD systemctl enable docker 2>/dev/null || true
@@ -352,6 +389,7 @@ fi
 command_exists() { command -v "$@" >/dev/null 2>&1; }
 
 ${BASH_DOCKER_INSTALL_FN}
+${BASH_GIT_INSTALL_FN}
 
 if ! command_exists curl; then
   if command_exists apt-get; then
@@ -375,6 +413,13 @@ else
     echo "Docker install failed; see https://docs.docker.com/engine/install/"
     exit 1
   }
+fi
+
+if command_exists git; then
+  echo "Git already installed."
+else
+  echo "Installing Git..."
+  git_install_weehawk || exit 1
 fi
 
 $SUDO_CMD systemctl enable docker 2>/dev/null || true

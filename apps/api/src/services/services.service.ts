@@ -1394,7 +1394,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
-      message: 'Repository archive fetched and application stack generated.',
+      message: 'Repository synced and application stack generated.',
       service: saved,
       remoteMirror,
     };
@@ -3512,14 +3512,14 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       const sourceDir = path.join(deployDir, 'app-source');
       await fs.mkdir(deployDir, { recursive: true });
 
-      emit(`[auto-deploy] Fetching ${provider} repository archive…\n`);
+      emit(`[auto-deploy] Syncing ${provider} repository (git clone/pull)…\n`);
       const { refUsed } = await this.gitService.materializeApplicationGitSource(
         cloneOptions,
         sourceDir,
         service.project?.userId ?? 1,
       );
       emit(
-        `[auto-deploy] Source extracted (ref: ${refUsed}). Generating stack configuration…\n`,
+        `[auto-deploy] Source synced (ref: ${refUsed}). Generating stack configuration…\n`,
       );
 
       await this.applyApplicationSourceFromDirectory(

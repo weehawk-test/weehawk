@@ -7,9 +7,17 @@ import { getServerApiBase } from "./server-api";
 
 function nestErrorMessage(text: string, fallback: string): string {
   try {
-    const j = JSON.parse(text) as { message?: string | string[] };
+    const j = JSON.parse(text) as {
+      message?: string | string[] | { error?: string; message?: string };
+      error?: string;
+    };
     if (typeof j.message === "string") return j.message;
     if (Array.isArray(j.message)) return j.message.join(", ");
+    if (j.message && typeof j.message === "object") {
+      if (typeof j.message.error === "string") return j.message.error;
+      if (typeof j.message.message === "string") return j.message.message;
+    }
+    if (typeof j.error === "string") return j.error;
   } catch {
     /* keep fallback */
   }

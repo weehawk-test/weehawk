@@ -101,45 +101,33 @@ if [ -n "\$AD_URL" ]; then
   echo "=== Auto-deploy: fetching source (branch: \$AD_BRANCH) ==="
   AD_SRC_REL="\${WEEHAWK_BUILD_CONTEXT_REL:-app-source}"
   AD_TARGET="\$ROOT/\$AD_SRC_REL"
-  rm -rf "\$AD_TARGET"
   mkdir -p "\$(dirname "\$AD_TARGET")"
-  if command -v git >/dev/null 2>&1; then
+  if ! command -v git >/dev/null 2>&1; then
+    echo "Auto-deploy requires git on the deploy host (git not found)." >&2
+    exit 1
+  fi
+  if [ -d "\$AD_TARGET/.git" ]; then
+    echo "=== Auto-deploy: git fetch/pull ==="
+    git -C "\$AD_TARGET" remote set-url origin "\$AD_URL" 2>&1 || true
+    git -C "\$AD_TARGET" fetch --depth 1 origin "\$AD_BRANCH" 2>&1 || {
+      echo "Auto-deploy git fetch failed." >&2
+      exit 1
+    }
+    git -C "\$AD_TARGET" checkout -B "\$AD_BRANCH" "origin/\$AD_BRANCH" 2>&1 || {
+      echo "Auto-deploy git checkout failed." >&2
+      exit 1
+    }
+    git -C "\$AD_TARGET" reset --hard "origin/\$AD_BRANCH" 2>&1 || {
+      echo "Auto-deploy git reset failed." >&2
+      exit 1
+    }
+    git -C "\$AD_TARGET" clean -fdx 2>&1 || true
+  else
+    rm -rf "\$AD_TARGET"
     git clone --depth 1 --branch "\$AD_BRANCH" "\$AD_URL" "\$AD_TARGET" 2>&1 || {
       echo "Auto-deploy git clone failed." >&2
       exit 1
     }
-  else
-    echo "(git not found — downloading tarball via curl)"
-    _GL_ID="\${WEEHAWK_GITLAB_PROJECT_ID:-}"
-    _GL_BASE="\${WEEHAWK_GITLAB_API_BASE:-}"
-    _GL_TOK="\${WEEHAWK_GITLAB_PRIVATE_TOKEN:-}"
-    if [ -n "\$_GL_ID" ] && [ -n "\$_GL_BASE" ] && [ -n "\$_GL_TOK" ]; then
-      echo "=== Auto-deploy: GitLab API archive (project \$_GL_ID) ==="
-      _GL_BT="\${_GL_BASE%/}"
-      _GL_ROOT="\${_GL_BT}/api/v4/projects/\${_GL_ID}/repository/archive.tar.gz"
-      mkdir -p "\$AD_TARGET"
-      curl -fsSL -G "\$_GL_ROOT" --data-urlencode "sha=\${AD_BRANCH}" \\
-        -H "PRIVATE-TOKEN: \${_GL_TOK}" | tar xz --strip-components=1 -C "\$AD_TARGET" 2>&1 || {
-        echo "Auto-deploy GitLab API archive failed (project \$_GL_ID)." >&2
-        exit 1
-      }
-    else
-      _TAR_BASE=\$(printf '%s' "\$AD_URL" | sed 's/\\.git\$//')
-      _SLUG=\$(printf '%s' "\$_TAR_BASE" | awk -F/ '{print \$NF}')
-      case "\$_TAR_BASE" in
-        *github.com/*)
-          _TAR_DL="\${_TAR_BASE}/archive/refs/heads/\${AD_BRANCH}.tar.gz"
-          ;;
-        *)
-          _TAR_DL="\${_TAR_BASE}/-/archive/\${AD_BRANCH}/\${_SLUG}-\${AD_BRANCH}.tar.gz"
-          ;;
-      esac
-      mkdir -p "\$AD_TARGET"
-      curl -fsSL "\$_TAR_DL" | tar xz --strip-components=1 -C "\$AD_TARGET" 2>&1 || {
-        echo "Auto-deploy tarball download failed (\$_TAR_DL)." >&2
-        exit 1
-      }
-    fi
   fi
   weehawk_ensure_generated_dockerfile_in_context "\$AD_TARGET" "\${WEEHAWK_DOCKERFILE_REL:-Dockerfile}" || exit 1
   echo "=== Auto-deploy: source ready ==="
