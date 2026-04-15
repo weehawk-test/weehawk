@@ -32,6 +32,7 @@ import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 export type CronJobListRow = {
   id: number;
+  publicId: string;
   name: string;
   description: string;
   isActive: boolean;
@@ -412,34 +413,37 @@ export class CronJobsService {
     return `[Cron ${w.cronExpression}] ${a}`;
   }
 
-  private toListRow(w: CronJob): CronJobListRow {
+  private async toListRow(w: CronJob): Promise<CronJobListRow> {
+    const row = await this.ensurePublicId(w);
     return {
-      id: w.id,
-      name: w.name,
-      description: w.description ?? '',
-      isActive: w.isActive,
-      cronExpression: w.cronExpression,
-      targetMode: w.targetMode,
-      serviceId: w.serviceId,
-      remoteServerId: w.remoteServerId,
-      serviceAction: w.serviceAction,
-      notifyOnTrigger: w.notifyOnTrigger,
-      createdAt: w.createdAt.toISOString(),
-      summary: this.summaryLabel(w),
+      id: row.id,
+      publicId: row.publicId,
+      name: row.name,
+      description: row.description ?? '',
+      isActive: row.isActive,
+      cronExpression: row.cronExpression,
+      targetMode: row.targetMode,
+      serviceId: row.serviceId,
+      remoteServerId: row.remoteServerId,
+      serviceAction: row.serviceAction,
+      notifyOnTrigger: row.notifyOnTrigger,
+      createdAt: row.createdAt.toISOString(),
+      summary: this.summaryLabel(row),
     };
   }
 
-  private toDetailRow(w: CronJob): CronJobDetailRow {
-    const cfg = w.databaseBackupConfig;
+  private async toDetailRow(w: CronJob): Promise<CronJobDetailRow> {
+    const row = await this.ensurePublicId(w);
+    const cfg = row.databaseBackupConfig;
     return {
-      ...this.toListRow(w),
-      volumeSource: w.volumeSource,
-      dockerCommand: w.dockerCommand,
+      ...(await this.toListRow(row)),
+      volumeSource: row.volumeSource,
+      dockerCommand: row.dockerCommand,
       databaseBackupConfig: cfg,
       databaseBackupPreview: cfg ? describeDatabaseBackupPreview(cfg) : null,
-      backupS3ProfileName: w.backupS3ProfileName,
-      notifyChannelId: w.notifyChannelId,
-      notifyMessage: w.notifyMessage,
+      backupS3ProfileName: row.backupS3ProfileName,
+      notifyChannelId: row.notifyChannelId,
+      notifyMessage: row.notifyMessage,
     };
   }
 
@@ -558,7 +562,7 @@ export class CronJobsService {
       });
       throw e;
     }
-    return this.toDetailRow(saved);
+    return await this.toDetailRow(saved);
   }
 
   async list(userId: number): Promise<CronJobListRow[]> {
@@ -566,12 +570,12 @@ export class CronJobsService {
       where: { userId },
       order: { createdAt: 'DESC' },
     });
-    return list.map((w) => this.toListRow(w));
+    return Promise.all(list.map((w) => this.toListRow(w)));
   }
 
   async findOne(userId: number, idOrPublicId: string | number): Promise<CronJobDetailRow> {
     const job = await this.resolveEntity(userId, idOrPublicId);
-    return this.toDetailRow(job);
+    return await this.toDetailRow(job);
   }
 
   async update(
@@ -656,7 +660,7 @@ export class CronJobsService {
       await this.removeCrontabEntryForRemote(prevRemoteId, saved.id);
     }
     await this.upsertCrontabEntry(saved);
-    return this.toDetailRow(saved);
+    return await this.toDetailRow(saved);
   }
 
   async remove(userId: number, idOrPublicId: string | number): Promise<void> {

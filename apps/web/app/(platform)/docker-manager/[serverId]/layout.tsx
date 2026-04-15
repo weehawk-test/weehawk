@@ -1,9 +1,8 @@
 import { type ReactNode } from "react";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { parseConsoleServerSlug } from "@/lib/console-target";
-import { isCloudEdition } from "@/lib/weehawk-edition";
 
-export default async function ConsoleServerLayout({
+export default async function DockerManagerServerLayout({
   children,
   params,
 }: {
@@ -11,20 +10,15 @@ export default async function ConsoleServerLayout({
   params: Promise<{ serverId: string }>;
 }) {
   const { serverId } = await params;
-  if (isCloudEdition() && serverId === "local") {
-    notFound();
-  }
   const target = parseConsoleServerSlug(serverId);
-  if (target == null) notFound();
-
-  const label =
-    serverId === "local" ? "Docker on the localhost" : `Remote server #${serverId}`;
+  /** Outside `(platform)` so the shell (sidebar) is not shown — `notFound()` would keep parent layouts. */
+  if (target == null) redirect("/console-not-found");
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm">
         <span className="text-muted-foreground">Weehawk · </span>
-        <span className="font-medium text-foreground">{label}</span>
+        <span className="font-medium text-foreground">Deploy server · {serverId}</span>
       </div>
       {children}
     </div>

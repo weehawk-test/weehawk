@@ -7,24 +7,35 @@ import {
   replaceDockerSecretApi,
   bulkImportSecretsApi,
   fetchDockerSecretsPagedApi,
+  type DockerSecretsRemoteServerId,
 } from "@/lib/docker-secrets-api";
 import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 
-export function useDockerSecrets(remoteServerId: number | null) {
+function secretsRemoteEnabled(id: DockerSecretsRemoteServerId | null): id is DockerSecretsRemoteServerId {
+  if (id == null) return false;
+  if (typeof id === "number") return Number.isFinite(id) && id > 0;
+  return id.trim().length > 0;
+}
+
+export function useDockerSecrets(remoteServerId: DockerSecretsRemoteServerId | null) {
   return useQuery({
     queryKey: ["docker-secrets", remoteServerId],
     queryFn: () => listDockerSecrets(remoteServerId!),
     staleTime: 15_000,
-    enabled: remoteServerId != null && remoteServerId > 0,
+    enabled: secretsRemoteEnabled(remoteServerId),
   });
 }
 
-export function useDockerSecretsPaged(remoteServerId: number | null, page: number, q: string) {
+export function useDockerSecretsPaged(
+  remoteServerId: DockerSecretsRemoteServerId | null,
+  page: number,
+  q: string,
+) {
   return useDockerSecretsPagedWithInitial(remoteServerId, page, q);
 }
 
 function useDockerSecretsPagedWithInitial(
-  remoteServerId: number | null,
+  remoteServerId: DockerSecretsRemoteServerId | null,
   page: number,
   q: string,
   options?: {
@@ -33,8 +44,7 @@ function useDockerSecretsPagedWithInitial(
   },
 ) {
   const hasInitial = options?.initialData !== undefined;
-  const enabled =
-    (options?.enabled ?? true) && remoteServerId != null && remoteServerId > 0;
+  const enabled = (options?.enabled ?? true) && secretsRemoteEnabled(remoteServerId);
   return useQuery({
     queryKey: ["docker-secrets-paged", remoteServerId, page, q],
     queryFn: () =>
@@ -48,7 +58,7 @@ function useDockerSecretsPagedWithInitial(
 }
 
 export function useDockerSecretsPagedWithInitialData(
-  remoteServerId: number | null,
+  remoteServerId: DockerSecretsRemoteServerId | null,
   page: number,
   q: string,
   options?: {
@@ -59,7 +69,7 @@ export function useDockerSecretsPagedWithInitialData(
   return useDockerSecretsPagedWithInitial(remoteServerId, page, q, options);
 }
 
-export function useCreateDockerSecret(remoteServerId: number | null) {
+export function useCreateDockerSecret(remoteServerId: DockerSecretsRemoteServerId | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateDockerSecretInput) => {
@@ -77,7 +87,7 @@ export function useCreateDockerSecret(remoteServerId: number | null) {
   });
 }
 
-export function useDeleteDockerSecret(remoteServerId: number | null) {
+export function useDeleteDockerSecret(remoteServerId: DockerSecretsRemoteServerId | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => {
@@ -91,7 +101,7 @@ export function useDeleteDockerSecret(remoteServerId: number | null) {
   });
 }
 
-export function useReplaceDockerSecret(remoteServerId: number | null) {
+export function useReplaceDockerSecret(remoteServerId: DockerSecretsRemoteServerId | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ name, value }: ReplaceDockerSecretInput) => {
@@ -105,7 +115,7 @@ export function useReplaceDockerSecret(remoteServerId: number | null) {
   });
 }
 
-export function useBulkImportDockerSecrets(remoteServerId: number | null) {
+export function useBulkImportDockerSecrets(remoteServerId: DockerSecretsRemoteServerId | null) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (envText: string) => {

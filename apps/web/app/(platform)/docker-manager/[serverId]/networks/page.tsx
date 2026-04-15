@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
-import { DockerContainersClient } from "@/(platform)/docker/containers/containers-client";
+import { DockerNetworksClient } from "@/(platform)/docker/networks/networks-client";
 import { parseConsoleServerSlug } from "@/lib/console-target";
 
-export default async function ConsoleContainersPage({
+export default async function DockerManagerNetworksPage({
   params,
   searchParams,
 }: {
@@ -15,5 +15,5 @@ export default async function ConsoleContainersPage({
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
-  return <DockerContainersClient consoleTarget={consoleTarget} urlPage={page} urlQ={q} />;
+  return <DockerNetworksClient consoleTarget={consoleTarget} urlPage={page} urlQ={q} />;
 }

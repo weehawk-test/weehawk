@@ -2,6 +2,9 @@ import { API_BASE } from "./api";
 import type { DockerSecretListItem } from "./schema";
 import type { PaginatedSecretsResponse } from "./docker-paged-fetch";
 
+/** Numeric DB id or `remote_servers.publicId` string (API accepts both in query/body). */
+export type DockerSecretsRemoteServerId = string | number;
+
 function parseJsonError(text: string): string {
   try {
     const j = JSON.parse(text) as { message?: string | string[] };
@@ -40,7 +43,7 @@ export function mapDockerSecretLsRow(r: Record<string, unknown>, index: number):
   return { id, name, createdAt };
 }
 
-export async function listDockerSecrets(remoteServerId: number): Promise<DockerSecretListItem[]> {
+export async function listDockerSecrets(remoteServerId: DockerSecretsRemoteServerId): Promise<DockerSecretListItem[]> {
   const qs = new URLSearchParams({ remoteServerId: String(remoteServerId) });
   const raw = await request<unknown[]>(`/api/docker-secrets?${qs.toString()}`);
   if (!Array.isArray(raw)) return [];
@@ -48,7 +51,7 @@ export async function listDockerSecrets(remoteServerId: number): Promise<DockerS
 }
 
 export async function fetchDockerSecretsPagedApi(
-  remoteServerId: number,
+  remoteServerId: DockerSecretsRemoteServerId,
   page: number,
   pageSize: number,
   q: string,
@@ -64,7 +67,7 @@ export async function fetchDockerSecretsPagedApi(
 }
 
 export async function createDockerSecretApi(body: {
-  remoteServerId: number;
+  remoteServerId: DockerSecretsRemoteServerId;
   name: string;
   value: string;
 }) {
@@ -74,7 +77,11 @@ export async function createDockerSecretApi(body: {
   });
 }
 
-export async function deleteDockerSecretApi(remoteServerId: number, name: string, force = false) {
+export async function deleteDockerSecretApi(
+  remoteServerId: DockerSecretsRemoteServerId,
+  name: string,
+  force = false,
+) {
   const enc = encodeURIComponent(name);
   const params = new URLSearchParams({ remoteServerId: String(remoteServerId) });
   if (force) params.set("force", "true");
@@ -85,7 +92,7 @@ export async function deleteDockerSecretApi(remoteServerId: number, name: string
 
 /** Docker secrets are immutable; rotation = rm + create with same name. */
 export async function replaceDockerSecretApi(
-  remoteServerId: number,
+  remoteServerId: DockerSecretsRemoteServerId,
   name: string,
   value: string,
 ) {
@@ -93,7 +100,7 @@ export async function replaceDockerSecretApi(
   await createDockerSecretApi({ remoteServerId, name, value });
 }
 
-export async function bulkImportSecretsApi(remoteServerId: number, envText: string) {
+export async function bulkImportSecretsApi(remoteServerId: DockerSecretsRemoteServerId, envText: string) {
   return request<{ message: string; created: string[]; failed: Array<{ key: string; error: string }> }>(
     "/api/docker-secrets/bulk-import",
     { method: "POST", body: JSON.stringify({ remoteServerId, envText }) },

@@ -6,6 +6,7 @@ import type { NotificationChannel } from "./notifications-api";
 import type { S3ProfilePublic, S3BucketListResponse, S3PrefixSummaryResponse } from "./s3-api";
 import type { RemoteServerRow } from "./remote-servers-api";
 import type { TraefikSettingsPayload } from "./traefik-api";
+import type { PaginatedSecretsResponse } from "./docker-paged-fetch";
 import {
   mapApiServiceToService,
   parseServicesPageResponse,
@@ -40,6 +41,10 @@ export async function fetchWebhookSSR(id: string): Promise<WebhookDetail | null>
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
@@ -59,6 +64,8 @@ export async function fetchWebhooksSSR(): Promise<WebhookListItem[]> {
   const data = (await res.json()) as Omit<WebhookListItem, "triggerType" | "cronExpression">[];
   return data.map((w) => ({
     ...w,
+    publicId:
+      w.publicId == null || String(w.publicId).trim() === "" ? undefined : String(w.publicId),
     remoteTriggerUrl: w.remoteTriggerUrl ?? null,
     hooksPublicHost: w.hooksPublicHost ?? null,
     remoteTriggerUrlScheme: w.remoteTriggerUrlScheme === "https" ? "https" : "http",
@@ -76,6 +83,10 @@ export async function fetchCronJobSSR(id: string): Promise<CronJobDetail | null>
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
@@ -89,7 +100,12 @@ export async function fetchCronJobsSSR(): Promise<CronJobListItem[]> {
   });
   if (!res.ok) return [];
   const data = (await res.json()) as Omit<CronJobListItem, "triggerType">[];
-  return data.map((j) => ({ ...j, triggerType: "cron" as const }));
+  return data.map((j) => ({
+    ...j,
+    publicId:
+      j.publicId == null || String(j.publicId).trim() === "" ? undefined : String(j.publicId),
+    triggerType: "cron" as const,
+  }));
 }
 
 export async function fetchProjectSSR(id: string): Promise<Project | null> {
@@ -214,6 +230,31 @@ export async function fetchRemoteServersSSR(): Promise<RemoteServerRow[]> {
   const data = (await res.json()) as unknown;
   if (!Array.isArray(data)) return [];
   return data as RemoteServerRow[];
+}
+
+/** Server-only: paginated Docker secrets on remote host (accepts numeric id or publicId). */
+export async function fetchDockerSecretsPagedSSR(
+  remoteServerId: string | number,
+  page: number,
+  pageSize: number,
+  q: string,
+): Promise<PaginatedSecretsResponse> {
+  const params = new URLSearchParams({
+    remoteServerId: String(remoteServerId),
+    page: String(Math.max(1, page)),
+    pageSize: String(Math.max(1, pageSize)),
+  });
+  const t = q.trim();
+  if (t) params.set("q", t);
+  const res = await fetch(`${apiBase()}/api/docker-secrets/paged?${params.toString()}`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(text.trim() || res.statusText || `HTTP ${res.status}`);
+  }
+  return JSON.parse(text) as PaginatedSecretsResponse;
 }
 
 export async function fetchTraefikSettingsSSR(): Promise<TraefikSettingsPayload | null> {

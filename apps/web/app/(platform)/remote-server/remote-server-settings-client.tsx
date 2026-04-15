@@ -31,9 +31,22 @@ import {
   type RemoteServerRow,
   type RemoteServerRole,
 } from "@/lib/remote-servers-api";
+import { fetchTraefikSettings, type TraefikSettingsPayload } from "@/lib/traefik-api";
+import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
 import { isLoopbackSshHost } from "@/lib/loopback-ssh-host";
+
+/** When Host is a dotted public IPv4, it is stored as `publicIpv4` (e.g. Magic traefik.me). Hostnames are SSH-only. */
+function parseDottedPublicIpv4(hostOrIp: string): string | null {
+  const t = hostOrIp.trim();
+  if (
+    /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/.test(t)
+  ) {
+    return t;
+  }
+  return null;
+}
 
 function emptyForm() {
   return {
@@ -41,7 +54,6 @@ function emptyForm() {
     host: "",
     port: "22",
     sshUser: "",
-    publicIpv4: "",
     privateKey: "",
     serverRole: "deploy" as RemoteServerRole,
   };
@@ -52,7 +64,6 @@ type EditDraft = {
   host: string;
   port: string;
   sshUser: string;
-  publicIpv4: string;
   privateKeyReplace: string;
   serverRole: RemoteServerRole;
 };
@@ -63,7 +74,6 @@ function emptyEditDraft(): EditDraft {
     host: "",
     port: "22",
     sshUser: "",
-    publicIpv4: "",
     privateKeyReplace: "",
     serverRole: "deploy",
   };
@@ -79,6 +89,7 @@ export function RemoteServerSettingsClient({
   const confirm = useConfirm();
   const qc = useQueryClient();
   const remoteServersQueryKey = ["remote-servers"] as const;
+  const traefikSettingsQueryKey = ["traefik", "settings"] as const;
   const hasInitialRemoteServers = initialRemoteServers !== undefined;
 
   const list = useQuery({
@@ -89,6 +100,17 @@ export function RemoteServerSettingsClient({
     staleTime: hasInitialRemoteServers ? Infinity : 10_000,
     refetchOnMount: hasInitialRemoteServers ? false : undefined,
   });
+
+  const traefikSettingsQ = useQuery({
+    queryKey: traefikSettingsQueryKey,
+    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
+    enabled: Boolean(accessToken),
+    staleTime: 10_000,
+  });
+
+  const certEmailReady = isLetsEncryptEmailConfigured(traefikSettingsQ.data?.acmeEmail);
+  const addHostBlocked =
+    traefikSettingsQ.isLoading || traefikSettingsQ.isError || !certEmailReady;
 
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -111,7 +133,6 @@ export function RemoteServerSettingsClient({
           host: row.host,
           port: String(row.port),
           sshUser: row.sshUser,
-          publicIpv4: row.publicIpv4 ?? "",
           privateKeyReplace: "",
           serverRole: row.serverRole,
         });
@@ -162,16 +183,24 @@ export function RemoteServerSettingsClient({
   });
 
   const createMut = useMutation({
-    mutationFn: () =>
-      createRemoteServerApi(accessToken ?? "", {
+    mutationFn: () => {
+      const settings = qc.getQueryData<TraefikSettingsPayload>(traefikSettingsQueryKey);
+      if (!isLetsEncryptEmailConfigured(settings?.acmeEmail)) {
+        return Promise.reject(
+          new Error("Save your Let's Encrypt certificate email on Domains before adding a host."),
+        );
+      }
+      const pip = parseDottedPublicIpv4(form.host);
+      return createRemoteServerApi(accessToken ?? "", {
         name: form.name.trim(),
         host: form.host.trim(),
         port: form.port.trim() ? Number(form.port) : 22,
         sshUser: form.sshUser.trim(),
         privateKey: form.privateKey.trim(),
         serverRole: form.serverRole,
-        ...(form.publicIpv4.trim() ? { publicIpv4: form.publicIpv4.trim() } : {}),
-      }),
+        ...(pip ? { publicIpv4: pip } : {}),
+      });
+    },
     onSuccess: (created) => {
       qc.setQueryData<RemoteServerRow[]>(remoteServersQueryKey, (prev) => {
         const rows = prev ?? [];
@@ -196,7 +225,7 @@ export function RemoteServerSettingsClient({
         port: Number(editDraft.port) || 22,
         sshUser: editDraft.sshUser.trim(),
         serverRole: editDraft.serverRole,
-        publicIpv4: editDraft.publicIpv4.trim() ? editDraft.publicIpv4.trim() : null,
+        publicIpv4: parseDottedPublicIpv4(editDraft.host),
       };
       const pem = editDraft.privateKeyReplace.trim();
       if (pem) {
@@ -443,14 +472,44 @@ export function RemoteServerSettingsClient({
         </div>
       </header>
 
+      {traefikSettingsQ.isLoading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-xl border border-border bg-muted/30 px-4 py-3">
+          <Loader2 className="size-4 animate-spin" />
+          Checking certificate settings…
+        </div>
+      ) : traefikSettingsQ.isError ? (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          <p className="font-medium">Could not load certificate settings</p>
+          <p className="text-xs text-red-300/90 mt-1">{(traefikSettingsQ.error as Error).message}</p>
+        </div>
+      ) : !certEmailReady ? (
+        <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 dark:bg-amber-500/15 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
+          <p className="font-medium">Certificate email required</p>
+          <p className="text-xs mt-1.5 text-amber-900/90 dark:text-amber-100/90 leading-relaxed">
+            Before adding a remote host, open{" "}
+            <Link href="/domains" className="font-medium text-primary underline-offset-2 hover:underline">
+              Domains
+            </Link>{" "}
+            and save a real Let&apos;s Encrypt contact email (Certificate email section). Then return here to add your
+            server.
+          </p>
+        </div>
+      ) : null}
+
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Hosts</h2>
           {!creating && (
             <button
               type="button"
+              disabled={addHostBlocked}
+              title={
+                addHostBlocked
+                  ? "Save your Let's Encrypt email on Domains first"
+                  : "Add a remote host"
+              }
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/25 text-primary hover:bg-primary/15"
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/25 text-primary hover:bg-primary/15 disabled:opacity-40 disabled:pointer-events-none"
             >
               <Plus className="size-3.5" />
               Add host
@@ -461,7 +520,19 @@ export function RemoteServerSettingsClient({
         <div className="space-y-2">
           {(list.data ?? []).length === 0 && !creating ? (
             <p className="text-sm text-muted-foreground py-8 text-center border border-dashed border-border rounded-xl">
-              No remote hosts yet. Add a host and paste a private key, or generate a new pair.
+              {certEmailReady ? (
+                <>
+                  No remote hosts yet. Add a host and paste a private key, or generate a new pair.
+                </>
+              ) : (
+                <>
+                  Save your Let&apos;s Encrypt certificate email on{" "}
+                  <Link href="/domains" className="text-primary hover:underline">
+                    Domains
+                  </Link>{" "}
+                  first, then use Add host.
+                </>
+              )}
             </p>
           ) : null}
 
@@ -497,11 +568,6 @@ export function RemoteServerSettingsClient({
                         {row.sshUser}@{row.host}
                         {row.port !== 22 ? `:${row.port}` : ""}
                       </p>
-                      {row.publicIpv4 ? (
-                        <p className="text-[11px] text-muted-foreground font-mono mt-1">
-                          Public IPv4: {row.publicIpv4}
-                        </p>
-                      ) : null}
                       {row.authMode === "file" && row.privateKeyPath ? (
                         <p className="text-[11px] text-zinc-500 font-mono mt-1 truncate break-all">
                           {row.privateKeyPath}
@@ -511,7 +577,7 @@ export function RemoteServerSettingsClient({
                     <div className="flex items-center gap-2 shrink-0">
                       {row.hasPrivateKey ? (
                         <Link
-                          href={`/console/${row.publicId ?? row.id}/images`}
+                          href={`/docker-manager/${row.publicId ?? row.id}/images`}
                           scroll={false}
                           className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
                           title="Open Docker console for this host (full Docker UI)"
@@ -685,6 +751,7 @@ export function RemoteServerSettingsClient({
                       onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
                       className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                       placeholder="203.0.113.10"
+                      autoComplete="off"
                     />
                   </label>
                   <label className="space-y-1 block">
@@ -706,16 +773,6 @@ export function RemoteServerSettingsClient({
                     />
                   </label>
                   <label className="space-y-1 block sm:col-span-2">
-                    <span className="text-xs text-muted-foreground">Public IPv4 (optional, traefik.me)</span>
-                    <input
-                      value={form.publicIpv4}
-                      onChange={(e) => setForm((f) => ({ ...f, publicIpv4: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
-                      placeholder="203.0.113.10"
-                      autoComplete="off"
-                    />
-                  </label>
-                  <label className="space-y-1 block sm:col-span-2">
                     <span className="text-xs text-muted-foreground">Private key (PEM)</span>
                     <textarea
                       value={form.privateKey}
@@ -733,9 +790,9 @@ export function RemoteServerSettingsClient({
                 <div className="flex gap-2 pt-1">
                   <button
                     type="button"
-                    disabled={createMut.isPending}
+                    disabled={createMut.isPending || addHostBlocked}
                     onClick={() => createMut.mutate()}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400"
+                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
                   >
                     {createMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
                   </button>
@@ -852,11 +909,13 @@ export function RemoteServerSettingsClient({
                     />
                   </label>
                   <label className="space-y-1 block">
-                    <span className="text-xs text-muted-foreground">Host</span>
+                    <span className="text-xs text-muted-foreground">Host / IP</span>
                     <input
                       value={editDraft.host}
                       onChange={(e) => setEditDraft((d) => ({ ...d, host: e.target.value }))}
                       className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      placeholder="203.0.113.10"
+                      autoComplete="off"
                     />
                   </label>
                   <label className="space-y-1 block">
@@ -873,16 +932,6 @@ export function RemoteServerSettingsClient({
                       value={editDraft.sshUser}
                       onChange={(e) => setEditDraft((d) => ({ ...d, sshUser: e.target.value }))}
                       className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                    />
-                  </label>
-                  <label className="space-y-1 block sm:col-span-2">
-                    <span className="text-xs text-muted-foreground">Public IPv4 (optional, traefik.me)</span>
-                    <input
-                      value={editDraft.publicIpv4}
-                      onChange={(e) => setEditDraft((d) => ({ ...d, publicIpv4: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm font-mono"
-                      placeholder="203.0.113.10"
-                      autoComplete="off"
                     />
                   </label>
                   {editingRow.authMode === "file" ? (

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Box,
   Search,
@@ -15,21 +15,14 @@ import {
   Network,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
-import {
-  DOCKER_API_HELP,
-  deleteDockerService,
-  dockerPagedWsUrl,
-  fetchDockerServiceLogs,
-  type ServiceStatus,
-} from "@/lib/docker-api";
-import { fetchDockerServicesPagedBrowser } from "@/lib/docker-paged-browser";
+import { DOCKER_API_HELP, type ServiceStatus } from "@/lib/docker-api";
 import type { DockerConsoleTarget } from "@/lib/console-target";
 import {
   deleteRemoteConsoleService,
   fetchRemoteConsoleServiceLogs,
   fetchRemoteConsoleServicesPaged,
 } from "@/lib/remote-console-api";
-import { DOCKER_LIST_PAGE_SIZE, type PaginatedServicesResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -70,7 +63,6 @@ type Props = {
 
 export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
   const { accessToken } = useAuth();
-  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -87,9 +79,6 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
   const listQuery = useQuery({
     queryKey: ["console", "services", consoleTarget, page, q],
     queryFn: async () => {
-      if (consoleTarget === "local") {
-        return fetchDockerServicesPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q);
-      }
       if (!accessToken) throw new Error("Sign in required");
       return fetchRemoteConsoleServicesPaged(
         accessToken,
@@ -99,7 +88,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
         q,
       );
     },
-    enabled: consoleTarget === "local" || Boolean(accessToken),
+    enabled: Boolean(accessToken),
   });
 
   const liveData = listQuery.data ?? null;
@@ -109,66 +98,17 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
       : String(listQuery.error)
     : null;
 
-  useEffect(() => {
-    if (consoleTarget !== "local") return;
-    let disposed = false;
-    let ws: WebSocket | null = null;
-    const connect = () => {
-      ws = new WebSocket(
-        dockerPagedWsUrl({
-          topic: "services.paged",
-          page,
-          pageSize: DOCKER_LIST_PAGE_SIZE,
-          q,
-          intervalMs: 2000,
-        }),
-      );
-      ws.onmessage = (ev) => {
-        if (disposed || typeof ev.data !== "string") return;
-        try {
-          const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
-          if (msg.type === "services.paged" && msg.data) {
-            qc.setQueryData(
-              ["console", "services", "local", page, q],
-              msg.data as PaginatedServicesResponse,
-            );
-          }
-        } catch {
-          /* ignore malformed message */
-        }
-      };
-      ws.onclose = () => {
-        if (disposed) return;
-        setTimeout(() => {
-          if (!disposed) connect();
-        }, 1500);
-      };
-    };
-    connect();
-    return () => {
-      disposed = true;
-      try {
-        ws?.close();
-      } catch {
-        /* ignore */
-      }
-    };
-  }, [consoleTarget, page, q, qc]);
-
   const loadLogs = useCallback(async () => {
     if (!logTarget) return;
     setLogLoading(true);
     setLogError(null);
     try {
-      const t =
-        consoleTarget === "local"
-          ? await fetchDockerServiceLogs(logTarget.id, logTail)
-          : await fetchRemoteConsoleServiceLogs(
-              accessToken ?? "",
-              consoleTarget as string,
-              logTarget.id,
-              logTail,
-            );
+      const t = await fetchRemoteConsoleServiceLogs(
+        accessToken ?? "",
+        consoleTarget,
+        logTarget.id,
+        logTail,
+      );
       setLogText(t.trim() ? t : "(no log output in this range)");
     } catch (e) {
       setLogText("");
@@ -200,9 +140,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
     setBulkPending(true);
     const results = await Promise.allSettled(
       targets.map((c) =>
-        consoleTarget === "local"
-          ? deleteDockerService(c.id, true)
-          : deleteRemoteConsoleService(accessToken ?? "", consoleTarget as string, c.id, true),
+        deleteRemoteConsoleService(accessToken ?? "", consoleTarget, c.id, true),
       ),
     );
     setBulkPending(false);
@@ -227,11 +165,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
     if (!ok) return;
     void (async () => {
       try {
-        if (consoleTarget === "local") {
-          await deleteDockerService(id, false);
-        } else {
-          await deleteRemoteConsoleService(accessToken ?? "", consoleTarget as string, id, false);
-        }
+        await deleteRemoteConsoleService(accessToken ?? "", consoleTarget, id, false);
         toast({ title: "Service removed", description: name });
         void listQuery.refetch();
       } catch (e) {
@@ -248,16 +182,12 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
     if (!forceDialog) return;
     setForcePending(forceDialog.id);
     try {
-      if (consoleTarget === "local") {
-        await deleteDockerService(forceDialog.id, true);
-      } else {
-        await deleteRemoteConsoleService(
-          accessToken ?? "",
-          consoleTarget as string,
-          forceDialog.id,
-          true,
-        );
-      }
+      await deleteRemoteConsoleService(
+        accessToken ?? "",
+        consoleTarget,
+        forceDialog.id,
+        true,
+      );
       toast({ title: "Service removed (force)", description: forceDialog.name });
       setForceDialog(null);
       void listQuery.refetch();
@@ -288,7 +218,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold">Docker Services</h1>
-          <p className="text-muted-foreground text-sm mt-1">Live data from Docker Swarm services (server-paged).</p>
+          <p className="text-muted-foreground text-sm mt-1">Swarm services (server-paged). Use Refresh to update.</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           {bulk.selectedInFiltered.length > 0 && (
@@ -335,14 +265,26 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
         </div>
       )}
 
-      <div className="relative mb-3">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
-          className="input-field !pl-10 w-full"
-          placeholder="Search services..."
-          value={localQ}
-          onChange={(e) => setLocalQ(e.target.value)}
-        />
+      <div className="flex gap-2 items-stretch mb-3">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <input
+            className="input-field !pl-10 w-full"
+            placeholder="Search services..."
+            value={localQ}
+            onChange={(e) => setLocalQ(e.target.value)}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void listQuery.refetch()}
+          disabled={listQuery.isFetching}
+          className="btn-secondary shrink-0 px-3 flex items-center justify-center min-w-[2.75rem]"
+          title="Refresh"
+          aria-label="Refresh list"
+        >
+          <RefreshCw className={cn("w-4 h-4", listQuery.isFetching && "animate-spin")} />
+        </button>
       </div>
 
       {currentData && currentData.total > 0 && !isError && (
@@ -388,11 +330,17 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
                     <Box className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-sm">{c.name}</span>
-                      <span className={`text-[11px] border rounded-full px-2 py-0.5 font-medium capitalize ${STATUS_STYLE[c.status]}`}>{c.status}</span>
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span className="font-semibold text-sm truncate" title={c.name}>
+                        {c.name}
+                      </span>
+                      <span className={`text-[11px] border rounded-full px-2 py-0.5 font-medium capitalize shrink-0 ${STATUS_STYLE[c.status]}`}>
+                        {c.status}
+                      </span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5 font-mono">{c.image}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 font-mono truncate" title={c.image}>
+                      {c.image}
+                    </p>
                     <p className="text-xs text-muted-foreground mt-0.5">Replicas: {c.replicas} • Mode: {c.mode}</p>
                   </div>
                 </div>

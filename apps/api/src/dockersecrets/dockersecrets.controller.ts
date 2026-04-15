@@ -18,13 +18,17 @@ import {
   CreateDockersecretDto,
 } from './dto/create-dockersecret.dto';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
+import { RemoteServersService } from '../remote-servers/remote-servers.service';
 
 @ApiTags('Docker Secrets')
 @ApiBearerAuth()
 @UseGuards(LocalSessionGuard)
 @Controller('api/docker-secrets')
 export class DockerSecretsController {
-  constructor(private readonly secretsService: DockerSecretsService) {}
+  constructor(
+    private readonly secretsService: DockerSecretsService,
+    private readonly remoteServersService: RemoteServersService,
+  ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
     const id = req?.user?.userId;
@@ -32,20 +36,23 @@ export class DockerSecretsController {
     return id;
   }
 
-  private parseRemoteServerId(raw: string | undefined): number {
-    const n = parseInt(raw ?? '', 10);
-    if (!Number.isFinite(n) || n <= 0) {
+  private async parseRemoteServerId(
+    raw: string | number | undefined,
+    req?: { user?: { userId?: number } },
+  ): Promise<number> {
+    const t = String(raw ?? '').trim();
+    if (!t) {
       throw new BadRequestException(
-        'Query parameter remoteServerId is required (positive integer). Secrets are managed on the remote Swarm manager over SSH.',
+        'Query parameter remoteServerId is required (remote server id or publicId). Secrets are managed on the remote Swarm manager over SSH.',
       );
     }
-    return n;
+    return this.remoteServersService.resolveServerIdForUser(t, this.uid(req));
   }
 
   @Get()
   @ApiOperation({ summary: 'List all secrets on a remote Docker host' })
   async findAll(@Query('remoteServerId') remoteServerIdStr: string, @Req() req: { user?: { userId: number } }) {
-    const remoteServerId = this.parseRemoteServerId(remoteServerIdStr);
+    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
     return await this.secretsService.findAll(remoteServerId, this.uid(req));
   }
 
@@ -58,7 +65,7 @@ export class DockerSecretsController {
     @Query('q') q?: string,
     @Req() req?: { user?: { userId: number } },
   ) {
-    const remoteServerId = this.parseRemoteServerId(remoteServerIdStr);
+    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
     return await this.secretsService.findAllPaged(
@@ -73,8 +80,9 @@ export class DockerSecretsController {
   @Post()
   @ApiOperation({ summary: 'Create a secret on a remote host' })
   async create(@Body() dto: CreateDockersecretDto, @Req() req: { user?: { userId: number } }) {
+    const remoteServerId = await this.parseRemoteServerId(dto.remoteServerId, req);
     await this.secretsService.create(
-      dto.remoteServerId,
+      remoteServerId,
       this.uid(req),
       dto.name,
       dto.value,
@@ -85,6 +93,7 @@ export class DockerSecretsController {
   @Post('bulk-import')
   @ApiOperation({ summary: 'Import from .env onto a remote host' })
   async bulkImport(@Body() dto: BulkImportDto, @Req() req: { user?: { userId: number } }) {
+    const remoteServerId = await this.parseRemoteServerId(dto.remoteServerId, req);
     const lines = dto.envText.split('\n');
 
     const results: string[] = [];
@@ -102,7 +111,7 @@ export class DockerSecretsController {
 
           try {
             await this.secretsService.create(
-              dto.remoteServerId,
+              remoteServerId,
               this.uid(req),
               name,
               value,
@@ -133,7 +142,7 @@ export class DockerSecretsController {
     @Query('remoteServerId') remoteServerIdStr: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    const remoteServerId = this.parseRemoteServerId(remoteServerIdStr);
+    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
     return await this.secretsService.remove(remoteServerId, this.uid(req), name, false);
   }
 
@@ -144,7 +153,7 @@ export class DockerSecretsController {
     @Query('remoteServerId') remoteServerIdStr: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    const remoteServerId = this.parseRemoteServerId(remoteServerIdStr);
+    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
     return await this.secretsService.findOne(remoteServerId, this.uid(req), name);
   }
 }

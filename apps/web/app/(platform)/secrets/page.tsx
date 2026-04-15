@@ -2,11 +2,10 @@ import Link from "next/link";
 import { DockerSecretsClient } from "./secrets-client";
 import {
   DOCKER_LIST_PAGE_SIZE,
-  fetchDockerSecretsPaged,
   type PaginatedSecretsResponse,
 } from "@/lib/docker-paged-fetch";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
-import { fetchRemoteServersSSR } from "@/lib/server-fetch";
+import { fetchDockerSecretsPagedSSR, fetchRemoteServersSSR } from "@/lib/server-fetch";
 
 export default async function Page({
   searchParams,
@@ -33,7 +32,7 @@ export default async function Page({
   let error: string | null = null;
   if (selectedId != null) {
     try {
-      data = await fetchDockerSecretsPaged(selectedId, page, DOCKER_LIST_PAGE_SIZE, q);
+      data = await fetchDockerSecretsPagedSSR(selectedId, page, DOCKER_LIST_PAGE_SIZE, q);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -58,7 +57,7 @@ export default async function Page({
           <p className="text-sm text-muted-foreground">
             Swarm secrets are managed over SSH on a deploy remote server. Add at least one SSH deploy host first, then
             return here or open secrets from the console for that server (
-            <span className="font-mono text-xs">/console/[id]/secrets</span>).
+            <span className="font-mono text-xs">/docker-manager/[id]/secrets</span>).
           </p>
         )}
         {deployServers.length > 0 && (
@@ -113,3 +112,4 @@ export default async function Page({
     </>
   );
 }
+

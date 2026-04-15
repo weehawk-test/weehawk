@@ -7,7 +7,7 @@ import { Clock3, Plus, Search, Trash2, ChevronRight, Clock, Pencil, Loader2, Pow
 import { useDeleteCronJob, useUpdateCronJob } from "@/hooks/use-cron-jobs";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
-import type { CronJobListItem } from "@/lib/cron-jobs-api";
+import { cronJobRouteId, type CronJobListItem } from "@/lib/cron-jobs-api";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 
@@ -254,12 +254,12 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                     {formatDateUTC(j.createdAt)}
                   </div>
                   <div className="flex items-center gap-3">
-                    <Link href={`/cron-jobs/${j.id}/edit`}>
+                    <Link href={`/cron-jobs/${cronJobRouteId(j)}/edit`}>
                       <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                         Edit <Pencil className="w-3 h-3" />
                       </span>
                     </Link>
-                    <Link href={`/cron-jobs/${j.id}`}>
+                    <Link href={`/cron-jobs/${cronJobRouteId(j)}`}>
                       <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                         View <ChevronRight className="w-3 h-3" />
                       </span>

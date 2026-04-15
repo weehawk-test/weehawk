@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { fetchWebhookSSR } from "@/lib/server-fetch";
 import { WebhookDetailsClient } from "./webhook-details-client";
 
@@ -7,8 +7,12 @@ type PageProps = {
 };
 
 export default async function WebhookDetailsPage({ params }: PageProps) {
-  const { id } = await params;
+  const { id: rawId } = await params;
+  const id = rawId.trim();
   const webhook = await fetchWebhookSSR(id);
   if (!webhook) notFound();
+  if (webhook.publicId && id !== webhook.publicId) {
+    redirect(`/webhooks/${webhook.publicId}`);
+  }
   return <WebhookDetailsClient initialWebhook={webhook} />;
 }

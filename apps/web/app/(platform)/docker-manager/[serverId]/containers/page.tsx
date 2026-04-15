@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
-import { DockerServicesClient } from "@/(platform)/docker/services/services-client";
+import { DockerContainersClient } from "@/(platform)/docker/containers/containers-client";
 import { parseConsoleServerSlug } from "@/lib/console-target";
 
-export default async function ConsoleServicesPage({
+export default async function DockerManagerContainersPage({
   params,
   searchParams,
 }: {
@@ -15,5 +15,5 @@ export default async function ConsoleServicesPage({
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
-  return <DockerServicesClient consoleTarget={consoleTarget} urlPage={page} urlQ={q} />;
+  return <DockerContainersClient consoleTarget={consoleTarget} urlPage={page} urlQ={q} />;
 }

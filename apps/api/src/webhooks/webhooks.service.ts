@@ -46,6 +46,7 @@ import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 export type WebhookListRow = {
   id: number;
+  publicId: string;
   name: string;
   description: string;
   isActive: boolean;
@@ -477,6 +478,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   private baseListFields(w: Webhook): Omit<WebhookListRow, 'remoteTriggerUrl'> {
     return {
       id: w.id,
+      publicId: w.publicId,
       name: w.name,
       description: w.description ?? '',
       isActive: w.isActive,
@@ -494,25 +496,30 @@ export class WebhooksService implements OnApplicationBootstrap {
   }
 
   private async toListRow(userId: number, w: Webhook): Promise<WebhookListRow> {
-    const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
+    const row = await this.ensurePublicId(w);
+    const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, row);
     return {
-      ...this.baseListFields(w),
+      ...this.baseListFields(row),
       remoteTriggerUrl,
     };
   }
 
-  private toDetailRow(w: Webhook, remoteTriggerUrl: string | null = null): WebhookDetailRow {
-    const cfg = w.databaseBackupConfig;
+  private async toDetailRow(
+    w: Webhook,
+    remoteTriggerUrl: string | null = null,
+  ): Promise<WebhookDetailRow> {
+    const row = await this.ensurePublicId(w);
+    const cfg = row.databaseBackupConfig;
     return {
-      ...this.baseListFields(w),
+      ...this.baseListFields(row),
       remoteTriggerUrl,
-      volumeSource: w.volumeSource,
-      dockerCommand: w.dockerCommand,
+      volumeSource: row.volumeSource,
+      dockerCommand: row.dockerCommand,
       databaseBackupConfig: cfg,
       databaseBackupPreview: cfg ? describeDatabaseBackupPreview(cfg) : null,
-      backupS3ProfileName: w.backupS3ProfileName,
-      notifyChannelId: w.notifyChannelId,
-      notifyMessage: w.notifyMessage,
+      backupS3ProfileName: row.backupS3ProfileName,
+      notifyChannelId: row.notifyChannelId,
+      notifyMessage: row.notifyMessage,
     };
   }
 
@@ -743,7 +750,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     });
     const saved = await this.webhookRepo.save(w);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
-    return this.toDetailRow(saved, remoteTriggerUrl);
+    return await this.toDetailRow(saved, remoteTriggerUrl);
   }
 
   /**
@@ -814,7 +821,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   async findOne(userId: number, idOrPublicId: string | number): Promise<WebhookDetailRow> {
     const w = await this.resolveEntity(userId, idOrPublicId);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
-    return this.toDetailRow(w, remoteTriggerUrl);
+    return await this.toDetailRow(w, remoteTriggerUrl);
   }
 
   async update(
@@ -1003,7 +1010,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
 
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
-    return this.toDetailRow(saved, remoteTriggerUrl);
+    return await this.toDetailRow(saved, remoteTriggerUrl);
   }
 
   async remove(userId: number, idOrPublicId: string | number): Promise<void> {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Globe, Loader2, Mail, Minus, Plus, Server, Settings2 } from "lucide-react";
+import { Globe, Loader2, Mail, Minus, Plus, Server } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import {
   fetchRemoteServers,
@@ -19,26 +19,15 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
+import {
+  isBlockedAcmeContactEmail,
+  isLetsEncryptEmailConfigured,
+  isValidEmailShape,
+} from "@/lib/traefik-acme-email";
 
 const REMOTE_SERVERS_QK = ["remote-servers"] as const;
 const TRAEFIK_SETTINGS_QK = ["traefik", "settings"] as const;
-
-const DEFAULT_ACME_PLACEHOLDER = "admin@example.com";
-
-function isValidEmailShape(s: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
-}
-
-/** Saved ACME email allows domain editing: real address, not the default placeholder. */
-function isLetsEncryptEmailConfigured(acmeEmail: string | null | undefined): boolean {
-  const t = (acmeEmail ?? "").trim();
-  if (!t || !isValidEmailShape(t)) return false;
-  if (t.toLowerCase() === DEFAULT_ACME_PLACEHOLDER.toLowerCase()) return false;
-  return true;
-}
 
 let rowIdSeq = 0;
 function newRowId(): number {
@@ -344,35 +333,11 @@ export function DeployDomainsClient({
   );
   const [acmeEmailDirty, setAcmeEmailDirty] = useState(false);
 
-  const [acmeOpen, setAcmeOpen] = useState(false);
-  const [certResolver, setCertResolver] = useState(
-    initialTraefikSettings?.certResolverName ?? "letsencrypt",
-  );
-  const [acmeStorage, setAcmeStorage] = useState(
-    initialTraefikSettings?.acmeStorageHostPath ?? "/var/www/weehawk/traefik/data/acme.json",
-  );
-  const [httpEp, setHttpEp] = useState(initialTraefikSettings?.httpEntrypoint ?? "web");
-  const [httpsEp, setHttpsEp] = useState(initialTraefikSettings?.httpsEntrypoint ?? "websecure");
-  const [redirectHttp, setRedirectHttp] = useState(initialTraefikSettings?.redirectHttpToHttps ?? true);
-  const [traefikImage, setTraefikImage] = useState(initialTraefikSettings?.traefikImage ?? "traefik:v2.11");
-  const [acmeAdvDirty, setAcmeAdvDirty] = useState(false);
-
   useEffect(() => {
     if (traefikQ.data != null && !acmeEmailDirty) {
       setAcmeEmailLocal(traefikQ.data.acmeEmail ?? "");
     }
   }, [traefikQ.data, acmeEmailDirty]);
-
-  useEffect(() => {
-    if (traefikQ.data != null && !acmeAdvDirty) {
-      setCertResolver(traefikQ.data.certResolverName ?? "letsencrypt");
-      setAcmeStorage(traefikQ.data.acmeStorageHostPath ?? "/var/www/weehawk/traefik/data/acme.json");
-      setHttpEp(traefikQ.data.httpEntrypoint ?? "web");
-      setHttpsEp(traefikQ.data.httpsEntrypoint ?? "websecure");
-      setRedirectHttp(traefikQ.data.redirectHttpToHttps ?? true);
-      setTraefikImage(traefikQ.data.traefikImage ?? "traefik:v2.11");
-    }
-  }, [traefikQ.data, acmeAdvDirty]);
 
   const emailMutation = useMutation({
     mutationFn: (email: string) =>
@@ -393,53 +358,16 @@ export function DeployDomainsClient({
       toast({ title: "Enter a valid email address", variant: "destructive" });
       return;
     }
-    if (t.toLowerCase() === DEFAULT_ACME_PLACEHOLDER.toLowerCase()) {
+    if (isBlockedAcmeContactEmail(t)) {
       toast({
         title: "Use your real email",
-        description: `${DEFAULT_ACME_PLACEHOLDER} is only a placeholder.`,
+        description: "That address is a placeholder and cannot be used for Let's Encrypt.",
         variant: "destructive",
       });
       return;
     }
     emailMutation.mutate(t);
   };
-
-  const acmeAdvMutation = useMutation({
-    mutationFn: (patch: Parameters<typeof updateTraefikSettings>[1]) =>
-      updateTraefikSettings(accessToken ?? "", patch),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: TRAEFIK_SETTINGS_QK });
-      setAcmeAdvDirty(false);
-      toast({ title: "ACME settings saved" });
-    },
-    onError: (e: Error) => {
-      toast({ title: "Could not save ACME settings", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const onSaveAcmeAdv = () => {
-    if (!certResolver.trim() || !acmeStorage.trim() || !httpEp.trim() || !httpsEp.trim() || !traefikImage.trim()) {
-      toast({ title: "All fields are required", variant: "destructive" });
-      return;
-    }
-    acmeAdvMutation.mutate({
-      certResolverName: certResolver.trim(),
-      acmeStorageHostPath: acmeStorage.trim(),
-      httpEntrypoint: httpEp.trim(),
-      httpsEntrypoint: httpsEp.trim(),
-      redirectHttpToHttps: redirectHttp,
-      traefikImage: traefikImage.trim(),
-    });
-  };
-
-  const isAcmeAdvChanged = traefikQ.data != null && (
-    certResolver.trim() !== (traefikQ.data.certResolverName ?? "") ||
-    acmeStorage.trim() !== (traefikQ.data.acmeStorageHostPath ?? "") ||
-    httpEp.trim() !== (traefikQ.data.httpEntrypoint ?? "") ||
-    httpsEp.trim() !== (traefikQ.data.httpsEntrypoint ?? "") ||
-    redirectHttp !== (traefikQ.data.redirectHttpToHttps ?? true) ||
-    traefikImage.trim() !== (traefikQ.data.traefikImage ?? "")
-  );
 
   const savedAcme = traefikQ.data?.acmeEmail ?? "";
   const acmeEmailChanged =
@@ -504,7 +432,8 @@ export function DeployDomainsClient({
             <div className="min-w-0 space-y-1">
               <h2 className="font-semibold text-sm tracking-tight">Certificate email</h2>
               <p className="text-xs text-muted-foreground">
-                For Let&apos;s Encrypt notices. Save it before editing addresses below.
+                For Let&apos;s Encrypt notices. Save it before editing addresses below. Traefik TLS settings (resolver,
+                entrypoints, image) use the platform defaults.
               </p>
             </div>
           </div>
@@ -543,7 +472,7 @@ export function DeployDomainsClient({
                     emailMutation.isPending ||
                     !acmeEmailChanged ||
                     !isValidEmailShape(acmeEmailLocal) ||
-                    acmeEmailLocal.trim().toLowerCase() === DEFAULT_ACME_PLACEHOLDER.toLowerCase()
+                    isBlockedAcmeContactEmail(acmeEmailLocal)
                   }
                   onClick={onSaveAcmeEmail}
                 >
@@ -558,124 +487,6 @@ export function DeployDomainsClient({
                 )}
               </div>
             </>
-          )}
-        </div>
-      </section>
-
-      {/* ── Advanced ACME / Traefik settings ── */}
-      <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20 max-w-3xl">
-        <div className="rounded-[0.875rem] bg-card/50">
-          <button
-            type="button"
-            onClick={() => setAcmeOpen(!acmeOpen)}
-            className="flex w-full items-center gap-3 p-5 text-left"
-          >
-            <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shrink-0">
-              <Settings2 className="size-5 text-primary" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <h2 className="font-semibold text-sm tracking-tight">Advanced ACME / Traefik</h2>
-              <p className="text-xs text-muted-foreground">
-                Cert resolver, entrypoints, image, and redirect settings.
-              </p>
-            </div>
-            <ChevronDown
-              className={cn(
-                "size-4 text-muted-foreground shrink-0 transition-transform duration-200",
-                acmeOpen && "rotate-180",
-              )}
-            />
-          </button>
-
-          {acmeOpen && (
-            <div className="px-5 pb-5 space-y-4 max-w-xl">
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-foreground/80">Cert Resolver Name</label>
-                <Input
-                  value={certResolver}
-                  onChange={(e) => { setAcmeAdvDirty(true); setCertResolver(e.target.value); }}
-                  placeholder="letsencrypt"
-                  className="max-w-md"
-                  spellCheck={false}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Name used in Traefik labels: <code className="text-[10px]">tls.certresolver={"<"}name{">"}</code>
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-foreground/80">ACME Storage Host Path</label>
-                <Input
-                  value={acmeStorage}
-                  onChange={(e) => { setAcmeAdvDirty(true); setAcmeStorage(e.target.value); }}
-                  placeholder="/var/www/weehawk/traefik/data/acme.json"
-                  className="max-w-md font-mono text-xs"
-                  spellCheck={false}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  File on the host mounted to <code className="text-[10px]">/acme.json</code> inside Traefik.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-foreground/80">Traefik Image</label>
-                <Input
-                  value={traefikImage}
-                  onChange={(e) => { setAcmeAdvDirty(true); setTraefikImage(e.target.value); }}
-                  placeholder="traefik:v2.11"
-                  className="max-w-md font-mono text-xs"
-                  spellCheck={false}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 max-w-md">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-foreground/80">HTTP Entrypoint</label>
-                  <Input
-                    value={httpEp}
-                    onChange={(e) => { setAcmeAdvDirty(true); setHttpEp(e.target.value); }}
-                    placeholder="web"
-                    className="font-mono text-xs"
-                    spellCheck={false}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-foreground/80">HTTPS Entrypoint</label>
-                  <Input
-                    value={httpsEp}
-                    onChange={(e) => { setAcmeAdvDirty(true); setHttpsEp(e.target.value); }}
-                    placeholder="websecure"
-                    className="font-mono text-xs"
-                    spellCheck={false}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 pt-1">
-                <Switch
-                  id="redirect-http"
-                  checked={redirectHttp}
-                  onCheckedChange={(v) => { setAcmeAdvDirty(true); setRedirectHttp(v); }}
-                />
-                <Label htmlFor="redirect-http" className="text-xs cursor-pointer">
-                  Redirect HTTP to HTTPS
-                </Label>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
-                  disabled={acmeAdvMutation.isPending || !isAcmeAdvChanged}
-                  onClick={onSaveAcmeAdv}
-                >
-                  {acmeAdvMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-                </button>
-                {isAcmeAdvChanged && (
-                  <span className="text-[11px] text-amber-500/80">Unsaved changes</span>
-                )}
-              </div>
-            </div>
           )}
         </div>
       </section>

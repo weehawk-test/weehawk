@@ -37,7 +37,7 @@ import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { ListPagination } from "@/components/docker/ListPagination";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
-import { deleteDockerSecretApi } from "@/lib/docker-secrets-api";
+import { deleteDockerSecretApi, type DockerSecretsRemoteServerId } from "@/lib/docker-secrets-api";
 import { formatSecretDate } from "@/lib/format-secret-date";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 import {
@@ -52,7 +52,13 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-function CreateSecretModal({ remoteServerId, onClose }: { remoteServerId: number; onClose: () => void }) {
+function CreateSecretModal({
+  remoteServerId,
+  onClose,
+}: {
+  remoteServerId: DockerSecretsRemoteServerId;
+  onClose: () => void;
+}) {
   const router = useRouter();
   const create = useCreateDockerSecret(remoteServerId);
   const { toast } = useToast();
@@ -145,7 +151,7 @@ function EditSecretModal({
   secret,
   onClose,
 }: {
-  remoteServerId: number;
+  remoteServerId: DockerSecretsRemoteServerId;
   secret: DockerSecretListItem;
   onClose: () => void;
 }) {
@@ -234,7 +240,13 @@ function EditSecretModal({
   );
 }
 
-function BulkImportPanel({ remoteServerId, onClose }: { remoteServerId: number; onClose: () => void }) {
+function BulkImportPanel({
+  remoteServerId,
+  onClose,
+}: {
+  remoteServerId: DockerSecretsRemoteServerId;
+  onClose: () => void;
+}) {
   const router = useRouter();
   const [text, setText] = useState("");
   const bulk = useBulkImportDockerSecrets(remoteServerId);
@@ -297,7 +309,7 @@ function SecretRow({
   selected,
   onToggleSelect,
 }: {
-  remoteServerId: number;
+  remoteServerId: DockerSecretsRemoteServerId;
   secret: DockerSecretListItem;
   onEdit: (s: DockerSecretListItem) => void;
   onForceDelete: (s: DockerSecretListItem) => void;
@@ -382,7 +394,7 @@ function SecretRow({
 }
 
 type Props = {
-  remoteServerId: number;
+  remoteServerId: DockerSecretsRemoteServerId;
   data: PaginatedSecretsResponse | null;
   error: string | null;
   urlPage: number;

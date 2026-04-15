@@ -6,6 +6,8 @@ export type { DatabaseBackupConfig };
 
 export type CronJobListItem = {
   id: number;
+  /** URL-safe id; prefer for routes and links. */
+  publicId?: string;
   name: string;
   description: string;
   isActive: boolean;
@@ -30,6 +32,11 @@ export type CronJobDetail = CronJobListItem & {
   notifyChannelId: string | null;
   notifyMessage: string | null;
 };
+
+export function cronJobRouteId(j: { publicId?: string | null; id: number }): string {
+  const p = j.publicId?.trim();
+  return p ? p : String(j.id);
+}
 
 export type CreateCronJobBody = {
   name: string;
@@ -81,10 +88,15 @@ export async function fetchCronJobs(accessToken: string): Promise<CronJobListIte
   });
   if (!res.ok) throw new Error(await errorBody(res));
   const data = (await res.json()) as Omit<CronJobListItem, "triggerType">[];
-  return data.map((j) => ({ ...j, triggerType: "cron" }));
+  return data.map((j) => ({
+    ...j,
+    publicId:
+      j.publicId == null || String(j.publicId).trim() === "" ? undefined : String(j.publicId),
+    triggerType: "cron" as const,
+  }));
 }
 
-export async function fetchCronJob(accessToken: string, id: number): Promise<CronJobDetail> {
+export async function fetchCronJob(accessToken: string, id: string | number): Promise<CronJobDetail> {
   const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
@@ -93,6 +105,10 @@ export async function fetchCronJob(accessToken: string, id: number): Promise<Cro
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
@@ -116,6 +132,10 @@ export async function createCronJob(
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
@@ -124,7 +144,7 @@ export async function createCronJob(
 
 export async function updateCronJob(
   accessToken: string,
-  id: number,
+  id: string | number,
   body: UpdateCronJobBody,
 ): Promise<CronJobDetail> {
   const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
@@ -140,13 +160,17 @@ export async function updateCronJob(
   const data = (await res.json()) as Omit<CronJobDetail, "triggerType">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
   };
 }
 
-export async function deleteCronJob(accessToken: string, id: number): Promise<void> {
+export async function deleteCronJob(accessToken: string, id: string | number): Promise<void> {
   const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
     method: "DELETE",
     headers: authHeaders(accessToken),

@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
-import { DockerImagesClient } from "@/(platform)/docker/images/images-client";
+import { DockerVolumesClient } from "@/(platform)/docker/volumes/volumes-client";
 import { parseConsoleServerSlug } from "@/lib/console-target";
 
-export default async function ConsoleImagesPage({
+export default async function DockerManagerVolumesPage({
   params,
   searchParams,
 }: {
@@ -15,5 +15,5 @@ export default async function ConsoleImagesPage({
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
-  return <DockerImagesClient consoleTarget={consoleTarget} urlPage={page} urlQ={q} />;
+  return <DockerVolumesClient consoleTarget={consoleTarget} urlPage={page} urlQ={q} />;
 }

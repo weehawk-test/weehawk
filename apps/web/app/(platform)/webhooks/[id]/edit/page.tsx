@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   fetchRemoteServersSSR,
   fetchNotificationChannelsSSR,
@@ -13,7 +13,8 @@ type PageProps = {
 };
 
 export default async function EditWebhookPage({ params }: PageProps) {
-  const { id } = await params;
+  const { id: rawId } = await params;
+  const id = rawId.trim();
   const [webhook, initialChannels, initialS3Profiles, initialServices, initialRemoteServers] = await Promise.all([
     fetchWebhookSSR(id),
     fetchNotificationChannelsSSR(),
@@ -22,6 +23,9 @@ export default async function EditWebhookPage({ params }: PageProps) {
     fetchRemoteServersSSR(),
   ]);
   if (!webhook) notFound();
+  if (webhook.publicId && id !== webhook.publicId) {
+    redirect(`/webhooks/${webhook.publicId}/edit`);
+  }
   return (
     <EditWebhookClient
       initialWebhook={webhook}

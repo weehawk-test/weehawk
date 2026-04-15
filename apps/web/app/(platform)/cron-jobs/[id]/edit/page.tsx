@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import {
   fetchCronJobSSR,
   fetchNotificationChannelsSSR,
@@ -13,7 +13,8 @@ type PageProps = {
 };
 
 export default async function EditCronJobPage({ params }: PageProps) {
-  const { id } = await params;
+  const { id: rawId } = await params;
+  const id = rawId.trim();
   const [cronJob, initialChannels, initialS3Profiles, initialServices, initialRemoteServers] = await Promise.all([
     fetchCronJobSSR(id),
     fetchNotificationChannelsSSR(),
@@ -22,6 +23,9 @@ export default async function EditCronJobPage({ params }: PageProps) {
     fetchRemoteServersSSR(),
   ]);
   if (!cronJob) notFound();
+  if (cronJob.publicId && id !== cronJob.publicId) {
+    redirect(`/cron-jobs/${cronJob.publicId}/edit`);
+  }
   return (
     <EditCronJobClient
       initialCronJob={cronJob}

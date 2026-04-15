@@ -241,21 +241,21 @@ export function Sidebar() {
       window.removeEventListener("storage", onStorage);
     };
   }, [user?.userId]);
-  const consoleMatch = /^\/console\/([^/]+)/.exec(location);
+  const consoleMatch = /^\/docker-manager\/([^/]+)/.exec(location);
   const consoleNavBase =
     consoleMatch != null
-      ? `/console/${consoleMatch[1]}`
+      ? `/docker-manager/${consoleMatch[1]}`
       : null;
   const dockerNavDynamic =
     consoleNavBase != null ? buildDockerNavItems(consoleNavBase) : [];
 
   const dockerShell =
-    /^\/console\/[^/]+/.test(location) ||
+    /^\/docker-manager\/[^/]+/.test(location) ||
     location === "/secrets" ||
     location.startsWith("/secrets/");
 
-  /** Under `/console/:id/...` show only Docker nav for that server (not General / Integrations / …). */
-  const isConsoleServerSidebar = /^\/console\/[^/]+/.test(location);
+  /** Under `/docker-manager/:id/...` show only Docker nav for that server (not General / Integrations / …). */
+  const isConsoleServerSidebar = /^\/docker-manager\/[^/]+/.test(location);
   const consoleLogoHref =
     consoleNavBase != null ? `${consoleNavBase}/images` : "/";
 
@@ -602,3 +602,4 @@ export function Sidebar() {
     </aside>
   );
 }
+

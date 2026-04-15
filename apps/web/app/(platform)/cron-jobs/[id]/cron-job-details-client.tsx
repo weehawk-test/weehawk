@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useDeleteCronJob, useUpdateCronJob } from "@/hooks/use-cron-jobs";
-import type { CronJobDetail } from "@/lib/cron-jobs-api";
+import { cronJobRouteId, type CronJobDetail } from "@/lib/cron-jobs-api";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 import { motion } from "framer-motion";
 
@@ -65,7 +65,7 @@ export function CronJobDetailsClient({ initialCronJob }: Props) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Link href={`/cron-jobs/${cronJob.id}/edit`}>
+            <Link href={`/cron-jobs/${cronJobRouteId(cronJob)}/edit`}>
               <button type="button" className="btn-secondary whitespace-nowrap flex items-center gap-2">
                 <Pencil className="w-4 h-4" /> Edit
               </button>
@@ -224,7 +224,12 @@ export function CronJobDetailsClient({ initialCronJob }: Props) {
                 <p className="text-muted-foreground text-xs mb-1 flex items-center gap-1.5">
                   <Hash className="w-3.5 h-3.5" /> ID
                 </p>
-                <p className="font-mono text-xs break-all">{cronJob.id}</p>
+                <p className="font-mono text-xs break-all">
+                  {cronJob.publicId ?? cronJob.id}
+                  {cronJob.publicId ? (
+                    <span className="block text-[10px] text-muted-foreground mt-0.5">Internal #{cronJob.id}</span>
+                  ) : null}
+                </p>
               </div>
               <div>
                 <p className="text-muted-foreground text-xs mb-1 flex items-center gap-1.5">

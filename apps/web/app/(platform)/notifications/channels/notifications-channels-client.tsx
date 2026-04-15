@@ -563,7 +563,7 @@ export function NotificationsChannelsClient({
     onSuccess: (log) => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "logs"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "logs", "paged"] });
-      if (log.status === "sent") toast({ title: "Test sent", description: "test succedded" });
+      if (log.status === "sent") toast({ title: "Test sent", description: "test succeeded" });
       else toast({ title: "Test failed", description: "Check channel configuration.", variant: "destructive" });
     },
     onError: (e: Error) => toast({ title: "Test failed", description: e.message, variant: "destructive" }),
@@ -619,7 +619,7 @@ export function NotificationsChannelsClient({
       queryClient.invalidateQueries({ queryKey: ["notifications", "logs"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "logs", "paged"] });
       if (log.status === "sent") {
-        toast({ title: "Test sent", description: "test succedded" });
+        toast({ title: "Test sent", description: "test succeeded" });
         setShowChannelAction(false);
       } else {
         toast({ title: "Test failed", description: "Check channel configuration.", variant: "destructive" });

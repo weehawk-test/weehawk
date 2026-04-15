@@ -7,7 +7,7 @@ import { Webhook, Plus, Search, Trash2, ChevronRight, Clock, Pencil, Loader2, Co
 import { useDeleteWebhook, useUpdateWebhook } from "@/hooks/use-webhooks";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
-import type { WebhookListItem } from "@/lib/webhooks-api";
+import { webhookRouteId, type WebhookListItem } from "@/lib/webhooks-api";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 
@@ -283,12 +283,12 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                     {formatDateUTC(w.createdAt)}
                   </div>
                   <div className="flex items-center gap-3">
-                    <Link href={`/webhooks/${w.id}/edit`}>
+                    <Link href={`/webhooks/${webhookRouteId(w)}/edit`}>
                       <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                         Edit <Pencil className="w-3 h-3" />
                       </span>
                     </Link>
-                    <Link href={`/webhooks/${w.id}`}>
+                    <Link href={`/webhooks/${webhookRouteId(w)}`}>
                       <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                         View <ChevronRight className="w-3 h-3" />
                       </span>

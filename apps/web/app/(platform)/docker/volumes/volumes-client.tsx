@@ -1,18 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Database, Search, HardDrive, Clock, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Database, Search, HardDrive, Clock, Loader2, AlertCircle, Trash2, OctagonAlert, RefreshCw } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
-import { DOCKER_API_HELP, deleteDockerVolume, dockerPagedWsUrl } from "@/lib/docker-api";
-import { fetchDockerVolumesPagedBrowser } from "@/lib/docker-paged-browser";
+import { DOCKER_API_HELP } from "@/lib/docker-api";
 import type { DockerConsoleTarget } from "@/lib/console-target";
 import {
   deleteRemoteConsoleVolume,
   fetchRemoteConsoleVolumesPaged,
 } from "@/lib/remote-console-api";
-import { DOCKER_LIST_PAGE_SIZE, type PaginatedVolumesResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -46,7 +45,6 @@ type Props = {
 
 export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
   const { accessToken } = useAuth();
-  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -57,9 +55,6 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
   const listQuery = useQuery({
     queryKey: ["console", "volumes", consoleTarget, page, q],
     queryFn: async () => {
-      if (consoleTarget === "local") {
-        return fetchDockerVolumesPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q, true);
-      }
       if (!accessToken) throw new Error("Sign in required");
       return fetchRemoteConsoleVolumesPaged(
         accessToken,
@@ -69,7 +64,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
         q,
       );
     },
-    enabled: consoleTarget === "local" || Boolean(accessToken),
+    enabled: Boolean(accessToken),
   });
 
   const liveData = listQuery.data ?? null;
@@ -78,49 +73,6 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
       ? listQuery.error.message
       : String(listQuery.error)
     : null;
-
-  useEffect(() => {
-    if (consoleTarget !== "local") return;
-    let disposed = false;
-    let ws: WebSocket | null = null;
-    const connect = () => {
-      ws = new WebSocket(
-        dockerPagedWsUrl({
-          topic: "volumes.paged",
-          page,
-          pageSize: DOCKER_LIST_PAGE_SIZE,
-          q,
-          intervalMs: 3000,
-          includeSizes: true,
-        }),
-      );
-      ws.onmessage = (ev) => {
-        if (disposed || typeof ev.data !== "string") return;
-        try {
-          const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
-          if (msg.type === "volumes.paged" && msg.data) {
-            qc.setQueryData(
-              ["console", "volumes", "local", page, q],
-              msg.data as PaginatedVolumesResponse,
-            );
-          }
-        } catch {}
-      };
-      ws.onclose = () => {
-        if (disposed) return;
-        setTimeout(() => {
-          if (!disposed) connect();
-        }, 1500);
-      };
-    };
-    connect();
-    return () => {
-      disposed = true;
-      try {
-        ws?.close();
-      } catch {}
-    };
-  }, [consoleTarget, page, q, qc]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -144,11 +96,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
     if (!confirmed) return;
     setBulkPending(true);
     const results = await Promise.allSettled(
-      names.map((n) =>
-        consoleTarget === "local"
-          ? deleteDockerVolume(n)
-          : deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as string, n, false),
-      ),
+      names.map((n) => deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget, n, false)),
     );
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
@@ -172,11 +120,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
     if (!ok) return;
     void (async () => {
       try {
-        if (consoleTarget === "local") {
-          await deleteDockerVolume(name);
-        } else {
-          await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as string, name, false);
-        }
+        await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget, name, false);
         toast({ title: "Volume removed", description: name });
         void listQuery.refetch();
       } catch (e) {
@@ -193,11 +137,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
     if (!forceDialog) return;
     setForcePending(forceDialog);
     try {
-      if (consoleTarget === "local") {
-        await deleteDockerVolume(forceDialog, true);
-      } else {
-        await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget as string, forceDialog, true);
-      }
+      await deleteRemoteConsoleVolume(accessToken ?? "", consoleTarget, forceDialog, true);
       toast({ title: "Volume removed (force)", description: forceDialog });
       setForceDialog(null);
       void listQuery.refetch();
@@ -221,7 +161,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold">Docker Volumes</h1>
-          <p className="text-muted-foreground text-sm mt-1">Live data from Docker via the API (server-paged).</p>
+          <p className="text-muted-foreground text-sm mt-1">Server-paged list from Docker. Use Refresh to update.</p>
         </div>
         <div className="flex items-center gap-2">
           {bulk.selectedInFiltered.length > 0 && (
@@ -257,14 +197,26 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
         </div>
       )}
 
-      <div className="relative mb-3">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
-          className="input-field !pl-10 w-full"
-          placeholder="Search volumes..."
-          value={localQ}
-          onChange={(e) => setLocalQ(e.target.value)}
-        />
+      <div className="flex gap-2 items-stretch mb-3">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <input
+            className="input-field !pl-10 w-full"
+            placeholder="Search volumes..."
+            value={localQ}
+            onChange={(e) => setLocalQ(e.target.value)}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void listQuery.refetch()}
+          disabled={listQuery.isFetching}
+          className="btn-secondary shrink-0 px-3 flex items-center justify-center min-w-[2.75rem]"
+          title="Refresh"
+          aria-label="Refresh list"
+        >
+          <RefreshCw className={cn("w-4 h-4", listQuery.isFetching && "animate-spin")} />
+        </button>
       </div>
 
       {currentData && currentData.total > 0 && !isError && (

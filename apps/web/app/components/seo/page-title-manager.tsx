@@ -8,7 +8,7 @@ function titleFromPath(pathname: string): string {
 
   if (path === "/" || path === "/projects") return "Projects";
   if (path.startsWith("/projects/")) return "Project Details";
-  if (path.startsWith("/console/")) return "Console";
+  if (path.startsWith("/docker-manager/")) return "Docker Manager";
   if (path.startsWith("/remote-server")) return "Remote Servers";
   if (path.startsWith("/domains")) return "Domains";
   if (path.startsWith("/webhooks")) return "Webhooks";
@@ -39,4 +39,5 @@ export function PageTitleManager() {
 
   return null;
 }
+
 

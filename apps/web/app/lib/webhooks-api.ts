@@ -27,6 +27,8 @@ export function hooksPublicHostForDisplay(stored: string | null | undefined): st
 
 export type WebhookListItem = {
   id: number;
+  /** URL-safe id; prefer for routes and links. */
+  publicId?: string;
   name: string;
   description: string;
   isActive: boolean;
@@ -58,6 +60,12 @@ export type WebhookDetail = WebhookListItem & {
   /** On-host agent URL when the script is deployed to a remote server (same path token as API `/hooks/{token}` by default). */
   remoteTriggerUrl: string | null;
 };
+
+/** Prefer `publicId` in URLs when the API has backfilled it. */
+export function webhookRouteId(w: { publicId?: string | null; id: number }): string {
+  const p = w.publicId?.trim();
+  return p ? p : String(w.id);
+}
 
 export type CreateWebhookBody = {
   name: string;
@@ -139,6 +147,8 @@ export async function fetchWebhooks(
   const data = (await res.json()) as Omit<WebhookListItem, "triggerType" | "cronExpression">[];
   return data.map((w) => ({
     ...w,
+    publicId:
+      w.publicId == null || String(w.publicId).trim() === "" ? undefined : String(w.publicId),
     remoteTriggerUrl: w.remoteTriggerUrl ?? null,
     hooksPublicHost: w.hooksPublicHost ?? null,
     remoteTriggerUrlScheme: w.remoteTriggerUrlScheme === "https" ? "https" : "http",
@@ -147,7 +157,7 @@ export async function fetchWebhooks(
   }));
 }
 
-export async function fetchWebhook(accessToken: string, id: number): Promise<WebhookDetail> {
+export async function fetchWebhook(accessToken: string, id: string | number): Promise<WebhookDetail> {
   const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
@@ -156,6 +166,10 @@ export async function fetchWebhook(accessToken: string, id: number): Promise<Web
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
@@ -183,6 +197,10 @@ export async function createWebhook(
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
@@ -195,7 +213,7 @@ export async function createWebhook(
 
 export async function updateWebhook(
   accessToken: string,
-  id: number,
+  id: string | number,
   body: UpdateWebhookBody,
 ): Promise<WebhookDetail> {
   const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
@@ -211,6 +229,10 @@ export async function updateWebhook(
   const data = (await res.json()) as Omit<WebhookDetail, "triggerType" | "cronExpression">;
   return {
     ...data,
+    publicId:
+      data.publicId == null || String(data.publicId).trim() === ""
+        ? undefined
+        : String(data.publicId),
     databaseBackupConfig: data.databaseBackupConfig ?? null,
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
@@ -221,7 +243,7 @@ export async function updateWebhook(
   };
 }
 
-export async function deleteWebhook(accessToken: string, id: number): Promise<void> {
+export async function deleteWebhook(accessToken: string, id: string | number): Promise<void> {
   const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
     method: "DELETE",
     headers: authHeaders(accessToken),

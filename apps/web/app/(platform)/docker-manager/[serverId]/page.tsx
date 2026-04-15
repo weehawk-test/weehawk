@@ -1,12 +1,12 @@
 import { notFound, redirect } from "next/navigation";
 import { parseConsoleServerSlug } from "@/lib/console-target";
 
-export default async function ConsoleServerIndexPage({
+export default async function DockerManagerServerIndexPage({
   params,
 }: {
   params: Promise<{ serverId: string }>;
 }) {
   const { serverId } = await params;
   if (parseConsoleServerSlug(serverId) == null) notFound();
-  redirect(`/console/${serverId}/images`);
+  redirect(`/docker-manager/${serverId}/images`);
 }

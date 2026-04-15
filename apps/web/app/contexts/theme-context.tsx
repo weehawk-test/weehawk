@@ -14,6 +14,11 @@ const THEME_STORAGE_KEY = "weehawk-theme";
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+function persistTheme(theme: Theme) {
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  document.cookie = `${THEME_STORAGE_KEY}=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`;
+}
+
 function applyThemeClass(theme: Theme) {
   const root = document.documentElement;
   root.classList.toggle("dark", theme === "dark");
@@ -24,7 +29,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (typeof document !== "undefined") {
       return document.documentElement.classList.contains("dark") ? "dark" : "light";
     }
-    return "light";
+    return "dark";
   });
 
   useEffect(() => {
@@ -32,11 +37,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const nextTheme: Theme = stored === "light" ? "light" : "dark";
     setThemeState(nextTheme);
     applyThemeClass(nextTheme);
+    persistTheme(nextTheme);
   }, []);
 
   const setTheme = (nextTheme: Theme) => {
     setThemeState(nextTheme);
-    localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    persistTheme(nextTheme);
     applyThemeClass(nextTheme);
   };
 
@@ -57,4 +63,3 @@ export function useTheme(): ThemeContextValue {
   if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
   return ctx;
 }
-

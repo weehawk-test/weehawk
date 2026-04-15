@@ -18,6 +18,7 @@ import {
   fetchWebhooks,
   hooksPublicHostForDisplay,
   updateWebhook,
+  webhookRouteId,
   type WebhookRemoteTriggerUrlScheme,
 } from "@/lib/webhooks-api";
 import { Label } from "@/components/ui/label";
@@ -446,7 +447,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       ) {
         const parentHost = webhookPublicHost.trim();
         try {
-          const outer = await updateWebhook(accessToken, webhookRowForBaseline.id, {
+          const outer = await updateWebhook(accessToken, webhookRouteId(webhookRowForBaseline), {
             hooksPublicHost: parentHost,
             remoteTriggerUrlScheme: webhookTriggerScheme,
           });
@@ -509,7 +510,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       });
       return;
     }
-    const oldId = hit.id;
+    const oldId = webhookRouteId(hit);
     setRegenerateWebhookPending(true);
     try {
       await syncRemoteDeploymentMirrorApi(String(service.id));

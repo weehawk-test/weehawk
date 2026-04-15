@@ -2,8 +2,8 @@ import ServiceDetailsClient from "./service-details-client";
 import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
 import type { Project, Service } from "@/lib/schema";
-import { fetchDockerSecretsPaged } from "@/lib/docker-paged-fetch";
 import {
+  fetchDockerSecretsPagedSSR,
   fetchProjectSSR,
   fetchServiceRuntimeSSR,
   fetchServiceSSR,
@@ -63,7 +63,7 @@ export default async function ServiceDetailsPage({
   const rsId = initialService?.remoteServerId;
   if (initialService?.type !== "application" && typeof rsId === "number" && rsId > 0) {
     initialSecretsPaged = await withSsrTimeout(
-      fetchDockerSecretsPaged(rsId, 1, DOCKER_LIST_PAGE_SIZE, ""),
+      fetchDockerSecretsPagedSSR(rsId, 1, DOCKER_LIST_PAGE_SIZE, ""),
       SSR_SECRETS_TIMEOUT_MS,
       null,
     );

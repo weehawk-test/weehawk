@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUpdateCronJob } from "@/hooks/use-cron-jobs";
-import type { CronJobDetail } from "@/lib/cron-jobs-api";
+import { cronJobRouteId, type CronJobDetail, type DatabaseBackupConfig } from "@/lib/cron-jobs-api";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
@@ -20,7 +20,6 @@ import {
   validateDatabaseBackupForm,
   type DatabaseBackupFormValues,
 } from "@/lib/database-backup-preview";
-import type { DatabaseBackupConfig } from "@/lib/cron-jobs-api";
 
 function renderHighlightedScript(script: string) {
   const lines = (script || "").split("\n");
@@ -187,7 +186,7 @@ export function EditCronJobClient({
           : {}),
       },
       {
-        onSuccess: () => router.push(`/cron-jobs/${initialCronJob.id}`),
+        onSuccess: (updated) => router.push(`/cron-jobs/${cronJobRouteId(updated)}`),
         onError: (e: Error) =>
           toast({ title: "Could not update cron job", description: e.message, variant: "destructive" }),
       },

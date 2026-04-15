@@ -6,9 +6,14 @@ import {
   fetchWebhook,
   fetchWebhooks,
   updateWebhook,
+  webhookRouteId,
   type CreateWebhookBody,
   type UpdateWebhookBody,
 } from "@/lib/webhooks-api";
+
+function webhookQueryEnabled(id: string | number): boolean {
+  return typeof id === "string" ? id.trim().length > 0 : Number.isFinite(id);
+}
 
 export function useWebhooks() {
   const { accessToken } = useAuth();
@@ -19,12 +24,12 @@ export function useWebhooks() {
   });
 }
 
-export function useWebhook(id: number) {
+export function useWebhook(id: string | number) {
   const { accessToken } = useAuth();
   return useQuery({
     queryKey: ["webhooks", id],
     queryFn: () => fetchWebhook(accessToken!, id),
-    enabled: Boolean(accessToken) && Number.isFinite(id),
+    enabled: Boolean(accessToken) && webhookQueryEnabled(id),
   });
 }
 
@@ -43,11 +48,12 @@ export function useUpdateWebhook() {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: number } & UpdateWebhookBody) =>
+    mutationFn: ({ id, ...body }: { id: string | number } & UpdateWebhookBody) =>
       updateWebhook(accessToken!, id, body),
-    onSuccess: (_, v) => {
+    onSuccess: (updated, v) => {
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
       queryClient.invalidateQueries({ queryKey: ["webhooks", v.id] });
+      queryClient.invalidateQueries({ queryKey: ["webhooks", webhookRouteId(updated)] });
     },
   });
 }
@@ -56,7 +62,7 @@ export function useDeleteWebhook() {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
   return useMutation({
-    mutationFn: (id: number) => deleteWebhook(accessToken!, id),
+    mutationFn: (id: string | number) => deleteWebhook(accessToken!, id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["webhooks"] });
     },

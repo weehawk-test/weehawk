@@ -12,7 +12,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { useCreateWebhook } from "@/hooks/use-webhooks";
-import { type WebhookRemoteTriggerUrlScheme, type WebhookTargetMode } from "@/lib/webhooks-api";
+import {
+  webhookRouteId,
+  type WebhookRemoteTriggerUrlScheme,
+  type WebhookTargetMode,
+} from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { S3ProfilePublic } from "@/lib/s3-api";
@@ -144,7 +148,7 @@ export function CreateWebhookClient({
           : {}),
       },
       {
-        onSuccess: (w) => router.push(`/webhooks/${w.id}`),
+        onSuccess: (w) => router.push(`/webhooks/${webhookRouteId(w)}`),
         onError: (e: Error) =>
           toast({ title: "Could not create webhook", description: e.message, variant: "destructive" }),
       },

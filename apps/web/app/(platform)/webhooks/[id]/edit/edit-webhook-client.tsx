@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useUpdateWebhook } from "@/hooks/use-webhooks";
 import {
   hooksPublicHostForDisplay,
+  webhookRouteId,
   type WebhookDetail,
   type WebhookRemoteTriggerUrlScheme,
 } from "@/lib/webhooks-api";
@@ -237,7 +238,7 @@ export function EditWebhookClient({
           : {}),
       },
       {
-        onSuccess: () => router.push(`/webhooks/${initialWebhook.id}`),
+        onSuccess: (updated) => router.push(`/webhooks/${webhookRouteId(updated)}`),
         onError: (e: Error) =>
           toast({ title: "Could not update webhook", description: e.message, variant: "destructive" }),
       },

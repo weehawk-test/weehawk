@@ -1,24 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { format } from "date-fns";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ImageIcon, Search, HardDrive, Tag, Clock, Loader2, AlertCircle, Trash2, OctagonAlert } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ImageIcon, Search, HardDrive, Tag, Clock, Loader2, AlertCircle, Trash2, OctagonAlert, RefreshCw } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import {
   DOCKER_API_HELP,
-  deleteDockerImage,
-  dockerPagedWsUrl,
   dockerImageDeleteRef,
   dockerImageForceDeleteRef,
   type DockerImage,
 } from "@/lib/docker-api";
-import { fetchDockerImagesPagedBrowser } from "@/lib/docker-paged-browser";
 import {
   deleteRemoteConsoleImage,
   fetchRemoteConsoleImagesPaged,
 } from "@/lib/remote-console-api";
-import { DOCKER_LIST_PAGE_SIZE, type PaginatedImagesResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 import type { DockerConsoleTarget } from "@/lib/console-target";
 import { useToast } from "@/hooks/use-toast";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -52,7 +49,6 @@ type Props = {
 
 export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
   const { accessToken } = useAuth();
-  const qc = useQueryClient();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -62,9 +58,6 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
   const listQuery = useQuery({
     queryKey: ["console", "images", consoleTarget, page, q],
     queryFn: async () => {
-      if (consoleTarget === "local") {
-        return fetchDockerImagesPagedBrowser(page, DOCKER_LIST_PAGE_SIZE, q);
-      }
       if (!accessToken) throw new Error("Sign in required");
       return fetchRemoteConsoleImagesPaged(
         accessToken,
@@ -74,7 +67,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         q,
       );
     },
-    enabled: consoleTarget === "local" || Boolean(accessToken),
+    enabled: Boolean(accessToken),
   });
 
   const liveData = listQuery.data ?? null;
@@ -83,48 +76,6 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
       ? listQuery.error.message
       : String(listQuery.error)
     : null;
-
-  useEffect(() => {
-    if (consoleTarget !== "local") return;
-    let disposed = false;
-    let ws: WebSocket | null = null;
-    const connect = () => {
-      ws = new WebSocket(
-        dockerPagedWsUrl({
-          topic: "images.paged",
-          page,
-          pageSize: DOCKER_LIST_PAGE_SIZE,
-          q,
-          intervalMs: 2000,
-        }),
-      );
-      ws.onmessage = (ev) => {
-        if (disposed || typeof ev.data !== "string") return;
-        try {
-          const msg = JSON.parse(ev.data) as { type?: string; data?: unknown; message?: string };
-          if (msg.type === "images.paged" && msg.data) {
-            qc.setQueryData(
-              ["console", "images", "local", page, q],
-              msg.data as PaginatedImagesResponse,
-            );
-          }
-        } catch {}
-      };
-      ws.onclose = () => {
-        if (disposed) return;
-        setTimeout(() => {
-          if (!disposed) connect();
-        }, 1500);
-      };
-    };
-    connect();
-    return () => {
-      disposed = true;
-      try {
-        ws?.close();
-      } catch {}
-    };
-  }, [consoleTarget, page, q, qc]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -149,9 +100,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
     const results = await Promise.allSettled(
       targets.map((img) => {
         const ref = dockerImageDeleteRef(img);
-        return consoleTarget === "local"
-          ? deleteDockerImage(ref)
-          : deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as string, ref);
+        return deleteRemoteConsoleImage(accessToken ?? "", consoleTarget, ref);
       }),
     );
     setBulkPending(false);
@@ -187,11 +136,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
     if (!ok) return;
     (async () => {
       try {
-        if (consoleTarget === "local") {
-          await deleteDockerImage(ref);
-        } else {
-          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as string, ref);
-        }
+        await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget, ref);
         toast({ title: "Image removed", description: ref });
         void listQuery.refetch();
       } catch (e) {
@@ -212,11 +157,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
     const ref = dockerImageForceDeleteRef(forceDialog);
     void (async () => {
       try {
-        if (consoleTarget === "local") {
-          await deleteDockerImage(ref);
-        } else {
-          await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget as string, ref);
-        }
+        await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget, ref);
         toast({ title: "Image removed (force)", description: ref });
         setForceDialog(null);
         void listQuery.refetch();
@@ -239,7 +180,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
       <div className="flex items-center justify-between mb-2">
         <div>
           <h1 className="text-3xl font-bold">Docker Images</h1>
-          <p className="text-muted-foreground text-sm mt-1">Live data from Docker via the API (server-paged).</p>
+          <p className="text-muted-foreground text-sm mt-1">Server-paged list from Docker. Use Refresh to update.</p>
         </div>
         <div className="flex items-center gap-2">
           {bulk.selectedInFiltered.length > 0 && (
@@ -267,14 +208,26 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         </div>
       )}
 
-      <div className="relative mb-3">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <input
-          className="input-field !pl-10 w-full"
-          placeholder="Search images..."
-          value={localQ}
-          onChange={(e) => setLocalQ(e.target.value)}
-        />
+      <div className="flex gap-2 items-stretch mb-3">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <input
+            className="input-field !pl-10 w-full"
+            placeholder="Search images..."
+            value={localQ}
+            onChange={(e) => setLocalQ(e.target.value)}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void listQuery.refetch()}
+          disabled={listQuery.isFetching}
+          className="btn-secondary shrink-0 px-3 flex items-center justify-center min-w-[2.75rem]"
+          title="Refresh"
+          aria-label="Refresh list"
+        >
+          <RefreshCw className={cn("w-4 h-4", listQuery.isFetching && "animate-spin")} />
+        </button>
       </div>
 
       {currentData && currentData.total > 0 && !isError && (
@@ -303,16 +256,26 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         </div>
       ) : currentData ? (
         <div className="glass-panel rounded-2xl overflow-hidden">
-          <table className="w-full">
+          <table className="w-full min-w-0">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="w-12 py-3 px-3" />
-                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Repository</th>
-                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Tag</th>
-                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Image ID</th>
-                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Size</th>
-                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Created</th>
-                <th className="py-3 px-5 w-[5.5rem] text-right" />
+                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Repository
+                </th>
+                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider max-w-[12rem]">
+                  Tag
+                </th>
+                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Image ID
+                </th>
+                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Size
+                </th>
+                <th className="text-left py-3 px-5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Created
+                </th>
+                <th className="py-3 px-5 w-[5.5rem] shrink-0 text-right" />
               </tr>
             </thead>
             <tbody>
@@ -328,22 +291,32 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
                       aria-label={`Select ${img.repository}:${img.tag}`}
                     />
                   </td>
-                  <td className="py-3.5 px-5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                  <td className="py-3.5 px-5 min-w-0 max-w-[min(42vw,22rem)] align-middle">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
                         <ImageIcon className="w-3.5 h-3.5 text-primary" />
                       </div>
-                      <span className="font-medium text-sm">{img.repository}</span>
+                      <span className="font-medium text-sm truncate" title={img.repository}>
+                        {img.repository}
+                      </span>
                     </div>
                   </td>
-                  <td className="py-3.5 px-5">
-                    <span className="bg-primary/10 text-primary border border-primary/20 text-xs rounded-full px-2 py-0.5 font-mono flex items-center gap-1 w-fit">
-                      <Tag className="w-3 h-3" />
-                      {img.tag}
+                  <td className="py-3.5 px-5 min-w-0 max-w-[12rem] align-middle">
+                    <span
+                      className="bg-primary/10 text-primary border border-primary/20 text-xs rounded-full px-2 py-0.5 font-mono inline-flex items-center gap-1 min-w-0 max-w-full"
+                      title={img.tag}
+                    >
+                      <Tag className="w-3 h-3 shrink-0" />
+                      <span className="truncate min-w-0">{img.tag}</span>
                     </span>
                   </td>
-                  <td className="py-3.5 px-5">
-                    <span className="font-mono text-xs text-muted-foreground">{img.imageId}</span>
+                  <td className="py-3.5 px-5 min-w-0 align-middle">
+                    <span
+                      className="font-mono text-xs text-muted-foreground truncate block"
+                      title={img.imageIdFull || img.imageId}
+                    >
+                      {img.imageId}
+                    </span>
                   </td>
                   <td className="py-3.5 px-5">
                     <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -357,8 +330,8 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
                       {formatCreated(img.createdAt)}
                     </span>
                   </td>
-                  <td className="py-3.5 px-5">
-                    <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <td className="py-3.5 px-5 w-[5.5rem] shrink-0 align-middle">
+                    <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => setForceDialog(img)}

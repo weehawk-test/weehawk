@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateCronJob } from "@/hooks/use-cron-jobs";
+import { cronJobRouteId } from "@/lib/cron-jobs-api";
 import { type WebhookTargetMode } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
@@ -125,7 +126,7 @@ export function CreateCronJobClient({
           : {}),
       },
       {
-        onSuccess: (j) => router.push(`/cron-jobs/${j.id}`),
+        onSuccess: (j) => router.push(`/cron-jobs/${cronJobRouteId(j)}`),
         onError: (e: Error) =>
           toast({ title: "Could not create cron job", description: e.message, variant: "destructive" }),
       },

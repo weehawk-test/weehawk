@@ -93,53 +93,8 @@ function buildQuery(page: number, pageSize: number, q: string): string {
   return params.toString();
 }
 
-export async function fetchDockerContainersPaged(
-  page: number,
-  pageSize: number,
-  q: string,
-): Promise<PaginatedContainersResponse> {
-  const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedContainersResponse>(`/api/docker-monitor/containers/paged?${qs}`);
-}
-
-export async function fetchDockerImagesPaged(
-  page: number,
-  pageSize: number,
-  q: string,
-): Promise<PaginatedImagesResponse> {
-  const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedImagesResponse>(`/api/docker-monitor/images/paged?${qs}`);
-}
-
-export async function fetchDockerServicesPaged(
-  page: number,
-  pageSize: number,
-  q: string,
-): Promise<PaginatedServicesResponse> {
-  const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedServicesResponse>(`/api/docker-monitor/services/paged?${qs}`);
-}
-
-export async function fetchDockerVolumesPaged(
-  page: number,
-  pageSize: number,
-  q: string,
-): Promise<PaginatedVolumesResponse> {
-  const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedVolumesResponse>(`/api/docker-monitor/volumes/paged?${qs}`);
-}
-
-export async function fetchDockerNetworksPaged(
-  page: number,
-  pageSize: number,
-  q: string,
-): Promise<PaginatedNetworksResponse> {
-  const qs = buildQuery(page, pageSize, q);
-  return fetchPaged<PaginatedNetworksResponse>(`/api/docker-monitor/networks/paged?${qs}`);
-}
-
 export async function fetchDockerSecretsPaged(
-  remoteServerId: number,
+  remoteServerId: string | number,
   page: number,
   pageSize: number,
   q: string,

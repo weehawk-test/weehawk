@@ -22,7 +22,7 @@ import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { motion } from "framer-motion";
-import type { WebhookDetail } from "@/lib/webhooks-api";
+import { webhookRouteId, type WebhookDetail } from "@/lib/webhooks-api";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 
 type Props = {
@@ -122,7 +122,7 @@ export function WebhookDetailsClient({ initialWebhook }: Props) {
           </div>
 
           <div className="flex items-center gap-2">
-            <Link href={`/webhooks/${webhook.id}/edit`}>
+            <Link href={`/webhooks/${webhookRouteId(webhook)}/edit`}>
               <button type="button" className="btn-secondary whitespace-nowrap flex items-center gap-2">
                 <Pencil className="w-4 h-4" /> Edit
               </button>
@@ -287,7 +287,12 @@ export function WebhookDetailsClient({ initialWebhook }: Props) {
                 <p className="text-muted-foreground text-xs mb-1 flex items-center gap-1.5">
                   <Hash className="w-3.5 h-3.5" /> ID
                 </p>
-                <p className="font-mono text-xs break-all">{webhook.id}</p>
+                <p className="font-mono text-xs break-all">
+                  {webhook.publicId ?? webhook.id}
+                  {webhook.publicId ? (
+                    <span className="block text-[10px] text-muted-foreground mt-0.5">Internal #{webhook.id}</span>
+                  ) : null}
+                </p>
               </div>
               <div>
                 <p className="text-muted-foreground text-xs mb-1 flex items-center gap-1.5">

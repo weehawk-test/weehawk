@@ -15,7 +15,7 @@ import { channelConfigRecord } from './providers/channel-config';
 import { ProviderSendResult } from './providers/provider.types';
 import { withRetry } from './utils/with-retry';
 
-export const NOTIFICATION_TEST_MESSAGE = 'test succedded';
+export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
 
 export type NotificationChannelRow = {
   id: string;
