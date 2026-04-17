@@ -9,6 +9,7 @@ import {
   changePassword,
   getProfile,
   requestEmailChange,
+  resendConfirmationEmail,
   setPassword,
   unlinkGoogle,
   updateProfile,
@@ -61,6 +62,7 @@ export default function ProfilePage() {
   const [settingPassword, setSettingPassword] = useState(false);
   const [unlinkingGoogle, setUnlinkingGoogle] = useState(false);
   const [requestingEmailChange, setRequestingEmailChange] = useState(false);
+  const [resendingConfirmation, setResendingConfirmation] = useState(false);
   const [activeTab, setActiveTab] = useState<"profile" | "password">("profile");
   const [bannerError, setBannerError] = useState<string | null>(null);
   const isGoogleLinked = Boolean(user?.providerId) || user?.provider === "GOOGLE";
@@ -258,6 +260,26 @@ export default function ProfilePage() {
       });
     } finally {
       setRequestingEmailChange(false);
+    }
+  };
+
+  const onResendConfirmation = async () => {
+    if (!user || user.emailVerified) return;
+    setResendingConfirmation(true);
+    try {
+      const result = await resendConfirmationEmail();
+      toast({
+        title: "Check your inbox",
+        description: result.message || "We sent you a confirmation link.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not resend email",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setResendingConfirmation(false);
     }
   };
 
@@ -491,7 +513,27 @@ export default function ProfilePage() {
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-sm text-muted-foreground">Account email</label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="text-sm text-muted-foreground">Account email</label>
+                {user?.emailVerified === false ? (
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                      Unverified
+                    </span>
+                    <button
+                      type="button"
+                      onClick={onResendConfirmation}
+                      disabled={resendingConfirmation}
+                      className="h-7 shrink-0 rounded-md border border-border/80 bg-background px-2.5 text-xs font-medium text-foreground shadow-sm hover:bg-muted/60 transition-colors disabled:opacity-60 inline-flex items-center gap-1.5"
+                    >
+                      {resendingConfirmation ? (
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                      ) : null}
+                      Resend link
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <input
                 type="email"
                 value={user?.email ?? ""}
