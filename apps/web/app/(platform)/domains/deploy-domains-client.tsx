@@ -126,6 +126,7 @@ function ServerDomainsCard({
   const initialRows = useMemo(() => hostsToRows(baselineHosts), [baselineHosts]);
 
   const [rows, setRows] = useState<DomainRow[]>(initialRows);
+  const [savedHosts, setSavedHosts] = useState<string[]>(baselineHosts);
   const [dirty, setDirty] = useState(false);
   const skipNextBaselineSync = useRef(false);
 
@@ -134,11 +135,14 @@ function ServerDomainsCard({
       skipNextBaselineSync.current = false;
       return;
     }
-    if (!dirty) setRows(initialRows);
-  }, [initialRows, dirty]);
+    if (!dirty) {
+      setRows(initialRows);
+      setSavedHosts(baselineHosts);
+    }
+  }, [initialRows, baselineHosts, dirty]);
 
   const currentHosts = useMemo(() => rowsToHosts(rows), [rows]);
-  const isDirty = dirty || !hostsEqual(currentHosts, baselineHosts);
+  const isDirty = dirty || !hostsEqual(currentHosts, savedHosts);
 
   const { mutate, isPending } = useMutation({
     mutationFn: async (domainsJson: string | null) =>
@@ -148,6 +152,7 @@ function ServerDomainsCard({
       const nextHosts = domainsJsonToHosts(row.domainsJson);
       skipNextBaselineSync.current = true;
       setRows(hostsToRows(nextHosts));
+      setSavedHosts(nextHosts);
       setDirty(false);
       toast({ title: "Domains saved", description: server.name });
     },
@@ -432,8 +437,7 @@ export function DeployDomainsClient({
             <div className="min-w-0 space-y-1">
               <h2 className="font-semibold text-sm tracking-tight">Certificate email</h2>
               <p className="text-xs text-muted-foreground">
-                For Let&apos;s Encrypt notices. Save it before editing addresses below. Traefik TLS settings (resolver,
-                entrypoints, image) use the platform defaults.
+                For Let&apos;s Encrypt notices. Save it before editing addresses below.
               </p>
             </div>
           </div>
