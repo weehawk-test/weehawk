@@ -8,6 +8,9 @@ export class UserProfileResponseDto {
   email!: string;
   role!: Role;
   provider!: AuthProvider;
+  providerId!: string | null;
+  /** Google OAuth email; may differ from {@link UserProfileResponseDto.email}. */
+  googleAccountEmail!: string | null;
   imageUrl!: string | null;
   /** True when the account has a local password (false for pure OAuth accounts). */
   hasPassword!: boolean;

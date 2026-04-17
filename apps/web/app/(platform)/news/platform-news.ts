@@ -10,7 +10,7 @@ export type PlatformNewsItem = {
   category: PlatformNewsCategory;
 };
 
-const PLATFORM_NEWS_URL = "https://weehawk.io/api/news";
+const PLATFORM_NEWS_URL = "https://api.weehawk.io/news";
 
 const CATEGORIES: PlatformNewsCategory[] = ["product", "security", "maintenance", "community"];
 
@@ -43,7 +43,7 @@ function parseNewsItem(raw: unknown): PlatformNewsItem | null {
   };
 }
 
-/** Fetches the public news feed from [weehawk.io/api/news](https://weehawk.io/api/news). */
+/** Fetches the public news feed from [api.weehawk.io/news](https://api.weehawk.io/news). */
 export async function fetchPlatformNews(): Promise<PlatformNewsItem[]> {
   try {
     const res = await fetch(PLATFORM_NEWS_URL, {

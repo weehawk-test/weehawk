@@ -1,9 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertCircle, Loader2, LockKeyhole, UserRound, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
-import { getProfile, updateProfile } from "@/lib/user-api";
+import { API_BASE } from "@/lib/api";
+import {
+  changePassword,
+  getProfile,
+  requestEmailChange,
+  setPassword,
+  unlinkGoogle,
+  updateProfile,
+} from "@/lib/user-api";
 import { useToast } from "@/hooks/use-toast";
 
 function GoogleMark({ className }: { className?: string }) {
@@ -37,12 +46,41 @@ function GoogleMark({ className }: { className?: string }) {
 export default function ProfilePage() {
   const { user, updateUser } = useAuth();
   const { toast } = useToast();
+  const router = useRouter();
   const [firstName, setFirstName] = useState(user?.firstName ?? "");
   const [lastName, setLastName] = useState(user?.lastName ?? "");
   const [saving, setSaving] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [setPasswordValue, setSetPasswordValue] = useState("");
+  const [setPasswordConfirmValue, setSetPasswordConfirmValue] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [hasPassword, setHasPassword] = useState(user?.provider === "LOCAL");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [settingPassword, setSettingPassword] = useState(false);
+  const [unlinkingGoogle, setUnlinkingGoogle] = useState(false);
+  const [requestingEmailChange, setRequestingEmailChange] = useState(false);
+  const [activeTab, setActiveTab] = useState<"profile" | "password">("profile");
+  const [bannerError, setBannerError] = useState<string | null>(null);
+  const isGoogleLinked = Boolean(user?.providerId) || user?.provider === "GOOGLE";
+  const googleLinkedEmail = user?.googleAccountEmail?.trim() || user?.email || "";
 
   useEffect(() => {
-    if (!user || user.provider) return;
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get("error")?.trim();
+    if (!err) return;
+    setBannerError(err);
+    toast({
+      title: "Could not link Google",
+      description: err,
+      variant: "destructive",
+    });
+    router.replace("/profile", { scroll: false });
+  }, [router, toast]);
+
+  useEffect(() => {
+    if (!user) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -50,9 +88,12 @@ export default function ProfilePage() {
         if (cancelled) return;
         updateUser({
           provider: p.provider,
+          providerId: p.providerId,
+          googleAccountEmail: p.googleAccountEmail,
           emailVerified: p.emailVerified,
           imageUrl: p.imageUrl,
         });
+        setHasPassword(p.hasPassword);
       } catch {
         /* ignore */
       }
@@ -60,7 +101,7 @@ export default function ProfilePage() {
     return () => {
       cancelled = true;
     };
-  }, [user?.userId, user?.provider, updateUser]);
+  }, [user?.userId, updateUser]);
 
   const onSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -84,6 +125,8 @@ export default function ProfilePage() {
         firstName: profile.firstName,
         lastName: profile.lastName,
         provider: profile.provider,
+        providerId: profile.providerId,
+        googleAccountEmail: profile.googleAccountEmail,
       });
       toast({ title: "Profile updated", description: "Your profile was saved successfully." });
     } catch (err) {
@@ -97,15 +140,249 @@ export default function ProfilePage() {
     }
   };
 
+  const onChangePassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const canChangePassword =
+      !!user && (user.provider === "LOCAL" || (user.provider === "GOOGLE" && hasPassword));
+    if (!canChangePassword) return;
+
+    const currentPasswordValue = currentPassword.trim();
+    const newPasswordValue = newPassword.trim();
+    const confirmPasswordValue = confirmPassword.trim();
+
+    if (!currentPasswordValue || !newPasswordValue || !confirmPasswordValue) {
+      toast({
+        title: "Missing fields",
+        description: "All password fields are required.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (newPasswordValue.length < 8) {
+      toast({
+        title: "Weak password",
+        description: "New password must be at least 8 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (newPasswordValue !== confirmPasswordValue) {
+      toast({
+        title: "Passwords do not match",
+        description: "Please confirm the new password correctly.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (currentPasswordValue === newPasswordValue) {
+      toast({
+        title: "No changes detected",
+        description: "New password must be different from current password.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const result = await changePassword({
+        currentPassword: currentPasswordValue,
+        newPassword: newPasswordValue,
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      toast({
+        title: "Password updated",
+        description: result.message || "Your password was changed successfully.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not change password",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  const onRequestEmailChange = async () => {
+    if (!user) return;
+    const nextEmail = newEmail.trim().toLowerCase();
+
+    if (!nextEmail) {
+      toast({
+        title: "Missing email",
+        description: "Please enter a new email address.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const isEmailLike = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail);
+    if (!isEmailLike) {
+      toast({
+        title: "Invalid email",
+        description: "Please enter a valid email address.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (nextEmail === (user.email ?? "").trim().toLowerCase()) {
+      toast({
+        title: "No changes detected",
+        description: "New email must be different from your current email.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setRequestingEmailChange(true);
+    try {
+      const result = await requestEmailChange({ newEmail: nextEmail });
+      setNewEmail("");
+      toast({
+        title: "Email change requested",
+        description: result.message || "Please check your new email for confirmation.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not request email change",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setRequestingEmailChange(false);
+    }
+  };
+
+  const onSetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user || user.provider !== "GOOGLE") return;
+
+    const nextPassword = setPasswordValue.trim();
+    const confirm = setPasswordConfirmValue.trim();
+
+    if (!nextPassword || !confirm) {
+      toast({
+        title: "Missing fields",
+        description: "Please fill both password fields.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (nextPassword.length < 8) {
+      toast({
+        title: "Weak password",
+        description: "Password must be at least 8 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!/[a-z]/.test(nextPassword) || !/[A-Z]/.test(nextPassword) || !/\d/.test(nextPassword)) {
+      toast({
+        title: "Weak password",
+        description: "Password must include uppercase, lowercase and a number.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (nextPassword !== confirm) {
+      toast({
+        title: "Passwords do not match",
+        description: "Please confirm the password correctly.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSettingPassword(true);
+    try {
+      const result = await setPassword({ newPassword: nextPassword });
+      setSetPasswordValue("");
+      setSetPasswordConfirmValue("");
+      setHasPassword(true);
+      toast({
+        title: "Password set",
+        description: result.message || "Your password has been set successfully.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not set password",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setSettingPassword(false);
+    }
+  };
+
+  const onUnlinkGoogle = async () => {
+    if (!user || !isGoogleLinked) return;
+    if (!hasPassword) {
+      toast({
+        title: "Set a password first",
+        description:
+          "You need a password on your account before you can unlink Google. Use the Password tab to set one.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setUnlinkingGoogle(true);
+    try {
+      const result = await unlinkGoogle();
+      updateUser({ provider: "LOCAL", providerId: null, googleAccountEmail: null });
+      setActiveTab("profile");
+      toast({
+        title: "Google unlinked",
+        description: result.message || "Your Google account was unlinked successfully.",
+      });
+    } catch (err) {
+      toast({
+        title: "Could not unlink Google",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setUnlinkingGoogle(false);
+    }
+  };
+
   return (
     <div className="max-w-xl mr-auto">
-      <div className="glass-panel rounded-2xl p-6 space-y-5 text-left">
+      <div className="glass-panel rounded-2xl p-6 sm:p-7 space-y-6 text-left">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Edit profile</h1>
           <p className="text-sm text-muted-foreground mt-1">Update your account information.</p>
         </div>
 
-        {user?.provider === "GOOGLE" ? (
+        {bannerError ? (
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-lg border border-red-500/40 bg-red-500/5 px-4 py-3 text-sm text-destructive"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="font-medium leading-none tracking-tight">Could not link Google</p>
+              <p className="text-destructive/95 leading-relaxed">{bannerError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setBannerError(null)}
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-destructive/30 bg-background text-destructive shadow-sm hover:bg-destructive/10 transition-colors"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        ) : null}
+
+        {isGoogleLinked ? (
           <div className="rounded-xl border border-border/70 bg-muted/25 dark:bg-muted/15 p-4 shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.06]">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">
               Linked account
@@ -116,64 +393,240 @@ export default function ProfilePage() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-foreground">Google</p>
-                <p className="text-sm text-muted-foreground truncate" title={user.email}>
-                  {user.email}
+                <p className="text-sm text-muted-foreground truncate" title={googleLinkedEmail}>
+                  {googleLinkedEmail}
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={onUnlinkGoogle}
+                disabled={unlinkingGoogle}
+                className="h-8 shrink-0 rounded-md border border-red-500/40 bg-red-500/10 px-2.5 text-xs font-medium text-red-500 hover:bg-red-500/20 transition-colors disabled:opacity-60 flex items-center justify-center gap-1.5"
+              >
+                {unlinkingGoogle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                Unlink
+              </button>
             </div>
-          </div>
-        ) : user?.provider === "LOCAL" ? (
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Linked account
-            </p>
-            <p className="text-sm font-medium text-foreground">Email &amp; password</p>
           </div>
         ) : null}
 
-        <form className="space-y-4 text-left" onSubmit={onSave}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-sm text-muted-foreground">First name</label>
-              <input
-                type="text"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                className="input-field"
-                placeholder="John"
-                autoComplete="given-name"
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm text-muted-foreground">Last name</label>
-              <input
-                type="text"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                className="input-field"
-                placeholder="Doe"
-                autoComplete="family-name"
-              />
+        {user && !isGoogleLinked ? (
+          <div className="rounded-xl border border-border/70 bg-muted/25 dark:bg-muted/15 p-4 shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.06]">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">
+              Link account
+            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-background border border-border/60 shadow-sm">
+                  <GoogleMark className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">Google</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">Connect Google to sign in with it on this account.</p>
+                </div>
+              </div>
+              <a
+                href={`${API_BASE}/api/oauth2/google-link/start`}
+                className="inline-flex h-9 shrink-0 items-center justify-center rounded-md border border-border/80 bg-background px-3 text-sm font-medium text-foreground shadow-sm hover:bg-muted/50 transition-colors sm:self-center"
+              >
+                Link
+              </a>
             </div>
           </div>
-          <div className="space-y-1">
-            <label className="text-sm text-muted-foreground">Account email</label>
-            <input
-              type="email"
-              value={user?.email ?? ""}
-              className="input-field opacity-70"
-              disabled />
-          </div>
+        ) : null}
 
-          <button
-            type="submit"
-            disabled={saving || !user}
-            className="btn-primary w-full flex items-center justify-center gap-2"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            Save changes
-          </button>
-        </form>
+        {user?.provider === "LOCAL" || user?.provider === "GOOGLE" ? (
+          <div className="rounded-xl border border-border/70 bg-muted/25 dark:bg-muted/15 p-1 grid grid-cols-2 gap-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab("profile")}
+              className={`h-10 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                activeTab === "profile"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-background/70"
+              }`}
+            >
+              <UserRound className="h-4 w-4" />
+              Profile
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("password")}
+              className={`h-10 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                activeTab === "password"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-background/70"
+              }`}
+            >
+              <LockKeyhole className="h-4 w-4" />
+              {user?.provider === "GOOGLE" && !hasPassword ? "Set password" : "Password"}
+            </button>
+          </div>
+        ) : null}
+
+        {activeTab === "profile" ? (
+          <form className="space-y-5 text-left" onSubmit={onSave}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-sm text-muted-foreground">First name</label>
+                <input
+                  type="text"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className="input-field"
+                  placeholder="John"
+                  autoComplete="given-name"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm text-muted-foreground">Last name</label>
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className="input-field"
+                  placeholder="Doe"
+                  autoComplete="family-name"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">Account email</label>
+              <input
+                type="email"
+                value={user?.email ?? ""}
+                className="input-field opacity-70 bg-muted/40"
+                placeholder="your@email.com"
+                disabled
+              />
+            </div>
+            {user?.provider === "LOCAL" || user?.provider === "GOOGLE" ? (
+              <div className="rounded-xl border border-border/70 bg-muted/20 dark:bg-muted/10 p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Change account email</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    We will send a confirmation link to your new email address.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-end">
+                  <div className="space-y-1">
+                    <label className="text-sm text-muted-foreground">New email address</label>
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      className="input-field"
+                      placeholder="new@email.com"
+                      autoComplete="email"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onRequestEmailChange}
+                    disabled={requestingEmailChange || !user}
+                    className="btn-secondary h-[46px] px-5 whitespace-nowrap flex items-center justify-center gap-2"
+                  >
+                    {requestingEmailChange ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Request change
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={saving || !user}
+              className="btn-primary w-full flex items-center justify-center gap-2"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Save changes
+            </button>
+          </form>
+        ) : null}
+
+        {activeTab === "password" &&
+        (user?.provider === "LOCAL" || (user?.provider === "GOOGLE" && hasPassword)) ? (
+          <form className="space-y-4 text-left" onSubmit={onChangePassword}>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">Current password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="input-field"
+                placeholder="Enter current password"
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">New password</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="input-field"
+                placeholder="Enter new password"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">Confirm new password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="input-field"
+                placeholder="Confirm new password"
+                autoComplete="new-password"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={changingPassword || !user}
+              className="btn-primary w-full flex items-center justify-center gap-2"
+            >
+              {changingPassword ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Change password
+            </button>
+          </form>
+        ) : null}
+
+        {user?.provider === "GOOGLE" && !hasPassword && activeTab === "password" ? (
+          <div className="space-y-4 text-left">
+            <form className="space-y-4" onSubmit={onSetPassword}>
+              <div className="space-y-1">
+                <label className="text-sm text-muted-foreground">New password</label>
+                <input
+                  type="password"
+                  value={setPasswordValue}
+                  onChange={(e) => setSetPasswordValue(e.target.value)}
+                  className="input-field"
+                  placeholder="Enter new password"
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm text-muted-foreground">Confirm password</label>
+                <input
+                  type="password"
+                  value={setPasswordConfirmValue}
+                  onChange={(e) => setSetPasswordConfirmValue(e.target.value)}
+                  className="input-field"
+                  placeholder="Confirm new password"
+                  autoComplete="new-password"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={settingPassword}
+                className="btn-primary w-full flex items-center justify-center gap-2"
+              >
+                {settingPassword ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Set password
+              </button>
+            </form>
+          </div>
+        ) : null}
       </div>
     </div>
   );

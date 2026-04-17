@@ -36,6 +36,12 @@ export class User {
   @Column({ type: 'varchar', name: 'provider_id', length: 100, nullable: true, unique: true })
   providerId: string | null = null;
 
+  /**
+   * Email returned by Google on OAuth (may differ from {@link User.email} after an in-app email change).
+   */
+  @Column({ type: 'varchar', name: 'google_account_email', length: 254, nullable: true })
+  googleAccountEmail: string | null = null;
+
   @Column({ default: true })
   enabled!: boolean;
 

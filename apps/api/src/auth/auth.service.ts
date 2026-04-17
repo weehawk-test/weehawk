@@ -67,7 +67,7 @@ export class AuthService {
     const user = await this.userRepo.findOne({ where: { email: dto.email.toLowerCase() } });
     if (!user) throw new UnauthorizedException('Invalid email or password');
 
-    if (user.provider !== AuthProvider.LOCAL || !user.passwordHash) {
+    if (!user.passwordHash) {
       throw new ConflictException(
         `Account is linked to ${user.provider}. Please sign in with that provider.`,
       );
@@ -122,6 +122,91 @@ export class AuthService {
     await this.emailConfirmationService.sendConfirmationEmail(user);
   }
 
+  createGoogleLinkIntentToken(userId: number): string {
+    return this.jwtService.sign(
+      { purpose: 'google_oauth_link', sub: String(userId) },
+      { expiresIn: '10m' },
+    );
+  }
+
+  verifyGoogleLinkIntentToken(token: string): number {
+    try {
+      const payload = this.jwtService.verify<{ purpose?: string; sub?: string }>(token);
+      if (payload.purpose !== 'google_oauth_link' || !payload.sub) {
+        throw new UnauthorizedException('Invalid link session');
+      }
+      const id = Number(payload.sub);
+      if (!Number.isFinite(id) || id <= 0) throw new UnauthorizedException('Invalid link session');
+      return id;
+    } catch (e) {
+      if (e instanceof UnauthorizedException) throw e;
+      throw new UnauthorizedException('Invalid or expired link session');
+    }
+  }
+
+  async assertCanStartGoogleLink(userId: number): Promise<void> {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+    if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+    if (user.providerId) {
+      throw new ConflictException('Google is already linked to this account.');
+    }
+  }
+
+  async linkGoogleAccount(userId: number, profile: Profile): Promise<AuthResponseDto> {
+    const email = profile.emails?.[0]?.value?.toLowerCase()?.trim();
+    if (!email) throw new UnauthorizedException('Google account email not available');
+
+    const providerId = profile.id ? String(profile.id) : null;
+    if (!providerId) throw new UnauthorizedException('Google account id not available');
+
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('User not found');
+    if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+    if (user.providerId) {
+      throw new ConflictException('Google is already linked to this account.');
+    }
+    if (!this.canSignInWithGoogle(user)) {
+      throw new ConflictException(
+        `Account is linked to ${user.provider}. Please sign in with that provider.`,
+      );
+    }
+
+    const ownerOfProviderId = await this.userRepo.findOne({ where: { providerId } });
+    if (ownerOfProviderId && ownerOfProviderId.id !== userId) {
+      throw new ConflictException('This Google account is already linked to another user.');
+    }
+
+    const ownerOfGoogleEmail = await this.userRepo.findOne({ where: { email } });
+    if (ownerOfGoogleEmail && ownerOfGoogleEmail.id !== userId) {
+      throw new ConflictException(
+        'An account with this Google email already exists. Sign in with Google or use a different Google account.',
+      );
+    }
+
+    const givenName = profile.name?.givenName ?? '';
+    const familyName = profile.name?.familyName ?? '';
+    const imageUrl = profile.photos?.[0]?.value ?? null;
+
+    let merged: User;
+    try {
+      merged = await this.mergeGoogleProfileIntoUser(user, {
+        email,
+        providerId,
+        givenName,
+        familyName,
+        imageUrl,
+      });
+    } catch (e) {
+      if (!isPostgresUniqueViolation(e)) throw e;
+      throw new ConflictException('This Google account is already linked to another user.');
+    }
+
+    const accessToken = this.generateAccessToken(merged);
+    const refreshToken = await this.refreshTokenService.createRefreshToken(merged);
+    return this.buildAuthResponse(merged, accessToken, refreshToken.token);
+  }
+
   async loginWithGoogle(profile: Profile): Promise<AuthResponseDto> {
     const email = profile.emails?.[0]?.value?.toLowerCase()?.trim();
     if (!email) throw new UnauthorizedException('Google account email not available');
@@ -136,7 +221,7 @@ export class AuthService {
       (providerId ? await this.userRepo.findOne({ where: { providerId } }) : null);
 
     if (user) {
-      if (user.provider !== AuthProvider.GOOGLE) {
+      if (!this.canSignInWithGoogle(user)) {
         throw new ConflictException(
           `Account is linked to ${user.provider}. Please sign in with that provider.`,
         );
@@ -155,6 +240,7 @@ export class AuthService {
         firstName: givenName || 'Google',
         lastName: familyName || 'User',
         email,
+        googleAccountEmail: email,
         passwordHash: null,
         provider: AuthProvider.GOOGLE,
         providerId,
@@ -174,7 +260,7 @@ export class AuthService {
           (await this.userRepo.findOne({ where: { email } })) ??
           (providerId ? await this.userRepo.findOne({ where: { providerId } }) : null);
         if (!user) throw e;
-        if (user.provider !== AuthProvider.GOOGLE) {
+        if (!this.canSignInWithGoogle(user)) {
           throw new ConflictException(
             `Account is linked to ${user.provider}. Please sign in with that provider.`,
           );
@@ -206,15 +292,21 @@ export class AuthService {
     },
   ): Promise<User> {
     user.providerId = p.providerId ?? user.providerId;
-    if (p.email && user.email !== p.email) {
-      user.email = p.email;
+    if (p.email) {
+      user.googleAccountEmail = p.email;
     }
     if (p.imageUrl && !user.imageUrl) user.imageUrl = p.imageUrl;
     if (p.givenName && !user.firstName) user.firstName = p.givenName;
     if (p.familyName && !user.lastName) user.lastName = p.familyName;
-    user.emailVerified = true;
+    if (user.email.toLowerCase() === p.email.toLowerCase()) {
+      user.emailVerified = true;
+    }
     user.lastLogin = new Date();
     return this.userRepo.save(user);
+  }
+
+  private canSignInWithGoogle(user: User): boolean {
+    return user.provider === AuthProvider.GOOGLE || user.provider === AuthProvider.LOCAL;
   }
 
   private generateAccessToken(user: User): string {

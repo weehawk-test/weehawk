@@ -9,6 +9,10 @@ export type UserProfile = {
   lastName: string;
   email: string;
   provider: AuthProvider;
+  providerId: string | null;
+  /** Google sign-in email; may differ from `email` after changing account email in-app. */
+  googleAccountEmail: string | null;
+  hasPassword: boolean;
   emailVerified: boolean;
   imageUrl: string | null;
   createdAt: string;
@@ -60,13 +64,63 @@ export async function changePassword(body: {
   currentPassword: string;
   newPassword: string;
 }): Promise<{ message: string }> {
-  const res = await authFetch(null, `${API_BASE}/api/user/password`, {
+  const res = await authFetch(null, `${API_BASE}/api/auth/change-password`, {
+    method: "POST",
+    headers: {
+      ...jsonHeaders,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function requestEmailChange(body: { newEmail: string }): Promise<{ message: string }> {
+  const res = await authFetch(null, `${API_BASE}/api/user/change-email`, {
     method: "PUT",
     headers: {
       ...jsonHeaders,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function confirmEmailChange(token: string): Promise<{ message: string }> {
+  const params = new URLSearchParams({ token });
+  const res = await fetch(`${API_BASE}/api/user/confirm-email-change?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function setPassword(body: { newPassword: string }): Promise<{ message: string }> {
+  const res = await authFetch(null, `${API_BASE}/api/user/set-password`, {
+    method: "POST",
+    headers: {
+      ...jsonHeaders,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}
+
+export async function unlinkGoogle(): Promise<{ message: string }> {
+  const res = await authFetch(null, `${API_BASE}/api/user/unlink-google`, {
+    method: "DELETE",
+    headers: {
+      ...jsonHeaders,
+      "Content-Type": "application/json",
+    },
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();

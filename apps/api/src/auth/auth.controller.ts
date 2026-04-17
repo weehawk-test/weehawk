@@ -33,6 +33,11 @@ import { PasswordResetService } from '../email/password-reset.service';
 import { Public } from './decorators/public.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
+const IS_DEV = (process.env.NODE_ENV ?? '').toLowerCase() === 'development';
+const AUTH_THROTTLE_LIMIT = IS_DEV ? 1_000_000 : 5;
+const AUTH_THROTTLE_TTL_MS = IS_DEV ? 60 * 1000 : 15 * 60 * 1000;
+const AUTH_THROTTLE_BLOCK_MS = IS_DEV ? 1 : 15 * 60 * 1000;
+
 @ApiTags('Auth')
 @Controller('/api/auth')
 @UseGuards(JwtAuthGuard)
@@ -65,9 +70,9 @@ export class AuthController {
   @Public()
   @Throttle({
     default: {
-      limit: 5,
-      ttl: 15 * 60 * 1000,
-      blockDuration: 15 * 60 * 1000,
+      limit: AUTH_THROTTLE_LIMIT,
+      ttl: AUTH_THROTTLE_TTL_MS,
+      blockDuration: AUTH_THROTTLE_BLOCK_MS,
     },
   })
   @ApiBody({ type: RegisterDto })
@@ -81,9 +86,9 @@ export class AuthController {
   @Public()
   @Throttle({
     default: {
-      limit: 5,
-      ttl: 15 * 60 * 1000,
-      blockDuration: 15 * 60 * 1000,
+      limit: AUTH_THROTTLE_LIMIT,
+      ttl: AUTH_THROTTLE_TTL_MS,
+      blockDuration: AUTH_THROTTLE_BLOCK_MS,
     },
   })
   @ApiBody({ type: LoginDto })

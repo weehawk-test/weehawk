@@ -20,7 +20,12 @@ export function AppLayout({ children }: AppLayoutProps) {
 
   useEffect(() => {
     if (!isReady || allowed) return;
-    router.replace("/login");
+    const params = new URLSearchParams(
+      typeof window !== "undefined" ? window.location.search : "",
+    );
+    const error = params.get("error")?.trim();
+    const dest = error ? `/login?${new URLSearchParams({ error }).toString()}` : "/login";
+    router.replace(dest);
   }, [isReady, allowed, router]);
 
   if (!allowed) {

@@ -24,6 +24,8 @@ export type AuthUser = {
   firstName: string;
   lastName: string;
   provider?: "LOCAL" | "GOOGLE";
+  providerId?: string | null;
+  googleAccountEmail?: string | null;
   emailVerified?: boolean;
   imageUrl?: string | null;
 };
@@ -34,6 +36,8 @@ export type AuthSessionInput = {
   firstName: string;
   lastName: string;
   provider?: "LOCAL" | "GOOGLE";
+  providerId?: string | null;
+  googleAccountEmail?: string | null;
   emailVerified?: boolean;
   imageUrl?: string | null;
 };
@@ -48,7 +52,17 @@ type AuthContextValue = {
   refreshSession: () => Promise<void>;
   updateUser: (
     patch: Partial<
-      Pick<AuthUser, "firstName" | "lastName" | "emailVerified" | "imageUrl" | "provider">
+      Pick<
+        AuthUser,
+        | "firstName"
+        | "lastName"
+        | "email"
+        | "emailVerified"
+        | "imageUrl"
+        | "provider"
+        | "providerId"
+        | "googleAccountEmail"
+      >
     >,
   ) => void;
   logout: () => Promise<void>;
@@ -76,6 +90,8 @@ export function AuthProvider({
     firstName: string;
     lastName: string;
     provider: "LOCAL" | "GOOGLE";
+    providerId: string | null;
+    googleAccountEmail: string | null;
     emailVerified: boolean;
     imageUrl: string | null;
   }) => {
@@ -85,6 +101,8 @@ export function AuthProvider({
       firstName: p.firstName,
       lastName: p.lastName,
       provider: p.provider,
+      providerId: p.providerId,
+      googleAccountEmail: p.googleAccountEmail,
       emailVerified: p.emailVerified,
       imageUrl: p.imageUrl,
     });
@@ -148,6 +166,8 @@ export function AuthProvider({
       firstName: res.firstName,
       lastName: res.lastName,
       provider: res.provider,
+      providerId: res.providerId ?? null,
+      googleAccountEmail: res.googleAccountEmail ?? null,
       emailVerified: res.emailVerified ?? false,
       imageUrl: res.imageUrl ?? null,
     });
@@ -157,7 +177,17 @@ export function AuthProvider({
   const updateUser = useCallback(
     (
       patch: Partial<
-        Pick<AuthUser, "firstName" | "lastName" | "emailVerified" | "imageUrl" | "provider">
+        Pick<
+          AuthUser,
+          | "firstName"
+          | "lastName"
+          | "email"
+          | "emailVerified"
+          | "imageUrl"
+          | "provider"
+          | "providerId"
+          | "googleAccountEmail"
+        >
       >,
     ) => {
       setUser((prev) => (prev ? { ...prev, ...patch } : prev));

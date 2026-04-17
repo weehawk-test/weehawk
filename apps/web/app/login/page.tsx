@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { AlertCircle, Loader2, X } from "lucide-react";
 import { AuthHttpError, loginApi } from "@/lib/auth-api";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
@@ -20,13 +20,28 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [blockedUntilMs, setBlockedUntilMs] = useState<number | null>(null);
+  const [bannerError, setBannerError] = useState<string | null>(null);
   const { secondsLeft, label } = useRateLimitCountdown(blockedUntilMs);
 
   useEffect(() => {
-    if (isReady && accessToken) {
-      router.replace("/");
-    }
+    if (!isReady || !accessToken) return;
+    const err = new URLSearchParams(window.location.search).get("error")?.trim();
+    if (err) return;
+    router.replace("/");
   }, [isReady, accessToken, router]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get("error")?.trim();
+    if (!err) return;
+    setBannerError(err);
+    toast({
+      title: "Could not complete sign-in",
+      description: err,
+      variant: "destructive",
+    });
+    router.replace("/login", { scroll: false });
+  }, [router, toast]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -100,6 +115,27 @@ export default function LoginPage() {
           <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
           <p className="text-sm text-muted-foreground mt-1">Use your Weehawk account.</p>
         </div>
+
+        {bannerError ? (
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-lg border border-red-500/40 bg-red-500/5 px-4 py-3 text-left text-sm text-destructive"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="font-medium leading-none tracking-tight">Something went wrong</p>
+              <p className="text-destructive/95 leading-relaxed">{bannerError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setBannerError(null)}
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md border border-destructive/30 bg-background text-destructive shadow-sm hover:bg-destructive/10 transition-colors"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        ) : null}
 
         <button
           type="button"
