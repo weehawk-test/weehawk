@@ -20,6 +20,17 @@
     "overrides": {
       "lodash": "^4.18.0",
       "path-to-regexp": "^8.4.0"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@scarf/scarf",
+      "bcrypt",
+      "better-sqlite3",
+      "cpu-features",
+      "protobufjs",
+      "sharp",
+      "ssh2",
+      "unrs-resolver"
+    ]
   }
 }

@@ -1,3 +1,4 @@
+import './load-docker-secrets';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';

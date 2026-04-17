@@ -1,0 +1,36 @@
+# Dependencies & caches
+node_modules
+**/node_modules
+.pnpm-store
+
+# Build outputs (rebuilt in image)
+apps/web/.next
+apps/web/out
+apps/api/dist
+
+# Git & editor
+.git
+.gitignore
+.cursor
+.vscode
+.idea
+
+# Env & secrets (inject at runtime)
+.env
+.env.*
+!.env.example
+**/.env.local
+
+# Tests & coverage
+**/coverage
+apps/api/test
+**/*.spec.ts
+
+# Docs & dev tooling
+**/*.md
+.devcontainer
+
+# Misc
+.turbo
+**/.swc
+apps/web/.next/cache

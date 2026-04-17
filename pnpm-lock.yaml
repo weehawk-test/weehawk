@@ -79,6 +79,9 @@ importers:
       dockerode:
         specifier: ^4.0.10
         version: 4.0.10
+      multer:
+        specifier: ^2.1.1
+        version: 2.1.1
       nodemailer:
         specifier: ^8.0.4
         version: 8.0.5

@@ -1,0 +1,45 @@
+# ───────────── build & deploy bundle ─────────────
+FROM node:20-alpine AS builder
+
+RUN apk add --no-cache python3 make g++ libc6-compat
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY apps/cron-worker/package.json ./apps/cron-worker/
+COPY apps/provision-worker/package.json ./apps/provision-worker/
+
+RUN pnpm install --frozen-lockfile --filter api...
+
+COPY apps/api ./apps/api
+
+RUN pnpm --filter api run build
+
+RUN mkdir -p /prod \
+  && pnpm --filter api deploy --legacy --prod /prod/app
+
+# ───────────── runtime ─────────────
+FROM node:20-alpine AS runtime
+
+RUN apk add --no-cache libc6-compat openssl ca-certificates
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=builder /prod/app ./
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
+  && chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 8080
+
+CMD ["node", "dist/main.js"]
