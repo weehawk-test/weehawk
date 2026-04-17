@@ -2,7 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
-/** Generate application stack from existing `app-source` (after ZIP upload or git clone stage). */
+/** Generate application stack from stored remote-git binding or existing `app-source` on the API host. */
 export class ApplicationGenerateFromSourceDto {
   @ApiPropertyOptional({ example: '.', default: '.' })
   @IsOptional()

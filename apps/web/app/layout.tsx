@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import Script from "next/script";
 import { JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/providers";
+import { documentTitleFromPathname } from "@/lib/seo/page-title-from-pathname";
 import { fetchUserProfileSSR } from "@/lib/ssr/fetch-user-profile";
 
 const fontSans = Plus_Jakarta_Sans({
@@ -18,10 +19,14 @@ const fontMono = JetBrains_Mono({
   weight: ["400", "500"],
 });
 
-export const metadata: Metadata = {
-  title: "Weehawk",
-  description: "Webhook and deployment management",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const h = await headers();
+  const pathname = h.get("x-weehawk-pathname") ?? "";
+  return {
+    title: documentTitleFromPathname(pathname),
+    description: "Webhook and deployment management",
+  };
+}
 
 const THEME_COOKIE_KEY = "weehawk-theme";
 

@@ -1,9 +1,5 @@
-"use client";
-
-import { useEffect } from "react";
-import { usePathname } from "next/navigation";
-
-function titleFromPath(pathname: string): string {
+/** Shared with middleware + root metadata — keep in sync with route structure. */
+export function pageLabelFromPathname(pathname: string): string {
   const path = pathname.toLowerCase();
 
   if (path === "/" || path === "/projects") return "Projects";
@@ -29,15 +25,7 @@ function titleFromPath(pathname: string): string {
   return "Weehawk";
 }
 
-export function PageTitleManager() {
-  const pathname = usePathname();
-
-  useEffect(() => {
-    const pageTitle = titleFromPath(pathname ?? "/");
-    document.title = pageTitle === "Weehawk" ? "Weehawk" : `${pageTitle} | Weehawk`;
-  }, [pathname]);
-
-  return null;
+export function documentTitleFromPathname(pathname: string): string {
+  const pageTitle = pageLabelFromPathname(pathname);
+  return pageTitle === "Weehawk" ? "Weehawk" : `${pageTitle} | Weehawk`;
 }
-
-

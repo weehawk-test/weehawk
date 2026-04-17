@@ -26,6 +26,9 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     '/v3/api-docs',
     '/hooks/', // public webhook trigger endpoint
     '/api/user/confirm-email-change',
+    // GitHub App setup: GitHub servers GET the manifest (no API key); webhooks POST with signature only.
+    '/api/git/github/manifest',
+    '/api/git/github/webhook',
   ];
 
   const normalizePath = (req: Request): string => {

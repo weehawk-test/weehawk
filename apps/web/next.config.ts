@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
-const apiBase = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/+$/, "");
+/** Match {@link apps/web/app/lib/api.ts}: origin only; strip mistaken `.../api` suffix. */
+function normalizePublicApiOrigin(raw: string): string {
+  let u = raw.trim().replace(/\/+$/, "");
+  if (u.toLowerCase().endsWith("/api")) {
+    u = u.slice(0, -4).replace(/\/+$/, "");
+  }
+  return u || "http://localhost:8080";
+}
+
+const apiBase = normalizePublicApiOrigin(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080");
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,

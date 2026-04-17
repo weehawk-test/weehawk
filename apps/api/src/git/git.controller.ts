@@ -12,6 +12,7 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import type { Request as ExpressRequest } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { GitService } from './git.service';
@@ -37,8 +38,8 @@ export class GitController {
   @ApiOperation({
     summary: 'GitHub App manifest JSON (GitHub servers GET this URL)',
   })
-  getGithubManifest() {
-    return this.gitService.buildGithubAppManifest();
+  getGithubManifest(@Req() req: ExpressRequest) {
+    return this.gitService.buildGithubAppManifest(req);
   }
 
   @Post('github/webhook')

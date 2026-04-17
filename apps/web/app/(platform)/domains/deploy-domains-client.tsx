@@ -502,11 +502,19 @@ export function DeployDomainsClient({
       )}
 
       {deployServers.length === 0 ? (
-        <div className="rounded-2xl border border-white/10 bg-card/30 p-8 text-center text-sm text-muted-foreground">
-          No deploy servers.{" "}
-          <Link href="/remote-server" className="text-primary hover:underline">
-            Add one
-          </Link>
+        <div
+          className="rounded-2xl border border-border/70 bg-muted/20 px-6 py-8 text-center dark:border-white/10 dark:bg-card/40 dark:shadow-sm"
+          role="status"
+        >
+          <p className="text-sm text-foreground">
+            <span className="text-muted-foreground">No deploy servers.</span>{" "}
+            <Link
+              href="/remote-server"
+              className="font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Add one
+            </Link>
+          </p>
         </div>
       ) : (
         <div className="space-y-5">

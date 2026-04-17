@@ -67,7 +67,6 @@ import {
   streamServiceLogs,
   updateDatabaseStackApi,
   patchApplicationImageDeployApi,
-  uploadApplicationArchiveApi,
   applicationGitCloneStageApi,
   generateApplicationFromSourceApi,
   runServiceBackupNowApi,
@@ -1265,7 +1264,7 @@ export default function ServiceDetails({
             </motion.div>
           )}
 
-          {/* ── Build & deployment (ZIP / Git / deploy flow); remote hosts → Remote tab ── */}
+          {/* ── Build & deployment (Git / image); remote hosts → Remote tab ── */}
           {activeTab === "appconf" && isApplicationService && projectId && (
             <motion.div
               key="appconf"
@@ -3230,12 +3229,8 @@ function ApplicationArchivePanel({
   const githubAppListReady = Boolean(
     gitSettings?.github.appId?.trim() && gitSettings?.github.privateKeySet,
   );
-  const [file, setFile] = useState<File | null>(null);
   const [buildPath, setBuildPath] = useState(".");
   const [replicas, setReplicas] = useState("1");
-  const [uploading, setUploading] = useState(false);
-  /** 0–100 while uploading ZIP to API; 100 while server processes after bytes sent. */
-  const [uploadProgressPct, setUploadProgressPct] = useState<number | null>(null);
   /** Approximate progress while POST generate-from-source runs (no byte-level progress). */
   const [stackGenProgressPct, setStackGenProgressPct] = useState<number | null>(null);
   const stackGenProgressTimerRef = useRef<number | null>(null);
@@ -3252,8 +3247,6 @@ function ApplicationArchivePanel({
   /** Show/hide value (default hidden). */
   const [valueVisibleByRow, setValueVisibleByRow] = useState<Record<number, boolean>>({});
   const [showEnvPaste, setShowEnvPaste] = useState(false);
-  const zipInputRef = useRef<HTMLInputElement>(null);
-  const [zipDragOver, setZipDragOver] = useState(false);
   const [connectionExternal, setConnectionExternal] = useState<string[]>([]);
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "env" | null>(null);
@@ -3284,7 +3277,7 @@ function ApplicationArchivePanel({
   const [gitlabProjectSearchApplied, setGitlabProjectSearchApplied] = useState("");
   const [gitlabProjectsPage, setGitlabProjectsPage] = useState(1);
   const [stagingProjectId, setStagingProjectId] = useState<number | null>(null);
-  /** Server has app-source from a completed git-clone-stage; user should configure options then Generate. */
+  /** Git binding stored after git-clone-stage; user should configure options then Generate. */
   const [gitSourceStaged, setGitSourceStaged] = useState(false);
   /** Row ids that finished fetch (shows Ready). */
   const [gitlabStagedProjectIds, setGitlabStagedProjectIds] = useState<Set<number>>(() => new Set());
@@ -3494,23 +3487,6 @@ function ApplicationArchivePanel({
     });
   };
 
-  const setZipFile = (f: File | null) => {
-    if (!f) {
-      setFile(null);
-      return;
-    }
-    if (!f.name.toLowerCase().endsWith(".zip")) {
-      toast({ title: "Invalid file", description: "Only .zip archives are supported.", variant: "destructive" });
-      return;
-    }
-    setFile(f);
-    setGitSourceStaged(false);
-    setGitlabStagedProjectIds(new Set());
-    setGitlabManualUrlStaged(false);
-    setGithubStagedRepoKeys(new Set());
-    setGithubManualUrlStaged(false);
-  };
-
   const validateApplicationDeployForm = (): {
     cp: number;
     rp: number | undefined;
@@ -3560,7 +3536,7 @@ function ApplicationArchivePanel({
     return { cp, rp, rep, cleanVars, stk };
   };
 
-  /** Git clone stage only — same idea as picking a ZIP: fetch source, then user sets port/env and clicks Generate. */
+  /** Git stage: resolve binding on the API, then user sets port/env and clicks Generate. */
   const stageGitlabSource = async (opts: { gitlabProjectId?: number; httpUrlToRepo?: string }) => {
     const byProject = opts.gitlabProjectId != null && opts.gitlabProjectId > 0;
     if (!byProject) {
@@ -3805,12 +3781,8 @@ function ApplicationArchivePanel({
     }
   };
 
-  /** Primary action: ZIP upload+generate, or generate from staged git source (after Fetch). */
+  /** Primary action: generate from staged git source (after Fetch). */
   const onGenerateStackFromSource = async () => {
-    if (file) {
-      await onUpload();
-      return;
-    }
     if (gitSourceStaged) {
       await generateStackFromGitSource();
       return;
@@ -3819,7 +3791,7 @@ function ApplicationArchivePanel({
       toast({
         title: "Fetch repository first",
         description:
-          "Click “Fetch repo” to download the source to the server, then configure options and click Generate stack from source.",
+          "Click “Fetch repo” to link the repository (no source files on the API), then configure options and click Generate stack from source.",
         variant: "destructive",
       });
       return;
@@ -3828,105 +3800,34 @@ function ApplicationArchivePanel({
       toast({
         title: "Fetch repository first",
         description:
-          "Click “Fetch repo” to download the GitHub source to the server (or pick a repo from the list), then click Generate stack from source.",
+          "Click “Fetch repo” to link the GitHub repository (or pick a repo from the list), then click Generate stack from source.",
         variant: "destructive",
       });
       return;
     }
     if (showGitlabPanel && gitSettings?.gitlab.groupAccessTokenSet) {
       toast({
-        title: "Fetch source or upload ZIP",
+        title: "Fetch source first",
         description:
-          "Use Fetch on a project row (or Fetch repo for a manual URL), then configure options and click Generate. Or upload a .zip file.",
+          "Use Fetch on a project row (or Fetch repo for a manual URL), then configure options and click Generate.",
         variant: "destructive",
       });
       return;
     }
     if (showGithubPanel && githubAppListReady) {
       toast({
-        title: "Fetch source or upload ZIP",
+        title: "Fetch source first",
         description:
-          "Use Fetch on a repository row (or Fetch repo for a public GitHub HTTPS URL), then configure options and click Generate. Or upload a .zip file.",
+          "Use Fetch on a repository row (or Fetch repo for a public GitHub HTTPS URL), then configure options and click Generate.",
         variant: "destructive",
       });
       return;
     }
     toast({
       title: "Choose a source",
-      description:
-        "Upload a .zip file, or open the GitHub / GitLab card and fetch a repository, or paste an HTTPS URL.",
+      description: "Open the GitHub or GitLab card and fetch a repository, or paste an HTTPS clone URL.",
       variant: "destructive",
     });
-  };
-
-  const onUpload = async () => {
-    if (!file) {
-      toast({ title: "Choose a ZIP file", description: "Upload your project ZIP first.", variant: "destructive" });
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith(".zip")) {
-      toast({ title: "Invalid file", description: "Only .zip archives are supported.", variant: "destructive" });
-      return;
-    }
-    const common = validateApplicationDeployForm();
-    if (!common) return;
-    if (!hasDeployHost) {
-      toast({
-        title: "Choose a deploy host first",
-        description:
-          "Open the Remote tab, select a remote Docker host, and click Save. Then upload your ZIP so the stack and source mirror to that server.",
-        variant: "destructive",
-      });
-      onNavigateToRemoteDeployHost();
-      return;
-    }
-    const { cp, rp, rep, cleanVars, stk } = common;
-
-    setUploading(true);
-    setUploadProgressPct(0);
-    try {
-      const { remoteMirror } = await uploadApplicationArchiveApi(serviceId, file, {
-        buildPath: buildPath.trim() || ".",
-        buildMode: "dockerfile",
-        containerPort: cp,
-        publishPort: rp,
-        replicas: rep,
-        variables: cleanVars,
-        networks: { external: connectionExternal, stack: stk },
-        onUploadProgress: (loaded, total) => {
-          if (total > 0) {
-            setUploadProgressPct(Math.min(100, Math.round((loaded / total) * 100)));
-          }
-        },
-      });
-      await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
-      const uploadDesc =
-        remoteMirror?.status === "synced"
-          ? "Stack config saved and files mirrored to the deploy server."
-          : remoteMirror?.status === "skipped"
-            ? "Stack saved on this machine only — no deploy host was selected when saving. Choose a host on the Remote tab and Save, then upload or generate again to mirror."
-            : remoteMirror?.status === "failed"
-              ? `Saved locally; deploy server sync failed: ${remoteMirror.message}`
-              : "Stack config is generated. Deploy to build image and run the stack.";
-      toast({
-        title: "Application source uploaded",
-        description: uploadDesc,
-        variant: remoteMirror?.status === "failed" ? "destructive" : "default",
-      });
-      setFile(null);
-      setGitSourceStaged(false);
-      setGitlabStagedProjectIds(new Set());
-      setGitlabManualUrlStaged(false);
-    } catch (e) {
-      toast({
-        title: "Upload failed",
-        description: e instanceof Error ? e.message : String(e),
-        variant: "destructive",
-      });
-    } finally {
-      setUploading(false);
-      setUploadProgressPct(null);
-    }
   };
 
   const onSaveImageStack = async () => {
@@ -4004,9 +3905,6 @@ function ApplicationArchivePanel({
     }
   };
 
-  const formatZipSize = (bytes: number) =>
-    bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
-
   return (
     <div className="glass-panel rounded-2xl border border-violet-500/20 p-6 md:p-8">
       <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
@@ -4060,7 +3958,7 @@ function ApplicationArchivePanel({
           </div>
           <p className="text-[11px] text-muted-foreground/90 max-w-xl leading-relaxed">
             {deployTarget === "source"
-              ? "Upload sources; Weehawk builds a Docker image on deploy using your Dockerfile or an auto-generated one."
+              ? "Connect GitHub or GitLab (or paste an HTTPS URL). On deploy, the remote host clones your repo and builds from your Dockerfile or an auto-generated one."
               : "Point at an image already in a registry (or Docker Hub). Deploy pulls the image and skips building from source."}
           </p>
         </div>
@@ -4069,7 +3967,7 @@ function ApplicationArchivePanel({
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1.5">Source</label>
           </div>
-          <div className="grid gap-2 sm:grid-cols-3 sm:items-stretch">
+          <div className="grid gap-2 sm:grid-cols-2 sm:items-stretch max-w-md">
             <button
               type="button"
               aria-expanded={showGithubPanel}
@@ -4133,90 +4031,7 @@ function ApplicationArchivePanel({
               <span className="text-[9px] text-muted-foreground/80">
                 {showGitlabPanel ? "Hide" : "Open"} settings
               </span>
-            </button>
-            <div className="relative min-h-0 sm:min-h-0">
-              <input
-                ref={zipInputRef}
-                type="file"
-                accept=".zip,application/zip"
-                className="sr-only"
-                aria-label="Choose project ZIP file"
-                onChange={(e) => {
-                  const f = e.target.files?.[0] ?? null;
-                  setZipFile(f);
-                  e.target.value = "";
-                }}
-              />
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => zipInputRef.current?.click()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    zipInputRef.current?.click();
-                  }
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setZipDragOver(true);
-                }}
-                onDragLeave={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setZipDragOver(false);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setZipDragOver(false);
-                  const dropped = e.dataTransfer.files?.[0];
-                  if (dropped) setZipFile(dropped);
-                }}
-                className={`group relative flex h-full min-h-[4.75rem] w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
-                  zipDragOver
-                    ? "border-primary bg-primary/10"
-                    : "border-violet-500/35 bg-muted/65 dark:bg-black/30 hover:border-violet-500/55 hover:bg-violet-500/5"
-                }`}
-              >
-                <span className="relative flex h-9 w-9 shrink-0 items-center justify-center">
-                  <Image
-                    src="/deployment-sources/upload-cloud.svg"
-                    alt=""
-                    width={36}
-                    height={36}
-                    className="h-9 w-9 object-contain drop-shadow-sm"
-                    priority={false}
-                  />
-                </span>
-                <div className="w-full space-y-0.5 px-0.5">
-                  <p className="text-xs font-medium text-foreground">Upload ZIP</p>
-                  <p
-                    className="text-[11px] leading-snug text-foreground/90 line-clamp-2 break-all"
-                    title={file ? file.name : undefined}
-                  >
-                    {file ? file.name : "Drop ZIP or click"}
-                  </p>
-                  <p className="text-[10px] leading-tight text-muted-foreground">
-                    {file ? `${formatZipSize(file.size)} · replace` : ".zip only"}
-                  </p>
-                </div>
-                {file && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setFile(null);
-                    }}
-                    className="absolute right-1 top-1 z-10 rounded p-1 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
-                    aria-label="Remove file"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
+                       </button>
           </div>
 
           {showGithubPanel ? (
@@ -4238,12 +4053,7 @@ function ApplicationArchivePanel({
 
             {githubAppListReady ? (
               <div className="space-y-2">
-                <div>
-                  <p className="text-[11px] font-medium text-foreground">Repositories your GitHub App can access</p>
-                  <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">
-                    Install the app on your org or user account, then refresh. Fetch downloads source to the server (like a ZIP). Then set port and env and click Generate stack from source. Search filters the merged list by full name. Auto-deploy registers a push webhook on your repo pointing directly to the remote deploy server — works even when this PC is off.
-                  </p>
-                </div>
+                <p className="text-[11px] font-medium text-foreground">Repositories your GitHub App can access</p>
                 <div className="flex flex-wrap gap-2 items-center max-w-xl">
                   <input
                     className="input-field font-mono text-xs flex-1 min-w-[10rem]"
@@ -4983,7 +4793,6 @@ function ApplicationArchivePanel({
                 type="button"
                 onClick={() => void onGenerateStackFromSource()}
                 disabled={
-                  uploading ||
                   stackGenerating ||
                   gitlabUrlStaging ||
                   stagingProjectId !== null ||
@@ -4998,9 +4807,7 @@ function ApplicationArchivePanel({
                     : undefined
                 }
               >
-                {uploading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : stackGenerating ? (
+                {stackGenerating ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : gitlabUrlStaging ||
                   stagingProjectId !== null ||
@@ -5010,22 +4817,18 @@ function ApplicationArchivePanel({
                 ) : (
                   <PackageOpen className="w-4 h-4" />
                 )}
-                {uploading
-                  ? uploadProgressPct != null && uploadProgressPct < 100
-                    ? `Uploading… ${uploadProgressPct}%`
-                    : "Processing on server…"
-                  : stackGenerating
-                    ? stackGenProgressPct != null && stackGenProgressPct < 100
-                      ? `Generating… ${Math.round(stackGenProgressPct)}%`
-                      : "Generating…"
-                    : gitlabUrlStaging ||
-                        stagingProjectId !== null ||
-                        githubUrlStaging ||
-                        stagingGithubRepoKey !== null
-                      ? "Fetching…"
-                      : !hasDeployHost
-                        ? "Choose deploy host on Remote tab first…"
-                        : "Generate stack from source"}
+                {stackGenerating
+                  ? stackGenProgressPct != null && stackGenProgressPct < 100
+                    ? `Generating… ${Math.round(stackGenProgressPct)}%`
+                    : "Generating…"
+                  : gitlabUrlStaging ||
+                      stagingProjectId !== null ||
+                      githubUrlStaging ||
+                      stagingGithubRepoKey !== null
+                    ? "Fetching…"
+                    : !hasDeployHost
+                      ? "Choose deploy host on Remote tab first…"
+                      : "Generate stack from source"}
               </button>
             ) : (
               <button
@@ -5039,30 +4842,15 @@ function ApplicationArchivePanel({
               </button>
             )}
           </div>
-          {(uploading ||
-            stackGenerating ||
-            uploadProgressPct !== null ||
-            stackGenProgressPct !== null) && (
+          {(stackGenerating || stackGenProgressPct !== null) && (
             <div className="w-full max-w-lg space-y-1.5">
-              <Progress
-                value={
-                  uploading && uploadProgressPct != null
-                    ? uploadProgressPct
-                    : stackGenProgressPct != null
-                      ? stackGenProgressPct
-                      : 0
-                }
-              />
+              <Progress value={stackGenProgressPct != null ? stackGenProgressPct : 0} />
               <p className="text-[11px] text-muted-foreground leading-snug">
-                {uploading
-                  ? uploadProgressPct != null && uploadProgressPct < 100
-                    ? `Sending archive to the API… ${uploadProgressPct}%`
-                    : "Server is extracting the archive and generating the stack (this can take a minute on large projects)."
-                  : stackGenerating || stackGenProgressPct != null
-                    ? stackGenProgressPct != null && stackGenProgressPct < 100
-                      ? `Generating compose on the server… about ${Math.round(stackGenProgressPct)}% (estimate until the request completes).`
-                      : "Finishing…"
-                    : null}
+                {stackGenerating || stackGenProgressPct != null
+                  ? stackGenProgressPct != null && stackGenProgressPct < 100
+                    ? `Generating compose on the server… about ${Math.round(stackGenProgressPct)}% (estimate until the request completes).`
+                    : "Finishing…"
+                  : null}
               </p>
             </div>
           )}

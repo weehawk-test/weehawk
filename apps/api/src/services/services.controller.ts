@@ -26,7 +26,6 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { RollMagicTraefikMeDto } from './dto/roll-magic-traefik-me.dto';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
-import { UploadApplicationZipDto } from './dto/upload-application-zip.dto';
 import { ApplicationGitCloneDto } from './dto/application-git-clone.dto';
 import { ApplicationGitCloneStageDto } from './dto/application-git-clone-stage.dto';
 import { ApplicationGenerateFromSourceDto } from './dto/application-generate-from-source.dto';
@@ -316,54 +315,6 @@ export class ServicesController {
     );
   }
 
-  @Post(':id/application/upload')
-  @UseInterceptors(FileInterceptor('file'))
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @ApiOperation({
-    summary:
-      'Upload application ZIP, extract source, generate stack config (Dockerfile auto-detect or Cloud Native Buildpacks)',
-  })
-  async uploadApplicationZip(
-    @Param('id') id: string,
-    @UploadedFile() file: Express.Multer.File,
-    @Body() dto: UploadApplicationZipDto,
-    @Req() req: Request & { user?: { userId: number } },
-  ) {
-    const resolvedId = await this.sid(id, req);
-    const raw = req.body as Record<string, unknown>;
-    const fromDto =
-      typeof dto.networksJson === 'string' && dto.networksJson.trim()
-        ? dto.networksJson.trim()
-        : undefined;
-    const fromRaw =
-      typeof raw?.networksJson === 'string' && String(raw.networksJson).trim()
-        ? String(raw.networksJson).trim()
-        : undefined;
-    const networksJson = fromDto ?? fromRaw;
-
-    const extFromDto = typeof dto.externalNetworks === 'string' ? dto.externalNetworks : undefined;
-    const extFromRaw =
-      typeof raw?.externalNetworks === 'string' ? String(raw.externalNetworks) : undefined;
-    const externalNetworks = extFromDto ?? extFromRaw;
-
-    const stkFromDto = typeof dto.stackNetworks === 'string' ? dto.stackNetworks : undefined;
-    const stkFromRaw =
-      typeof raw?.stackNetworks === 'string' ? String(raw.stackNetworks) : undefined;
-    const stackNetworks = stkFromDto ?? stkFromRaw;
-
-    return this.servicesService.uploadApplicationArchive(
-      resolvedId,
-      file,
-      this.uid(req),
-      {
-        ...dto,
-        ...(networksJson !== undefined ? { networksJson } : {}),
-        ...(externalNetworks !== undefined ? { externalNetworks } : {}),
-        ...(stackNetworks !== undefined ? { stackNetworks } : {}),
-      },
-    );
-  }
-
   @Post(':id/application/git-clone')
   @UsePipes(
     new ValidationPipe({
@@ -374,7 +325,7 @@ export class ServicesController {
   )
   @ApiOperation({
     summary:
-      'Clone a GitLab repository into app source (requires `git` on the API host; GitLab personal/group token in Git settings)',
+      'Link a Git repository and generate stack (ref via provider APIs; source fetched on deploy host)',
   })
   async uploadApplicationGitClone(
     @Param('id') id: string,
@@ -399,7 +350,7 @@ export class ServicesController {
   )
   @ApiOperation({
     summary:
-      'Clone Git repository into app source only (no stack yet). Then POST generate-from-source with port/env.',
+      'Resolve Git ref and store binding in dockerConfig (no app files on API). Then POST generate-from-source with port/env.',
   })
   async stageApplicationGitClone(
     @Param('id') id: string,
@@ -424,7 +375,7 @@ export class ServicesController {
   )
   @ApiOperation({
     summary:
-      'Generate application stack from existing app-source (after git-clone-stage or to re-apply options)',
+      'Generate application stack from remote-git headers or existing app-source (after git-clone-stage or to re-apply options)',
   })
   async generateApplicationFromSource(
     @Param('id') id: string,
@@ -462,7 +413,7 @@ export class ServicesController {
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
     summary:
-      'Configure application stack to run a pre-built Docker image (no source ZIP; deploy skips docker build)',
+      'Configure application stack to run a pre-built Docker image (deploy skips docker build from source)',
   })
   async patchApplicationImage(
     @Param('id') id: string,

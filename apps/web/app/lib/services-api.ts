@@ -1,5 +1,5 @@
 import { API_BASE } from "./api";
-import { authFetch, authFormDataUploadWithProgress } from "./auth-fetch";
+import { authFetch } from "./auth-fetch";
 import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
 import type { DatabaseEngineId } from "./database-engines";
 import type { DatabaseBackupConfig } from "./database-backup-preview";
@@ -829,76 +829,7 @@ function parseRemoteMirrorPayload(raw: unknown): RemoteMirrorPayload | undefined
   return undefined;
 }
 
-export async function uploadApplicationArchiveApi(
-  id: string,
-  file: File,
-  options?: {
-    buildPath?: string;
-    dockerfilePath?: string;
-    buildMode?: "dockerfile" | "buildpacks";
-    containerPort?: number;
-    publishPort?: number;
-    replicas?: number;
-    variables?: Array<{ key: string; value: string }>;
-    /** Applied with the upload; avoids a separate PATCH to `/application/networks`. */
-    networks?: { external: string[]; stack: string[] };
-    /** Browser-only: XMLHttpRequest upload progress (bytes sent to the API). */
-    onUploadProgress?: (loaded: number, total: number) => void;
-  },
-): Promise<{ service: Service; remoteMirror?: RemoteMirrorPayload }> {
-  const fd = new FormData();
-  // Append all text fields before `file`. Multer/Nest often only bind body fields that appear
-  // before the file part; putting `file` first can drop `networksJson` and other metadata.
-  if (options?.buildPath) fd.append("buildPath", options.buildPath);
-  if (options?.dockerfilePath) fd.append("dockerfilePath", options.dockerfilePath);
-  if (options?.buildMode) fd.append("buildMode", options.buildMode);
-  if (options?.containerPort != null) fd.append("containerPort", String(options.containerPort));
-  if (options?.publishPort != null) fd.append("publishPort", String(options.publishPort));
-  if (options?.replicas != null) fd.append("replicas", String(options.replicas));
-  // Always send when the caller passes `variables` (even `[]`) so the API can drop removed keys
-  // and prune obsolete managed Swarm secrets; omitting the field would skip cleanup on empty env lists.
-  if (options?.variables !== undefined) {
-    fd.append("variablesJson", JSON.stringify(options.variables));
-  }
-  if (options?.networks) {
-    const { external, stack } = options.networks;
-    fd.append("externalNetworks", external.join("|"));
-    fd.append("stackNetworks", stack.join("|"));
-    fd.append("networksJson", JSON.stringify(options.networks));
-  }
-  fd.append("file", file);
-
-  const path = `/api/services/${encodeURIComponent(id)}/application/upload`;
-  const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
-  const url = `${base}${path}`;
-
-  let text: string;
-  if (typeof window !== "undefined" && options?.onUploadProgress) {
-    try {
-      text = await authFormDataUploadWithProgress(url, fd, options.onUploadProgress);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(nestErrorMessage(msg, msg));
-    }
-  } else {
-    const res = await apiFetch(path, {
-      method: "POST",
-      body: fd,
-    });
-    text = await res.text();
-    if (!res.ok) {
-      throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
-    }
-  }
-  const json = JSON.parse(text) as { service?: unknown; remoteMirror?: unknown };
-  if (!json.service) throw new Error("Upload succeeded but no service payload was returned.");
-  return {
-    service: mapApiServiceToService(json.service),
-    remoteMirror: parseRemoteMirrorPayload(json.remoteMirror),
-  };
-}
-
-/** Stage: clone Git repo into app source only (no stack). Then call `generateApplicationFromSourceApi`. */
+/** Stage: resolve Git ref and persist binding (no app files on API). Then call `generateApplicationFromSourceApi`. */
 export async function applicationGitCloneStageApi(
   id: string,
   options: {

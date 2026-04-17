@@ -14,6 +14,11 @@ export class UpdateGitSettingsDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(255)
+  githubAppSlug?: string;
+
+  @IsOptional()
+  @IsString()
   githubClientSecret?: string;
 
   @IsOptional()

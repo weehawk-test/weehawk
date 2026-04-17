@@ -8,6 +8,8 @@ export type GitSettingsPublic = {
     clientSecretSet: boolean;
     privateKeySet: boolean;
     webhookSecretSet: boolean;
+    appSlug: string | null;
+    installAppUrl: string | null;
   };
   gitlab: {
     baseUrl: string | null;
@@ -19,6 +21,7 @@ export type GitSettingsPublic = {
 export type UpdateGitSettingsPayload = Partial<{
   githubAppId: string;
   githubClientId: string;
+  githubAppSlug: string;
   githubClientSecret: string;
   githubPrivateKey: string;
   githubWebhookSecret: string;
@@ -98,6 +101,29 @@ export async function fetchGithubRepositories(
   const res = await authFetch(accessToken, u.toString(), { method: "GET" });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json() as Promise<GithubRepositoriesListResponse>;
+}
+
+/** Shape of GET /api/git/github/manifest (public; used for GitHub’s POST manifest registration). */
+export type GithubAppManifest = {
+  name: string;
+  url: string;
+  description: string;
+  hook_attributes: { url: string };
+  redirect_url: string;
+  callback_urls: string[];
+  public: boolean;
+  default_permissions: Record<string, string>;
+  default_events: string[];
+};
+
+/** No auth — GitHub’s form POST flow needs the same JSON GitHub would fetch from manifest_url. */
+export async function fetchPublicGithubAppManifest(): Promise<GithubAppManifest> {
+  const res = await fetch(`${API_BASE}/api/git/github/manifest`, {
+    method: "GET",
+    credentials: "omit",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json() as Promise<GithubAppManifest>;
 }
 
 export async function updateGitSettings(

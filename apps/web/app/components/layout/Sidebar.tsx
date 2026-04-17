@@ -11,7 +11,10 @@ import {
 import { motion, LayoutGroup } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
-import type { PlatformNewsItem } from "@/(platform)/news/platform-news";
+import {
+  PLATFORM_NEWS_FETCH_URL,
+  type PlatformNewsItem,
+} from "@/(platform)/news/platform-news";
 import {
   newsFeedHasUnread,
   PLATFORM_NEWS_SEEN_EVENT,
@@ -117,7 +120,9 @@ function NavRow({
   const className = cn(
     "relative flex items-center rounded-xl transition-colors duration-200 group",
     collapsed ? "justify-center px-2 py-2" : "gap-3 px-4 py-2",
-    active ? "text-primary" : "text-foreground/90 hover:text-foreground hover:bg-accent/70",
+    active
+      ? "text-violet-800 dark:text-primary"
+      : "text-foreground/90 hover:text-foreground hover:bg-accent/70",
   );
 
   const inner = (
@@ -125,7 +130,11 @@ function NavRow({
       {active && !external && (
         <motion.div
           layoutId={activeLayoutId}
-          className="absolute inset-0 bg-primary/10 rounded-xl border border-primary/20"
+          className={cn(
+            "absolute inset-0 rounded-xl border",
+            "bg-violet-500/[0.12] border-violet-500/30",
+            "dark:bg-primary/10 dark:border-primary/20",
+          )}
           initial={false}
           transition={{ type: "spring", stiffness: 320, damping: 30 }}
         />
@@ -134,7 +143,9 @@ function NavRow({
         <Icon
           className={cn(
             "w-4 h-4",
-            active ? "text-primary" : "text-foreground/90 group-hover:text-foreground",
+            active
+              ? "text-violet-700 dark:text-primary"
+              : "text-foreground/90 group-hover:text-foreground",
           )}
         />
         {showUnreadDot ? (
@@ -215,7 +226,7 @@ export function Sidebar() {
 
     async function refreshNewsUnread() {
       try {
-        const res = await fetch("/api/platform-news", { cache: "no-store" });
+        const res = await fetch(PLATFORM_NEWS_FETCH_URL, { cache: "no-store" });
         if (!res.ok || cancelled) return;
         const data: unknown = await res.json();
         if (!Array.isArray(data) || cancelled) return;

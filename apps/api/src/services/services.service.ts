@@ -23,14 +23,12 @@ import { Observable } from 'rxjs';
 import { composeType } from './entities/composeType.enum';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import * as fss from 'fs';
 import {
   DatabaseEngine,
   DatabaseGeneratorService,
 } from './database-generator.service';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
-import * as unzipper from 'unzipper';
 import {
   createBackupTempDir,
   getServiceDeploymentDir,
@@ -46,6 +44,7 @@ import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s
 import { S3Service } from '../s3/s3.service';
 import { getErrorMessage } from '../utils/error-message';
 import { GitService } from '../git/git.service';
+import type { WeehawkRemoteGitMarkerV1 } from '../git/git.service';
 import { TraefikService } from '../traefik/traefik.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
@@ -290,6 +289,81 @@ export class ServicesService {
   private normalizeArchivePath(raw: string, fallback: string): string {
     const t = (raw || fallback).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
     return t || fallback;
+  }
+
+  private stripRemoteGitHeaders(config: string): string {
+    return (config || '')
+      .split(/\r?\n/)
+      .filter((l) => !/^\s*#\s*app\.git\./.test(l))
+      .join('\n');
+  }
+
+  private remoteGitHeaderBlock(marker: WeehawkRemoteGitMarkerV1): string {
+    const lines: string[] = [
+      `# app.git.remoteOnly: true`,
+      `# app.git.provider: ${marker.provider}`,
+      `# app.git.ref: ${marker.ref}`,
+    ];
+    if (marker.gitlabProjectId != null) {
+      lines.push(`# app.git.gitlabProjectId: ${marker.gitlabProjectId}`);
+    }
+    if (marker.httpUrlToRepo) {
+      lines.push(`# app.git.httpUrlToRepo: ${marker.httpUrlToRepo}`);
+    }
+    if (marker.githubInstallationId != null) {
+      lines.push(`# app.git.githubInstallationId: ${marker.githubInstallationId}`);
+    }
+    if (marker.githubRepoFullName) {
+      lines.push(`# app.git.githubRepoFullName: ${marker.githubRepoFullName}`);
+    }
+    return `${lines.join('\n')}\n`;
+  }
+
+  private injectRemoteGitHeaders(
+    config: string,
+    marker: WeehawkRemoteGitMarkerV1,
+  ): string {
+    const stripped = this.stripRemoteGitHeaders(config);
+    const block = this.remoteGitHeaderBlock(marker);
+    const needle = '# weehawk application service';
+    const idx = stripped.indexOf(needle);
+    if (idx >= 0) {
+      const lineEnd = stripped.indexOf('\n', idx);
+      const insertAt = lineEnd >= 0 ? lineEnd + 1 : stripped.length;
+      return stripped.slice(0, insertAt) + block + stripped.slice(insertAt);
+    }
+    return `${block}${stripped}`;
+  }
+
+  private parseStoredRemoteGitMarker(config: string): WeehawkRemoteGitMarkerV1 | null {
+    if (this.parseConfigHeaderValue(config, 'app.git.remoteOnly') !== 'true') {
+      return null;
+    }
+    const provider = this.parseConfigHeaderValue(config, 'app.git.provider');
+    const ref = this.parseConfigHeaderValue(config, 'app.git.ref')?.trim() || '';
+    if ((provider !== 'gitlab' && provider !== 'github') || !ref) {
+      return null;
+    }
+    const marker: WeehawkRemoteGitMarkerV1 = {
+      v: 1,
+      provider: provider as 'gitlab' | 'github',
+      ref,
+    };
+    const gid = this.parseConfigHeaderValue(config, 'app.git.gitlabProjectId');
+    if (gid) {
+      const n = parseInt(gid, 10);
+      if (Number.isFinite(n)) marker.gitlabProjectId = n;
+    }
+    const url = this.parseConfigHeaderValue(config, 'app.git.httpUrlToRepo');
+    if (url?.trim()) marker.httpUrlToRepo = url.trim();
+    const iid = this.parseConfigHeaderValue(config, 'app.git.githubInstallationId');
+    if (iid) {
+      const n = parseInt(iid, 10);
+      if (Number.isFinite(n)) marker.githubInstallationId = n;
+    }
+    const fn = this.parseConfigHeaderValue(config, 'app.git.githubRepoFullName');
+    if (fn?.trim()) marker.githubRepoFullName = fn.trim();
+    return marker;
   }
 
   /** Validates a Docker image reference for image-based application deploy (no local build). */
@@ -979,7 +1053,7 @@ export class ServicesService {
       service,
       args.containerPort,
     );
-    return this.composeApplicationDockerConfig({
+    const next = this.composeApplicationDockerConfig({
       sourceDir: args.sourceDir,
       buildPath: args.buildPath,
       dockerfilePath: args.dockerfilePath,
@@ -996,6 +1070,8 @@ export class ServicesService {
       network,
       traefik,
     });
+    const marker = this.parseStoredRemoteGitMarker(service.dockerConfig || '');
+    return marker ? this.injectRemoteGitHeaders(next, marker) : next;
   }
 
   private composeApplicationDockerConfig(args: {
@@ -1104,34 +1180,6 @@ ${ports}    deploy:
 ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   }
 
-  private async extractZipSafely(zipPath: string, targetDir: string): Promise<void> {
-    const directory = await unzipper.Open.file(zipPath);
-    await fs.mkdir(targetDir, { recursive: true });
-    for (const entry of directory.files) {
-      const normalized = path.normalize(entry.path);
-      if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-        continue;
-      }
-      const outPath = path.join(targetDir, normalized);
-      const relative = path.relative(targetDir, outPath);
-      if (relative.startsWith('..') || path.isAbsolute(relative)) {
-        continue;
-      }
-      if (entry.type === 'Directory') {
-        await fs.mkdir(outPath, { recursive: true });
-      } else {
-        await fs.mkdir(path.dirname(outPath), { recursive: true });
-        await new Promise<void>((resolve, reject) => {
-          entry
-            .stream()
-            .pipe(fss.createWriteStream(outPath))
-            .on('finish', () => resolve())
-            .on('error', (e) => reject(e));
-        });
-      }
-    }
-  }
-
   private async listFilesRecursively(dir: string, relativePrefix = ''): Promise<string[]> {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     const out: string[] = [];
@@ -1173,7 +1221,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
     if (dockerfileCandidates.length === 0) {
       throw new BadRequestException(
-        `Dockerfile not found in archive under build path "${buildPath}".`,
+        `Dockerfile not found under build path "${buildPath}".`,
       );
     }
 
@@ -1236,8 +1284,12 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
           stackNetworks?: string;
         }
       | undefined,
-    sourceKind: 'archive' | 'repository',
+    remoteGitMarker?: WeehawkRemoteGitMarkerV1 | null,
   ): Promise<Service> {
+    const previousConfig = service.dockerConfig || '';
+    const effectiveRemoteMarker =
+      remoteGitMarker ?? this.parseStoredRemoteGitMarker(previousConfig);
+
     let buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
     let dockerfilePath = this.normalizeArchivePath(options?.dockerfilePath || '', '');
     /** Dockerfile-first only; buildpacks/nixpacks are deprecated and mapped to this flow. */
@@ -1249,46 +1301,48 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const valuesMap = this.resolveApplicationValuesMap(parsedVars);
 
     let dockerfileGenerated: boolean | undefined;
+    const remoteGitOnly = Boolean(effectiveRemoteMarker);
     try {
-      const contextDir = path.join(sourceDir, buildPath);
-      try {
-        await fs.access(contextDir);
-      } catch {
-        throw new BadRequestException(
-          sourceKind === 'archive'
-            ? `Build path not found in archive: "${buildPath}".`
-            : `Build path not found in repository: "${buildPath}".`,
+      if (remoteGitOnly) {
+        dockerfilePath = this.normalizeArchivePath(
+          options?.dockerfilePath || 'Dockerfile',
+          'Dockerfile',
         );
-      }
-
-      const gen = await this.dockerfileGenerator.ensureDockerfileForContext(contextDir, {
-        port: containerPort,
-      });
-
-      if (gen.usedUserDockerfile) {
         dockerfileGenerated = false;
-        dockerfilePath = await this.resolveDockerfilePath(
-          sourceDir,
-          buildPath,
-          dockerfilePath || undefined,
-        );
       } else {
-        dockerfileGenerated = true;
-        dockerfilePath = 'Dockerfile';
-        if (gen.kind === 'static' && options?.containerPort === undefined) {
-          containerPort = 80;
+        const contextDir = path.join(sourceDir, buildPath);
+        try {
+          await fs.access(contextDir);
+        } catch {
+          throw new BadRequestException(
+            `Build path not found in application source: "${buildPath}".`,
+          );
+        }
+
+        const gen = await this.dockerfileGenerator.ensureDockerfileForContext(contextDir, {
+          port: containerPort,
+        });
+
+        if (gen.usedUserDockerfile) {
+          dockerfileGenerated = false;
+          dockerfilePath = await this.resolveDockerfilePath(
+            sourceDir,
+            buildPath,
+            dockerfilePath || undefined,
+          );
+        } else {
+          dockerfileGenerated = true;
+          dockerfilePath = 'Dockerfile';
+          if (gen.kind === 'static' && options?.containerPort === undefined) {
+            containerPort = 80;
+          }
         }
       }
     } catch (e) {
       if (e instanceof BadRequestException) throw e;
-      throw new BadRequestException(
-        sourceKind === 'archive'
-          ? 'Could not read archive build context.'
-          : 'Could not read repository build context.',
-      );
+      throw new BadRequestException('Could not read application build context.');
     }
 
-    const previousConfig = service.dockerConfig || '';
     await this.removeObsoleteManagedSecrets(service, previousConfig, {});
     const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
@@ -1306,7 +1360,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       preservedRegistry && preservedRegistry.length > 0 ? preservedRegistry : undefined;
     const imageNameForStack = registryRef ?? `${service.appName}:latest`;
 
-    service.dockerConfig = this.composeApplicationDockerConfig({
+    let nextConfig = this.composeApplicationDockerConfig({
       sourceDir: 'app-source',
       buildPath,
       dockerfilePath,
@@ -1323,6 +1377,10 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       network: networkMerged,
       traefik,
     });
+    if (effectiveRemoteMarker) {
+      nextConfig = this.injectRemoteGitHeaders(nextConfig, effectiveRemoteMarker);
+    }
+    service.dockerConfig = nextConfig;
     const saved = await this.serviceRepository.save(service);
     const hydrated =
       (await this.serviceRepository.findOne({
@@ -1330,64 +1388,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         relations: ['project', 'remoteServer'],
       })) ?? saved;
     return this.withMagicTraefikMeUrl(hydrated);
-  }
-
-  async uploadApplicationArchive(
-    id: number,
-    file: Express.Multer.File,
-    userId: number,
-    options?: {
-      buildPath?: string;
-      dockerfilePath?: string;
-      buildMode?: 'dockerfile' | 'buildpacks' | 'nixpacks';
-      containerPort?: number;
-      publishPort?: number;
-      replicas?: number;
-      variablesJson?: string;
-      /** JSON `{ "external": string[], "stack": string[] }` — overrides networks from previous config when set. */
-      networksJson?: string;
-      /** Pipe-separated external network names (multipart-friendly). */
-      externalNetworks?: string;
-      /** Pipe-separated stack overlay keys (multipart-friendly). */
-      stackNetworks?: string;
-    },
-  ) {
-    if (!file || !file.buffer?.length) {
-      throw new BadRequestException('ZIP file is required.');
-    }
-    const service = await this.assertServiceOwnedByUser(id, userId);
-    if (service.composeType !== composeType.APPLICATION) {
-      throw new BadRequestException('This service is not an application-type service.');
-    }
-
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const sourceDir = path.join(deployDir, 'app-source');
-    const zipPath = path.join(deployDir, 'upload.zip');
-    await fs.mkdir(deployDir, { recursive: true });
-    await fs.rm(sourceDir, { recursive: true, force: true });
-    await fs.writeFile(zipPath, file.buffer);
-    try {
-      await this.extractZipSafely(zipPath, sourceDir);
-    } finally {
-      await fs.rm(zipPath, { force: true });
-    }
-
-    const saved = await this.applyApplicationSourceFromDirectory(
-      service,
-      sourceDir,
-      options,
-      'archive',
-    );
-    const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
-    return {
-      success: true,
-      message: 'Archive uploaded and application stack generated.',
-      service: saved,
-      remoteMirror,
-    };
   }
 
   async uploadApplicationFromGitClone(
@@ -1415,36 +1415,30 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const sourceDir = path.join(deployDir, 'app-source');
-    await fs.mkdir(deployDir, { recursive: true });
-
-    await this.gitService.materializeApplicationGitSource(
+    const { marker } = await this.gitService.resolveRemoteGitApplicationBinding(
       options,
-      sourceDir,
       userId,
     );
 
     const saved = await this.applyApplicationSourceFromDirectory(
       service,
-      sourceDir,
+      '',
       options,
-      'repository',
+      marker,
     );
     const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
-      message: 'Repository synced and application stack generated.',
+      message:
+        'Git repository linked and application stack generated (no source files stored on the API).',
       service: saved,
       remoteMirror,
     };
   }
 
   /**
-   * Clone Git repository into `app-source` only (no stack YAML). User configures port/env then calls {@link generateApplicationFromSource}.
+   * Resolve Git ref and persist binding in `dockerConfig` only (no files under `app-source` on the API).
+   * User configures port/env then calls {@link generateApplicationFromSource}.
    */
   async stageApplicationGitClone(
     id: number,
@@ -1462,30 +1456,50 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const sourceDir = path.join(deployDir, 'app-source');
-    await fs.mkdir(deployDir, { recursive: true });
-
-    await this.gitService.materializeApplicationGitSource(
+    const { marker } = await this.gitService.resolveRemoteGitApplicationBinding(
       options,
-      sourceDir,
       userId,
     );
+
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: service.env ?? '',
+    };
+    let dc = this.stripRemoteGitHeaders(service.dockerConfig || '');
+    if (!dc.trim()) {
+      dc = this.composeApplicationDockerConfig({
+        sourceDir: 'app-source',
+        buildPath: '.',
+        dockerfilePath: 'Dockerfile',
+        buildMode: 'dockerfile',
+        deployMode: 'source',
+        dockerfileGenerated: false,
+        imageName: `${service.appName}:latest`,
+        registryPushImage: undefined,
+        containerPort: 3000,
+        publishPort: undefined,
+        replicas: 1,
+        envKeys: [],
+        network: { external: [], stack: [] },
+        traefik: undefined,
+      });
+    }
+    service.dockerConfig = this.injectRemoteGitHeaders(dc, marker);
+    const saved = await this.serviceRepository.save(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
 
     const fresh = await this.assertServiceOwnedByUser(id, userId);
     return {
       success: true,
       message:
-        'Repository fetched into app source. Configure port and options, then generate the stack.',
+        'Git repository linked (no source files on the API). Configure port and options, then generate the stack.',
       service: fresh,
     };
   }
 
   /**
-   * Build stack YAML from existing `app-source` (after git stage or same as re-apply after changing options).
+   * Build stack YAML from `app-source` on disk (legacy files) or from stored remote-git headers
+   * (after {@link stageApplicationGitClone} with no API-side files).
    */
   async generateApplicationFromSource(
     id: number,
@@ -1512,23 +1526,25 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       undefined,
     );
     const sourceDir = path.join(deployDir, 'app-source');
-    try {
-      await fs.access(sourceDir);
-    } catch {
-      throw new BadRequestException(
-        'No application source on disk. Fetch a Git repository or upload a ZIP archive first.',
-      );
-    }
-    const entries = await fs.readdir(sourceDir);
-    if (entries.length === 0) {
-      throw new BadRequestException('Application source directory is empty.');
+    const storedRemote = this.parseStoredRemoteGitMarker(service.dockerConfig || '');
+    if (!storedRemote) {
+      try {
+        await fs.access(sourceDir);
+      } catch {
+        throw new BadRequestException(
+          'No application source on disk. Link a Git repository (Fetch) or ensure app-source exists on this server.',
+        );
+      }
+      const entries = await fs.readdir(sourceDir);
+      if (entries.length === 0) {
+        throw new BadRequestException('Application source directory is empty.');
+      }
     }
 
     const saved = await this.applyApplicationSourceFromDirectory(
       service,
       sourceDir,
       options,
-      'repository',
     );
     const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
@@ -1540,7 +1556,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   }
 
   /**
-   * Configure Swarm stack to run a pre-built image (no ZIP / docker build on deploy).
+   * Configure Swarm stack to run a pre-built image (no docker build on deploy).
    */
   async setApplicationImageDeploy(
     id: number,
@@ -3551,29 +3567,25 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     }
 
     try {
-      const deployDir = getServiceDeploymentDir(
-        service.appName,
-        undefined,
-      );
-      const sourceDir = path.join(deployDir, 'app-source');
-      await fs.mkdir(deployDir, { recursive: true });
-
-      emit(`[auto-deploy] Syncing ${provider} repository (git clone/pull)…\n`);
-      const { refUsed } = await this.gitService.materializeApplicationGitSource(
-        cloneOptions,
-        sourceDir,
-        service.project?.userId ?? 1,
-      );
+      const userId = service.project?.userId ?? 1;
       emit(
-        `[auto-deploy] Source synced (ref: ${refUsed}). Generating stack configuration…\n`,
+        `[auto-deploy] Resolving ${provider} git ref on API (no repo download on control plane)…\n`,
+      );
+      const { refUsed, marker } =
+        await this.gitService.resolveRemoteGitApplicationBinding(cloneOptions, userId);
+      emit(
+        `[auto-deploy] Ref resolved (${refUsed}). Generating stack configuration…\n`,
       );
 
-      await this.applyApplicationSourceFromDirectory(
-        service,
-        sourceDir,
-        {},
-        'repository',
-      );
+      const fresh = await this.serviceRepository.findOne({
+        where: { id: service.id },
+        relations: ['project', 'remoteServer', 'buildRemoteServer'],
+      });
+      if (!fresh) {
+        return { success: false, output: `Service #${service.id} not found after update.` };
+      }
+
+      await this.applyApplicationSourceFromDirectory(fresh, '', {}, marker);
       emit('[auto-deploy] Stack configuration generated.\n');
 
       emit('[auto-deploy] Syncing files to deploy host…\n');

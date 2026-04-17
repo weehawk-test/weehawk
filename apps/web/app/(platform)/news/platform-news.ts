@@ -10,7 +10,10 @@ export type PlatformNewsItem = {
   category: PlatformNewsCategory;
 };
 
-const PLATFORM_NEWS_URL = "https://api.weehawk.io/news";
+/** Full URL; override with `NEXT_PUBLIC_PLATFORM_NEWS_URL` for staging/self-hosted. */
+export const PLATFORM_NEWS_FETCH_URL = (
+  process.env.NEXT_PUBLIC_PLATFORM_NEWS_URL?.trim() || "https://api.weehawk.io/news"
+).replace(/\/+$/, "");
 
 const CATEGORIES: PlatformNewsCategory[] = ["product", "security", "maintenance", "community"];
 
@@ -43,10 +46,10 @@ function parseNewsItem(raw: unknown): PlatformNewsItem | null {
   };
 }
 
-/** Fetches the public news feed from [api.weehawk.io/news](https://api.weehawk.io/news). */
+/** Fetches the public news feed from {@link PLATFORM_NEWS_FETCH_URL}. */
 export async function fetchPlatformNews(): Promise<PlatformNewsItem[]> {
   try {
-    const res = await fetch(PLATFORM_NEWS_URL, {
+    const res = await fetch(PLATFORM_NEWS_FETCH_URL, {
       cache: "no-store",
       headers: { Accept: "application/json" },
     });

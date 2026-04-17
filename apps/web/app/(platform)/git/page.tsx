@@ -12,7 +12,8 @@ export default function GitLandingPage() {
         <p className="mt-3 text-muted-foreground leading-relaxed">
           Choose where Weehawk stores credentials for pulling application source.
           <br />
-          GitHub uses a GitHub App (manifest flow). GitLab uses an access token.
+          GitHub uses a GitHub App (create app, then install to grant repo access). GitLab uses an
+          access token.
         </p>
       </header>
 
@@ -34,7 +35,7 @@ export default function GitLandingPage() {
             </div>
             <div className="min-w-0 flex-1">
               <h2 className="text-xl font-semibold tracking-tight text-foreground">GitHub</h2>
-              <p className="mt-1.5 text-sm text-muted-foreground">GitHub App · manifest setup</p>
+              <p className="mt-1.5 text-sm text-muted-foreground">GitHub App · manifest + install</p>
             </div>
           </div>
           <div className="mt-8 flex items-center justify-end border-t border-border/60 pt-6 dark:border-white/10">
