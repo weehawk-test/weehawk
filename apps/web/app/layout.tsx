@@ -30,7 +30,8 @@ export async function generateMetadata(): Promise<Metadata> {
 
 const THEME_COOKIE_KEY = "weehawk-theme";
 
-const THEME_INIT_SCRIPT = `(function(){try{var t=(localStorage.getItem('${THEME_COOKIE_KEY}')||'').trim();var dark=t!=='light';document.documentElement.classList.toggle('dark',dark);document.cookie='${THEME_COOKIE_KEY}='+(dark?'dark':'light')+'; Path=/; Max-Age=31536000; SameSite=Lax';}catch(_e){document.documentElement.classList.add('dark');document.cookie='${THEME_COOKIE_KEY}=dark; Path=/; Max-Age=31536000; SameSite=Lax';}})();`;
+/** If storage is empty, keep SSR `class` from cookie (avoids light→dark flash). */
+const THEME_INIT_SCRIPT = `(function(){try{var k='${THEME_COOKIE_KEY}';var t=(localStorage.getItem(k)||'').trim();if(t==='light'){document.documentElement.classList.remove('dark');document.cookie=k+'=light; Path=/; Max-Age=31536000; SameSite=Lax';}else if(t==='dark'){document.documentElement.classList.add('dark');document.cookie=k+'=dark; Path=/; Max-Age=31536000; SameSite=Lax';}}catch(_e){document.documentElement.classList.add('dark');document.cookie='${THEME_COOKIE_KEY}=dark; Path=/; Max-Age=31536000; SameSite=Lax';}})();`;
 
 export default async function RootLayout({
   children,

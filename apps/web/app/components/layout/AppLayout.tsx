@@ -1,8 +1,8 @@
 "use client";
 
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useLayoutEffect, useRef } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { SidebarLayoutProvider, useSidebarLayout } from "@/contexts/sidebar-layout-context";
@@ -15,6 +15,15 @@ interface AppLayoutProps {
 
 function PlatformShell({ children }: { children: ReactNode }) {
   const { isMobileNav, mobileNavOpen, closeMobileNav, openMobileNav } = useSidebarLayout();
+  const pathname = usePathname();
+  const mainScrollRef = useRef<HTMLElement>(null);
+
+  /** Shell stays mounted across routes; the scrollable region is `main`, not the document. */
+  useLayoutEffect(() => {
+    const el = mainScrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [pathname]);
 
   return (
     <>
@@ -28,8 +37,9 @@ function PlatformShell({ children }: { children: ReactNode }) {
       ) : null}
       <Sidebar />
       <main
+        ref={mainScrollRef}
         className={cn(
-          "flex-1 overflow-y-auto relative z-10 min-h-screen transition-[margin-left] duration-200 ease-out",
+          "flex-1 overflow-y-auto relative z-10 min-h-screen transition-[margin-left] duration-200 ease-out overscroll-y-contain",
           "ml-[var(--app-sidebar-width)]",
         )}
       >

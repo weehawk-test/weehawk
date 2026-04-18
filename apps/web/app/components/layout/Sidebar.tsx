@@ -315,13 +315,14 @@ export function Sidebar() {
     <aside
       id="app-sidebar"
       className={cn(
-        "border-r border-border bg-card/30 backdrop-blur-xl fixed top-0 left-0 h-screen flex flex-col z-40 overflow-x-hidden",
+        "fixed left-0 top-0 z-40 flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-border",
+        /* Opaque panel on phone: translucent + blur composites inconsistently over the scrim (iOS). */
         isMobileNav
           ? cn(
-              "w-[min(20rem,calc(100vw-1.5rem))] transition-transform duration-200 ease-out shadow-2xl",
+              "bg-card h-[100dvh] max-h-[100dvh] w-[min(20rem,calc(100vw_-_1rem))] max-w-[calc(100vw_-_1rem)] pt-[env(safe-area-inset-top,0px)] shadow-2xl transition-transform duration-200 ease-out",
               mobileNavOpen ? "translate-x-0" : "-translate-x-full",
             )
-          : "w-[var(--app-sidebar-width)] transition-[width] duration-200 ease-out",
+          : "h-screen w-[var(--app-sidebar-width)] bg-card/30 backdrop-blur-xl transition-[width] duration-200 ease-out",
       )}
       aria-hidden={isMobileNav && !mobileNavOpen ? true : undefined}
     >
@@ -559,16 +560,22 @@ export function Sidebar() {
       </nav>
 
       {/* Local user label (no auth session) */}
-      <div className="flex-shrink-0 border-t border-border p-2.5">
+      <div
+        className={cn(
+          "flex-shrink-0 border-t border-border p-2.5",
+          isMobileNav &&
+            "pb-[max(0.625rem,env(safe-area-inset-bottom,0px))] pl-[max(0.625rem,env(safe-area-inset-left,0px))] pr-[max(0.625rem,env(safe-area-inset-right,0px))]",
+        )}
+      >
         <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
           <DropdownMenuTrigger asChild>
             {railMode ? (
               <button
                 type="button"
-                className="w-full flex justify-center items-center px-2 py-2 rounded-xl hover:bg-accent/70 data-[state=open]:bg-accent/80 transition-colors outline-none focus-visible:outline-none focus-visible:ring-0"
+                className="flex w-full min-w-0 items-center justify-center rounded-xl px-2 py-2 outline-none transition-colors hover:bg-accent/70 data-[state=open]:bg-accent/80 focus-visible:outline-none focus-visible:ring-0"
                 aria-label="Open user menu"
               >
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-muted/40 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-gradient-to-br from-primary/20 to-muted/40">
                   {avatarUrl ? (
                     <img
                       src={avatarUrl}
@@ -584,10 +591,10 @@ export function Sidebar() {
             ) : (
               <button
                 type="button"
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-accent/70 data-[state=open]:bg-accent/80 transition-colors outline-none focus-visible:outline-none focus-visible:ring-0"
+                className="flex w-full min-w-0 max-w-full items-center gap-2 rounded-xl px-2 py-2 text-left outline-none transition-colors hover:bg-accent/70 data-[state=open]:bg-accent/80 focus-visible:outline-none focus-visible:ring-0 sm:gap-3 sm:px-3"
                 aria-label="Open user menu"
               >
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary/20 to-muted/40 border border-primary/20 flex items-center justify-center flex-shrink-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-gradient-to-br from-primary/20 to-muted/40 max-[380px]:h-8 max-[380px]:w-8">
                   {avatarUrl ? (
                     <img
                       src={avatarUrl}
@@ -599,15 +606,16 @@ export function Sidebar() {
                     <span className="text-xs font-bold text-primary tracking-tight">{initials}</span>
                   )}
                 </div>
-                <div className="flex-1 text-left min-w-0">
-                  <p className="text-sm font-semibold text-foreground leading-tight truncate">{displayName}</p>
-                  <p className="text-xs text-muted-foreground mt-1 truncate">{displayEmail}</p>
+                <div className="min-w-0 flex-1 overflow-hidden text-left">
+                  <p className="truncate text-sm font-semibold leading-tight text-foreground">{displayName}</p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">{displayEmail}</p>
                 </div>
                 <ChevronDown
                   className={cn(
-                    "w-4 h-4 text-muted-foreground transition-transform duration-200",
+                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
                     profileMenuOpen && "rotate-180",
                   )}
+                  aria-hidden
                 />
               </button>
             )}

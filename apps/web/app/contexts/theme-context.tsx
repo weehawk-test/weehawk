@@ -34,7 +34,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stored = (localStorage.getItem(THEME_STORAGE_KEY) ?? "").trim();
-    const nextTheme: Theme = stored === "light" ? "light" : "dark";
+    const nextTheme: Theme =
+      stored === "light"
+        ? "light"
+        : stored === "dark"
+          ? "dark"
+          : document.documentElement.classList.contains("dark")
+            ? "dark"
+            : "light";
     setThemeState(nextTheme);
     applyThemeClass(nextTheme);
     persistTheme(nextTheme);
