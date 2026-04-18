@@ -1,18 +1,29 @@
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../auth/entities/user.entity';
 import { UserProfileResponseDto } from '../auth/dto/user-profile-response.dto';
 import { UpdateProfileRequestDto } from '../auth/dto/update-profile-request.dto';
-import { RefreshTokenService } from '../token/refresh-token.service';
 import { AuthProvider } from '../auth/entities/auth-provider.enum';
+import { Webhook } from '../webhooks/entities/webhook.entity';
+import { CronJob } from '../cron-jobs/entities/cron-job.entity';
+import { Project } from '../projects/entities/project.entity';
+import { RemoteServerProvisionJob } from '../remote-servers/entities/remote-server-provision-job.entity';
+import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
+import { RegistryAccount } from '../registry/entities/registry-account.entity';
+import { S3Profile } from '../s3/entities/s3-profile.entity';
+import { GitIntegrationSettings } from '../git/entities/git-integration.entity';
+import { TraefikSettings } from '../traefik/entities/traefik-settings.entity';
+import { Notification } from '../notifications/entities/notification.entity';
+import { NotificationChannel } from '../notifications/entities/notification-channel.entity';
+import { RefreshToken } from '../token/refresh-token.entity';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
-    private readonly refreshTokenService: RefreshTokenService,
+    @InjectDataSource() private readonly dataSource: DataSource,
   ) {}
 
   async getProfile(email: string): Promise<UserProfileResponseDto> {
@@ -30,11 +41,36 @@ export class UserService {
     return this.toProfileResponse(user);
   }
 
+  /**
+   * Removes all rows scoped to this user (projects, services via FK cascade, integrations, etc.)
+   * then deletes the user. Used for self-service account deletion and admin delete.
+   */
+  async deleteUserAndRelatedRows(userId: number): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await this.deleteUserScopedData(manager, userId);
+      await manager.delete(User, { id: userId });
+    });
+  }
+
+  private async deleteUserScopedData(manager: EntityManager, userId: number): Promise<void> {
+    await manager.delete(Webhook, { userId });
+    await manager.delete(CronJob, { userId });
+    await manager.delete(Project, { userId });
+    await manager.delete(RemoteServerProvisionJob, { userId });
+    await manager.delete(RemoteServer, { userId });
+    await manager.delete(RegistryAccount, { userId });
+    await manager.delete(S3Profile, { userId });
+    await manager.delete(GitIntegrationSettings, { userId });
+    await manager.delete(TraefikSettings, { userId });
+    await manager.delete(Notification, { userId });
+    await manager.delete(NotificationChannel, { userId });
+    await manager.delete(RefreshToken, { userId });
+  }
+
   async deleteAccount(email: string): Promise<void> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
-    await this.refreshTokenService.deleteByUserId(user.id);
-    await this.userRepo.remove(user);
+    await this.deleteUserAndRelatedRows(user.id);
   }
 
   async setPasswordForGoogle(email: string, newPassword: string): Promise<void> {

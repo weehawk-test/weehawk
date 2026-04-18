@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { useRateLimitCountdown } from "@/hooks/use-rate-limit-countdown";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { PasswordInput } from "@/components/inputs/password-input";
 import { API_BASE } from "@/lib/api";
 
 export default function RegisterPage() {
@@ -181,22 +182,18 @@ export default function RegisterPage() {
           </div>
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">Password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="input-field"
               placeholder="At least 8 characters"
               autoComplete="new-password"
             />
           </div>
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">Confirm password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="input-field"
               placeholder="Repeat password"
               autoComplete="new-password"
             />

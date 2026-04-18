@@ -146,3 +146,12 @@ export async function unlinkGoogle(): Promise<{ message: string }> {
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
+
+export async function deleteAccount(): Promise<{ message: string }> {
+  const res = await authFetch(null, `${API_BASE}/api/user/account`, {
+    method: "DELETE",
+    headers: jsonHeaders,
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json();
+}

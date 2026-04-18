@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { useRateLimitCountdown } from "@/hooks/use-rate-limit-countdown";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { PasswordInput } from "@/components/inputs/password-input";
 import { API_BASE } from "@/lib/api";
 
 export default function LoginPage() {
@@ -189,11 +190,9 @@ export default function LoginPage() {
                 Forgot password?
               </Link>
             </div>
-            <input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="input-field"
               placeholder="••••••••"
               autoComplete="current-password"
             />

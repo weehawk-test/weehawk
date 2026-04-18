@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertCircle, Loader2, LockKeyhole, UserRound, X } from "lucide-react";
+import { AlertCircle, Loader2, LockKeyhole, Trash2, UserRound, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { API_BASE } from "@/lib/api";
 import {
   changePassword,
+  deleteAccount,
   getProfile,
   requestEmailChange,
   resendConfirmationEmail,
@@ -15,6 +16,20 @@ import {
   updateProfile,
 } from "@/lib/user-api";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { buttonVariants } from "@/components/ui/button";
+import { PasswordInput } from "@/components/inputs/password-input";
+import { cn } from "@/lib/utils";
+
+/** User must type this exactly (case-insensitive) to confirm account deletion. */
+const ACCOUNT_DELETE_CONFIRM_PHRASE = "delete";
 
 function GoogleMark({ className }: { className?: string }) {
   return (
@@ -45,7 +60,7 @@ function GoogleMark({ className }: { className?: string }) {
 }
 
 export default function ProfilePage() {
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, logout } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
   const [firstName, setFirstName] = useState(user?.firstName ?? "");
@@ -65,6 +80,9 @@ export default function ProfilePage() {
   const [resendingConfirmation, setResendingConfirmation] = useState(false);
   const [activeTab, setActiveTab] = useState<"profile" | "password">("profile");
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmPhrase, setDeleteConfirmPhrase] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const isGoogleLinked = Boolean(user?.providerId) || user?.provider === "GOOGLE";
   const googleLinkedEmail = user?.googleAccountEmail?.trim() || user?.email || "";
 
@@ -344,6 +362,37 @@ export default function ProfilePage() {
     }
   };
 
+  const onConfirmDeleteAccount = async () => {
+    if (!user) return;
+    if (deleteConfirmPhrase.trim().toLowerCase() !== ACCOUNT_DELETE_CONFIRM_PHRASE) {
+      toast({
+        title: "Confirmation does not match",
+        description: `Type ${ACCOUNT_DELETE_CONFIRM_PHRASE} exactly to confirm.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    setDeletingAccount(true);
+    try {
+      const result = await deleteAccount();
+      setDeleteDialogOpen(false);
+      toast({
+        title: "Account deleted",
+        description: result.message || "Your account was removed.",
+      });
+      await logout();
+      router.replace("/login");
+    } catch (err) {
+      toast({
+        title: "Could not delete account",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const onUnlinkGoogle = async () => {
     if (!user || !isGoogleLinked) return;
     if (!hasPassword) {
@@ -591,33 +640,27 @@ export default function ProfilePage() {
           <form className="space-y-4 text-left" onSubmit={onChangePassword}>
             <div className="space-y-1">
               <label className="text-sm text-muted-foreground">Current password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="input-field"
                 placeholder="Enter current password"
                 autoComplete="current-password"
               />
             </div>
             <div className="space-y-1">
               <label className="text-sm text-muted-foreground">New password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="input-field"
                 placeholder="Enter new password"
                 autoComplete="new-password"
               />
             </div>
             <div className="space-y-1">
               <label className="text-sm text-muted-foreground">Confirm new password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="input-field"
                 placeholder="Confirm new password"
                 autoComplete="new-password"
               />
@@ -638,22 +681,18 @@ export default function ProfilePage() {
             <form className="space-y-4" onSubmit={onSetPassword}>
               <div className="space-y-1">
                 <label className="text-sm text-muted-foreground">New password</label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={setPasswordValue}
                   onChange={(e) => setSetPasswordValue(e.target.value)}
-                  className="input-field"
                   placeholder="Enter new password"
                   autoComplete="new-password"
                 />
               </div>
               <div className="space-y-1">
                 <label className="text-sm text-muted-foreground">Confirm password</label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={setPasswordConfirmValue}
                   onChange={(e) => setSetPasswordConfirmValue(e.target.value)}
-                  className="input-field"
                   placeholder="Confirm new password"
                   autoComplete="new-password"
                 />
@@ -668,6 +707,104 @@ export default function ProfilePage() {
               </button>
             </form>
           </div>
+        ) : null}
+
+        {user ? (
+          <>
+            <div className="rounded-xl border border-red-500/30 bg-red-500/[0.06] dark:bg-red-500/[0.08] p-4 space-y-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-red-600/90 dark:text-red-400/90">
+                  Danger zone
+                </p>
+                <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+                  Permanently delete your account and profile data. You will be signed out. This cannot
+                  be undone.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteConfirmPhrase("");
+                  setDeleteDialogOpen(true);
+                }}
+                disabled={deletingAccount}
+                className="inline-flex h-9 w-full sm:w-auto items-center justify-center gap-2 rounded-md border border-red-500/45 bg-red-500/10 px-3 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-60"
+              >
+                <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                Delete account
+              </button>
+            </div>
+
+            <Dialog
+              open={deleteDialogOpen}
+              onOpenChange={(open) => {
+                if (!open && deletingAccount) return;
+                if (!open) setDeleteConfirmPhrase("");
+                setDeleteDialogOpen(open);
+              }}
+            >
+              <DialogContent className="z-[120] border-border/80 sm:rounded-lg [&>button]:hidden">
+                <DialogHeader>
+                  <DialogTitle>Delete your account?</DialogTitle>
+                  <DialogDescription asChild>
+                    <div className="space-y-4 text-left text-muted-foreground">
+                      <p>
+                        This permanently deletes your profile, projects, services, webhooks, saved
+                        servers, and other data tied to this account. If you rely on this environment,
+                        export or migrate first.
+                      </p>
+                      <div className="space-y-2.5">
+                        <label className="text-sm font-medium text-foreground block" htmlFor="delete-account-confirm">
+                          Type{" "}
+                          <span className="font-mono font-semibold text-red-600 dark:text-red-400">
+                            &quot;{ACCOUNT_DELETE_CONFIRM_PHRASE}&quot;
+                          </span>{" "}
+                          to confirm
+                        </label>
+                        <input
+                          id="delete-account-confirm"
+                          type="text"
+                          value={deleteConfirmPhrase}
+                          onChange={(e) => setDeleteConfirmPhrase(e.target.value)}
+                          className="input-field font-mono text-sm"
+                          placeholder={ACCOUNT_DELETE_CONFIRM_PHRASE}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          disabled={deletingAccount}
+                        />
+                      </div>
+                    </div>
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter>
+                  <button
+                    type="button"
+                    disabled={deletingAccount}
+                    className={cn(buttonVariants({ variant: "outline" }), "mt-2 sm:mt-0")}
+                    onClick={() => {
+                      setDeleteConfirmPhrase("");
+                      setDeleteDialogOpen(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      deletingAccount ||
+                      deleteConfirmPhrase.trim().toLowerCase() !== ACCOUNT_DELETE_CONFIRM_PHRASE
+                    }
+                    className={cn(buttonVariants({ variant: "destructive" }), "gap-2")}
+                    onClick={() => void onConfirmDeleteAccount()}
+                  >
+                    {deletingAccount ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : null}
+                    Delete permanently
+                  </button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </>
         ) : null}
       </div>
     </div>

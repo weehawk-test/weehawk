@@ -86,6 +86,6 @@ export class AdminUserService {
   async deleteById(id: number): Promise<void> {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found with id: ' + id);
-    await this.userRepo.remove(user);
+    await this.userService.deleteUserAndRelatedRows(user.id);
   }
 }

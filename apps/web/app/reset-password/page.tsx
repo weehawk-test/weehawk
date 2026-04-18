@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react";
 import { resetPasswordApi } from "@/lib/auth-api";
 import { useToast } from "@/hooks/use-toast";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { PasswordInput } from "@/components/inputs/password-input";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -90,22 +91,18 @@ export default function ResetPasswordPage() {
         <form className="space-y-4" onSubmit={onSubmit}>
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">New password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="input-field"
               placeholder="At least 8 characters"
               autoComplete="new-password"
             />
           </div>
           <div className="space-y-1">
             <label className="text-sm text-muted-foreground">Confirm password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="input-field"
               placeholder="Repeat password"
               autoComplete="new-password"
             />
