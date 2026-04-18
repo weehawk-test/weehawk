@@ -12,6 +12,7 @@ import { Inject, forwardRef } from '@nestjs/common';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { ExecutorService } from './executor.service';
 import { ServicesService } from '../services/services.service';
+import { resolveCorsOrigin } from '../common/cors-origin';
 
 /**
  * Interactive shell inside the service's running container on the **deploy** host (SSH + `docker exec`).
@@ -19,7 +20,12 @@ import { ServicesService } from '../services/services.service';
  */
 @WebSocketGateway({
   path: '/ws/service-terminal',
-  cors: { origin: true },
+  cors: {
+    origin: resolveCorsOrigin(process.env.CORS_ORIGIN, process.env.NODE_ENV, {
+      logWarnings: false,
+    }),
+    credentials: true,
+  },
 })
 export class ServiceTerminalGateway implements OnGatewayConnection {
   constructor(
@@ -86,94 +92,91 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
 
       ssh
         .once('ready', () => {
-          ssh?.exec(
-            remoteCmd,
-            { pty: true, env: { TERM: 'xterm-256color' } as NodeJS.ProcessEnv },
-            (err, stream) => {
-              if (err) {
-                client.send(JSON.stringify({ type: 'error', message: err.message }));
-                client.close(4002, 'docker exec failed');
-                return;
-              }
-
-              stream.on('data', (d: Buffer) => {
-                if (client.readyState === 1) {
-                  client.send(d, { binary: true });
-                }
-              });
-              stream.stderr.on('data', (d: Buffer) => {
-                if (client.readyState === 1) {
-                  client.send(d, { binary: true });
-                }
-              });
-              stream.on('close', () => {
-                try {
-                  ssh?.end();
-                } catch {
-                  /* ignore */
-                }
-                if (client.readyState === 1) client.close(1000, 'terminal closed');
-              });
-
-              client.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
-                const buf = Array.isArray(data)
-                  ? Buffer.concat(data)
-                  : Buffer.isBuffer(data)
-                    ? data
-                    : Buffer.from(data);
-                const s = buf.toString('utf8');
-                const trimmed = s.trim();
-                if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                  try {
-                    const j = JSON.parse(trimmed) as {
-                      type?: string;
-                      cols?: number;
-                      rows?: number;
-                    };
-                    if (j.type === 'resize') {
-                      const cols = Math.min(
-                        512,
-                        Math.max(2, Math.floor(Number(j.cols)) || 80),
-                      );
-                      const rows = Math.min(
-                        512,
-                        Math.max(2, Math.floor(Number(j.rows)) || 24),
-                      );
-                      try {
-                        stream.setWindow(rows, cols, 0, 0);
-                      } catch {
-                        /* ignore */
-                      }
-                      return;
-                    }
-                  } catch {
-                    /* not JSON control packet */
+          void this.remoteServersService
+            .flushPendingSshHostKeyFingerprint(ctx.remoteServerId)
+            .then(() => {
+              ssh?.exec(
+                remoteCmd,
+                { pty: true, env: { TERM: 'xterm-256color' } as NodeJS.ProcessEnv },
+                (err, stream) => {
+                  if (err) {
+                    client.send(JSON.stringify({ type: 'error', message: err.message }));
+                    client.close(4002, 'docker exec failed');
+                    return;
                   }
-                }
-                try {
-                  stream.write(s);
-                } catch {
-                  /* ignore */
-                }
-              });
-            },
-          );
+
+                  stream.on('data', (d: Buffer) => {
+                    if (client.readyState === 1) {
+                      client.send(d, { binary: true });
+                    }
+                  });
+                  stream.stderr.on('data', (d: Buffer) => {
+                    if (client.readyState === 1) {
+                      client.send(d, { binary: true });
+                    }
+                  });
+                  stream.on('close', () => {
+                    try {
+                      ssh?.end();
+                    } catch {
+                      /* ignore */
+                    }
+                    if (client.readyState === 1) client.close(1000, 'terminal closed');
+                  });
+
+                  client.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
+                    const buf = Array.isArray(data)
+                      ? Buffer.concat(data)
+                      : Buffer.isBuffer(data)
+                        ? data
+                        : Buffer.from(data);
+                    const s = buf.toString('utf8');
+                    const trimmed = s.trim();
+                    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                      try {
+                        const j = JSON.parse(trimmed) as {
+                          type?: string;
+                          cols?: number;
+                          rows?: number;
+                        };
+                        if (j.type === 'resize') {
+                          const cols = Math.min(
+                            512,
+                            Math.max(2, Math.floor(Number(j.cols)) || 80),
+                          );
+                          const rows = Math.min(
+                            512,
+                            Math.max(2, Math.floor(Number(j.rows)) || 24),
+                          );
+                          try {
+                            stream.setWindow(rows, cols, 0, 0);
+                          } catch {
+                            /* ignore */
+                          }
+                          return;
+                        }
+                      } catch {
+                        /* not JSON control packet */
+                      }
+                    }
+                    try {
+                      stream.write(s);
+                    } catch {
+                      /* ignore */
+                    }
+                  });
+                },
+              );
+            });
         })
         .on('error', (e: Error) => {
+          this.remoteServersService.clearPendingSshHostKeyForServer(ctx.remoteServerId);
           if (client.readyState === 1) {
             client.send(JSON.stringify({ type: 'error', message: e.message }));
             client.close(4001, 'ssh connection failed');
           }
         })
-        .connect({
-          host: ctx.connect.host,
-          port: ctx.connect.port,
-          username: ctx.connect.username,
-          privateKey: ctx.connect.privateKey,
-          readyTimeout: 120_000,
-          hostVerifier: () => true,
-          ...(ctx.connect.family != null ? { family: ctx.connect.family } : {}),
-        });
+        .connect(ctx.connect);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       client.send(JSON.stringify({ type: 'error', message: msg }));

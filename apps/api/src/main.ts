@@ -1,42 +1,28 @@
 import './load-docker-secrets';
-import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WsAdapter } from '@nestjs/platform-ws';
+import helmet from 'helmet';
 import { createSecretKeyMiddleware } from './common/middleware/secret-key.middleware';
-
-function resolveCorsOrigin(corsEnv: string | undefined): boolean | string[] {
-  const raw = corsEnv?.trim();
-  if (!raw) {
-    if (process.env.NODE_ENV === 'production') {
-      Logger.warn(
-        'CORS_ORIGIN is not set; browser requests from other origins are blocked. Set CORS_ORIGIN in .env (comma-separated URLs).',
-      );
-      return false;
-    }
-    Logger.warn(
-      'CORS_ORIGIN is not set; reflecting the request Origin (OK for local dev on any port). Set CORS_ORIGIN for production.',
-    );
-    return true;
-  }
-  const lower = raw.toLowerCase();
-  if (lower === '*' || lower === 'true') {
-    return true;
-  }
-  const list = raw
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
-  return list.length > 0 ? list : false;
-}
+import { resolveCorsOrigin } from './common/cors-origin';
+import { assertProductionSecurityConfig } from './common/production-security';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.useWebSocketAdapter(new WsAdapter(app));
   const configService = app.get(ConfigService);
+  assertProductionSecurityConfig(configService);
+
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
   const origin = resolveCorsOrigin(configService.get<string>('CORS_ORIGIN'));
 
   app.enableCors({

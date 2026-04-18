@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,7 +10,6 @@ import {
   Bird,
   Users,
   Mail,
-  SendHorizontal,
   BellRing,
   ShieldAlert,
   Bell,
@@ -25,6 +24,7 @@ import {
   ExternalLink,
   FlaskConical,
   Loader2,
+  Pencil,
   X,
   Clock,
 } from "lucide-react";
@@ -35,11 +35,13 @@ import {
   bulkDeleteNotificationChannels,
   deleteNotificationChannel,
   fetchNotificationChannelsPaged,
-  sendNotification,
   testNotificationChannel,
-  testTelegramCredentials,
+  updateNotificationChannel,
+  type NotificationChannel,
   type PaginatedNotificationChannelsResponse,
 } from "@/lib/notifications-api";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
+import { fetchRemoteServers } from "@/lib/remote-servers-api";
 import { ListPagination } from "@/components/docker/ListPagination";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
@@ -413,11 +415,16 @@ export function NotificationsChannelsClient({
     return () => window.clearTimeout(t);
   }, [channelsLocalQ, channelsQ, pathname, router]);
 
-  useEffect(() => {
-    const handleOpenAdd = () => setShowAdd(true);
-    window.addEventListener("notifications:add-channel", handleOpenAdd);
-    return () => window.removeEventListener("notifications:add-channel", handleOpenAdd);
-  }, []);
+  const remoteServersQuery = useQuery({
+    queryKey: ["remote-servers", "list"],
+    queryFn: () => fetchRemoteServers(accessToken!),
+    enabled: Boolean(accessToken),
+    staleTime: 120_000,
+  });
+  const deployServers = useMemo(
+    () => filterSshDeployServers(remoteServersQuery.data ?? []),
+    [remoteServersQuery.data],
+  );
 
   const channelsPagedQuery = useQuery({
     queryKey: ["notifications", "channels", "paged", channelsPage, channelsQ],
@@ -447,9 +454,15 @@ export function NotificationsChannelsClient({
   const [revealedTokens, setRevealedTokens] = useState<Set<string>>(new Set());
   const [showChannelAction, setShowChannelAction] = useState(false);
   const [actionChannel, setActionChannel] = useState<{ id: string; name: string } | null>(null);
-  const [actionMessage, setActionMessage] = useState("");
+  const [showEditChannel, setShowEditChannel] = useState(false);
+  const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editIsActive, setEditIsActive] = useState(true);
+  const [editDeployServerId, setEditDeployServerId] = useState<number | "">("");
 
   const [form, setForm] = useState({ name: "", type: "telegram" });
+  /** Deploy host selected only for draft Test in add modal (optional; same pattern as S3 verify). */
+  const [addTestRemoteId, setAddTestRemoteId] = useState<number | null>(null);
   const [telegramForm, setTelegramForm] = useState({ token: "", target: "" });
   const [emailForm, setEmailForm] = useState({
     smtpServer: "smtp.gmail.com",
@@ -467,6 +480,17 @@ export function NotificationsChannelsClient({
   const [gotifyForm, setGotifyForm] = useState({ serverUrl: "", appToken: "", priority: "5" });
   const [ntfyForm, setNtfyForm] = useState({ serverUrl: "https://ntfy.sh", topic: "", token: "" });
   const [pushoverForm, setPushoverForm] = useState({ userKey: "", appToken: "", device: "" });
+
+  const openAddChannelModal = useCallback(() => {
+    setAddTestRemoteId(null);
+    setShowAdd(true);
+  }, []);
+
+  useEffect(() => {
+    const handleOpenAdd = () => openAddChannelModal();
+    window.addEventListener("notifications:add-channel", handleOpenAdd);
+    return () => window.removeEventListener("notifications:add-channel", handleOpenAdd);
+  }, [openAddChannelModal]);
 
   const addEmailRecipient = () => {
     setEmailForm((prev) => ({ ...prev, toAddresses: [...prev.toAddresses, ""] }));
@@ -540,17 +564,12 @@ export function NotificationsChannelsClient({
   const testDraftMutation = useMutation({
     mutationFn: async () => {
       if (!form.name.trim()) throw new Error("Service name is required.");
-      if (form.type === "telegram") {
-        return testTelegramCredentials(accessToken!, {
-          botToken: telegramForm.token.trim(),
-          chatId: telegramForm.target.trim(),
-          channelName: form.name.trim() || undefined,
-        });
-      }
+      if (addTestRemoteId == null) throw new Error("Select a deploy host to run the test.");
       const tempChannel = await createNotificationChannel(accessToken!, {
         name: `${form.name.trim()} (test)`,
         type: form.type.trim(),
         config: platformPayload(),
+        remoteServerId: addTestRemoteId,
       });
       try {
         return await testNotificationChannel(accessToken!, tempChannel.id);
@@ -560,20 +579,24 @@ export function NotificationsChannelsClient({
         } catch {}
       }
     },
-    onSuccess: (log) => {
-      queryClient.invalidateQueries({ queryKey: ["notifications", "logs"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications", "logs", "paged"] });
-      if (log.status === "sent") toast({ title: "Test sent", description: "test succeeded" });
-      else toast({ title: "Test failed", description: "Check channel configuration.", variant: "destructive" });
+    onSuccess: (res) => {
+      if (res.success) toast({ title: "Test succeeded", description: res.message });
+      else toast({ title: "Test failed", description: res.message, variant: "destructive" });
     },
     onError: (e: Error) => toast({ title: "Test failed", description: e.message, variant: "destructive" }),
   });
   const createMutation = useMutation({
-    mutationFn: () => createNotificationChannel(accessToken!, { name: form.name.trim(), type: form.type.trim(), config: platformPayload() }),
+    mutationFn: () =>
+      createNotificationChannel(accessToken!, {
+        name: form.name.trim(),
+        type: form.type.trim(),
+        config: platformPayload(),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
       setForm({ name: "", type: "telegram" });
+      setAddTestRemoteId(null);
       setShowAdd(false);
       toast({ title: "Channel added", description: "Notification channel saved." });
     },
@@ -598,35 +621,58 @@ export function NotificationsChannelsClient({
     },
     onError: (e: Error) => toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
   });
-  const sendMutation = useMutation({
-    mutationFn: ({ channelId, message }: { channelId: string; message: string }) => sendNotification(accessToken!, { channelId, message: message.trim() }),
-    onSuccess: (log) => {
-      queryClient.invalidateQueries({ queryKey: ["notifications", "logs"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications", "logs", "paged"] });
-      if (log.status === "sent") {
-        toast({ title: "Message sent" });
-        setShowChannelAction(false);
-        setActionMessage("");
-      } else {
-        toast({ title: "Failed to send", description: "Check channel configuration.", variant: "destructive" });
-      }
-    },
-    onError: (e: Error) => toast({ title: "Send failed", description: e.message, variant: "destructive" }),
-  });
   const testMutation = useMutation({
     mutationFn: (channelId: string) => testNotificationChannel(accessToken!, channelId),
-    onSuccess: (log) => {
-      queryClient.invalidateQueries({ queryKey: ["notifications", "logs"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications", "logs", "paged"] });
-      if (log.status === "sent") {
-        toast({ title: "Test sent", description: "test succeeded" });
+    onSuccess: (res) => {
+      if (res.success) {
+        toast({ title: "Test succeeded", description: res.message });
         setShowChannelAction(false);
       } else {
-        toast({ title: "Test failed", description: "Check channel configuration.", variant: "destructive" });
+        toast({ title: "Test failed", description: res.message, variant: "destructive" });
       }
     },
     onError: (e: Error) => toast({ title: "Test failed", description: e.message, variant: "destructive" }),
   });
+
+  const updateChannelMutation = useMutation({
+    mutationFn: async () => {
+      if (!editChannel) throw new Error("No channel selected.");
+      if (editDeployServerId === "") {
+        throw new Error("Select a deploy host.");
+      }
+      return updateNotificationChannel(accessToken!, editChannel.id, {
+        name: editName.trim(),
+        isActive: editIsActive,
+        remoteServerId: editDeployServerId as number,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
+      setShowEditChannel(false);
+      setEditChannel(null);
+      toast({ title: "Channel updated" });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Update failed", description: e.message, variant: "destructive" }),
+  });
+
+  const openEditChannel = (ch: NotificationChannel) => {
+    setEditChannel(ch);
+    setEditName(ch.name);
+    setEditIsActive(ch.isActive);
+    const fallbackId = deployServers[0]?.id;
+    setEditDeployServerId(
+      ch.remoteServerId ?? (fallbackId !== undefined ? fallbackId : ""),
+    );
+    setShowEditChannel(true);
+  };
+
+  const closeEditChannel = () => {
+    if (updateChannelMutation.isPending) return;
+    setShowEditChannel(false);
+    setEditChannel(null);
+  };
 
   const toggleReveal = (id: string) => setRevealedTokens((prev) => {
     const n = new Set(prev);
@@ -634,6 +680,8 @@ export function NotificationsChannelsClient({
     else n.add(id);
     return n;
   });
+  const addFormReady = Boolean(form.name.trim() && isPlatformValid());
+
   const addChannel = () => {
     if (!form.name.trim()) return toast({ title: "Missing name", description: "Please enter a service name before saving.", variant: "destructive" });
     if (!isPlatformValid()) return toast({ title: "Missing fields", description: "Please complete required fields for this provider.", variant: "destructive" });
@@ -642,17 +690,18 @@ export function NotificationsChannelsClient({
   const runDraftTest = () => {
     if (!form.name.trim()) return toast({ title: "Missing name", description: "Please enter a service name before testing.", variant: "destructive" });
     if (!isPlatformValid()) return toast({ title: "Missing fields", description: "Please complete required fields for this provider.", variant: "destructive" });
+    if (addTestRemoteId == null) {
+      return toast({
+        title: "Choose a deploy host",
+        description: "Select which remote server should run the test.",
+        variant: "destructive",
+      });
+    }
     testDraftMutation.mutate();
   };
   const openChannelActions = (channelId: string, channelName: string) => {
     setActionChannel({ id: channelId, name: channelName });
-    setActionMessage("");
     setShowChannelAction(true);
-  };
-  const runChannelSend = () => {
-    if (!actionChannel) return;
-    if (!actionMessage.trim()) return toast({ title: "Missing message", description: "Please enter a message before sending.", variant: "destructive" });
-    sendMutation.mutate({ channelId: actionChannel.id, message: actionMessage });
   };
   const runChannelTest = () => {
     if (!actionChannel) return;
@@ -699,6 +748,7 @@ export function NotificationsChannelsClient({
   const closeAddModal = () => {
     setShowAdd(false);
     setForm({ name: "", type: "telegram" });
+    setAddTestRemoteId(null);
     setTelegramForm({ token: "", target: "" });
   };
 
@@ -761,7 +811,8 @@ export function NotificationsChannelsClient({
                     Add Notification Channel
                   </h3>
                   <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                    Create a provider to send alerts from WeeHawk.
+                    Create a provider. Assign a deploy host when you are ready (Edit), or use Test below to try from a host
+                    without saving one on the channel yet.
                   </p>
                 </div>
                 <button
@@ -999,31 +1050,73 @@ export function NotificationsChannelsClient({
 
               </div>
 
-              <div className="mt-4 flex flex-col gap-2 border-t border-border pt-3 dark:border-white/10 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <div className="relative z-10 mt-4 mb-4 rounded-xl border border-primary/20 bg-primary/[0.06] p-4 md:p-5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
+                <div className="flex flex-col gap-1 mb-3">
+                  <span className="text-sm font-semibold text-foreground">Test connection</span>
+                  <span className="text-xs text-muted-foreground">
+                    Optional: send a fixed test from a deploy host over SSH. Saving the channel does not require a test or
+                    a host here — set a deploy host later via Edit when you want deliveries.
+                  </span>
+                </div>
+                <div>
+                  <label htmlFor="notify-add-test-from" className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Run test from <span className="font-normal text-muted-foreground/80">(optional)</span>
+                  </label>
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                    <select
+                      id="notify-add-test-from"
+                      className="input-field-sm w-full sm:flex-1 min-w-0 h-9 min-h-9 py-0 text-sm leading-normal"
+                      value={addTestRemoteId ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setAddTestRemoteId(v === "" ? null : Number(v));
+                      }}
+                    >
+                      <option value="">Select a deploy host…</option>
+                      {deployServers.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.host})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={runDraftTest}
+                      disabled={
+                        testDraftMutation.isPending ||
+                        createMutation.isPending ||
+                        !addFormReady ||
+                        addTestRemoteId == null ||
+                        deployServers.length === 0
+                      }
+                      title="Creates a temporary channel on the selected host, runs one test, then deletes it"
+                      className="btn-secondary text-sm border border-primary/40 text-primary inline-flex items-center justify-center gap-1.5 shrink-0 h-9 min-h-9 px-3 disabled:opacity-50"
+                    >
+                      {testDraftMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
+                      Test
+                    </button>
+                  </div>
+                </div>
+                {deployServers.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-2.5">
+                    Add a deploy server under Remote servers to run a test from that host.
+                  </p>
+                )}
+              </div>
+
+              <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3 dark:border-white/10 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
+                <button type="button" onClick={closeAddModal} className="btn-secondary w-full text-sm sm:w-auto">
+                  Cancel
+                </button>
                 <button
                   type="button"
-                  onClick={runDraftTest}
-                  disabled={testDraftMutation.isPending || createMutation.isPending}
-                  title="Runs a temporary channel test"
-                  className="btn-secondary order-2 w-full justify-center text-xs sm:order-1 sm:w-auto sm:text-sm border border-primary/35 text-primary flex items-center gap-2 disabled:opacity-50"
+                  onClick={addChannel}
+                  disabled={!addFormReady || createMutation.isPending || testDraftMutation.isPending}
+                  className="btn-primary w-full text-sm sm:w-auto disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {testDraftMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
-                  Test
+                  {createMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Add Channel
                 </button>
-                <div className="order-1 flex w-full items-stretch justify-stretch gap-2 sm:order-2 sm:w-auto sm:justify-end">
-                  <button type="button" onClick={closeAddModal} className="btn-secondary flex-1 text-xs sm:flex-none sm:text-sm">
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={addChannel}
-                    disabled={!form.name.trim() || !isPlatformValid() || createMutation.isPending}
-                    className="btn-primary flex-1 text-xs sm:flex-none sm:text-sm disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {createMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                    Add Channel
-                  </button>
-                </div>
               </div>
             </motion.div>
           </motion.div>
@@ -1043,9 +1136,8 @@ export function NotificationsChannelsClient({
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
               onClick={() => {
-                if (testMutation.isPending || sendMutation.isPending) return;
+                if (testMutation.isPending) return;
                 setShowChannelAction(false);
-                setActionMessage("");
               }}
             >
             <motion.div
@@ -1057,16 +1149,15 @@ export function NotificationsChannelsClient({
             >
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
-                  <h3 className="text-lg font-semibold">Send a notification</h3>
+                  <h3 className="text-lg font-semibold">Test channel</h3>
                   <p className="text-sm text-muted-foreground mt-1">{actionChannel.name}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
                     setShowChannelAction(false);
-                    setActionMessage("");
                   }}
-                  disabled={testMutation.isPending || sendMutation.isPending}
+                  disabled={testMutation.isPending}
                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 disabled:pointer-events-none"
                   aria-label="Close"
                 >
@@ -1074,32 +1165,146 @@ export function NotificationsChannelsClient({
                 </button>
               </div>
 
-              <div className="space-y-3 mb-4">
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Message</label>
-                  <textarea className="input-field min-h-[110px] resize-none" placeholder="Write a message to send..." value={actionMessage} onChange={(e) => setActionMessage(e.target.value)} />
-                </div>
+              <div className="rounded-xl border border-primary/20 bg-primary/[0.06] p-4 mb-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
+                <p className="text-sm text-foreground font-medium mb-1">Runs on the deploy host only</p>
+                <p className="text-xs text-muted-foreground">
+                  A fixed test payload is sent from this channel&apos;s deploy server over SSH (same path as automated notifications). Nothing is sent from the app server.
+                </p>
               </div>
 
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChannelAction(false)}
+                  disabled={testMutation.isPending}
+                  className="btn-secondary text-sm"
+                >
+                  Cancel
+                </button>
                 <button
                   type="button"
                   onClick={runChannelTest}
-                  disabled={testMutation.isPending || sendMutation.isPending}
-                  className="btn-secondary text-sm border border-primary/35 text-primary flex items-center gap-2 disabled:opacity-50"
+                  disabled={testMutation.isPending}
+                  className="btn-secondary text-sm border border-primary/40 text-primary inline-flex items-center justify-center gap-1.5 h-9 min-h-9 px-3 disabled:opacity-50"
                 >
                   {testMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
                   Test
                 </button>
-                <div className="flex items-center justify-end">
-                  <button type="button" onClick={runChannelSend} disabled={sendMutation.isPending || testMutation.isPending} className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50">
-                    {sendMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                    Send Message
-                  </button>
-                </div>
               </div>
             </motion.div>
           </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body,
+        )}
+      {typeof document !== "undefined" &&
+        createPortal(
+        <AnimatePresence>
+          {showEditChannel && editChannel && (
+            <motion.div
+              key="edit-channel"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
+              onClick={closeEditChannel}
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                className="w-full max-w-lg glass-panel rounded-2xl border border-primary/25 p-5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold">Edit channel</h3>
+                    <p className="text-sm text-muted-foreground mt-1">{channelTypeLabel(editChannel.type)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeEditChannel}
+                    disabled={updateChannelMutation.isPending}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40"
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="space-y-3 mb-4">
+                  <div>
+                    <label className="text-sm text-muted-foreground mb-1 block">Name</label>
+                    <input
+                      className="input-field text-sm"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      disabled={updateChannelMutation.isPending}
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border"
+                      checked={editIsActive}
+                      onChange={(e) => setEditIsActive(e.target.checked)}
+                      disabled={updateChannelMutation.isPending}
+                    />
+                    <span>Channel active</span>
+                  </label>
+                  <div>
+                    <label className="text-sm text-muted-foreground mb-1 block">Deploy host</label>
+                    <select
+                      className="input-field text-sm"
+                      value={editDeployServerId === "" ? "" : String(editDeployServerId)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setEditDeployServerId(v === "" ? "" : Number(v));
+                      }}
+                      disabled={deployServers.length === 0 || updateChannelMutation.isPending}
+                    >
+                      {deployServers.length === 0 && <option value="">No deploy servers</option>}
+                      {deployServers.map((srv) => (
+                        <option key={srv.id} value={srv.id}>
+                          {srv.name} ({srv.host})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[0.7rem] text-muted-foreground mt-1.5">
+                      Provider credentials are unchanged. To change tokens or webhooks, delete and add the channel again.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button type="button" onClick={closeEditChannel} disabled={updateChannelMutation.isPending} className="btn-secondary text-sm">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      updateChannelMutation.isPending ||
+                      !editName.trim() ||
+                      editDeployServerId === "" ||
+                      deployServers.length === 0
+                    }
+                    onClick={() => {
+                      if (!editName.trim()) {
+                        toast({ title: "Name required", variant: "destructive" });
+                        return;
+                      }
+                      if (editDeployServerId === "") {
+                        toast({ title: "Deploy host required", variant: "destructive" });
+                        return;
+                      }
+                      updateChannelMutation.mutate();
+                    }}
+                    className="btn-primary text-sm inline-flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {updateChannelMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    Save
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
           )}
         </AnimatePresence>,
         document.body,
@@ -1111,7 +1316,7 @@ export function NotificationsChannelsClient({
           </div>
           <h3 className="text-xl font-bold mb-2">No channels configured</h3>
           <p className="text-muted-foreground mb-8 max-w-md">Add your first provider to start receiving notifications.</p>
-          <button type="button" onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2">
+          <button type="button" onClick={() => openAddChannelModal()} className="btn-primary flex items-center gap-2">
             <Plus className="w-5 h-5" /> Add Channel
           </button>
         </div>
@@ -1227,6 +1432,11 @@ export function NotificationsChannelsClient({
                       <p className="text-sm text-muted-foreground mt-1 truncate">
                         {channelTypeLabel(ch.type)}
                       </p>
+                      {ch.remoteServerId == null ? (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 truncate" title="This channel cannot deliver until a deploy host is set">
+                          No deploy host — recreate this channel or set remoteServerId via API
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
@@ -1271,25 +1481,37 @@ export function NotificationsChannelsClient({
                   <p className="text-sm font-mono truncate">Target: {ch.targetPreview}</p>
                 </div>
 
-                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-sm text-muted-foreground">
-                  <div className="flex items-center gap-1.5">
-                    <Clock className="w-4 h-4" />
-                    {formatDateUTC(ch.createdAt)}
+                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-sm text-muted-foreground gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Clock className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{formatDateUTC(ch.createdAt)}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => openChannelActions(ch.id, ch.name)}
-                    disabled={sendMutation.isPending || testMutation.isPending}
-                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 text-sm disabled:opacity-50"
-                    title="Send/Test actions"
-                  >
-                    {sendMutation.isPending || testMutation.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <span className="w-4 h-4" />
-                    )}
-                    Send
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => openEditChannel(ch)}
+                      disabled={updateChannelMutation.isPending || testMutation.isPending}
+                      className="text-primary hover:underline cursor-pointer font-medium inline-flex items-center gap-1 text-sm disabled:opacity-50"
+                      title="Edit name, active state, deploy host"
+                    >
+                      {updateChannelMutation.isPending && editChannel?.id === ch.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Pencil className="w-4 h-4" />
+                      )}
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openChannelActions(ch.id, ch.name)}
+                      disabled={testMutation.isPending || updateChannelMutation.isPending}
+                      className="text-primary hover:underline cursor-pointer font-medium inline-flex items-center gap-1 text-sm disabled:opacity-50"
+                      title="Test from deploy host"
+                    >
+                      {testMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
+                      Test
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             ))}

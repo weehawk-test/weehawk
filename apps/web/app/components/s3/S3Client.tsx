@@ -17,6 +17,7 @@ import {
   type S3ProfilePayload,
   type S3ProfilePublic,
 } from "@/lib/s3-api";
+import { fetchRemoteServers, type RemoteServerRow } from "@/lib/remote-servers-api";
 import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
 
 /** Short provider label from endpoint host (card badges). */
@@ -98,6 +99,9 @@ export function S3Client({
   const [provider, setProvider] = useState("custom");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  /** `null` = verify from the API server (default). */
+  const [s3VerifyRemoteId, setS3VerifyRemoteId] = useState<number | null>(null);
+  const [deployServersForTest, setDeployServersForTest] = useState<RemoteServerRow[]>([]);
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [form, setForm] = useState<Omit<S3ProfilePayload, "forcePathStyle">>({
@@ -118,6 +122,23 @@ export function S3Client({
       });
     }
   }, [initialError, toast]);
+
+  useEffect(() => {
+    if (!modal) return;
+    let cancelled = false;
+    void fetchRemoteServers("")
+      .then((rows) => {
+        if (!cancelled) {
+          setDeployServersForTest(rows.filter((r) => r.serverRole === "deploy"));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setDeployServersForTest([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modal]);
 
   const secretRequired = modal?.type === "add";
   const canSubmit = useMemo(() => {
@@ -162,6 +183,7 @@ export function S3Client({
 
   const closeModal = () => {
     setModal(null);
+    setS3VerifyRemoteId(null);
     setProvider("custom");
     setForm({
       name: "",
@@ -174,6 +196,7 @@ export function S3Client({
   };
 
   const openEdit = (profile: S3ProfilePublic) => {
+    setS3VerifyRemoteId(null);
     setProvider("custom");
     setForm({
       name: profile.name,
@@ -232,9 +255,20 @@ export function S3Client({
       });
       return;
     }
+    if (s3VerifyRemoteId == null) {
+      toast({
+        title: "Choose a deploy host",
+        description: "Select which remote server should run the verification request.",
+        variant: "destructive",
+      });
+      return;
+    }
     setTesting(true);
     try {
-      const res = await testS3ConnectionApi(payloadForApi);
+      const res = await testS3ConnectionApi({
+        ...payloadForApi,
+        remoteServerId: s3VerifyRemoteId,
+      });
       toast({ title: "Connection verified", description: res.message });
     } catch (e) {
       toast({
@@ -329,7 +363,14 @@ export function S3Client({
             Link your cloud storage buckets so backups and uploads know where to send data.
           </p>
         </div>
-        <button type="button" onClick={() => setModal({ type: "add" })} className="btn-primary flex items-center justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setS3VerifyRemoteId(null);
+            setModal({ type: "add" });
+          }}
+          className="btn-primary flex items-center justify-center gap-2"
+        >
           <Plus className="w-5 h-5" /> Add destination
         </button>
       </div>
@@ -387,7 +428,14 @@ export function S3Client({
             {search ? "No destinations match your search." : "Add your first S3 destination profile."}
           </p>
           {!search && (
-            <button type="button" onClick={() => setModal({ type: "add" })} className="btn-primary flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setS3VerifyRemoteId(null);
+                setModal({ type: "add" });
+              }}
+              className="btn-primary flex items-center gap-2"
+            >
               <Plus className="w-5 h-5" /> Add destination
             </button>
           )}
@@ -685,18 +733,72 @@ export function S3Client({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 relative z-10">
-                <button type="button" onClick={onTest} disabled={!canSubmit || testing || saving} className="btn-secondary text-sm border border-primary/35 text-primary flex items-center gap-2 disabled:opacity-50">
-                  {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlugZap className="w-3.5 h-3.5" />}
-                  Verify
-                </button>
-                <div className="flex items-center gap-2">
-                  <button type="button" onClick={closeModal} className="btn-secondary text-sm">Cancel</button>
-                  <button type="button" onClick={onSave} disabled={!canSubmit || saving || testing} className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50">
-                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                    {modal.type === "edit" ? "Update" : "Save"}
-                  </button>
+              <div className="relative z-10 mb-6 rounded-xl border border-primary/20 bg-primary/[0.06] p-4 md:p-5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
+                <div className="flex flex-col gap-1 mb-3">
+                  <span className="text-sm font-semibold text-foreground">Test connection</span>
+                  <span className="text-xs text-muted-foreground">
+                    Optional: verify from a deploy host (same network path as backups). Saving the destination does not
+                    require a test.
+                  </span>
                 </div>
+                <div>
+                  <label htmlFor="s3-verify-from" className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                    Run test from <span className="font-normal text-muted-foreground/80">(optional)</span>
+                  </label>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <select
+                      id="s3-verify-from"
+                      className="input-field-sm w-full sm:flex-1 min-w-0 h-9 min-h-9 py-0 text-sm leading-normal"
+                      value={s3VerifyRemoteId ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setS3VerifyRemoteId(v === "" ? null : Number(v));
+                      }}
+                    >
+                      <option value="">Select a deploy host…</option>
+                      {deployServersForTest.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.host})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={onTest}
+                      disabled={
+                        !canSubmit ||
+                        testing ||
+                        saving ||
+                        s3VerifyRemoteId == null ||
+                        deployServersForTest.length === 0
+                      }
+                      className="btn-secondary text-sm border border-primary/40 text-primary inline-flex items-center justify-center gap-1.5 shrink-0 h-9 min-h-9 px-3 disabled:opacity-50"
+                    >
+                      {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlugZap className="w-3.5 h-3.5" />}
+                      Verify
+                    </button>
+                  </div>
+                </div>
+                {deployServersForTest.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-2.5">
+                    Add a deploy server under Remote servers to enable verification from that host.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 relative z-10">
+                <button type="button" onClick={closeModal} className="btn-secondary text-sm">
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={onSave}
+                  disabled={!canSubmit || saving || testing}
+                  className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  {modal.type === "edit" ? "Update" : "Save"}
+                </button>
               </div>
             </motion.div>
           </motion.div>

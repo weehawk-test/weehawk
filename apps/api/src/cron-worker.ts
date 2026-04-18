@@ -1,12 +1,15 @@
 import './load-docker-secrets';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { CronJobsService } from './cron-jobs/cron-jobs.service';
+import { assertProductionSecurityConfig } from './common/production-security';
 
 async function bootstrapCronWorker() {
   const logger = new Logger('CronWorker');
   const app = await NestFactory.createApplicationContext(AppModule);
+  assertProductionSecurityConfig(app.get(ConfigService));
   const cronJobsService = app.get(CronJobsService);
 
   logger.log('Cron worker started');

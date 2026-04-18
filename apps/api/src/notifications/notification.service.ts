@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { NotificationChannel } from './entities/notification-channel.entity';
@@ -8,12 +13,12 @@ import { NotificationDelivery } from './entities/notification-delivery.entity';
 import { Notification } from './entities/notification.entity';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
-import { sendTelegramMessage } from './telegram-api';
 import { notificationPlainText } from './notification-format';
 import { ProviderRegistryService } from './providers/provider-registry.service';
 import { channelConfigRecord } from './providers/channel-config';
 import { ProviderSendResult } from './providers/provider.types';
 import { withRetry } from './utils/with-retry';
+import { RemoteServersService } from '../remote-servers/remote-servers.service';
 
 export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
 
@@ -24,6 +29,8 @@ export type NotificationChannelRow = {
   credentialPreview: string;
   targetPreview: string;
   isActive: boolean;
+  /** When set, Send/Test uses SSH on this deploy host (curl from customer network). */
+  remoteServerId: number | null;
   createdAt: string;
 };
 
@@ -56,6 +63,7 @@ export class NotificationService {
     @InjectRepository(NotificationDelivery)
     private readonly deliveryRepo: Repository<NotificationDelivery>,
     private readonly providerRegistry: ProviderRegistryService,
+    private readonly remoteServersService: RemoteServersService,
   ) {}
 
   private toChannelRow(
@@ -69,6 +77,7 @@ export class NotificationService {
       credentialPreview: preview.credentialPreview,
       targetPreview: preview.targetPreview,
       isActive: ch.isActive,
+      remoteServerId: ch.remoteServerId ?? null,
       createdAt: ch.createdAt.toISOString(),
     };
   }
@@ -125,8 +134,27 @@ export class NotificationService {
     try {
       return await withRetry(
         async () => {
-          const provider = this.providerRegistry.get(channel.type);
-          const result = await provider.send(channel, notification);
+          if (channel.remoteServerId == null) {
+            return {
+              ok: false,
+              description:
+                'This channel has no deploy host. Recreate it with a remote server id or PATCH remoteServerId.',
+            };
+          }
+          const runtime: NotificationChannelRuntimeConfig = {
+            id: channel.id,
+            name: channel.name,
+            type: channel.type,
+            config: channelConfigRecord(channel),
+          };
+          const text = notificationPlainText(notification);
+          const result =
+            await this.remoteServersService.deliverNotificationChannelViaDeployHost(
+              channel.remoteServerId,
+              channel.userId,
+              runtime,
+              text,
+            );
           if (result.ok) return result;
           const desc = result.description ?? '';
           const transient = /429|rate|timeout|ECONNRESET|ETIMEDOUT|socket|network/i.test(
@@ -149,73 +177,6 @@ export class NotificationService {
         e instanceof Error ? e.message : 'Notification send failed';
       return { ok: false, description };
     }
-  }
-
-  /**
-   * Creates a notification and delivers it to every active channel for the user.
-   */
-  async sendToUser(
-    userId: number,
-    title: string,
-    message: string,
-  ): Promise<{ notificationId: string; logs: NotificationLogRow[] }> {
-    const notification = this.notificationRepo.create({
-      userId,
-      title: title.trim() || 'Notification',
-      message,
-    });
-    const savedNotification = await this.notificationRepo.save(notification);
-
-    const channels = await this.channelRepo.find({
-      where: { userId, isActive: true },
-      order: { createdAt: 'ASC' },
-    });
-
-    const logs: NotificationLogRow[] = [];
-
-    for (const channel of channels) {
-      const delivery = this.deliveryRepo.create({
-        notificationId: savedNotification.id,
-        channelId: channel.id,
-        status: NotificationDeliveryStatus.PENDING,
-        response: null,
-        sentAt: null,
-      });
-      const savedDelivery = await this.deliveryRepo.save(delivery);
-
-      let result: ProviderSendResult;
-      try {
-        result = await this.sendWithRetry(channel, savedNotification);
-      } catch (e) {
-        this.logger.error(
-          `Unexpected error sending to channel ${channel.id}`,
-          e instanceof Error ? e.stack : e,
-        );
-        result = {
-          ok: false,
-          description:
-            e instanceof Error ? e.message : 'Unexpected notification error',
-        };
-      }
-
-      const now = new Date();
-      savedDelivery.status = result.ok
-        ? NotificationDeliveryStatus.SENT
-        : NotificationDeliveryStatus.FAILED;
-      savedDelivery.response = this.serializeResponse(result);
-      savedDelivery.sentAt = now;
-      await this.deliveryRepo.save(savedDelivery);
-
-      const withChannel = await this.deliveryRepo.findOne({
-        where: { id: savedDelivery.id },
-        relations: ['channel'],
-      });
-      logs.push(
-        this.toLogRow(withChannel ?? savedDelivery, savedNotification, {}),
-      );
-    }
-
-    return { notificationId: savedNotification.id, logs };
   }
 
   async sendMessage(
@@ -337,12 +298,18 @@ export class NotificationService {
       dto.type as NotificationChannelType,
     );
     const config = provider.normalizeConfig(dto.config ?? {});
+    const remoteId =
+      dto.remoteServerId != null ? dto.remoteServerId : null;
+    if (remoteId != null) {
+      await this.remoteServersService.findOne(remoteId, userId);
+    }
     const ch = this.channelRepo.create({
       userId,
       name: dto.name.trim(),
       type: dto.type as NotificationChannelType,
       isActive: true,
       config,
+      remoteServerId: remoteId,
     });
     const saved = await this.channelRepo.save(ch);
     const preview = await provider.preview(saved);
@@ -364,6 +331,15 @@ export class NotificationService {
         ...channelConfigRecord(ch),
         ...dto.config,
       });
+    }
+    if (dto.remoteServerId !== undefined) {
+      if (dto.remoteServerId === null) {
+        throw new BadRequestException(
+          'remoteServerId cannot be cleared; notifications are delivered only via deploy hosts.',
+        );
+      }
+      await this.remoteServersService.findOne(dto.remoteServerId, userId);
+      ch.remoteServerId = dto.remoteServerId;
     }
     const saved = await this.channelRepo.save(ch);
     const preview = await this.providerRegistry.get(saved.type).preview(saved);
@@ -390,150 +366,13 @@ export class NotificationService {
     return { removed: res.affected ?? 0 };
   }
 
-  async listLogs(userId: number): Promise<NotificationLogRow[]> {
-    const rows = await this.deliveryRepo
-      .createQueryBuilder('d')
-      .innerJoinAndSelect('d.notification', 'n')
-      .leftJoinAndSelect('d.channel', 'c')
-      .where('n.userId = :userId', { userId })
-      .orderBy('d.sentAt', 'DESC', 'NULLS LAST')
-      .addOrderBy('d.createdAt', 'DESC')
-      .take(500)
-      .getMany();
-    return rows.map((d) => this.toLogRow(d, d.notification, {}));
-  }
-
-  async listLogsPaged(
-    userId: number,
-    page: number,
-    _pageSize: number,
-    q?: string,
-  ): Promise<{
-    items: NotificationLogRow[];
-    total: number;
-    page: number;
-    pageSize: number;
-  }> {
-    const take = 10;
-    const skip = (Math.max(1, page) - 1) * take;
-    const qb = this.deliveryRepo
-      .createQueryBuilder('d')
-      .innerJoinAndSelect('d.notification', 'n')
-      .leftJoinAndSelect('d.channel', 'c')
-      .where('n.userId = :userId', { userId });
-    const term = (q ?? '').trim();
-    if (term) {
-      qb.andWhere(
-        '(c.name ILIKE :term OR n.message ILIKE :term OR n.title ILIKE :term)',
-        { term: `%${term}%` },
-      );
-    }
-    qb.orderBy('d.sentAt', 'DESC', 'NULLS LAST')
-      .addOrderBy('d.createdAt', 'DESC')
-      .skip(skip)
-      .take(take);
-    const [rows, total] = await qb.getManyAndCount();
-    return {
-      items: rows.map((d) => this.toLogRow(d, d.notification, {})),
-      total,
-      page: Math.max(1, page),
-      pageSize: take,
-    };
-  }
-
-  async deleteLog(userId: number, id: string): Promise<void> {
-    await this.deliveryRepo
-      .createQueryBuilder()
-      .delete()
-      .from(NotificationDelivery)
-      .where(
-        'id IN (SELECT d2.id FROM notification_deliveries d2 INNER JOIN notifications n2 ON n2.id = d2.notification_id WHERE d2.id = :id AND n2.user_id = :userId)',
-        { id, userId },
-      )
-      .execute();
-  }
-
-  async bulkDeleteLogs(
-    userId: number,
-    ids: string[],
-  ): Promise<{ removed: number }> {
-    if (ids.length === 0) return { removed: 0 };
-    const res = await this.deliveryRepo
-      .createQueryBuilder()
-      .delete()
-      .from(NotificationDelivery)
-      .where(
-        'id IN (SELECT d2.id FROM notification_deliveries d2 INNER JOIN notifications n2 ON n2.id = d2.notification_id WHERE d2.id IN (:...ids) AND n2.user_id = :userId)',
-        { ids, userId },
-      )
-      .execute();
-    return { removed: res.affected ?? 0 };
-  }
-
-  private async persistDraftLog(
-    userId: number,
-    channelName: string,
-    title: string,
-    message: string,
-    status: 'sent' | 'failed',
-    errorDetail: string | null,
-  ): Promise<NotificationLogRow> {
-    const notification = this.notificationRepo.create({
-      userId,
-      title,
-      message,
-    });
-    const savedN = await this.notificationRepo.save(notification);
-    const delivery = this.deliveryRepo.create({
-      notificationId: savedN.id,
-      channelId: null,
-      status:
-        status === 'sent'
-          ? NotificationDeliveryStatus.SENT
-          : NotificationDeliveryStatus.FAILED,
-      response: errorDetail,
-      sentAt: new Date(),
-    });
-    const savedD = await this.deliveryRepo.save(delivery);
-    return this.toLogRow(savedD, savedN, { channelName: channelName });
-  }
-
-  async testTelegramCredentials(
-    userId: number,
-    botToken: string,
-    chatId: string,
-    channelName?: string,
-  ): Promise<NotificationLogRow> {
-    const label = channelName?.trim() || 'Draft';
-    const result = await sendTelegramMessage(
-      botToken.trim(),
-      chatId.trim(),
-      NOTIFICATION_TEST_MESSAGE,
-    );
-    if (result.ok) {
-      return this.persistDraftLog(
-        userId,
-        label,
-        'Credential test',
-        NOTIFICATION_TEST_MESSAGE,
-        'sent',
-        null,
-      );
-    }
-    return this.persistDraftLog(
-      userId,
-      label,
-      'Credential test',
-      NOTIFICATION_TEST_MESSAGE,
-      'failed',
-      result.description,
-    );
-  }
-
+  /**
+   * Dry-run: sends the fixed test payload via the channel's deploy host (SSH + curl). Does not persist history rows.
+   */
   async testChannel(
     userId: number,
     channelId: string,
-  ): Promise<NotificationLogRow> {
+  ): Promise<{ success: boolean; message: string }> {
     const channel = await this.channelRepo.findOne({
       where: { id: channelId, userId },
     });
@@ -544,30 +383,17 @@ export class NotificationService {
       title: 'Test',
       message: NOTIFICATION_TEST_MESSAGE,
     });
-    const savedNotification = await this.notificationRepo.save(notification);
-
-    const delivery = this.deliveryRepo.create({
-      notificationId: savedNotification.id,
-      channelId: channel.id,
-      status: NotificationDeliveryStatus.PENDING,
-      response: null,
-      sentAt: null,
-    });
-    const savedDelivery = await this.deliveryRepo.save(delivery);
-
-    const result = await this.sendWithRetry(channel, savedNotification);
-    const now = new Date();
-    savedDelivery.status = result.ok
-      ? NotificationDeliveryStatus.SENT
-      : NotificationDeliveryStatus.FAILED;
-    savedDelivery.response = this.serializeResponse(result);
-    savedDelivery.sentAt = now;
-    await this.deliveryRepo.save(savedDelivery);
-
-    const withChannel = await this.deliveryRepo.findOne({
-      where: { id: savedDelivery.id },
-      relations: ['channel'],
-    });
-    return this.toLogRow(withChannel ?? savedDelivery, savedNotification, {});
+    const result = await this.sendWithRetry(channel, notification);
+    if (result.ok) {
+      const msg =
+        typeof result.response === 'string' && result.response.trim()
+          ? result.response.trim()
+          : 'test succeeded';
+      return { success: true, message: msg };
+    }
+    return {
+      success: false,
+      message: (result.description ?? '').trim() || 'Test failed',
+    };
   }
 }

@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ServicesService } from './services.service';
 import { ServicesController } from './services.controller';
+import { RemoteImportBackupInterceptor } from './remote-import-backup.interceptor';
 import { Service } from './entities/service.entity';
 import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
 import { ProjectsModule } from 'src/projects/projects.module';
@@ -27,7 +28,7 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
     TraefikModule,
   ],
   controllers: [ServicesController],
-  providers: [ServicesService, DatabaseGeneratorService],
+  providers: [ServicesService, DatabaseGeneratorService, RemoteImportBackupInterceptor],
   exports: [
     ServicesService,
     DatabaseGeneratorService,

@@ -4,7 +4,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import * as path from 'path';
 import { Repository } from 'typeorm';
 import { NotificationService } from '../notifications/notification.service';
 import {
@@ -14,10 +13,6 @@ import {
   remoteInstallShQuote,
   REMOTE_NOTIFY_DEFAULTS_CRON,
 } from '../common/remote-wrapped-script-install';
-import {
-  createBackupTempDir,
-  removeBackupTempDir,
-} from '../services/deployment-paths';
 import { ExecutorService } from '../executor/executor.service';
 import { S3Service } from '../s3/s3.service';
 import { ServicesService } from '../services/services.service';
@@ -451,8 +446,17 @@ export class CronJobsService {
     userId: number,
     contextId: number,
     profileName: string | null | undefined,
-    destDir: string,
-    r: { success: boolean; output: string; archiveBasename?: string },
+    r: {
+      success: boolean;
+      output: string;
+      archiveBasename?: string;
+      remoteArtifact?: {
+        remoteServerId: number;
+        projectUserId: number | null;
+        stagingDir: string;
+        remoteFilePath: string;
+      };
+    },
   ): Promise<{ success: boolean; output: string }> {
     if (!r.success || !r.archiveBasename) {
       return { success: r.success, output: r.output };
@@ -464,20 +468,42 @@ export class CronJobsService {
         output: `${r.output}\nS3 destination is not configured.`,
       };
     }
-    const localPath = path.join(destDir, r.archiveBasename);
     const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    const ra = r.remoteArtifact;
+    if (!ra) {
+      return {
+        success: false,
+        output: `${r.output}\nBackup archive was not created on the deploy host.`,
+      };
+    }
     try {
-      const { bucket, key: uploadedKey } = await this.s3Service.uploadLocalFile(
-        userId,
-        trimmed,
-        localPath,
-        key,
+      const put = await this.s3Service.presignPutObject(userId, trimmed, key, {
+        contentType: r.archiveBasename.toLowerCase().endsWith('.gz')
+          ? 'application/gzip'
+          : 'application/octet-stream',
+      });
+      await this.remoteServersService.curlPresignedPutFromRemoteFile(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.remoteFilePath,
+        put.url,
+        put.contentType,
+      );
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.stagingDir,
       );
       return {
         success: true,
-        output: `${r.output}\nUploaded to s3://${bucket}/${uploadedKey}`,
+        output: `${r.output}\nUploaded to s3://${put.bucket}/${put.key}`,
       };
     } catch (e) {
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.stagingDir,
+      );
       return {
         success: false,
         output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
@@ -700,9 +726,7 @@ export class CronJobsService {
             output =
               'S3 destination is not configured. Edit the cron job and choose a saved S3 profile.';
           } else {
-            let destDir: string | null = null;
             try {
-              destDir = await createBackupTempDir();
               const ssh = await this.servicesService.getDockerSshTargetIds(job.serviceId);
               if (ssh.remoteServerId == null) {
                 success = false;
@@ -711,26 +735,21 @@ export class CronJobsService {
               } else {
                 const r = await this.executorService.backupDockerVolume(
                   job.volumeSource,
-                  destDir,
                   ssh.remoteServerId,
                   null,
                 );
                 const final = await this.finalizeBackupWithS3(
-                  1,
+                  job.userId,
                   job.id,
                   job.backupS3ProfileName,
-                  destDir,
                   r,
                 );
                 success = final.success;
                 output = final.output;
               }
-            } finally {
-              if (destDir) {
-                await removeBackupTempDir(destDir).catch(() => {
-                  /* best effort */
-                });
-              }
+            } catch (e) {
+              success = false;
+              output = getErrorMessage(e);
             }
           }
         } else if (job.serviceAction === 'database_backup' && job.serviceId != null) {
@@ -740,54 +759,41 @@ export class CronJobsService {
             output =
               'S3 destination is not configured. Edit the cron job and choose a saved S3 profile.';
           } else if (job.databaseBackupConfig) {
-            let destDir: string | null = null;
             try {
-              destDir = await createBackupTempDir();
               const r = await this.executorService.backupDatabaseStructured(
                 job.serviceId,
                 job.databaseBackupConfig,
-                destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                1,
+                job.userId,
                 job.id,
                 job.backupS3ProfileName,
-                destDir,
                 r,
               );
               success = final.success;
               output = final.output;
-            } finally {
-              if (destDir) {
-                await removeBackupTempDir(destDir).catch(() => {
-                  /* best effort */
-                });
-              }
+            } catch (e) {
+              success = false;
+              output = getErrorMessage(e);
             }
           } else if (job.dockerCommand) {
-            let destDir: string | null = null;
             try {
-              destDir = await createBackupTempDir();
               const r = await this.executorService.backupDatabaseFromDockerCommand(
                 job.serviceId,
                 job.dockerCommand,
-                destDir,
+                '',
               );
               const final = await this.finalizeBackupWithS3(
-                1,
+                job.userId,
                 job.id,
                 job.backupS3ProfileName,
-                destDir,
                 r,
               );
               success = final.success;
               output = final.output;
-            } finally {
-              if (destDir) {
-                await removeBackupTempDir(destDir).catch(() => {
-                  /* best effort */
-                });
-              }
+            } catch (e) {
+              success = false;
+              output = getErrorMessage(e);
             }
           } else {
             success = false;

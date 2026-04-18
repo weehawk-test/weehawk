@@ -17,7 +17,12 @@ import { ListPagination } from "@/components/docker/ListPagination";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createServiceSchema, type CreateServiceInput, type Project } from "@/lib/schema";
-import { applyDatabaseApi, SERVICES_PAGE_SIZE, type ServicesPageResponse } from "@/lib/services-api";
+import {
+  applyDatabaseApi,
+  serviceQueryKeyId,
+  SERVICES_PAGE_SIZE,
+  type ServicesPageResponse,
+} from "@/lib/services-api";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
@@ -224,7 +229,7 @@ function CreateServiceModal({
           ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
           ...(img ? { image: img } : {}),
         });
-        await invalidateServiceScopedQueries(qc, created.id, user?.userId ?? "none");
+        await invalidateServiceScopedQueries(qc, serviceQueryKeyId(created), user?.userId ?? "none");
       }
       toast({
         title: "Service Created",

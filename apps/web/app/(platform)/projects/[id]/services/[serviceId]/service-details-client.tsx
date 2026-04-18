@@ -73,6 +73,7 @@ import {
   importServiceBackupFromS3Api,
   fetchAutoDeploySettings,
   configureAutoDeployApi,
+  serviceQueryKeyId,
 } from "@/lib/services-api";
 import {
   parseApplicationBuildPath,
@@ -2529,7 +2530,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
       await updateDatabaseStackApi(service.id, engine, {
         publishPort: t === "" ? null : parseInt(t, 10),
       });
-      await invalidateServiceScopedQueries(queryClient, service.id, authUser?.userId ?? "none");
+      await invalidateServiceScopedQueries(queryClient, serviceQueryKeyId(service), authUser?.userId ?? "none");
       setEditingHostPort(false);
       toast({
         title: "Stack updated",
@@ -2559,7 +2560,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
     setReplicasSaving(true);
     try {
       await updateDatabaseStackApi(service.id, engine, { replicas: n });
-      await invalidateServiceScopedQueries(queryClient, service.id, authUser?.userId ?? "none");
+      await invalidateServiceScopedQueries(queryClient, serviceQueryKeyId(service), authUser?.userId ?? "none");
       setEditingReplicas(false);
       toast({
         title: "Stack updated",

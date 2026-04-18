@@ -21,6 +21,7 @@ import {
   invalidateServiceScopedQueries,
   scheduleServiceRuntimeRefetchBurst,
 } from "@/lib/invalidate-service-queries";
+import { serviceQueryKeyId } from "@/lib/services-api";
 
 /** All services in project (`all=1`); use when the full list is required. */
 export function useServices(
@@ -159,11 +160,11 @@ export function useUpdateService() {
       >;
     }) => updateServiceApi(id, patch),
     onSuccess: (data) => {
-      // Keep ["service", ownerKey, id] in sync; invalidate uses predicate so it matches that key shape.
-      qc.setQueryData(["service", user?.userId ?? "none", String(data.id)], data);
+      const sid = serviceQueryKeyId(data);
+      qc.setQueryData(["service", user?.userId ?? "none", sid], data);
       void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });
-      void invalidateServiceScopedQueries(qc, String(data.id), user?.userId ?? "none");
+      void invalidateServiceScopedQueries(qc, sid, user?.userId ?? "none");
       void invalidateProjectDetailQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
@@ -186,7 +187,7 @@ export function usePatchApplicationNetworks() {
     onSuccess: (data) => {
       void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });
-      void invalidateServiceScopedQueries(qc, String(data.id), user?.userId ?? "none");
+      void invalidateServiceScopedQueries(qc, serviceQueryKeyId(data), user?.userId ?? "none");
     },
   });
 }
@@ -241,7 +242,7 @@ export function useToggleService() {
     onSuccess: (data) => {
       void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });
-      void invalidateServiceScopedQueries(qc, String(data.id), user?.userId ?? "none");
+      void invalidateServiceScopedQueries(qc, serviceQueryKeyId(data), user?.userId ?? "none");
       void invalidateProjectDetailQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["projects"] });
     },

@@ -11,9 +11,11 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { randomBytes } from 'crypto';
+import { pipeline } from 'stream/promises';
+import type { Readable } from 'stream';
 import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 import Dockerode from 'dockerode';
-import { Client, type ClientChannel } from 'ssh2';
+import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 import { RemoteServer } from './entities/remote-server.entity';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
 import { UpdateRemoteServerDto } from './dto/update-remote-server.dto';
@@ -44,15 +46,20 @@ import { decryptPrivateKey, encryptPrivateKey } from './ssh-key-crypto';
 import { generateEd25519SshKeyPair } from './ssh-ed25519-generate';
 import {
   buildRemoteEnvAndWrappedShInstallScript,
+  buildRemoteNotificationCredentialEnvLines,
   remoteInstallShQuote,
+  remoteNotifyDispatchFunctionsBashStrict,
   REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
 } from '../common/remote-wrapped-script-install';
+import type { NotificationChannelRuntimeConfig } from '../notifications/notification.service';
+import type { ProviderSendResult } from '../notifications/providers/provider.types';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import { TraefikService } from '../traefik/traefik.service';
 import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
 import { toSafePathSegment } from '../services/deployment-paths';
 import { isLoopbackSshHost } from './loopback-ssh-host';
+import { sshHostKeySha256Fingerprint, sshHostKeysEqual } from './ssh-host-key';
 import {
   assertPublicRemoteIpv4Literal,
   assertPublicRemoteSshHost,
@@ -135,6 +142,19 @@ function humanizeRemoteTestError(raw: string, mode: 'docker' | 'ssh'): string {
     );
   }
 
+  if (
+    lower.includes('hostkey') ||
+    lower.includes('host key') ||
+    lower.includes('verification') ||
+    lower.includes('not verified') ||
+    lower.includes('man-in-the-middle')
+  ) {
+    return (
+      'SSH host key verification failed — the server key does not match the fingerprint stored for this remote server (possible MITM or the host key was rotated). Update the server host/port to clear the saved fingerprint, or fix sshd keys on the target. Compare with `ssh-keyscan -p <port> <host>` / `ssh-keygen -lf -E sha256`.' +
+      tech
+    );
+  }
+
   return t.length > 0 ? t : 'Unknown error';
 }
 
@@ -187,6 +207,8 @@ export type RemoteServerSafe = {
   publicIpv4: string | null;
   /** Optional JSON: domain labels / metadata (primarily for deploy servers). */
   domainsJson: string | null;
+  /** OpenSSH SHA256 host key fingerprint when trust-on-first-use has run; null until first successful SSH. */
+  sshHostKeySha256: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -214,6 +236,9 @@ export class RemoteServersService {
    * do not race on `docker service rm` / `docker service create` (AlreadyExists).
    */
   private readonly webhookSwarmRecreateChainByServerId = new Map<number, Promise<void>>();
+
+  /** Observed host key from last verifier run (trust-on-first-use), keyed by remote server id. */
+  private readonly pendingSshHostKeyByServerId = new Map<number, string>();
 
   constructor(
     @InjectRepository(RemoteServer)
@@ -321,9 +346,73 @@ export class RemoteServersService {
       extraSshOptions: rs.extraSshOptions ?? null,
       publicIpv4: rs.publicIpv4?.trim() ? rs.publicIpv4.trim() : null,
       domainsJson: rs.domainsJson?.trim() ? rs.domainsJson.trim() : null,
+      sshHostKeySha256: rs.sshHostKeySha256?.trim() ? rs.sshHostKeySha256.trim() : null,
       createdAt: rs.createdAt,
       updatedAt: rs.updatedAt,
     };
+  }
+
+  private buildSshHostVerifier(rs: RemoteServer): (key: Buffer) => boolean {
+    const loopback = isLoopbackSshHost(rs.host.trim());
+    const expected = rs.sshHostKeySha256?.trim() ?? '';
+    return (key: Buffer) => {
+      if (loopback) {
+        return true;
+      }
+      const observed = sshHostKeySha256Fingerprint(key);
+      if (!expected) {
+        this.pendingSshHostKeyByServerId.set(rs.id, observed);
+        return true;
+      }
+      if (!sshHostKeysEqual(expected, observed)) {
+        return false;
+      }
+      this.pendingSshHostKeyByServerId.delete(rs.id);
+      return true;
+    };
+  }
+
+  /**
+   * Spread into ssh2 `Client.connect`. After `ready`, call {@link flushPendingSshHostKeyFingerprint}.
+   */
+  getSsh2ConnectOptions(
+    rs: RemoteServer,
+    privateKeyPem: string,
+    readyTimeoutMs = 120_000,
+  ): ConnectConfig {
+    const p = this.getSshConnectParams(rs, privateKeyPem);
+    return {
+      host: p.host,
+      port: p.port,
+      username: p.username,
+      privateKey: p.privateKey,
+      readyTimeout: readyTimeoutMs,
+      hostVerifier: this.buildSshHostVerifier(rs),
+      ...(p.family != null ? { family: p.family } : {}),
+    };
+  }
+
+  /** Persist trust-on-first-use host key after a successful ssh2 handshake. */
+  async flushPendingSshHostKeyFingerprint(remoteServerId: number): Promise<void> {
+    const fp = this.pendingSshHostKeyByServerId.get(remoteServerId);
+    if (!fp) {
+      return;
+    }
+    const row = await this.remoteServerRepository.findOne({
+      where: { id: remoteServerId },
+      select: { id: true, sshHostKeySha256: true },
+    });
+    if (!row || (row.sshHostKeySha256?.trim()?.length ?? 0) > 0) {
+      this.pendingSshHostKeyByServerId.delete(remoteServerId);
+      return;
+    }
+    await this.remoteServerRepository.update(remoteServerId, { sshHostKeySha256: fp });
+    this.pendingSshHostKeyByServerId.delete(remoteServerId);
+  }
+
+  /** Clear in-memory TOFU host-key capture when the session fails before {@link flushPendingSshHostKeyFingerprint}. */
+  clearPendingSshHostKeyForServer(remoteServerId: number): void {
+    this.pendingSshHostKeyByServerId.delete(remoteServerId);
   }
 
   /** PEM text for Dockerode / temp file (decrypts DB or reads file path). */
@@ -409,9 +498,8 @@ export class RemoteServersService {
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const script = `set -eu\n${bashScriptBody}`;
-    return await this.execSshBashScriptCollectOutput(p, script, onChunk);
+    return await this.execSshBashScriptCollectOutput(rs, pem, script, onChunk);
   }
 
   /**
@@ -432,10 +520,9 @@ export class RemoteServersService {
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const cmd = argv.map((a) => shSingleQuoteRemote(String(a))).join(' ');
     const script = `set -euo pipefail\ndocker ${cmd}\n`;
-    return await this.withSshClient(p, (client) =>
+    return await this.withSshClient(rs, pem, (client) =>
       this.execSshBashScriptCollectOutputBinaryStdoutOnClient(client, script),
     );
   }
@@ -475,16 +562,25 @@ docker compose -f docker-compose.yml -p ${projQ} ${tail}
   }
 
   /**
-   * Creates a `.tar.gz` of a named volume on the remote host and returns the bytes (API writes them under `destDir`).
+   * Creates a `.tar.gz` of a named volume on the remote host at `${stagingDir}/${archiveBasename}`.
+   * Caller should upload or import from this path, then remove `stagingDir` (e.g. {@link removeRemoteTreeBestEffort}).
    */
-  async dockerNamedVolumeBackupArchiveFromRemote(
+  async dockerNamedVolumeBackupArchiveOnRemoteToPath(
     remoteServerId: number,
     projectUserId: number | null,
     volumeName: string,
-  ): Promise<{ data: Buffer; stderr: string }> {
+    archiveBasename: string,
+  ): Promise<{
+    stagingDir: string;
+    remoteArchivePath: string;
+  }> {
     const safe = volumeName.trim();
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(safe)) {
       throw new BadRequestException('Invalid volume name.');
+    }
+    const base = path.basename(archiveBasename);
+    if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/i.test(base)) {
+      throw new BadRequestException('Invalid archive name.');
     }
     const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
     if (!rs) {
@@ -492,21 +588,276 @@ docker compose -f docker-compose.yml -p ${projQ} ${tail}
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const token = randomBytes(8).toString('hex');
-    const outDir = `/tmp/weehawk-vol-bk-${token}`;
-    const outDirQ = shSingleQuoteRemote(outDir);
+    const stagingDir = `/tmp/weehawk-vol-bk-${token}`;
+    const stagingDirQ = shSingleQuoteRemote(stagingDir);
     const volQ = shSingleQuoteRemote(safe);
+    const finalFile = `${stagingDir}/${base}`;
     const script = `set -euo pipefail
-mkdir -p ${outDirQ}
-docker run --rm -v ${volQ}:/v:ro -v ${outDirQ}:/out alpine:3.19 tar czf /out/backup.tar.gz -C /v .
+mkdir -p ${stagingDirQ}
+docker run --rm -v ${volQ}:/v:ro -v ${stagingDirQ}:/out alpine:3.19 tar czf /out/backup.tar.gz -C /v .
+mv ${shSingleQuoteRemote(`${stagingDir}/backup.tar.gz`)} ${shSingleQuoteRemote(finalFile)}
 `;
-    return await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.execSshBashScriptCollectOutputOnClient(client, script, undefined);
-      const buf = await this.sftpReadRemoteBuffer(client, `${outDir}/backup.tar.gz`);
-      await this.sshExecIgnoreFailure(client, `rm -rf ${outDirQ}`);
-      return { data: buf, stderr: '' };
     });
+    return { stagingDir, remoteArchivePath: finalFile };
+  }
+
+  async allocRemoteWeehawkTempDir(
+    remoteServerId: number,
+    projectUserId: number | null,
+    dirNamePrefix: string,
+  ): Promise<string> {
+    const safePrefix =
+      dirNamePrefix.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'wh';
+    const token = randomBytes(8).toString('hex');
+    const dir = `/tmp/${safePrefix}-${token}`;
+    const dirQ = shSingleQuoteRemote(dir);
+    await this.execDockerCliOnRemoteViaSsh(
+      remoteServerId,
+      projectUserId,
+      `mkdir -p ${dirQ}\n`,
+    );
+    return dir;
+  }
+
+  async removeRemoteTreeBestEffort(
+    remoteServerId: number,
+    projectUserId: number | null,
+    remotePath: string,
+  ): Promise<void> {
+    const p = remotePath.trim();
+    if (!p.startsWith('/tmp/') || p.includes('..')) {
+      return;
+    }
+    const pQ = shSingleQuoteRemote(p);
+    try {
+      await this.execDockerCliOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId,
+        `rm -rf ${pQ}\n`,
+      );
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /**
+   * Download bytes from a presigned GET URL on the deploy host (URL is written via SFTP to avoid shell quoting issues).
+   */
+  async curlPresignedDownloadToRemotePath(
+    remoteServerId: number,
+    projectUserId: number | null,
+    presignedUrl: string,
+    remoteDestAbsolutePath: string,
+  ): Promise<void> {
+    const u = presignedUrl.trim();
+    if (!/^https?:\/\//i.test(u)) {
+      throw new BadRequestException('Invalid presigned URL.');
+    }
+    const dest = remoteDestAbsolutePath.trim();
+    if (!dest.startsWith('/tmp/') || dest.includes('..')) {
+      throw new BadRequestException('Invalid destination path.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const token = randomBytes(8).toString('hex');
+    const urlFile = `/tmp/weehawk-s3get-url-${token}`;
+    const urlQ = shSingleQuoteRemote(urlFile);
+    const destQ = shSingleQuoteRemote(dest);
+    await this.withSshClient(rs, pem, async (client) => {
+      await this.sftpWriteRemoteBuffer(client, urlFile, Buffer.from(u, 'utf8'));
+      await this.execSshBashScriptCollectOutputOnClient(
+        client,
+        `set -euo pipefail
+U=$(tr -d '\\n\\r' < ${urlQ})
+rm -f ${urlQ}
+curl -fsSL -o ${destQ} "$U"
+`,
+        undefined,
+      );
+    });
+  }
+
+  /**
+   * PUT a file that already exists on the deploy host to a presigned upload URL (must match signed Content-Type).
+   */
+  async curlPresignedPutFromRemoteFile(
+    remoteServerId: number,
+    projectUserId: number | null,
+    remoteSourceAbsolutePath: string,
+    presignedUrl: string,
+    contentType: string,
+  ): Promise<void> {
+    const u = presignedUrl.trim();
+    if (!/^https?:\/\//i.test(u)) {
+      throw new BadRequestException('Invalid presigned URL.');
+    }
+    const src = remoteSourceAbsolutePath.trim();
+    if (!src.startsWith('/tmp/') || src.includes('..')) {
+      throw new BadRequestException('Invalid source path.');
+    }
+    const ct = contentType?.trim() || 'application/octet-stream';
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const token = randomBytes(8).toString('hex');
+    const urlFile = `/tmp/weehawk-s3put-url-${token}`;
+    const urlQ = shSingleQuoteRemote(urlFile);
+    const srcQ = shSingleQuoteRemote(src);
+    const ctQ = shSingleQuoteRemote(ct);
+    await this.withSshClient(rs, pem, async (client) => {
+      await this.sftpWriteRemoteBuffer(client, urlFile, Buffer.from(u, 'utf8'));
+      await this.execSshBashScriptCollectOutputOnClient(
+        client,
+        `set -euo pipefail
+U=$(tr -d '\\n\\r' < ${urlQ})
+rm -f ${urlQ}
+curl -fsS -X PUT -T ${srcQ} -H ${ctQ} "$U"
+`,
+        undefined,
+      );
+    });
+  }
+
+  /**
+   * Stream bytes into a new file under `/tmp/...` on the deploy host (SFTP write stream).
+   * Used so multipart imports never land on the API filesystem.
+   */
+  async pipeUploadStreamToRemoteImport(
+    remoteServerId: number,
+    projectUserId: number | null,
+    safeBasename: string,
+    body: Readable,
+  ): Promise<{ stagingDir: string; remotePath: string }> {
+    if (!/^[a-zA-Z0-9._-]+$/.test(safeBasename)) {
+      throw new BadRequestException('Invalid file name.');
+    }
+    if (safeBasename.length > 255) {
+      throw new BadRequestException('File name is too long.');
+    }
+    const stagingDir = await this.allocRemoteWeehawkTempDir(
+      remoteServerId,
+      projectUserId,
+      'wh-import-mp',
+    );
+    const remotePath = `${stagingDir}/${safeBasename}`;
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    try {
+      await this.withSshClient(rs, pem, async (client) => {
+        await new Promise<void>((resolve, reject) => {
+          client.sftp((sftpErr, sftp) => {
+            if (sftpErr) {
+              reject(sftpErr);
+              return;
+            }
+            const ws = sftp.createWriteStream(remotePath);
+            const done = (e?: Error) => {
+              try {
+                sftp.end();
+              } catch {
+                /* ignore */
+              }
+              if (e) {
+                reject(e);
+              } else {
+                resolve();
+              }
+            };
+            ws.on('error', (e) =>
+              done(e instanceof Error ? e : new Error(String(e))),
+            );
+            pipeline(body, ws)
+              .then(() => done())
+              .catch((e) =>
+                done(e instanceof Error ? e : new Error(String(e))),
+              );
+          });
+        });
+      });
+    } catch (e) {
+      await this.removeRemoteTreeBestEffort(remoteServerId, projectUserId, stagingDir);
+      throw e;
+    }
+    return { stagingDir, remotePath };
+  }
+
+  /**
+   * Extract an existing `.tar.gz` on the remote host into a named volume, then delete the archive file.
+   */
+  async dockerNamedVolumeImportArchiveFromRemotePath(
+    remoteServerId: number,
+    projectUserId: number | null,
+    volumeName: string,
+    remoteArchiveAbsolutePath: string,
+  ): Promise<{ stdout: string; stderr: string }> {
+    const safe = volumeName.trim();
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(safe)) {
+      throw new BadRequestException('Invalid volume name.');
+    }
+    const p = remoteArchiveAbsolutePath.trim();
+    if (!p.startsWith('/tmp/') || p.includes('..')) {
+      throw new BadRequestException('Invalid archive path.');
+    }
+    const base = path.basename(p);
+    if (!/^[a-zA-Z0-9._-]+\.tar\.gz$/i.test(base)) {
+      throw new BadRequestException('Expected a .tar.gz archive.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const inDir = path.posix.dirname(p);
+    const inDirQ = shSingleQuoteRemote(inDir);
+    const volQ = shSingleQuoteRemote(safe);
+    const pQ = shSingleQuoteRemote(p);
+    const run = `set -euo pipefail
+docker run --rm -v ${volQ}:/v -v ${inDirQ}:/in:ro alpine:3.19 sh -c 'cd /v && tar xzf /in/${base}'
+rm -f ${pQ}
+`;
+    return await this.withSshClient(rs, pem, async (client) => {
+      return await this.execSshBashScriptCollectOutputOnClient(client, run, undefined);
+    });
+  }
+
+  /** `docker cp` from a path on the deploy host into a container (no API-side file read). */
+  async dockerCpRemoteHostFileToContainer(
+    remoteServerId: number,
+    projectUserId: number | null,
+    remoteAbsolutePath: string,
+    containerId: string,
+    pathInContainer: string,
+  ): Promise<void> {
+    const p = remoteAbsolutePath.trim();
+    if (!p.startsWith('/tmp/') || p.includes('..')) {
+      throw new BadRequestException('Invalid source path.');
+    }
+    const base = path.basename(p);
+    if (!/^[a-zA-Z0-9._-]+$/.test(base)) {
+      throw new BadRequestException('Invalid import file name.');
+    }
+    const destArg = JSON.stringify(`${containerId}:${pathInContainer}`);
+    const srcQ = shSingleQuoteRemote(p);
+    await this.execDockerCliOnRemoteViaSsh(
+      remoteServerId,
+      projectUserId,
+      `docker cp ${srcQ} ${destArg}\n`,
+    );
   }
 
   /**
@@ -530,13 +881,12 @@ docker run --rm -v ${volQ}:/v:ro -v ${outDirQ}:/out alpine:3.19 tar czf /out/bac
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const token = randomBytes(8).toString('hex');
     const remoteDir = `/tmp/weehawk-dtcp-${token}`;
     const remoteDirQ = shSingleQuoteRemote(remoteDir);
     const remoteFile = `${remoteDir}/${base}`;
     const destArg = JSON.stringify(`${containerId}:${pathInContainer}`);
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.execSshBashScriptCollectOutputOnClient(
         client,
         `set -euo pipefail\nmkdir -p ${remoteDirQ}\n`,
@@ -575,13 +925,12 @@ docker run --rm -v ${volQ}:/v:ro -v ${outDirQ}:/out alpine:3.19 tar czf /out/bac
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const token = randomBytes(8).toString('hex');
     const inDir = `/tmp/weehawk-vol-im-${token}`;
     const inDirQ = shSingleQuoteRemote(inDir);
     const remoteFile = `${inDir}/${base}`;
     const volQ = shSingleQuoteRemote(safe);
-    return await this.withSshClient(p, async (client) => {
+    return await this.withSshClient(rs, pem, async (client) => {
       await this.execSshBashScriptCollectOutputOnClient(
         client,
         `set -euo pipefail\nmkdir -p ${inDirQ}\n`,
@@ -733,7 +1082,7 @@ rm -rf ${inDirQ}
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
+    const connectOpts = this.getSsh2ConnectOptions(rs, pem, 120_000);
     const script = `set +e\n${bashScriptBody}\n`;
 
     return await new Promise((resolveOuter, rejectOuter) => {
@@ -756,55 +1105,50 @@ rm -rf ${inDirQ}
 
       client
         .once('ready', () => {
-          client.exec('bash -s', (err, stream) => {
-            if (err || !stream) {
+          void this.flushPendingSshHostKeyFingerprint(rs.id).then(() => {
+            client.exec('bash -s', (err, stream) => {
+              if (err || !stream) {
+                if (!settled) {
+                  settled = true;
+                  rejectOuter(
+                    err ?? new InternalServerErrorException('SSH exec failed for remote docker logs'),
+                  );
+                }
+                try {
+                  client.end();
+                } catch {
+                  /* ignore */
+                }
+                return;
+              }
+              streamRef = stream;
+              stream.on('data', (d: Buffer) => onChunk(d.toString()));
+              stream.stderr.on('data', (d: Buffer) => onChunk(d.toString()));
+              stream.on('close', (code: number | null) => {
+                onRemoteEnd?.(code ?? null);
+                try {
+                  client.end();
+                } catch {
+                  /* ignore */
+                }
+              });
+              stream.write(script);
+              stream.end();
               if (!settled) {
                 settled = true;
-                rejectOuter(
-                  err ?? new InternalServerErrorException('SSH exec failed for remote docker logs'),
-                );
-              }
-              try {
-                client.end();
-              } catch {
-                /* ignore */
-              }
-              return;
-            }
-            streamRef = stream;
-            stream.on('data', (d: Buffer) => onChunk(d.toString()));
-            stream.stderr.on('data', (d: Buffer) => onChunk(d.toString()));
-            stream.on('close', (code: number | null) => {
-              onRemoteEnd?.(code ?? null);
-              try {
-                client.end();
-              } catch {
-                /* ignore */
+                resolveOuter({ cancel });
               }
             });
-            stream.write(script);
-            stream.end();
-            if (!settled) {
-              settled = true;
-              resolveOuter({ cancel });
-            }
           });
         })
         .on('error', (err: Error) => {
+          this.clearPendingSshHostKeyForServer(rs.id);
           if (!settled) {
             settled = true;
             rejectOuter(err);
           }
         })
-        .connect({
-          host: p.host,
-          port: p.port,
-          username: p.username,
-          privateKey: p.privateKey,
-          readyTimeout: 120_000,
-          hostVerifier: () => true,
-          ...(p.family != null ? { family: p.family } : {}),
-        });
+        .connect(connectOpts);
     });
   }
 
@@ -1158,7 +1502,6 @@ rm -rf ${inDirQ}
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const remoteDir = `/tmp/weehawk_wa_img_${randomBytes(12).toString('hex')}`;
     const dirQ = remoteDir.replace(/'/g, `'\\''`);
     const tag = WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE;
@@ -1171,7 +1514,7 @@ cd "$DIR"
 docker build -t '${tagQ}' .
 `;
 
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.sshExecCollectOutput(client, `mkdir -p '${dirQ}'`);
       await this.sftpWriteRemoteBuffer(client, `${remoteDir}/Dockerfile`, dockerfile);
       await this.sftpWriteRemoteBuffer(client, `${remoteDir}/main.go`, mainGo);
@@ -1430,7 +1773,6 @@ WantedBy=multi-user.target
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const remoteSrc = `/tmp/weehawk_wa_src_${randomBytes(16).toString('hex')}`;
     const srcQ = remoteSrc.replace(/'/g, `'\\''`);
     const b64Q = `'${unitB64.replace(/'/g, `'\\''`)}'`;
@@ -1450,7 +1792,7 @@ rm -f /tmp/weehawk-webhook-agent-bin
 ${systemd}
 `;
 
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.sshExecCollectOutput(client, `mkdir -p '${srcQ}'`);
       await this.sftpWriteRemoteBuffer(client, `${remoteSrc}/main.go`, mainGo);
       await this.sftpWriteRemoteBuffer(client, `${remoteSrc}/go.mod`, goMod);
@@ -1514,7 +1856,6 @@ sudo -n systemctl enable --now weehawk-webhook-agent
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const remoteTmp = `/tmp/weehawk_wa_${randomBytes(16).toString('hex')}`;
     const tmpQ = remoteTmp.replace(/'/g, `'\\''`);
     const b64Q = `'${unitB64.replace(/'/g, `'\\''`)}'`;
@@ -1526,7 +1867,7 @@ sudo -n chmod 644 /etc/systemd/system/weehawk-webhook-agent.service
 sudo -n systemctl daemon-reload
 sudo -n systemctl enable --now weehawk-webhook-agent
 `;
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.sftpWriteRemoteBuffer(client, remoteTmp, buf);
       await this.sshExecCollectOutput(client, `chmod 700 '${tmpQ}'`);
       await this.execSshBashScriptCollectOutputOnClient(client, body, undefined);
@@ -1553,7 +1894,6 @@ sudo -n systemctl enable --now weehawk-webhook-agent
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const envPath = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.env`;
     const scriptPath = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.sh`;
     const installScript = buildRemoteEnvAndWrappedShInstallScript({
@@ -1565,7 +1905,7 @@ sudo -n systemctl enable --now weehawk-webhook-agent
       defaults: REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
     });
     const deployBaseQ = WEEHAWK_REMOTE_DEPLOYMENTS_BASE.replace(/'/g, `'\\''`);
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.sshExecIgnoreFailure(client, `mkdir -p '${deployBaseQ}'`);
       await this.execSshBashScriptCollectOutputOnClient(client, installScript, undefined);
     });
@@ -1585,7 +1925,6 @@ sudo -n systemctl enable --now weehawk-webhook-agent
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const shQ = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.sh`.replace(
       /'/g,
       `'\\''`,
@@ -1594,7 +1933,7 @@ sudo -n systemctl enable --now weehawk-webhook-agent
       /'/g,
       `'\\''`,
     );
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.sshExecIgnoreFailure(client, `rm -f '${shQ}' '${envQ}'`);
     });
   }
@@ -1627,7 +1966,6 @@ sudo -n systemctl enable --now weehawk-webhook-agent
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const remoteDir = `/tmp/weehawk_sd_${randomBytes(12).toString('hex')}`;
     const stackQ = params.stackName.replace(/'/g, `'\\''`);
 
@@ -1642,7 +1980,7 @@ sudo -n systemctl enable --now weehawk-webhook-agent
     }
 
     const onChunk = params.onChunk;
-    return await this.withSshClient(p, async (client) => {
+    return await this.withSshClient(rs, pem, async (client) => {
       try {
         await this.sshExecCollectOutput(client, `mkdir -p '${remoteDir}/docker-config'`, onChunk);
         onChunk?.('Uploading compose to remote host…\n');
@@ -1722,20 +2060,24 @@ fi
   async mirrorDockerComposeToRemotePersistent(
     remoteServerId: number,
     projectUserId: number | null,
-    params: { localComposeAbsolutePath: string; projectName: string },
+    params:
+      | { localComposeAbsolutePath: string; projectName: string }
+      | { composeYaml: string; projectName: string },
   ): Promise<void> {
-    const yaml = await fs.readFile(params.localComposeAbsolutePath, 'utf8');
+    const yaml =
+      'composeYaml' in params
+        ? params.composeYaml
+        : await fs.readFile(params.localComposeAbsolutePath, 'utf8');
     const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
     if (!rs) {
       throw new NotFoundException(`Remote server #${remoteServerId} not found`);
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(params.projectName)}`;
     const remoteYml = `${persist}/docker-compose.yml`;
     const persistQ = persist.replace(/'/g, `'\\''`);
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.sshExecCollectOutput(client, `mkdir -p '${persistQ}'`, undefined);
       await this.sftpWriteRemoteFile(client, remoteYml, yaml);
     });
@@ -1763,7 +2105,6 @@ fi
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(params.stackName)}`;
     const persistQ = persist.replace(/'/g, `'\\''`);
 
@@ -1777,7 +2118,7 @@ fi
       }
     }
 
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       await this.sshExecCollectOutput(client, `mkdir -p '${persistQ}'`, undefined);
       await this.sftpWriteRemoteFile(
         client,
@@ -1891,10 +2232,9 @@ fi
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
     const remoteDir = params.remoteDirAbsolute.replace(/\\/g, '/').replace(/\/+$/, '');
 
-    await this.withSshClient(p, async (client) => {
+    await this.withSshClient(rs, pem, async (client) => {
       const rdq = remoteDir.replace(/'/g, `'\\''`);
       await this.sshExecCollectOutput(client, `rm -rf '${rdq}' && mkdir -p '${rdq}'`, undefined);
       const dirs = new Set<string>();
@@ -1987,8 +2327,7 @@ done
     }
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
-    return await this.withSshClient(p, async (client) => {
+    return await this.withSshClient(rs, pem, async (client) => {
       const exists = await this.sshExecExitCode(client, `docker secret inspect ${JSON.stringify(secretName)} >/dev/null 2>&1`);
       if (exists === 0) {
         return;
@@ -2062,8 +2401,7 @@ done
       sshOptions: {
         privateKey: p.privateKey,
         readyTimeout: 60_000,
-        // Match non-interactive “first connect” UX; Swarm deploy uses SSH exec on the remote host instead of local DOCKER_HOST=ssh:// when a deploy server is set.
-        hostVerifier: () => true,
+        hostVerifier: this.buildSshHostVerifier(rs),
         ...(p.family != null ? { family: p.family } : {}),
       },
     });
@@ -2238,7 +2576,7 @@ done
   async assertDeployServerById(
     id: number,
     projectUserId: number | null,
-  ): Promise<void> {
+  ): Promise<{ name: string }> {
     const rs = await this.remoteServerRepository.findOne({ where: { id } });
     if (!rs) {
       throw new NotFoundException(`Remote server #${id} not found`);
@@ -2254,6 +2592,43 @@ done
         `Remote server "${rs.name}" points to the local machine (loopback). It cannot be used as a deploy host — use a real remote server, or use this entry only for image builds.`,
       );
     }
+    return { name: rs.name };
+  }
+
+  /**
+   * GET a presigned URL from the deploy host (URL is written via SFTP). Used to confirm the host
+   * can reach object storage the same way backup/upload flows do.
+   */
+  async curlPresignedProbeOnRemote(
+    remoteServerId: number,
+    projectUserId: number | null,
+    presignedUrl: string,
+  ): Promise<void> {
+    const u = presignedUrl.trim();
+    if (!/^https?:\/\//i.test(u)) {
+      throw new BadRequestException('Invalid presigned URL.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const token = randomBytes(8).toString('hex');
+    const urlFile = `/tmp/weehawk-s3-probe-url-${token}`;
+    const urlQ = shSingleQuoteRemote(urlFile);
+    await this.withSshClient(rs, pem, async (client) => {
+      await this.sftpWriteRemoteBuffer(client, urlFile, Buffer.from(u, 'utf8'));
+      await this.execSshBashScriptCollectOutputOnClient(
+        client,
+        `set -euo pipefail
+U=$(tr -d '\\n\\r' < ${urlQ})
+rm -f ${urlQ}
+curl -fsS -o /dev/null "$U"
+`,
+        undefined,
+      );
+    });
   }
 
   /**
@@ -2268,23 +2643,63 @@ done
     return { server, privateKeyPem };
   }
 
+  /**
+   * Runs the same `send_notification` curl logic as cron/webhook remote scripts on the deploy host
+   * so outbound provider traffic uses the customer's network, not the API server.
+   */
+  async deliverNotificationChannelViaDeployHost(
+    remoteServerId: number,
+    userId: number,
+    runtime: NotificationChannelRuntimeConfig,
+    plainText: string,
+  ): Promise<ProviderSendResult> {
+    const cred = buildRemoteNotificationCredentialEnvLines(runtime);
+    if (cred.length === 1 && cred[0] === 'WEEHAWK_NOTIFY_ENABLED=0') {
+      return {
+        ok: false,
+        description:
+          'This channel type cannot be sent from a deploy host. Use a supported provider (Telegram, Slack, Discord, etc.) or clear the deploy server on the channel.',
+      };
+    }
+    const rs = await this.findEntityOrFail(remoteServerId, userId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const tag = `WHNK_MSG_${randomBytes(16).toString('hex')}`;
+    const exportsBlock = cred.map((line) => `export ${line}`).join('\n');
+    const strictBash = remoteNotifyDispatchFunctionsBashStrict('Notification');
+    const script = [
+      'set -euo pipefail',
+      exportsBlock,
+      strictBash,
+      `MSG=$(cat <<'${tag}'`,
+      plainText.replace(/\r\n/g, '\n'),
+      tag,
+      ')',
+      'send_notification "$MSG"',
+      '',
+    ].join('\n');
+    try {
+      await this.execSshBashScriptCollectOutput(rs, pem, script);
+      return { ok: true, response: 'delivered-via-deploy-host' };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, description: msg };
+    }
+  }
+
   /** For WebSocket remote terminal. */
   async getSshTerminalContext(id: number): Promise<{
-    connect: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey: Buffer;
-      family?: number;
-    };
+    remoteServerId: number;
+    connect: ConnectConfig;
   }> {
     const rs = await this.remoteServerRepository.findOne({ where: { id } });
     if (!rs) {
       throw new NotFoundException(`Remote server #${id} not found`);
     }
     const pem = await this.resolvePrivateKeyPem(rs);
-    const p = this.getSshConnectParams(rs, pem);
-    return { connect: p };
+    return {
+      remoteServerId: rs.id,
+      connect: this.getSsh2ConnectOptions(rs, pem, 120_000),
+    };
   }
 
   private async findEntityOrFail(id: number | string, userId: number): Promise<RemoteServer> {
@@ -2373,6 +2788,10 @@ done
       }
     }
 
+    const hostOrPortChanged =
+      (dto.host != null && String(dto.host).trim() !== existing.host) ||
+      (dto.port != null && dto.port !== existing.port);
+
     const merged = this.remoteServerRepository.merge(existing, {
       name: dto.name != null ? String(dto.name).trim() : existing.name,
       host: dto.host != null ? String(dto.host).trim() : existing.host,
@@ -2404,6 +2823,7 @@ done
             ),
       privateKeyEncrypted: nextEnc,
       privateKeyPath: nextPath,
+      ...(hostOrPortChanged ? { sshHostKeySha256: null } : {}),
     });
     if (isLoopbackSshHost(merged.host) && merged.serverRole === 'deploy') {
       const nDeploy = await svcRepo.count({
@@ -2445,7 +2865,11 @@ done
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
-      return await fn(docker);
+      try {
+        return await fn(docker);
+      } finally {
+        await this.flushPendingSshHostKeyFingerprint(rs.id);
+      }
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
@@ -2557,42 +2981,46 @@ done
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
     const docker = this.createDockerodeForRemote(rs, pem);
-    const ctx = path.resolve(params.contextPath);
-    const src = await this.collectRelativeFilePathsForDockerBuild(ctx);
-    if (src.length === 0) {
-      throw new BadRequestException(`Build context has no files: ${ctx}`);
-    }
-    let stream: NodeJS.ReadableStream;
     try {
-      stream = await docker.buildImage(
-        { context: ctx, src },
-        {
-          t: params.tag,
-          dockerfile: params.dockerfilePosix,
-        },
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new InternalServerErrorException(
-        `Remote Docker build (host #${remoteServerId}) failed to start: ${msg}`,
-      );
-    }
-    try {
-      const { text, streamError } = await this.followDockerProgressToString(docker, stream);
-      if (streamError) {
+      const ctx = path.resolve(params.contextPath);
+      const src = await this.collectRelativeFilePathsForDockerBuild(ctx);
+      if (src.length === 0) {
+        throw new BadRequestException(`Build context has no files: ${ctx}`);
+      }
+      let stream: NodeJS.ReadableStream;
+      try {
+        stream = await docker.buildImage(
+          { context: ctx, src },
+          {
+            t: params.tag,
+            dockerfile: params.dockerfilePosix,
+          },
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         throw new InternalServerErrorException(
-          `Docker build failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+          `Remote Docker build (host #${remoteServerId}) failed to start: ${msg}`,
         );
       }
-      return { output: text.trim() || '(build finished with no log output)' };
-    } catch (e) {
-      if (e instanceof InternalServerErrorException || e instanceof BadRequestException) {
-        throw e;
+      try {
+        const { text, streamError } = await this.followDockerProgressToString(docker, stream);
+        if (streamError) {
+          throw new InternalServerErrorException(
+            `Docker build failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+          );
+        }
+        return { output: text.trim() || '(build finished with no log output)' };
+      } catch (e) {
+        if (e instanceof InternalServerErrorException || e instanceof BadRequestException) {
+          throw e;
+        }
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new InternalServerErrorException(
+          `Docker build failed on remote host #${remoteServerId}: ${msg}`,
+        );
       }
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new InternalServerErrorException(
-        `Docker build failed on remote host #${remoteServerId}: ${msg}`,
-      );
+    } finally {
+      await this.flushPendingSshHostKeyFingerprint(remoteServerId);
     }
   }
 
@@ -2612,36 +3040,40 @@ done
     this.assertRemoteServerMatchesProject(rs, projectUserId);
     const pem = await this.resolvePrivateKeyPem(rs);
     const docker = this.createDockerodeForRemote(rs, pem);
-    const image = docker.getImage(params.imageRef);
-    const opts: Record<string, unknown> = {};
-    if (params.auth) {
-      opts.authconfig = params.auth;
-    }
-    let stream: NodeJS.ReadableStream;
     try {
-      stream = await image.push(opts);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new InternalServerErrorException(
-        `Remote Docker push (host #${remoteServerId}) failed to start: ${msg}`,
-      );
-    }
-    try {
-      const { text, streamError } = await this.followDockerProgressToString(docker, stream);
-      if (streamError) {
+      const image = docker.getImage(params.imageRef);
+      const opts: Record<string, unknown> = {};
+      if (params.auth) {
+        opts.authconfig = params.auth;
+      }
+      let stream: NodeJS.ReadableStream;
+      try {
+        stream = await image.push(opts);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         throw new InternalServerErrorException(
-          `Docker registry push failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+          `Remote Docker push (host #${remoteServerId}) failed to start: ${msg}`,
         );
       }
-      return { output: text.trim() || '(push finished with no log output)' };
-    } catch (e) {
-      if (e instanceof InternalServerErrorException || e instanceof BadRequestException) {
-        throw e;
+      try {
+        const { text, streamError } = await this.followDockerProgressToString(docker, stream);
+        if (streamError) {
+          throw new InternalServerErrorException(
+            `Docker registry push failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+          );
+        }
+        return { output: text.trim() || '(push finished with no log output)' };
+      } catch (e) {
+        if (e instanceof InternalServerErrorException || e instanceof BadRequestException) {
+          throw e;
+        }
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new InternalServerErrorException(
+          `Docker registry push failed on remote host #${remoteServerId}: ${msg}`,
+        );
       }
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new InternalServerErrorException(
-        `Docker registry push failed on remote host #${remoteServerId}: ${msg}`,
-      );
+    } finally {
+      await this.flushPendingSshHostKeyFingerprint(remoteServerId);
     }
   }
 
@@ -2796,15 +3228,19 @@ done
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
-      const v = await docker.version();
-      const lines = [
-        `Version: ${v.Version}`,
-        `ApiVersion: ${v.ApiVersion}`,
-        `Os: ${v.Os}`,
-        `Arch: ${v.Arch}`,
-        v.KernelVersion ? `KernelVersion: ${v.KernelVersion}` : '',
-      ].filter((s) => s.length > 0);
-      return { success: true, output: lines.join('\n') };
+      try {
+        const v = await docker.version();
+        const lines = [
+          `Version: ${v.Version}`,
+          `ApiVersion: ${v.ApiVersion}`,
+          `Os: ${v.Os}`,
+          `Arch: ${v.Arch}`,
+          v.KernelVersion ? `KernelVersion: ${v.KernelVersion}` : '',
+        ].filter((s) => s.length > 0);
+        return { success: true, output: lines.join('\n') };
+      } finally {
+        await this.flushPendingSshHostKeyFingerprint(rs.id);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return { success: false, output: humanizeRemoteTestError(msg, 'docker') };
@@ -2823,7 +3259,11 @@ done
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const p = this.getSshConnectParams(rs, pem);
-      const stdout = await this.execSshRemoteShell(p, "bash -lc 'uname -sn 2>/dev/null || uname -s'");
+      const stdout = await this.execSshRemoteShell(
+        rs,
+        pem,
+        "bash -lc 'uname -sn 2>/dev/null || uname -s'",
+      );
       const uname = stdout.trim().replace(/\s+/g, ' ');
       const lines = [
         `Connected as ${p.username} to ${p.host}:${p.port}.`,
@@ -2848,8 +3288,7 @@ done
     const rs = await this.findEntityOrFail(id, userId);
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
-      const p = this.getSshConnectParams(rs, pem);
-      const r = await this.execSshBashScriptCollectOutput(p, `${trimmed}\n`);
+      const r = await this.execSshBashScriptCollectOutput(rs, pem, `${trimmed}\n`);
       const out = [r.stdout, r.stderr]
         .filter((s) => s && String(s).trim())
         .join('\n');
@@ -2861,50 +3300,53 @@ done
   }
 
   private async execSshRemoteShell(
-    p: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey: Buffer;
-      family?: number;
-    },
+    rs: RemoteServer,
+    privateKeyPem: string,
     command: string,
   ): Promise<string> {
     const client = new Client();
+    const opts = this.getSsh2ConnectOptions(rs, privateKeyPem, 60_000);
     return new Promise((resolve, reject) => {
       client
         .once('ready', () => {
-          client.exec(command, (err, stream) => {
-            if (err) {
-              reject(err);
-              return;
-            }
-            let stdout = '';
-            let stderr = '';
-            stream.on('close', (code: number) => {
-              client.end();
-              if (code === 0) {
-                resolve(stdout);
-              } else {
-                reject(
-                  new BadRequestException(
-                    stderr.trim()
-                      ? `SSH remote command failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
-                      : `SSH remote command exited with code ${code}`,
-                  ),
-                );
+          void this.flushPendingSshHostKeyFingerprint(rs.id).then(() => {
+            client.exec(command, (err, stream) => {
+              if (err) {
+                reject(err);
+                return;
               }
-            });
-            stream.on('data', (d: Buffer) => {
-              stdout += d.toString();
-            });
-            stream.stderr.on('data', (d: Buffer) => {
-              stderr += d.toString();
+              let stdout = '';
+              let stderr = '';
+              stream.on('close', (code: number) => {
+                client.end();
+                if (code === 0) {
+                  resolve(stdout);
+                } else {
+                  reject(
+                    new BadRequestException(
+                      stderr.trim()
+                        ? `SSH remote command failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
+                        : `SSH remote command exited with code ${code}`,
+                    ),
+                  );
+                }
+              });
+              stream.on('data', (d: Buffer) => {
+                stdout += d.toString();
+              });
+              stream.stderr.on('data', (d: Buffer) => {
+                stderr += d.toString();
+              });
             });
           });
         })
         .on('error', (err: Error & { level?: string }) => {
-          client.end();
+          this.clearPendingSshHostKeyForServer(rs.id);
+          try {
+            client.end();
+          } catch {
+            /* ignore */
+          }
           if (err.level === 'client-authentication') {
             reject(
               new BadRequestException(
@@ -2915,44 +3357,46 @@ done
             reject(err);
           }
         })
-        .connect({
-          host: p.host,
-          port: p.port,
-          username: p.username,
-          privateKey: p.privateKey,
-          readyTimeout: 60_000,
-          hostVerifier: () => true,
-          ...(p.family != null ? { family: p.family } : {}),
-        });
+        .connect(opts);
     });
   }
 
   private async withSshClient<T>(
-    p: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey: Buffer;
-      family?: number;
-    },
+    rs: RemoteServer,
+    privateKeyPem: string,
     fn: (client: Client) => Promise<T>,
   ): Promise<T> {
     const client = new Client();
+    const opts = this.getSsh2ConnectOptions(rs, privateKeyPem, 120_000);
     return await new Promise<T>((resolve, reject) => {
       client
         .once('ready', () => {
-          void fn(client)
+          void this.flushPendingSshHostKeyFingerprint(rs.id)
+            .then(() => fn(client))
             .then((v) => {
-              client.end();
+              try {
+                client.end();
+              } catch {
+                /* ignore */
+              }
               resolve(v);
             })
             .catch((e) => {
-              client.end();
+              try {
+                client.end();
+              } catch {
+                /* ignore */
+              }
               reject(e);
             });
         })
         .on('error', (err: Error & { level?: string }) => {
-          client.end();
+          this.clearPendingSshHostKeyForServer(rs.id);
+          try {
+            client.end();
+          } catch {
+            /* ignore */
+          }
           if (err.level === 'client-authentication') {
             reject(
               new BadRequestException(
@@ -2963,30 +3407,17 @@ done
             reject(err);
           }
         })
-        .connect({
-          host: p.host,
-          port: p.port,
-          username: p.username,
-          privateKey: p.privateKey,
-          readyTimeout: 120_000,
-          hostVerifier: () => true,
-          ...(p.family != null ? { family: p.family } : {}),
-        });
+        .connect(opts);
     });
   }
 
   private async execSshBashScriptCollectOutput(
-    p: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey: Buffer;
-      family?: number;
-    },
+    rs: RemoteServer,
+    privateKeyPem: string,
     script: string,
     onChunk?: (s: string) => void,
   ): Promise<{ stdout: string; stderr: string }> {
-    return await this.withSshClient(p, (client) =>
+    return await this.withSshClient(rs, privateKeyPem, (client) =>
       this.execSshBashScriptCollectOutputOnClient(client, script, onChunk),
     );
   }

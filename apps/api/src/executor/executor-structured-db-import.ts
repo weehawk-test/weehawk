@@ -30,6 +30,7 @@ export async function runStructuredDatabaseImport(
   hostArchivePath: string,
   docker: StructuredDbImportDocker,
   containerId: string,
+  opts?: { skipLocalFsAccessCheck?: boolean },
 ): Promise<{ success: boolean; output: string }> {
   const base = path.basename(hostArchivePath);
   if (!/^[a-zA-Z0-9._-]+$/.test(base)) {
@@ -38,10 +39,12 @@ export async function runStructuredDatabaseImport(
 
   assertSafeComposeService(config.composeService);
 
-  try {
-    await fs.access(hostArchivePath);
-  } catch {
-    return { success: false, output: 'Import file not found on the server.' };
+  if (!opts?.skipLocalFsAccessCheck) {
+    try {
+      await fs.access(hostArchivePath);
+    } catch {
+      return { success: false, output: 'Import file not found on the server.' };
+    }
   }
 
   const inside = `/tmp/weehawk-import-${Date.now()}`;

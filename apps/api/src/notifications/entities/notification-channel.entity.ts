@@ -25,6 +25,13 @@ export class NotificationChannel {
   @Column({ type: 'simple-json', nullable: true })
   config!: Record<string, unknown> | null;
 
+  /**
+   * When set, Send/Test from the API runs `curl` (same logic as cron/webhook scripts) on this
+   * deploy host over SSH so outbound traffic originates from the customer's server.
+   */
+  @Column({ name: 'remote_server_id', type: 'int', nullable: true })
+  remoteServerId!: number | null;
+
   @Column({ name: 'is_active', default: true })
   isActive!: boolean;
 

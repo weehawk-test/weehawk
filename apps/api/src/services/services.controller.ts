@@ -19,7 +19,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { RemoteImportBackupInterceptor } from './remote-import-backup.interceptor';
 import { ServicesService } from './services.service';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
@@ -258,12 +258,10 @@ export class ServicesController {
   }
 
   @Post(':id/backup/import')
-  @UseInterceptors(
-    FileInterceptor('file', { limits: { fileSize: 512 * 1024 * 1024 } }),
-  )
+  @UseInterceptors(RemoteImportBackupInterceptor)
   @ApiOperation({
     summary:
-      'Import a database dump or a volume .tar.gz backup (multipart file; runs on host)',
+      'Import a DB dump or volume .tar.gz: multipart bytes stream over SSH to the deploy host only (not stored on the API server)',
   })
   async importBackup(
     @Param('id') id: string,
@@ -300,7 +298,7 @@ export class ServicesController {
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
     summary:
-      'Import database or volume backup from an object in a saved S3 profile (server downloads then imports)',
+      'Import database or volume backup from S3 (presigned download on the deploy host; API does not store the object)',
   })
   async importBackupFromS3(
     @Param('id') id: string,

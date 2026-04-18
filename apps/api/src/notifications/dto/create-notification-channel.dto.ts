@@ -1,10 +1,13 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsIn,
+  IsInt,
   IsNotEmpty,
   IsObject,
+  IsOptional,
   IsString,
   MaxLength,
+  Min,
 } from 'class-validator';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
 
@@ -42,4 +45,14 @@ export class CreateNotificationChannelDto {
   })
   @IsObject()
   config!: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional at create time. When set, deliveries and tests use this deploy host (SSH + curl). Omit to save the channel and assign a host later (e.g. via PATCH).',
+    example: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  remoteServerId?: number;
 }

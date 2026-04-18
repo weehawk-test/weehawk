@@ -14,6 +14,7 @@ import { MicrosoftTeamsProvider } from './providers/microsoft-teams.provider';
 import { GotifyProvider } from './providers/gotify.provider';
 import { NtfyProvider } from './providers/ntfy.provider';
 import { PushoverProvider } from './providers/pushover.provider';
+import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PushoverProvider } from './providers/pushover.provider';
       Notification,
       NotificationDelivery,
     ]),
+    RemoteServersModule,
   ],
   controllers: [NotificationsController],
   providers: [

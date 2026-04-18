@@ -158,6 +158,16 @@ export function parseServicesPageResponse(text: string): ServicesPageResponse {
   };
 }
 
+/**
+ * Segment for React Query keys like `["service", ownerKey, id]`.
+ * Service URLs use `publicId`; API JSON `id` is often the numeric PK — they must not diverge in the cache.
+ */
+export function serviceQueryKeyId(row: Pick<Service, "id" | "publicId">): string {
+  const pub = row.publicId?.trim();
+  if (pub) return pub;
+  return String(row.id ?? "").trim();
+}
+
 export function mapApiServiceToService(row: unknown): Service {
   const s = row as Record<string, unknown>;
   const project = s.project as { id?: number } | undefined;

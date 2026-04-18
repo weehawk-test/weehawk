@@ -16,6 +16,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createReadStream, createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
@@ -23,7 +24,9 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
+import { TestS3ConnectionDto } from './dto/test-s3-connection.dto';
 import { S3Profile } from './entities/s3-profile.entity';
+import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { inferS3ForcePathStyle } from './s3-force-path-style';
 import { getErrorMessage } from '../utils/error-message';
 import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
@@ -76,6 +79,7 @@ export class S3Service implements OnModuleInit {
     @InjectRepository(S3Profile)
     private readonly profileRepo: Repository<S3Profile>,
     private readonly configService: ConfigService,
+    private readonly remoteServersService: RemoteServersService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -334,31 +338,64 @@ export class S3Service implements OnModuleInit {
     return { success: true, name: safeName };
   }
 
-  async testConnection(dto: UpsertS3ProfileDto) {
+  async testConnection(
+    userId: number,
+    dto: TestS3ConnectionDto,
+  ): Promise<{
+    success: true;
+    message: string;
+    remoteServerId: number;
+  }> {
     const input = this.normalizeProfile(dto);
+    const remoteId = dto.remoteServerId;
+
+    const { name: remoteName } = await this.remoteServersService.assertDeployServerById(
+      remoteId,
+      userId,
+    );
+
     const client = createS3Client(input);
+    let listUrl: string;
     try {
-      await client.send(
-        new ListObjectsV2Command({
-          Bucket: input.bucket,
-          MaxKeys: 1,
-        }),
+      const cmd = new ListObjectsV2Command({
+        Bucket: input.bucket,
+        MaxKeys: 1,
+      });
+      listUrl = await (
+        getSignedUrl as (
+          c: unknown,
+          command: unknown,
+          opts: { expiresIn: number },
+        ) => Promise<string>
+      )(client, cmd, { expiresIn: 300 });
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `Could not presign list request for remote test: ${getErrorMessage(e)}`,
       );
-      return {
-        success: true,
-        message: 'S3 connection verified',
-      };
-    } catch (error) {
-      const msg =
-        error instanceof Error
-          ? error.message
-          : typeof error === 'object' && error !== null && 'message' in error
-            ? String((error as { message: unknown }).message)
-            : 'unknown error';
-      throw new InternalServerErrorException(`S3 connection failed: ${msg}`);
     } finally {
       client.destroy();
     }
+
+    try {
+      await this.remoteServersService.curlPresignedProbeOnRemote(remoteId, userId, listUrl);
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      const hint = getErrorMessage(e);
+      throw new InternalServerErrorException(
+        `S3 connection from deploy host "${remoteName}" failed: ${hint}`,
+      );
+    }
+
+    return {
+      success: true,
+      message: `S3 connection verified from deploy host "${remoteName}"`,
+      remoteServerId: remoteId,
+    };
   }
 
   async assertProfileExists(name: string, userId?: number): Promise<void> {
@@ -825,6 +862,93 @@ export class S3Service implements OnModuleInit {
   /**
    * Download an object to a local file path (writes the full object, then returns).
    */
+  /** Presigned PUT so clients or deploy hosts upload bytes directly to the bucket (not via API disk). */
+  async presignPutObject(
+    userId: number,
+    profileName: string,
+    objectKey: string,
+    opts?: { contentType?: string; expiresInSeconds?: number },
+  ): Promise<{
+    url: string;
+    bucket: string;
+    key: string;
+    expiresIn: number;
+    contentType: string;
+  }> {
+    const row = await this.findProfileOrThrow(userId, profileName);
+    const input = this.rowToCredentials(row);
+    const key = this.assertSafeObjectKey(objectKey);
+    const expiresIn = Math.min(
+      Math.max(opts?.expiresInSeconds ?? 3600, 60),
+      60 * 60 * 24 * 7,
+    );
+    const contentType =
+      opts?.contentType?.trim() ||
+      (key.endsWith('.gz') ? 'application/gzip' : 'application/octet-stream');
+    const client = createS3Client(input);
+    try {
+      const cmd = new PutObjectCommand({
+        Bucket: input.bucket,
+        Key: key,
+        ContentType: contentType,
+      });
+      const url = await (
+        getSignedUrl as (
+          c: unknown,
+          command: unknown,
+          opts: { expiresIn: number },
+        ) => Promise<string>
+      )(client, cmd, { expiresIn });
+      return { url, bucket: input.bucket, key, expiresIn, contentType };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 presigned PUT failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /** Presigned GET so clients download directly from the bucket (not streamed through the API). */
+  async presignGetObject(
+    userId: number,
+    profileName: string,
+    objectKey: string,
+    expiresInSeconds?: number,
+  ): Promise<{ url: string; bucket: string; key: string; expiresIn: number }> {
+    const row = await this.findProfileOrThrow(userId, profileName);
+    const input = this.rowToCredentials(row);
+    const key = this.assertSafeObjectKey(objectKey);
+    const expiresIn = Math.min(
+      Math.max(expiresInSeconds ?? 3600, 60),
+      60 * 60 * 24 * 7,
+    );
+    const client = createS3Client(input);
+    try {
+      const cmd = new GetObjectCommand({ Bucket: input.bucket, Key: key });
+      const url = await (
+        getSignedUrl as (
+          c: unknown,
+          command: unknown,
+          opts: { expiresIn: number },
+        ) => Promise<string>
+      )(client, cmd, { expiresIn });
+      return { url, bucket: input.bucket, key, expiresIn };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 presigned GET failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
   async downloadObjectToFile(
     userId: number,
     profileName: string,

@@ -1,41 +1,11 @@
 import { mkdtemp, rm } from 'fs/promises';
-import { homedir, tmpdir } from 'os';
+import { tmpdir } from 'os';
 import * as path from 'path';
 
-function expandEnvTokens(input: string): string {
-  if (!input) return input;
-  const fromPercent = input.replace(/%([A-Z0-9_]+)%/gi, (_, key: string) => {
-    const value = process.env[key];
-    return typeof value === 'string' ? value : '';
-  });
-  const fromBraced = fromPercent.replace(/\$\{([A-Z0-9_]+)\}/gi, (_, key: string) => {
-    const value = process.env[key];
-    return typeof value === 'string' ? value : '';
-  });
-  return fromBraced.replace(/\$([A-Z0-9_]+)/gi, (_, key: string) => {
-    const value = process.env[key];
-    return typeof value === 'string' ? value : '';
-  });
-}
-
-function resolveDeploymentsBaseDir(configuredBaseDir?: string | null): string {
-  const configured = expandEnvTokens((configuredBaseDir || '').trim()).trim();
-  if (configured) return path.resolve(configured);
-
-  if (process.platform === 'win32') {
-    const localAppData = (process.env.LOCALAPPDATA || '').trim();
-    if (localAppData) {
-      return path.join(localAppData, 'weehawk', 'deployments');
-    }
-    const programData = (process.env.PROGRAMDATA || '').trim();
-    if (programData) {
-      return path.join(programData, 'weehawk', 'deployments');
-    }
-  }
-
-  return path.join(homedir(), '.weehawk', 'deployments');
-}
-
+/**
+ * Ephemeral deploy workspace on the control plane (under OS temp). Real compose/stacks and builds
+ * run on the user’s SSH deploy host; this path is only for staging source/context when needed.
+ */
 export function toSafePathSegment(raw: string): string {
   const normalized = (raw || '')
     .trim()
@@ -47,21 +17,12 @@ export function toSafePathSegment(raw: string): string {
 
 export function getServiceDeploymentDir(
   appName: string | undefined,
-  configuredBaseDir?: string | null,
+  serviceId?: number | null,
 ): string {
-  const baseDir = resolveDeploymentsBaseDir(configuredBaseDir);
   const safeAppName = toSafePathSegment(appName || 'service');
-  const resolvedBaseDir = path.resolve(baseDir);
-  const deploymentDir = path.resolve(resolvedBaseDir, safeAppName);
-  const basePrefix = resolvedBaseDir.endsWith(path.sep)
-    ? resolvedBaseDir
-    : `${resolvedBaseDir}${path.sep}`;
-
-  if (deploymentDir !== resolvedBaseDir && !deploymentDir.startsWith(basePrefix)) {
-    throw new Error('Invalid deployment directory path.');
-  }
-
-  return deploymentDir;
+  const idPart =
+    serviceId != null && serviceId >= 1 ? `-svc${serviceId}` : '';
+  return path.join(tmpdir(), 'weehawk-orchestrator', `${safeAppName}${idPart}`);
 }
 
 /** Temp directory for a single backup run (volume tar.gz or DB dump); removed after S3 upload. */

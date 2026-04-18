@@ -19,10 +19,7 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { NotificationService } from './notification.service';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
-import { SendNotificationDto } from './dto/send-notification.dto';
-import { TestTelegramCredentialsDto } from './dto/test-telegram-credentials.dto';
 import { PagedLogsQueryDto } from './dto/paged-logs-query.dto';
-import { BulkDeleteLogsDto } from './dto/bulk-delete-logs.dto';
 import { BulkDeleteChannelsDto } from './dto/bulk-delete-channels.dto';
 
 type AuthedReq = { user?: { email: string; userId: number } };
@@ -73,19 +70,6 @@ export class NotificationsController {
     );
   }
 
-  @Post('test-credentials')
-  testCredentials(
-    @Req() req: AuthedReq,
-    @Body() dto: TestTelegramCredentialsDto,
-  ) {
-    return this.notificationsService.testTelegramCredentials(
-      this.userId(req),
-      dto.botToken,
-      dto.chatId,
-      dto.channelName,
-    );
-  }
-
   @Post('channels')
   createChannel(
     @Req() req: AuthedReq,
@@ -117,41 +101,4 @@ export class NotificationsController {
     return this.notificationsService.testChannel(this.userId(req), id);
   }
 
-  @Get('logs')
-  listLogs(@Req() req: AuthedReq) {
-    return this.notificationsService.listLogs(this.userId(req));
-  }
-
-  @Get('logs/paged')
-  listLogsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
-    return this.notificationsService.listLogsPaged(
-      this.userId(req),
-      q.page,
-      q.pageSize,
-      q.q,
-    );
-  }
-
-  @Delete('logs/:id')
-  async deleteLog(
-    @Req() req: AuthedReq,
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
-    await this.notificationsService.deleteLog(this.userId(req), id);
-    return { ok: true };
-  }
-
-  @Post('logs/bulk-delete')
-  async bulkDeleteLogs(@Req() req: AuthedReq, @Body() dto: BulkDeleteLogsDto) {
-    return this.notificationsService.bulkDeleteLogs(this.userId(req), dto.ids);
-  }
-
-  @Post('send')
-  send(@Req() req: AuthedReq, @Body() dto: SendNotificationDto) {
-    return this.notificationsService.sendMessage(
-      this.userId(req),
-      dto.channelId,
-      dto.message,
-    );
-  }
 }

@@ -11,13 +11,8 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import * as net from 'net';
-import * as path from 'path';
 import { Like, Repository } from 'typeorm';
 import { NotificationService } from '../notifications/notification.service';
-import {
-  createBackupTempDir,
-  removeBackupTempDir,
-} from '../services/deployment-paths';
 import { ExecutorService } from '../executor/executor.service';
 import { S3Service } from '../s3/s3.service';
 import { ServicesService } from '../services/services.service';
@@ -574,8 +569,17 @@ export class WebhooksService implements OnApplicationBootstrap {
     userId: number,
     contextId: number,
     profileName: string | null | undefined,
-    destDir: string,
-    r: { success: boolean; output: string; archiveBasename?: string },
+    r: {
+      success: boolean;
+      output: string;
+      archiveBasename?: string;
+      remoteArtifact?: {
+        remoteServerId: number;
+        projectUserId: number | null;
+        stagingDir: string;
+        remoteFilePath: string;
+      };
+    },
   ): Promise<{ success: boolean; output: string }> {
     if (!r.success || !r.archiveBasename) {
       return { success: r.success, output: r.output };
@@ -587,20 +591,42 @@ export class WebhooksService implements OnApplicationBootstrap {
         output: `${r.output}\nS3 destination is not configured.`,
       };
     }
-    const localPath = path.join(destDir, r.archiveBasename);
     const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    const ra = r.remoteArtifact;
+    if (!ra) {
+      return {
+        success: false,
+        output: `${r.output}\nBackup archive was not created on the deploy host.`,
+      };
+    }
     try {
-      const { bucket, key: uploadedKey } = await this.s3Service.uploadLocalFile(
-        userId,
-        trimmed,
-        localPath,
-        key,
+      const put = await this.s3Service.presignPutObject(userId, trimmed, key, {
+        contentType: r.archiveBasename.toLowerCase().endsWith('.gz')
+          ? 'application/gzip'
+          : 'application/octet-stream',
+      });
+      await this.remoteServersService.curlPresignedPutFromRemoteFile(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.remoteFilePath,
+        put.url,
+        put.contentType,
+      );
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.stagingDir,
       );
       return {
         success: true,
-        output: `${r.output}\nUploaded to s3://${bucket}/${uploadedKey}`,
+        output: `${r.output}\nUploaded to s3://${put.bucket}/${put.key}`,
       };
     } catch (e) {
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.stagingDir,
+      );
       return {
         success: false,
         output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
@@ -1091,37 +1117,30 @@ export class WebhooksService implements OnApplicationBootstrap {
             output =
               'S3 destination is not configured. Edit the webhook and choose a saved S3 profile.';
           } else {
-            let destDir: string | null = null;
             try {
-              destDir = await createBackupTempDir();
               const ssh = await this.servicesService.getDockerSshTargetIds(w.serviceId);
               if (ssh.remoteServerId == null) {
                 success = false;
                 output =
                   'This service has no deploy host; volume backup runs on the remote Docker machine. Set Remote Docker host on the service, then try again.';
               } else {
-              const r = await this.executorService.backupDockerVolume(
-                w.volumeSource,
-                destDir,
-                ssh.remoteServerId,
-                null,
-              );
-              const final = await this.finalizeBackupWithS3(
-                1,
-                w.id,
-                w.backupS3ProfileName,
-                destDir,
-                r,
-              );
-              success = final.success;
-              output = final.output;
+                const r = await this.executorService.backupDockerVolume(
+                  w.volumeSource,
+                  ssh.remoteServerId,
+                  null,
+                );
+                const final = await this.finalizeBackupWithS3(
+                  w.userId,
+                  w.id,
+                  w.backupS3ProfileName,
+                  r,
+                );
+                success = final.success;
+                output = final.output;
               }
-            } finally {
-              if (destDir) {
-                await removeBackupTempDir(destDir).catch(() => {
-                  /* best effort */
-                });
-              }
+            } catch (e) {
+              success = false;
+              output = getErrorMessage(e);
             }
           }
         } else if (w.serviceAction === 'database_backup' && w.serviceId != null) {
@@ -1131,54 +1150,41 @@ export class WebhooksService implements OnApplicationBootstrap {
             output =
               'S3 destination is not configured. Edit the webhook and choose a saved S3 profile.';
           } else if (w.databaseBackupConfig) {
-            let destDir: string | null = null;
             try {
-              destDir = await createBackupTempDir();
               const r = await this.executorService.backupDatabaseStructured(
                 w.serviceId,
                 w.databaseBackupConfig,
-                destDir,
               );
               const final = await this.finalizeBackupWithS3(
-                1,
+                w.userId,
                 w.id,
                 w.backupS3ProfileName,
-                destDir,
                 r,
               );
               success = final.success;
               output = final.output;
-            } finally {
-              if (destDir) {
-                await removeBackupTempDir(destDir).catch(() => {
-                  /* best effort */
-                });
-              }
+            } catch (e) {
+              success = false;
+              output = getErrorMessage(e);
             }
           } else if (w.dockerCommand) {
-            let destDir: string | null = null;
             try {
-              destDir = await createBackupTempDir();
               const r = await this.executorService.backupDatabaseFromDockerCommand(
                 w.serviceId,
                 w.dockerCommand,
-                destDir,
+                '',
               );
               const final = await this.finalizeBackupWithS3(
-                1,
+                w.userId,
                 w.id,
                 w.backupS3ProfileName,
-                destDir,
                 r,
               );
               success = final.success;
               output = final.output;
-            } finally {
-              if (destDir) {
-                await removeBackupTempDir(destDir).catch(() => {
-                  /* best effort */
-                });
-              }
+            } catch (e) {
+              success = false;
+              output = getErrorMessage(e);
             }
           } else {
             success = false;

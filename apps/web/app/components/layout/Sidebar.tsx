@@ -71,7 +71,7 @@ function buildMainNavSections(): MainNavSection[] {
       items: [
         { href: "/webhooks", label: "Webhooks", icon: Webhook },
         { href: "/cron-jobs", label: "Cron Jobs", icon: Clock3 },
-        { href: "/notifications/channels", label: "Notifications", icon: Bell },
+        { href: "/notifications", label: "Notifications", icon: Bell },
         { href: "/s3", label: "S3 Destinations", icon: HardDrive },
       ],
     },
@@ -283,7 +283,7 @@ export function Sidebar() {
     if (href === "/") {
       return location === "/" || location === "/projects" || location.startsWith("/projects/");
     }
-    if (href === "/notifications/channels") return location.startsWith("/notifications");
+    if (href === "/notifications") return location.startsWith("/notifications");
     if (href === "/registry") {
       return location === "/registry" || location.startsWith("/registry/");
     }

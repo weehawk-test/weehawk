@@ -8,8 +8,9 @@ import {
   Inject,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { gzipSync } from 'zlib';
+import { randomBytes } from 'crypto';
 import * as fs from 'fs/promises';
+import { tmpdir } from 'os';
 import * as path from 'path';
 import { ServicesService } from '../services/services.service';
 import { composeType } from '../services/entities/composeType.enum';
@@ -29,7 +30,7 @@ import { emitDeployLog, formatExecError, stderrIndicatesDockerFailure } from './
 import type { ExecuteDeployOptions } from './executor-types';
 import { isSwarmStackService } from './executor-swarm';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
-import { runStructuredDatabaseBackup } from './executor-structured-db-backup';
+import { runStructuredDatabaseBackupOnRemoteHost } from './executor-structured-db-backup';
 import {
   runStructuredDatabaseImport,
   type StructuredDbImportDocker,
@@ -142,32 +143,32 @@ export class ExecutorService {
       };
     }
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-
-    await fs.mkdir(deployDir, { recursive: true });
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
-
+    const deployDir = getServiceDeploymentDir(service.appName, service.id);
     const finalConfig = service.dockerConfig.replace(
       /\${APP_NAME}/g,
       service.appName,
     );
-    await fs.writeFile(composeFile, finalConfig);
+
     if (sshTargets.remoteServerId != null && !isSwarmStackService(service)) {
       await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
         sshTargets.remoteServerId,
         projectUserId,
         {
-          localComposeAbsolutePath: composeFile,
+          composeYaml: finalConfig,
           projectName: service.appName || 'service',
         },
       );
     }
 
+    const needsLocalSourceTree =
+      isSwarmStackService(service) &&
+      service.composeType === composeType.APPLICATION;
+    if (needsLocalSourceTree) {
+      await fs.mkdir(deployDir, { recursive: true });
+    }
+
     const execOpts = {
-      cwd: deployDir,
+      cwd: needsLocalSourceTree ? deployDir : tmpdir(),
       env: await this.getProcessEnvForService(service),
     };
     const deployLogEmitter = options?.deployLogEmitter;
@@ -242,9 +243,6 @@ export class ExecutorService {
               buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
               if (buildLogPrefix) emitChunk(buildLogPrefix);
             } else {
-              if (mode === 'deploy') {
-                await removeDeploymentFolder(deployDir);
-              }
               return {
                 success: false,
                 output:
@@ -253,9 +251,6 @@ export class ExecutorService {
             }
             if (registryPush?.trim()) {
               if (!useRemoteDockerBuild || buildRemoteServerId == null) {
-                if (mode === 'deploy') {
-                  await removeDeploymentFolder(deployDir);
-                }
                 return {
                   success: false,
                   output:
@@ -280,9 +275,6 @@ export class ExecutorService {
                   emitChunk(pushChunk);
                 }
               } catch (pushErr) {
-                if (mode === 'deploy') {
-                  await removeDeploymentFolder(deployDir);
-                }
                 if (pushErr instanceof HttpException) {
                   return { success: false, output: pushErr.message };
                 }
@@ -416,9 +408,6 @@ export class ExecutorService {
       }
       return { success, output: out };
     } catch (error) {
-      if (mode === 'deploy') {
-        await removeDeploymentFolder(deployDir);
-      }
       if (error instanceof HttpException) {
         const res = error.getResponse();
         let msg: string;
@@ -433,6 +422,8 @@ export class ExecutorService {
         return { success: false, output: msg };
       }
       return { success: false, output: formatExecError(error) };
+    } finally {
+      await removeDeploymentFolder(deployDir);
     }
   }
 
@@ -465,12 +456,7 @@ export class ExecutorService {
         'No compose YAML saved for this service yet. Save the service configuration first.',
       );
     }
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    await fs.mkdir(deployDir, { recursive: true });
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
+    const deployDir = getServiceDeploymentDir(service.appName, service.id);
     const finalConfig = service.dockerConfig.replace(
       /\${APP_NAME}/g,
       service.appName,
@@ -480,14 +466,14 @@ export class ExecutorService {
         'Compose content is empty after resolving ${APP_NAME}. Fix the service YAML and save.',
       );
     }
-    await fs.writeFile(composeFile, finalConfig);
 
+    try {
     if (!isSwarmStackService(service)) {
       await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
         remoteId,
         projectUserId,
         {
-          localComposeAbsolutePath: composeFile,
+          composeYaml: finalConfig,
           projectName: service.appName || 'service',
         },
       );
@@ -536,9 +522,13 @@ export class ExecutorService {
       );
     }
     if (isSwarmStackService(service) && service.composeType === composeType.APPLICATION) {
+      await fs.mkdir(deployDir, { recursive: true });
       await this.maybeMirrorApplicationSourceForOnHostRedeploy(service, deployDir, remoteId);
     }
     return { ok: true };
+    } finally {
+      await removeDeploymentFolder(deployDir);
+    }
   }
 
   /**
@@ -584,23 +574,15 @@ export class ExecutorService {
       );
     }
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
-
-    await fs.mkdir(deployDir, { recursive: true });
     const finalConfig = service.dockerConfig.replace(
       /\${APP_NAME}/g,
       service.appName,
     );
-    await fs.writeFile(composeFile, finalConfig);
     const projectUserId: number | null = null;
     await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
       sshIds.remoteServerId,
       projectUserId,
-      { localComposeAbsolutePath: composeFile, projectName: service.appName || 'service' },
+      { composeYaml: finalConfig, projectName: service.appName || 'service' },
     );
     const deployEnv = parseEnv(service.env || '');
     try {
@@ -632,11 +614,6 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
 
     try {
       if (isSwarmStackService(service)) {
@@ -668,12 +645,6 @@ export class ExecutorService {
       if (sshIds.remoteServerId == null) {
         return { running: false };
       }
-
-      const exists = await fs
-        .access(composeFile)
-        .then(() => true)
-        .catch(() => false);
-      if (!exists) return { running: false };
 
       const deployEnv = parseEnv(service.env || '');
       const r = await this.withRuntimeTimeout(
@@ -712,11 +683,6 @@ export class ExecutorService {
       throw e;
     }
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     let key: string;
@@ -759,17 +725,6 @@ export class ExecutorService {
         return { id: cid };
       }
 
-      const exists = await fs
-        .access(composeFile)
-        .then(() => true)
-        .catch(() => false);
-      if (!exists) {
-        return {
-          error:
-            'Compose file not found on the server. Deploy this service first.',
-        };
-      }
-
       if (sshIds.remoteServerId == null) {
         return { error: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
       }
@@ -802,11 +757,7 @@ export class ExecutorService {
     const service = await this.servicesService.findOne(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
+    const deployDir = getServiceDeploymentDir(service.appName, service.id);
 
     try {
       if (isSwarmStackService(service)) {
@@ -823,25 +774,19 @@ export class ExecutorService {
           );
         }
       } else if (sshIds.remoteServerId != null) {
-        const fileExists = await fs
-          .access(composeFile)
-          .then(() => true)
-          .catch(() => false);
-        if (fileExists) {
-          const deployEnv = parseEnv(service.env || '');
-          await this.remoteServersService.composeInPersistentDeploymentViaSsh(
-            sshIds.remoteServerId,
-            projectUserId,
-            {
-              projectName: service.appName,
-              composeArgvTail: ['down', '-v'],
-              deployEnv,
-            },
-          );
-          console.log(
-            `Compose project ${service.appName} stopped and volumes removed on deploy host.`,
-          );
-        }
+        const deployEnv = parseEnv(service.env || '');
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['down', '-v'],
+            deployEnv,
+          },
+        );
+        console.log(
+          `Compose project ${service.appName} stopped and volumes removed on deploy host.`,
+        );
       }
     } catch (error) {
       console.error(`Clean stop failed: ${error.message}`);
@@ -860,17 +805,10 @@ export class ExecutorService {
       return { items: [], error: 'No compose configuration on this service.' };
     }
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
-    await fs.mkdir(deployDir, { recursive: true });
     const finalConfig = service.dockerConfig.replace(
       /\${APP_NAME}/g,
       service.appName,
     );
-    await fs.writeFile(composeFile, finalConfig, 'utf8');
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     if (sshIds.remoteServerId == null) {
@@ -884,7 +822,7 @@ export class ExecutorService {
       await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
         sshIds.remoteServerId,
         projectUserId,
-        { localComposeAbsolutePath: composeFile, projectName: service.appName || 'service' },
+        { composeYaml: finalConfig, projectName: service.appName || 'service' },
       );
       const deployEnv = parseEnv(service.env || '');
       const { stdout } = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
@@ -914,20 +852,18 @@ export class ExecutorService {
   async backupDatabaseStructured(
     serviceId: number,
     config: DatabaseBackupConfig,
-    destDir: string,
-  ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
+  ): Promise<{
+    success: boolean;
+    output: string;
+    archiveBasename?: string;
+    remoteArtifact?: {
+      remoteServerId: number;
+      projectUserId: number | null;
+      stagingDir: string;
+      remoteFilePath: string;
+    };
+  }> {
     const service = await this.servicesService.findOne(serviceId);
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    await fs.mkdir(deployDir, { recursive: true });
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
-    const finalConfig = (service.dockerConfig || '').replace(
-      /\$\{APP_NAME\}/g,
-      service.appName,
-    );
-    await fs.writeFile(composeFile, finalConfig, 'utf8');
 
     const resolved = await this.getExecContainerId(
       serviceId,
@@ -942,45 +878,77 @@ export class ExecutorService {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
     const projectUserId: number | null = null;
-    const runDocker = (argv: string[]) =>
-      this.remoteServersService.execDockerArgvBinaryOnRemoteViaSsh(
-        sshIds.remoteServerId!,
-        projectUserId,
-        argv,
-      );
-    return runStructuredDatabaseBackup(
-      deployDir,
-      config,
-      destDir,
-      service.appName,
-      runDocker,
-      resolved.id,
+    const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
+      sshIds.remoteServerId,
+      projectUserId,
+      'weehawk-db-bk',
     );
+    const r = await runStructuredDatabaseBackupOnRemoteHost(
+      config,
+      stagingDir,
+      service.appName,
+      resolved.id,
+      (body) =>
+        this.remoteServersService.execDockerCliOnRemoteViaSsh(
+          sshIds.remoteServerId!,
+          projectUserId,
+          body,
+        ),
+    );
+    if (!r.success || !r.archiveBasename) {
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        sshIds.remoteServerId,
+        projectUserId,
+        stagingDir,
+      );
+      return r;
+    }
+    return {
+      ...r,
+      remoteArtifact: {
+        remoteServerId: sshIds.remoteServerId!,
+        projectUserId,
+        stagingDir,
+        remoteFilePath: `${stagingDir}/${r.archiveBasename}`,
+      },
+    };
   }
 
   async backupDockerVolume(
     volumeName: string,
-    destDir: string,
     remoteServerId: number,
     projectUserId: number | null = null,
-  ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
+  ): Promise<{
+    success: boolean;
+    output: string;
+    archiveBasename?: string;
+    remoteArtifact?: {
+      remoteServerId: number;
+      projectUserId: number | null;
+      stagingDir: string;
+      remoteFilePath: string;
+    };
+  }> {
     try {
-      const { data, stderr } =
-        await this.remoteServersService.dockerNamedVolumeBackupArchiveFromRemote(
+      const safe = volumeName.trim();
+      const archiveBasename = `vol-${safe}-${Date.now()}.tar.gz`;
+      const { stagingDir, remoteArchivePath } =
+        await this.remoteServersService.dockerNamedVolumeBackupArchiveOnRemoteToPath(
           remoteServerId,
           projectUserId,
           volumeName,
+          archiveBasename,
         );
-      await fs.mkdir(destDir, { recursive: true });
-      const safe = volumeName.trim();
-      const archiveBasename = `vol-${safe}-${Date.now()}.tar.gz`;
-      const fullPath = path.join(path.resolve(destDir), archiveBasename);
-      await fs.writeFile(fullPath, data);
-      const out = [stderr].filter((s) => s?.trim()).join('\n');
       return {
         success: true,
-        output: [out, `Archive: ${fullPath}`].filter(Boolean).join('\n'),
+        output: `Archive on deploy host: ${remoteArchivePath}`,
         archiveBasename,
+        remoteArtifact: {
+          remoteServerId,
+          projectUserId,
+          stagingDir,
+          remoteFilePath: remoteArchivePath,
+        },
       };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -993,19 +961,9 @@ export class ExecutorService {
     serviceId: number,
     config: DatabaseBackupConfig,
     hostArchivePath: string,
+    opts?: { archiveOnRemoteHost?: boolean },
   ): Promise<{ success: boolean; output: string }> {
     const service = await this.servicesService.findOne(serviceId);
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    await fs.mkdir(deployDir, { recursive: true });
-    const composeFile = path.join(deployDir, 'docker-compose.yml');
-    const finalConfig = (service.dockerConfig || '').replace(
-      /\$\{APP_NAME\}/g,
-      service.appName,
-    );
-    await fs.writeFile(composeFile, finalConfig, 'utf8');
 
     const resolved = await this.getExecContainerId(
       serviceId,
@@ -1020,10 +978,20 @@ export class ExecutorService {
     }
     const projectUserId: number | null = null;
     const cid = resolved.id;
+    const onRemote = Boolean(opts?.archiveOnRemoteHost);
     const docker: StructuredDbImportDocker = {
       copyHostArchiveIntoContainer: (hostPath, destSpec) => {
         const idx = destSpec.indexOf(':');
         const pathInContainer = idx >= 0 ? destSpec.slice(idx + 1) : destSpec;
+        if (onRemote) {
+          return this.remoteServersService.dockerCpRemoteHostFileToContainer(
+            sshIds.remoteServerId!,
+            projectUserId,
+            hostPath,
+            cid,
+            pathInContainer,
+          );
+        }
         return this.remoteServersService.uploadHostFileAndDockerCpToContainer(
           sshIds.remoteServerId!,
           projectUserId,
@@ -1033,10 +1001,20 @@ export class ExecutorService {
         );
       },
       execInContainer: async (innerSh) => {
+        // execDockerCliOnRemoteViaSsh wraps with `set -eu`. A `docker exec … sh -c "…"` string would be
+        // double-quote-expanded on the **deploy host**, so $POSTGRES_PASSWORD* (meant for the container)
+        // triggers nounset failures there. Feed the script via stdin + quoted heredoc — no host expansion.
+        const marker = `WEEHAWK_DB_IMPORT_${Date.now()}_${randomBytes(6).toString('hex')}`;
+        const remoteBody = `docker exec -i ${JSON.stringify(
+          cid,
+        )} sh -s <<'${marker}'
+${innerSh}
+${marker}
+`;
         const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
           sshIds.remoteServerId!,
           projectUserId,
-          `docker exec ${JSON.stringify(cid)} sh -c ${JSON.stringify(innerSh)}`,
+          remoteBody,
         );
         return { stdout: r.stdout, stderr: r.stderr };
       },
@@ -1048,7 +1026,9 @@ export class ExecutorService {
         );
       },
     };
-    return runStructuredDatabaseImport(config, hostArchivePath, docker, cid);
+    return runStructuredDatabaseImport(config, hostArchivePath, docker, cid, {
+      skipLocalFsAccessCheck: onRemote,
+    });
   }
 
   /** Restore a named volume from a .tar.gz produced by volume backup. */
@@ -1077,20 +1057,25 @@ export class ExecutorService {
   }
 
   /**
-   * Run a docker command that prints a SQL/text dump on stdout; gzip and write under `destDir`.
+   * Run a docker command that prints a SQL/text dump on stdout; gzip and write on the deploy host (no API disk).
    * Use plain `pg_dump` text output (not `-Fc`). Command rules match `runWebhookDockerCommand`.
    */
   async backupDatabaseFromDockerCommand(
     serviceId: number,
     rawInput: string,
-    destDir: string,
-  ): Promise<{ success: boolean; output: string; archiveBasename?: string }> {
+    _destDir: string,
+  ): Promise<{
+    success: boolean;
+    output: string;
+    archiveBasename?: string;
+    remoteArtifact?: {
+      remoteServerId: number;
+      projectUserId: number | null;
+      stagingDir: string;
+      remoteFilePath: string;
+    };
+  }> {
     const service = await this.servicesService.findOne(serviceId);
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    await fs.mkdir(deployDir, { recursive: true });
     let cmd = rawInput.trim().replace(/\s+/g, ' ');
     const lower = cmd.toLowerCase();
     if (!lower.startsWith('docker')) {
@@ -1119,9 +1104,19 @@ export class ExecutorService {
     const projectUserId: number | null = null;
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
     const persistQ = persist.replace(/'/g, `'\\''`);
+    const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
+      sshIds.remoteServerId,
+      projectUserId,
+      'weehawk-dbcmd',
+    );
+    const archiveBasename = `db-${service.appName}-${Date.now()}.sql.gz`;
+    const outFile = `${stagingDir}/${archiveBasename}`;
+    const outQ = `'${outFile.replace(/'/g, `'\\''`)}'`;
     const body = `set -euo pipefail
 cd '${persistQ}'
-${cmd}
+OUT=${outQ}
+${cmd} | gzip -c > "$OUT"
+test -s "$OUT"
 `;
     try {
       const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
@@ -1129,35 +1124,35 @@ ${cmd}
         projectUserId,
         body,
       );
-      const stdout = r.stdout ?? '';
       const stderr = r.stderr ?? '';
-      const err = stderr ?? '';
-      const failed = stderrIndicatesDockerFailure(err);
+      const failed = stderrIndicatesDockerFailure(stderr);
       if (failed) {
-        const out = [stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
+        await this.remoteServersService.removeRemoteTreeBestEffort(
+          sshIds.remoteServerId,
+          projectUserId,
+          stagingDir,
+        );
+        const out = [r.stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
         return { success: false, output: out || '(no output)' };
       }
-      const rawOut = stdout ?? '';
-      if (!rawOut.length) {
-        return {
-          success: false,
-          output: 'Database backup produced no output on stdout.',
-        };
-      }
-      await fs.mkdir(destDir, { recursive: true });
-      const archiveBasename = `db-${service.appName}-${Date.now()}.sql.gz`;
-      const fullPath = path.join(path.resolve(destDir), archiveBasename);
-      const gz = gzipSync(Buffer.from(rawOut, 'utf8'));
-      await fs.writeFile(fullPath, gz);
-      const out = [stdout, stderr]
-        .filter((s) => s && String(s).trim())
-        .join('\n');
+      const out = [r.stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
       return {
         success: true,
-        output: [out, `Archive: ${fullPath}`].filter(Boolean).join('\n'),
+        output: [out, `Archive: ${outFile}`].filter(Boolean).join('\n'),
         archiveBasename,
+        remoteArtifact: {
+          remoteServerId: sshIds.remoteServerId!,
+          projectUserId,
+          stagingDir,
+          remoteFilePath: outFile,
+        },
       };
     } catch (e) {
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        sshIds.remoteServerId,
+        projectUserId,
+        stagingDir,
+      );
       const msg = e instanceof Error ? e.message : String(e);
       return { success: false, output: msg };
     }
@@ -1172,11 +1167,6 @@ ${cmd}
     rawInput: string,
   ): Promise<{ success: boolean; output: string }> {
     const service = await this.servicesService.findOne(serviceId);
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
-    await fs.mkdir(deployDir, { recursive: true });
     const script = rawInput.trim();
     if (!script) {
       return { success: false, output: 'Script is empty.' };
@@ -1244,10 +1234,6 @@ ${script}
     const service = await this.servicesService.findOne(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
 
     try {
       if (isSwarmStackService(service)) {

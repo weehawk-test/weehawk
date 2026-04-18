@@ -1,6 +1,73 @@
 import { NotificationChannelType } from '../notifications/entities/notification-channel-type.enum';
 import type { NotificationChannelRuntimeConfig } from '../notifications/notification.service';
 
+function appendRemoteNotificationProviderEnvLines(
+  lines: string[],
+  channel: NotificationChannelRuntimeConfig,
+): void {
+  const cfg = channel.config;
+  switch (channel.type) {
+    case NotificationChannelType.TELEGRAM:
+      lines.push(
+        `WEEHAWK_NOTIFY_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'token'))}`,
+        `WEEHAWK_NOTIFY_TARGET=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'target'))}`,
+      );
+      break;
+    case NotificationChannelType.SLACK:
+    case NotificationChannelType.DISCORD:
+    case NotificationChannelType.LARK:
+    case NotificationChannelType.MICROSOFT_TEAMS:
+      lines.push(
+        `WEEHAWK_NOTIFY_WEBHOOK_URL=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'webhookUrl'))}`,
+      );
+      break;
+    case NotificationChannelType.GOTIFY:
+      lines.push(
+        `WEEHAWK_NOTIFY_SERVER_URL=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'serverUrl'))}`,
+        `WEEHAWK_NOTIFY_APP_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'appToken'))}`,
+        `WEEHAWK_NOTIFY_PRIORITY=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'priority') || '5')}`,
+      );
+      break;
+    case NotificationChannelType.NTFY:
+      lines.push(
+        `WEEHAWK_NOTIFY_SERVER_URL=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'serverUrl'))}`,
+        `WEEHAWK_NOTIFY_TOPIC=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'topic'))}`,
+        `WEEHAWK_NOTIFY_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'token'))}`,
+      );
+      break;
+    case NotificationChannelType.PUSHOVER:
+      lines.push(
+        `WEEHAWK_NOTIFY_APP_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'appToken'))}`,
+        `WEEHAWK_NOTIFY_USER_KEY=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'userKey'))}`,
+        `WEEHAWK_NOTIFY_DEVICE=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'device'))}`,
+      );
+      break;
+    default:
+      lines.length = 0;
+      lines.push('WEEHAWK_NOTIFY_ENABLED=0');
+      break;
+  }
+}
+
+/**
+ * Env lines for `send_notification` on a remote host (credentials only; message is passed as an argument).
+ * Returns `WEEHAWK_NOTIFY_ENABLED=0` when the channel type is not supported for remote dispatch.
+ */
+export function buildRemoteNotificationCredentialEnvLines(
+  channel: NotificationChannelRuntimeConfig | null,
+): string[] {
+  if (!channel) {
+    return ['WEEHAWK_NOTIFY_ENABLED=0'];
+  }
+  const lines: string[] = [
+    'WEEHAWK_NOTIFY_ENABLED=1',
+    `WEEHAWK_NOTIFY_TYPE=${remoteEnvFileQuote(channel.type)}`,
+    `WEEHAWK_NOTIFY_CHANNEL_NAME=${remoteEnvFileQuote(channel.name)}`,
+  ];
+  appendRemoteNotificationProviderEnvLines(lines, channel);
+  return lines;
+}
+
 /** Bash-safe single-quoted path segments in remote install snippets (mkdir, chmod, heredoc targets). */
 export function remoteInstallShQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -49,49 +116,70 @@ export function buildRemoteNotificationEnvLinesFromChannel(
     `WEEHAWK_NOTIFY_MESSAGE=${remoteEnvFileQuote(normalizeRemoteNotificationMessage(rawNotifyMessage))}`,
     `WEEHAWK_NOTIFY_CHANNEL_NAME=${remoteEnvFileQuote(channel.name)}`,
   ];
-  const cfg = channel.config;
-  switch (channel.type) {
-    case NotificationChannelType.TELEGRAM:
-      lines.push(
-        `WEEHAWK_NOTIFY_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'token'))}`,
-        `WEEHAWK_NOTIFY_TARGET=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'target'))}`,
-      );
-      break;
-    case NotificationChannelType.SLACK:
-    case NotificationChannelType.DISCORD:
-    case NotificationChannelType.LARK:
-    case NotificationChannelType.MICROSOFT_TEAMS:
-      lines.push(
-        `WEEHAWK_NOTIFY_WEBHOOK_URL=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'webhookUrl'))}`,
-      );
-      break;
-    case NotificationChannelType.GOTIFY:
-      lines.push(
-        `WEEHAWK_NOTIFY_SERVER_URL=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'serverUrl'))}`,
-        `WEEHAWK_NOTIFY_APP_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'appToken'))}`,
-        `WEEHAWK_NOTIFY_PRIORITY=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'priority') || '5')}`,
-      );
-      break;
-    case NotificationChannelType.NTFY:
-      lines.push(
-        `WEEHAWK_NOTIFY_SERVER_URL=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'serverUrl'))}`,
-        `WEEHAWK_NOTIFY_TOPIC=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'topic'))}`,
-        `WEEHAWK_NOTIFY_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'token'))}`,
-      );
-      break;
-    case NotificationChannelType.PUSHOVER:
-      lines.push(
-        `WEEHAWK_NOTIFY_APP_TOKEN=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'appToken'))}`,
-        `WEEHAWK_NOTIFY_USER_KEY=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'userKey'))}`,
-        `WEEHAWK_NOTIFY_DEVICE=${remoteEnvFileQuote(readNotificationConfigString(cfg, 'device'))}`,
-      );
-      break;
-    default:
-      lines.length = 0;
-      lines.push('WEEHAWK_NOTIFY_ENABLED=0');
-      break;
-  }
+  appendRemoteNotificationProviderEnvLines(lines, channel);
   return lines;
+}
+
+/**
+ * `json_escape` + `send_notification` for one-shot SSH dispatch (curl failures are not masked).
+ */
+export function remoteNotifyDispatchFunctionsBashStrict(
+  channelTitleFallback: string,
+): string {
+  const core = [
+    'json_escape() {',
+    "  printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g; s/\r/\\\\r/g; s/\n/\\\\n/g'",
+    '}',
+    'send_notification() {',
+    '  if [ "${WEEHAWK_NOTIFY_ENABLED:-0}" != "1" ]; then return 0; fi',
+    '  local msg="$1"',
+    '  local t="${WEEHAWK_NOTIFY_TYPE:-}"',
+    '  case "$t" in',
+    '    telegram)',
+    '      [ -n "${WEEHAWK_NOTIFY_TOKEN:-}" ] && [ -n "${WEEHAWK_NOTIFY_TARGET:-}" ] || exit 2',
+    '      curl -fsS -X POST "https://api.telegram.org/bot${WEEHAWK_NOTIFY_TOKEN}/sendMessage" --data-urlencode "chat_id=${WEEHAWK_NOTIFY_TARGET}" --data-urlencode "text=${msg}" >/dev/null',
+    '      ;;',
+    '    slack|microsoft-teams)',
+    '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || exit 2',
+    '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"text\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null',
+    '      ;;',
+    '    discord)',
+    '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || exit 2',
+    '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"content\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null',
+    '      ;;',
+    '    lark)',
+    '      [ -n "${WEEHAWK_NOTIFY_WEBHOOK_URL:-}" ] || exit 2',
+    '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$(json_escape "$msg")\"}}" "${WEEHAWK_NOTIFY_WEBHOOK_URL}" >/dev/null',
+    '      ;;',
+    '    gotify)',
+    '      [ -n "${WEEHAWK_NOTIFY_SERVER_URL:-}" ] && [ -n "${WEEHAWK_NOTIFY_APP_TOKEN:-}" ] || exit 2',
+    '      curl -fsS -X POST -H "Content-Type: application/json" -d "{\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\",\"priority\":${WEEHAWK_NOTIFY_PRIORITY:-5}}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/message?token=${WEEHAWK_NOTIFY_APP_TOKEN}" >/dev/null',
+    '      ;;',
+    '    ntfy)',
+    '      [ -n "${WEEHAWK_NOTIFY_SERVER_URL:-}" ] && [ -n "${WEEHAWK_NOTIFY_TOPIC:-}" ] || exit 2',
+    '      if [ -n "${WEEHAWK_NOTIFY_TOKEN:-}" ]; then',
+    '        curl -fsS -X POST -H "Authorization: Bearer ${WEEHAWK_NOTIFY_TOKEN}" -H "Content-Type: application/json" -d "{\"topic\":\"$(json_escape "${WEEHAWK_NOTIFY_TOPIC}")\",\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/${WEEHAWK_NOTIFY_TOPIC}" >/dev/null',
+    '      else',
+    '        curl -fsS -X POST -H "Content-Type: application/json" -d "{\"topic\":\"$(json_escape "${WEEHAWK_NOTIFY_TOPIC}")\",\"title\":\"$(json_escape "${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}")\",\"message\":\"$(json_escape "$msg")\"}" "${WEEHAWK_NOTIFY_SERVER_URL%/}/${WEEHAWK_NOTIFY_TOPIC}" >/dev/null',
+    '      fi',
+    '      ;;',
+    '    pushover)',
+    '      [ -n "${WEEHAWK_NOTIFY_APP_TOKEN:-}" ] && [ -n "${WEEHAWK_NOTIFY_USER_KEY:-}" ] || exit 2',
+    '      if [ -n "${WEEHAWK_NOTIFY_DEVICE:-}" ]; then',
+    '        curl -fsS -X POST "https://api.pushover.net/1/messages.json" --data-urlencode "token=${WEEHAWK_NOTIFY_APP_TOKEN}" --data-urlencode "user=${WEEHAWK_NOTIFY_USER_KEY}" --data-urlencode "device=${WEEHAWK_NOTIFY_DEVICE}" --data-urlencode "title=${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}" --data-urlencode "message=${msg}" >/dev/null',
+    '      else',
+    '        curl -fsS -X POST "https://api.pushover.net/1/messages.json" --data-urlencode "token=${WEEHAWK_NOTIFY_APP_TOKEN}" --data-urlencode "user=${WEEHAWK_NOTIFY_USER_KEY}" --data-urlencode "title=${WEEHAWK_NOTIFY_CHANNEL_NAME:-Cron Job}" --data-urlencode "message=${msg}" >/dev/null',
+    '      fi',
+    '      ;;',
+    '    *)',
+    '      exit 3',
+    '      ;;',
+    '  esac',
+    '}',
+  ]
+    .map((line) => bashDefaultChannelTitleLines(line, channelTitleFallback))
+    .join('\n');
+  return core;
 }
 
 export type RemoteNotifyScriptDefaults = {

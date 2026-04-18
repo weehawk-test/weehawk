@@ -1,14 +1,17 @@
 import './load-docker-secrets';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { RemoteServerProvisionService } from './remote-servers/remote-server-provision.service';
+import { assertProductionSecurityConfig } from './common/production-security';
 
 const POLL_MS = 5_000;
 
 async function bootstrapProvisionWorker() {
   const logger = new Logger('ProvisionWorker');
   const app = await NestFactory.createApplicationContext(AppModule);
+  assertProductionSecurityConfig(app.get(ConfigService));
   const provision = app.get(RemoteServerProvisionService);
 
   logger.log('Provision worker started (SSH: Docker + Swarm + weehawk overlay)');

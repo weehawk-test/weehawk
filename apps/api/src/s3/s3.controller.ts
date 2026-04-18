@@ -10,20 +10,16 @@ import {
   Query,
   Res,
   StreamableFile,
-  UploadedFile,
-  UseInterceptors,
   UseGuards,
   Req,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { diskStorage } from 'multer';
-import * as os from 'os';
-import { randomBytes } from 'crypto';
-import * as fs from 'fs/promises';
 import type { Response } from 'express';
 import { S3Service } from './s3.service';
 import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
+import { TestS3ConnectionDto } from './dto/test-s3-connection.dto';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 
 @ApiTags('S3')
@@ -57,11 +53,16 @@ export class S3Controller {
   }
 
   @Post('test-connection')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
-    summary: 'Verify S3-compatible connection (AWS SDK ListObjectsV2)',
+    summary:
+      'Verify S3-compatible connection from a deploy server (presigned ListObjects URL + curl over SSH).',
   })
-  async testConnection(@Body() dto: UpsertS3ProfileDto) {
-    return this.s3Service.testConnection(dto);
+  async testConnection(
+    @Req() req: { user?: { userId: number } },
+    @Body() dto: TestS3ConnectionDto,
+  ) {
+    return this.s3Service.testConnection(this.uid(req), dto);
   }
 
   @Get('profiles/:name/objects')
@@ -91,6 +92,51 @@ export class S3Controller {
       throw new BadRequestException('prefix query parameter is required.');
     }
     return this.s3Service.summarizePrefix(this.uid(req), name, prefix);
+  }
+
+  @Post('profiles/:name/objects/presign-put')
+  @ApiOperation({
+    summary:
+      'Get a presigned PUT URL so the browser or another host can upload the object without sending bytes through the API',
+  })
+  presignPutObject(
+    @Req() req: { user?: { userId: number } },
+    @Param('name') name: string,
+    @Body()
+    body: { key?: string; contentType?: string; expiresInSeconds?: number },
+  ) {
+    if (!body?.key?.trim()) {
+      throw new BadRequestException('key is required in body.');
+    }
+    return this.s3Service.presignPutObject(this.uid(req), name, body.key.trim(), {
+      contentType: body.contentType,
+      expiresInSeconds: body.expiresInSeconds,
+    });
+  }
+
+  @Get('profiles/:name/presign-get')
+  @ApiOperation({
+    summary:
+      'Get a presigned GET URL so the browser can download the object without streaming through the API',
+  })
+  presignGetObject(
+    @Req() req: { user?: { userId: number } },
+    @Param('name') name: string,
+    @Query('key') key: string | undefined,
+    @Query('expiresInSeconds') expiresInSecondsRaw?: string,
+  ) {
+    if (!key?.trim()) {
+      throw new BadRequestException('key query parameter is required.');
+    }
+    const n = expiresInSecondsRaw != null ? Number(expiresInSecondsRaw) : undefined;
+    const expiresInSeconds =
+      expiresInSecondsRaw != null && !Number.isFinite(n) ? undefined : n;
+    return this.s3Service.presignGetObject(
+      this.uid(req),
+      name,
+      key.trim(),
+      expiresInSeconds,
+    );
   }
 
   @Get('profiles/:name/download')
@@ -171,44 +217,5 @@ export class S3Controller {
       throw new BadRequestException('prefix is required in body.');
     }
     return this.s3Service.deleteObjectsUnderPrefix(this.uid(req), name, body.prefix);
-  }
-
-  @Post('profiles/:name/objects/upload')
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: { fileSize: 512 * 1024 * 1024 },
-      storage: diskStorage({
-        destination: os.tmpdir(),
-        filename: (_req, _file, cb) => {
-          cb(null, `weehawk-s3up-${randomBytes(16).toString('hex')}`);
-        },
-      }),
-    }),
-  )
-  @ApiOperation({ summary: 'Upload a file to the bucket' })
-  async uploadObject(
-    @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
-    @UploadedFile() file: Express.Multer.File | undefined,
-    @Body('key') objectKey: string | undefined,
-  ) {
-    if (!file?.path) {
-      throw new BadRequestException('file is required.');
-    }
-    if (!objectKey?.trim()) {
-      throw new BadRequestException(
-        'key is required (full object key in bucket).',
-      );
-    }
-    try {
-      return await this.s3Service.uploadLocalFile(
-        this.uid(req),
-        name,
-        file.path,
-        objectKey.trim(),
-      );
-    } finally {
-      await fs.unlink(file.path).catch(() => {});
-    }
   }
 }

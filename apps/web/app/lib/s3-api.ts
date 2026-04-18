@@ -68,8 +68,16 @@ export function saveS3ProfileApi(body: S3ProfilePayload) {
   });
 }
 
-export function testS3ConnectionApi(body: S3ProfilePayload) {
-  return request<{ success: boolean; message: string }>("/api/s3/test-connection", {
+export type S3TestConnectionPayload = S3ProfilePayload & {
+  remoteServerId: number;
+};
+
+export function testS3ConnectionApi(body: S3TestConnectionPayload) {
+  return request<{
+    success: boolean;
+    message: string;
+    remoteServerId: number;
+  }>("/api/s3/test-connection", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -145,31 +153,69 @@ export function deleteS3PrefixApi(profileName: string, prefix: string) {
   });
 }
 
-export async function uploadS3ObjectApi(profileName: string, key: string, file: File) {
-  const fd = new FormData();
-  fd.append("file", file);
-  fd.append("key", key);
-  const res = await fetch(
-    `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileName)}/objects/upload`,
+export type S3PresignPutResponse = {
+  url: string;
+  bucket: string;
+  key: string;
+  expiresIn: number;
+  contentType: string;
+};
+
+export async function presignS3PutApi(
+  profileName: string,
+  key: string,
+  opts?: { contentType?: string; expiresInSeconds?: number },
+): Promise<S3PresignPutResponse> {
+  return request<S3PresignPutResponse>(
+    `/api/s3/profiles/${encodeURIComponent(profileName)}/objects/presign-put`,
     {
       method: "POST",
-      body: fd,
-      credentials: "include",
-      cache: "no-store",
+      body: JSON.stringify({
+        key,
+        contentType: opts?.contentType,
+        expiresInSeconds: opts?.expiresInSeconds,
+      }),
     },
   );
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(parseErrorMessage(text || res.statusText));
+}
+
+/** Upload bytes directly to the bucket using a presigned URL (API never stores the file). */
+export async function uploadS3ObjectApi(profileName: string, key: string, file: File) {
+  const contentType =
+    file.type ||
+    (key.toLowerCase().endsWith(".gz") ? "application/gzip" : "application/octet-stream");
+  const presign = await presignS3PutApi(profileName, key, { contentType });
+  const put = await fetch(presign.url, {
+    method: "PUT",
+    headers: { "Content-Type": presign.contentType },
+    body: file,
+    cache: "no-store",
+  });
+  if (!put.ok) {
+    const text = await put.text().catch(() => "");
+    throw new Error(text || put.statusText || "S3 upload failed");
   }
-  return JSON.parse(text) as { bucket: string; key: string };
+  return { bucket: presign.bucket, key: presign.key };
+}
+
+export type S3PresignGetResponse = {
+  url: string;
+  bucket: string;
+  key: string;
+  expiresIn: number;
+};
+
+export async function presignS3GetApi(profileName: string, key: string, expiresInSeconds?: number) {
+  const q = new URLSearchParams({ key });
+  if (expiresInSeconds != null) q.set("expiresInSeconds", String(expiresInSeconds));
+  return request<S3PresignGetResponse>(
+    `/api/s3/profiles/${encodeURIComponent(profileName)}/presign-get?${q.toString()}`,
+  );
 }
 
 export async function downloadS3ObjectBlob(profileName: string, key: string): Promise<Blob> {
-  const res = await fetch(
-    `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileName)}/download?${new URLSearchParams({ key })}`,
-    { credentials: "include", cache: "no-store" },
-  );
+  const { url } = await presignS3GetApi(profileName, key);
+  const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(parseErrorMessage(text || res.statusText));

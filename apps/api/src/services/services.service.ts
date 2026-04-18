@@ -16,25 +16,20 @@ import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { Project } from 'src/projects/entities/project.entity';
 import { randomBytes } from 'crypto';
-import * as os from 'os';
 import { ExecutorService } from '../executor/executor.service';
 import { emitDeployLog } from '../executor/executor-docker';
 import { Observable } from 'rxjs';
 import { composeType } from './entities/composeType.enum';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import type { Readable } from 'stream';
 import {
   DatabaseEngine,
   DatabaseGeneratorService,
 } from './database-generator.service';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
-import {
-  createBackupTempDir,
-  getServiceDeploymentDir,
-  removeBackupTempDir,
-  toSafePathSegment,
-} from './deployment-paths';
+import { getServiceDeploymentDir, toSafePathSegment } from './deployment-paths';
 import type { EventEmitter } from 'events';
 import { DockerfileGeneratorService } from '../dockerfile-generator/dockerfile-generator.service';
 import type { DatabaseBackupConfig } from '../backup/database-backup.types';
@@ -1521,10 +1516,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    const deployDir = getServiceDeploymentDir(
-      service.appName,
-      undefined,
-    );
+    const deployDir = getServiceDeploymentDir(service.appName, service.id);
     const sourceDir = path.join(deployDir, 'app-source');
     const storedRemote = this.parseStoredRemoteGitMarker(service.dockerConfig || '');
     if (!storedRemote) {
@@ -1893,8 +1885,17 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     userId: number,
     contextId: string,
     profileName: string | null | undefined,
-    destDir: string,
-    r: { success: boolean; output: string; archiveBasename?: string },
+    r: {
+      success: boolean;
+      output: string;
+      archiveBasename?: string;
+      remoteArtifact?: {
+        remoteServerId: number;
+        projectUserId: number | null;
+        stagingDir: string;
+        remoteFilePath: string;
+      };
+    },
   ): Promise<{ success: boolean; output: string }> {
     if (!r.success || !r.archiveBasename) {
       return { success: r.success, output: r.output };
@@ -1906,21 +1907,42 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         output: `${r.output}\nS3 destination is not configured.`,
       };
     }
-    const localPath = path.join(destDir, r.archiveBasename);
     const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    const ra = r.remoteArtifact;
+    if (!ra) {
+      return {
+        success: false,
+        output: `${r.output}\nBackup archive was not created on the deploy host.`,
+      };
+    }
     try {
-      const { bucket, key: uploadedKey } =
-        await this.s3Service.uploadLocalFile(
-          userId,
-          trimmed,
-          localPath,
-          key,
-        );
+      const put = await this.s3Service.presignPutObject(userId, trimmed, key, {
+        contentType: r.archiveBasename.toLowerCase().endsWith('.gz')
+          ? 'application/gzip'
+          : 'application/octet-stream',
+      });
+      await this.remoteServersService.curlPresignedPutFromRemoteFile(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.remoteFilePath,
+        put.url,
+        put.contentType,
+      );
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.stagingDir,
+      );
       return {
         success: true,
-        output: `${r.output}\nUploaded to s3://${bucket}/${uploadedKey}`,
+        output: `${r.output}\nUploaded to s3://${put.bucket}/${put.key}`,
       };
     } catch (e) {
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        ra.remoteServerId,
+        ra.projectUserId,
+        ra.stagingDir,
+      );
       return {
         success: false,
         output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
@@ -1930,9 +1952,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
   /**
    * One-off backup trigger from the service details UI.
-   * Mirrors the same execution flow as webhooks/cron jobs:
-   * - run volume/db backup on the server (temp folder)
-   * - upload produced archive to S3 (if configured)
+   * Mirrors webhooks/cron jobs: archive on the deploy host, then presigned PUT to S3 (no backup bytes on the API host).
    */
   async runServiceBackupNow(
     userId: number,
@@ -1946,10 +1966,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       throw new BadRequestException('backupS3ProfileName is required.');
     }
 
-    let destDir: string | null = null;
     try {
       await this.s3Service.assertProfileExists(profileName);
-      destDir = await createBackupTempDir();
 
       if (dto.action === 'volume_backup') {
         const volumeSource = dto.volumeSource?.trim();
@@ -1965,7 +1983,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
         const r = await this.executorService.backupDockerVolume(
           volumeSource,
-          destDir,
           ssh.remoteServerId,
           null,
         );
@@ -1973,7 +1990,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
           userId,
           contextId,
           profileName,
-          destDir,
           r,
         );
         return { ok: final.success, action: dto.action, output: final.output.slice(0, 8000) };
@@ -1984,16 +2000,11 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
           throw new BadRequestException('databaseBackupConfig is required for database backup.');
         }
         const cfg = dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
-        const r = await this.executorService.backupDatabaseStructured(
-          serviceId,
-          cfg,
-          destDir,
-        );
+        const r = await this.executorService.backupDatabaseStructured(serviceId, cfg);
         const final = await this.finalizeBackupWithS3(
           userId,
           contextId,
           profileName,
-          destDir,
           r,
         );
         return { ok: final.success, action: dto.action, output: final.output.slice(0, 8000) };
@@ -2004,17 +2015,63 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     } catch (e) {
       const msg = getErrorMessage(e).slice(0, 8000);
       return { ok: false, action: dto.action, output: msg };
-    } finally {
-      if (destDir) {
-        await removeBackupTempDir(destDir).catch(() => {
-          /* best effort cleanup */
-        });
-      }
     }
   }
 
   /**
-   * Import a database dump or volume backup archive from multipart upload; runs on the host like backup jobs.
+   * Stage a multipart upload on the deploy host (see {@link RemoteImportBackupInterceptor}).
+   */
+  async pipeImportMultipartStreamToDeployHost(
+    userId: number,
+    serviceIdRouteParam: string,
+    originalFilename: string,
+    stream: Readable,
+  ): Promise<{
+    stagingDir: string;
+    remotePath: string;
+    remoteServerId: number;
+  }> {
+    const serviceId = await this.resolveServiceIdForUser(serviceIdRouteParam, userId);
+    const ssh = await this.getDockerSshTargetIds(serviceId);
+    if (ssh.remoteServerId == null) {
+      throw new BadRequestException(
+        'Set a deploy host for this service before importing. The file is streamed over SSH to that host only (nothing is stored on the API server).',
+      );
+    }
+    const safeName =
+      path.basename(originalFilename || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_') ||
+      'upload.bin';
+    if (!safeName) {
+      throw new BadRequestException('Invalid file name.');
+    }
+    const { stagingDir, remotePath } =
+      await this.remoteServersService.pipeUploadStreamToRemoteImport(
+        ssh.remoteServerId,
+        null,
+        safeName,
+        stream,
+      );
+    return {
+      stagingDir,
+      remotePath,
+      remoteServerId: ssh.remoteServerId,
+    };
+  }
+
+  async removeDeployHostImportStaging(
+    remoteServerId: number,
+    stagingDir: string,
+  ): Promise<void> {
+    await this.remoteServersService.removeRemoteTreeBestEffort(
+      remoteServerId,
+      null,
+      stagingDir,
+    );
+  }
+
+  /**
+   * Import a database dump or volume backup from multipart upload.
+   * Bytes are streamed to the deploy host over SFTP (no API disk).
    */
   async runServiceImportBackup(
     userId: number,
@@ -2025,27 +2082,35 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     volumeSource?: string,
   ): Promise<{ ok: boolean; output: string }> {
     await this.assertServiceOwnedByUser(serviceId, userId);
-    if (!file || (!(file as { buffer?: Buffer }).buffer?.length && !file.path)) {
+    if (!file) {
       throw new BadRequestException('file is required.');
     }
-    const buf = (file as { buffer?: Buffer }).buffer;
-    if (buf && buf.length === 0) {
-      throw new BadRequestException('Empty file.');
+    const meta = file as Express.Multer.File & {
+      remoteStagingDir?: string;
+      remoteFilePath?: string;
+      remoteServerId?: number;
+    };
+    if (
+      meta.remoteServerId == null ||
+      !meta.remoteStagingDir?.startsWith('/tmp/') ||
+      !meta.remoteFilePath?.startsWith('/tmp/')
+    ) {
+      throw new BadRequestException(
+        'Upload did not stage on the deploy host. Ensure this service has a deploy host configured.',
+      );
     }
-    const safeName =
-      path.basename(file.originalname || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_') ||
-      'upload.bin';
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wh-import-'));
-    const tmpPath = path.join(tmpDir, safeName);
-    try {
-      if (buf?.length) {
-        await fs.writeFile(tmpPath, buf);
-      } else if (file.path) {
-        await fs.copyFile(file.path, tmpPath);
-      } else {
-        throw new BadRequestException('Could not read uploaded file.');
-      }
+    const remotePath = meta.remoteFilePath;
+    const stagingDir = meta.remoteStagingDir;
+    const remoteServerId = meta.remoteServerId;
 
+    const sshNow = await this.getDockerSshTargetIds(serviceId);
+    if (sshNow.remoteServerId !== remoteServerId) {
+      throw new BadRequestException(
+        'Deploy host changed or does not match this service. Configure the service deploy host and retry.',
+      );
+    }
+
+    try {
       if (action === 'import_volume') {
         const vol = volumeSource?.trim();
         if (!vol) {
@@ -2054,19 +2119,18 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(vol)) {
           throw new BadRequestException('Invalid volume name.');
         }
-        const ssh = await this.getDockerSshTargetIds(serviceId);
-        if (ssh.remoteServerId == null) {
-          throw new BadRequestException(
-            'Set a deploy host for this service before importing a volume.',
+        const ir =
+          await this.remoteServersService.dockerNamedVolumeImportArchiveFromRemotePath(
+            remoteServerId,
+            null,
+            vol,
+            remotePath,
           );
-        }
-        const r = await this.executorService.importDockerVolume(
-          vol,
-          tmpPath,
-          ssh.remoteServerId,
-          null,
-        );
-        return { ok: r.success, output: r.output };
+        const out = [ir.stdout, ir.stderr].filter((s) => s?.trim()).join('\n');
+        return {
+          ok: true,
+          output: (out || 'Volume import finished.').slice(0, 8000),
+        };
       }
 
       if (action === 'import_database') {
@@ -2084,7 +2148,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         const r = await this.executorService.importDatabaseStructured(
           serviceId,
           cfg,
-          tmpPath,
+          remotePath,
+          { archiveOnRemoteHost: true },
         );
         return { ok: r.success, output: r.output };
       }
@@ -2096,12 +2161,16 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       }
       return { ok: false, output: getErrorMessage(e).slice(0, 8000) };
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        remoteServerId,
+        null,
+        stagingDir,
+      );
     }
   }
 
   /**
-   * Import from an object already stored in S3 (downloads to a temp file, then same path as multipart import).
+   * Import from an object in S3 (presigned GET + curl on the deploy host; API does not store the object).
    */
   async runServiceImportBackupFromS3(
     serviceId: number,
@@ -2124,14 +2193,27 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const rawBase = path.basename(key.replace(/\\/g, '/')) || 'import.bin';
     const safeName =
       rawBase.replace(/[^a-zA-Z0-9._-]/g, '_') || 'import.bin';
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'wh-import-s3-'));
-    const tmpPath = path.join(tmpDir, safeName);
+    const ssh = await this.getDockerSshTargetIds(serviceId);
+    if (ssh.remoteServerId == null) {
+      throw new BadRequestException(
+        'Set a deploy host for this service before importing from S3 (objects are downloaded on the remote Docker host).',
+      );
+    }
+    const projectUserId: number | null = null;
+    const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
+      ssh.remoteServerId,
+      projectUserId,
+      'wh-import-s3',
+    );
+    const remotePath = `${stagingDir}/${safeName}`;
     try {
-      await this.s3Service.downloadObjectToFile(userId, profile, key, tmpPath);
-      const st = await fs.stat(tmpPath);
-      if (st.size === 0) {
-        throw new BadRequestException('Downloaded object is empty.');
-      }
+      const { url } = await this.s3Service.presignGetObject(userId, profile, key);
+      await this.remoteServersService.curlPresignedDownloadToRemotePath(
+        ssh.remoteServerId,
+        projectUserId,
+        url,
+        remotePath,
+      );
 
       if (dto.action === 'import_volume') {
         const vol = dto.volumeSource?.trim();
@@ -2141,19 +2223,17 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(vol)) {
           throw new BadRequestException('Invalid volume name.');
         }
-        const ssh = await this.getDockerSshTargetIds(serviceId);
-        if (ssh.remoteServerId == null) {
-          throw new BadRequestException(
-            'Set a deploy host for this service before importing a volume.',
-          );
-        }
-        const r = await this.executorService.importDockerVolume(
-          vol,
-          tmpPath,
+        const ir = await this.remoteServersService.dockerNamedVolumeImportArchiveFromRemotePath(
           ssh.remoteServerId,
-          null,
+          projectUserId,
+          vol,
+          remotePath,
         );
-        return { ok: r.success, output: r.output };
+        const out = [ir.stdout, ir.stderr].filter((s) => s?.trim()).join('\n');
+        return {
+          ok: true,
+          output: (out || 'Volume import finished.').slice(0, 8000),
+        };
       }
 
       if (dto.action === 'import_database') {
@@ -2171,7 +2251,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         const r = await this.executorService.importDatabaseStructured(
           serviceId,
           cfg,
-          tmpPath,
+          remotePath,
+          { archiveOnRemoteHost: true },
         );
         return { ok: r.success, output: r.output };
       }
@@ -2183,7 +2264,11 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       }
       return { ok: false, output: getErrorMessage(e).slice(0, 8000) };
     } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      await this.remoteServersService.removeRemoteTreeBestEffort(
+        ssh.remoteServerId,
+        projectUserId,
+        stagingDir,
+      );
     }
   }
 

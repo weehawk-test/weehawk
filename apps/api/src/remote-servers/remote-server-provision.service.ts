@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Client } from 'ssh2';
+import { RemoteServer } from './entities/remote-server.entity';
 import { RemoteServerProvisionJob } from './entities/remote-server-provision-job.entity';
 import { RemoteServersService } from './remote-servers.service';
 import {
@@ -183,15 +184,8 @@ export class RemoteServerProvisionService {
         `[Weehawk] job_kind=${kind}\n` +
           `\n--- SSH ${ctx.server.host}:${ctx.server.port} (${ctx.server.sshUser}) [${kind}] ---\n`,
       );
-      await this.execSshBashScript(
-        {
-          host: ctx.server.host.trim(),
-          port: ctx.server.port ?? 22,
-          username: ctx.server.sshUser.trim(),
-          privateKey: Buffer.from(ctx.privateKeyPem, 'utf8'),
-        },
-        script,
-        (s) => void appendLog(s),
+      await this.execSshBashScript(ctx.server, ctx.privateKeyPem, script, (s) =>
+        void appendLog(s),
       );
       await this.jobRepo.update({ id: job.id }, { status: 'done', errorMessage: null });
     } catch (e) {
@@ -218,50 +212,54 @@ export class RemoteServerProvisionService {
   }
 
   private async execSshBashScript(
-    opts: {
-      host: string;
-      port: number;
-      username: string;
-      privateKey: Buffer;
-    },
+    server: RemoteServer,
+    privateKeyPem: string,
     script: string,
     onData?: (chunk: string) => void,
   ): Promise<void> {
     const client = new Client();
+    const connectOpts = this.remoteServersService.getSsh2ConnectOptions(
+      server,
+      privateKeyPem,
+      120_000,
+    );
     return new Promise((resolve, reject) => {
       client
         .once('ready', () => {
-          client.exec('bash -s', (err, stream) => {
-            if (err) {
-              reject(err);
-              return;
-            }
-            let stderr = '';
-            stream.on('close', (code: number) => {
-              client.end();
-              if (code === 0) {
-                resolve();
-              } else {
-                reject(
-                  new BadRequestException(
-                    stderr.trim()
-                      ? `Remote script failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
-                      : `Remote script exited with code ${code}`,
-                  ),
-                );
+          void this.remoteServersService.flushPendingSshHostKeyFingerprint(server.id).then(() => {
+            client.exec('bash -s', (err, stream) => {
+              if (err) {
+                reject(err);
+                return;
               }
+              let stderr = '';
+              stream.on('close', (code: number) => {
+                client.end();
+                if (code === 0) {
+                  resolve();
+                } else {
+                  reject(
+                    new BadRequestException(
+                      stderr.trim()
+                        ? `Remote script failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
+                        : `Remote script exited with code ${code}`,
+                    ),
+                  );
+                }
+              });
+              stream.on('data', (d: Buffer) => onData?.(d.toString()));
+              stream.stderr.on('data', (d: Buffer) => {
+                const s = d.toString();
+                stderr += s;
+                onData?.(s);
+              });
+              stream.write(script);
+              stream.end();
             });
-            stream.on('data', (d: Buffer) => onData?.(d.toString()));
-            stream.stderr.on('data', (d: Buffer) => {
-              const s = d.toString();
-              stderr += s;
-              onData?.(s);
-            });
-            stream.write(script);
-            stream.end();
           });
         })
         .on('error', (err: Error & { level?: string }) => {
+          this.remoteServersService.clearPendingSshHostKeyForServer(server.id);
           client.end();
           if (err.level === 'client-authentication') {
             reject(
@@ -273,14 +271,7 @@ export class RemoteServerProvisionService {
             reject(err);
           }
         })
-        .connect({
-          host: opts.host,
-          port: opts.port,
-          username: opts.username,
-          privateKey: opts.privateKey,
-          readyTimeout: 120_000,
-          hostVerifier: () => true,
-        });
+        .connect(connectOpts);
     });
   }
 }
