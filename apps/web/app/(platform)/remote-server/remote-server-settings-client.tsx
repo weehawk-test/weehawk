@@ -455,11 +455,11 @@ export function RemoteServerSettingsClient({
   return (
     <div className="space-y-8 max-w-4xl">
       <header className="space-y-2">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-primary/10 border border-primary/20 p-2.5">
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-primary/10 border border-primary/20 p-2.5 shrink-0">
             <Server className="size-6 text-primary" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight">Remote servers</h1>
             <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
               Connect and manage remote hosts via SSH keys. Assign each server a specific role,{" "}

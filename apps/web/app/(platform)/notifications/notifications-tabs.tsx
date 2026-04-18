@@ -19,22 +19,20 @@ export function NotificationsTabs() {
 
   return (
     <>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-10">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-10">
         <div>
           <h1 className="text-3xl font-bold text-foreground mb-2">Notifications</h1>
           <p className="text-muted-foreground">{subtitle}</p>
         </div>
         {pathname === "/notifications/channels" ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent("notifications:add-channel"))}
-              className="btn-primary flex items-center justify-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              Add Channel
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("notifications:add-channel"))}
+            className="btn-primary flex w-full items-center justify-center gap-2 md:w-auto"
+          >
+            <Plus className="w-5 h-5" />
+            Add Channel
+          </button>
         ) : null}
       </div>
       <div className="flex gap-1 p-1 w-fit mb-6 rounded-xl border border-border bg-muted/70 shadow-sm dark:border-white/5 dark:bg-card/50 dark:shadow-none">

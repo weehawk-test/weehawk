@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Webhook, FolderKanban, KeyRound, ChevronLeft, ChevronRight,
   ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, Server, Mail, Globe, Newspaper, LogOut, UserCog, ChevronDown,
+  GitBranch, Server, Mail, Globe, Newspaper, LogOut, UserCog, ChevronDown, X,
 } from "lucide-react";
 import { motion, LayoutGroup } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
@@ -155,7 +155,9 @@ function NavRow({
           />
         ) : null}
       </span>
-      {!collapsed && <span className="font-medium relative z-10 text-sm">{label}</span>}
+      {!collapsed && (
+        <span className="font-medium relative z-10 text-sm min-w-0 break-words leading-snug">{label}</span>
+      )}
     </>
   );
 
@@ -194,7 +196,9 @@ function NavRow({
 }
 
 export function Sidebar() {
-  const { collapsed, toggle } = useSidebarLayout();
+  const { collapsed, toggle, isMobileNav, mobileNavOpen, closeMobileNav } = useSidebarLayout();
+  /** Icon-only rail on desktop when collapsed; on phone the drawer is always full labels. */
+  const railMode = collapsed && !isMobileNav;
   const { user, logout } = useAuth();
   const router = useRouter();
   const location = usePathname();
@@ -252,6 +256,11 @@ export function Sidebar() {
       window.removeEventListener("storage", onStorage);
     };
   }, [user?.userId]);
+
+  useEffect(() => {
+    closeMobileNav();
+  }, [location, closeMobileNav]);
+
   const consoleMatch = /^\/docker-manager\/([^/]+)/.exec(location);
   const consoleNavBase =
     consoleMatch != null
@@ -304,15 +313,22 @@ export function Sidebar() {
 
   return (
     <aside
+      id="app-sidebar"
       className={cn(
-        "border-r border-border bg-card/30 backdrop-blur-xl fixed top-0 left-0 h-screen flex flex-col z-40",
-        "w-[var(--app-sidebar-width)] transition-[width] duration-200 ease-out overflow-x-hidden",
+        "border-r border-border bg-card/30 backdrop-blur-xl fixed top-0 left-0 h-screen flex flex-col z-40 overflow-x-hidden",
+        isMobileNav
+          ? cn(
+              "w-[min(20rem,calc(100vw-1.5rem))] transition-transform duration-200 ease-out shadow-2xl",
+              mobileNavOpen ? "translate-x-0" : "-translate-x-full",
+            )
+          : "w-[var(--app-sidebar-width)] transition-[width] duration-200 ease-out",
       )}
+      aria-hidden={isMobileNav && !mobileNavOpen ? true : undefined}
     >
       {/* Logo + collapse toggle */}
-      <div className={cn("flex-shrink-0 pt-7 pb-1.5", collapsed ? "px-2" : "px-6")}>
-        {!collapsed ? (
-          <div className="flex items-start gap-2">
+      <div className={cn("flex-shrink-0 pt-7 pb-1.5", railMode ? "px-2" : "px-6 max-md:px-4")}>
+        {!railMode ? (
+          <div className="flex items-start gap-2 min-w-0">
             <Link
               href={isConsoleServerSidebar ? consoleLogoHref : "/"}
               scroll={false}
@@ -329,7 +345,9 @@ export function Sidebar() {
                 />
               </div>
               <div className="min-w-0 flex-1 pt-0.5">
-                <h1 className="font-bold text-lg text-foreground tracking-tight leading-none">Weehawk</h1>
+                <h1 className="font-bold text-lg text-foreground tracking-tight leading-none truncate">
+                  Weehawk
+                </h1>
                 <p className="text-[10px] text-muted-foreground tracking-widest uppercase font-mono mt-1">
                   CLOUD
                 </p>
@@ -337,14 +355,25 @@ export function Sidebar() {
             </Link>
             <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
               <ThemeToggle />
-              <button
-                type="button"
-                onClick={toggle}
-                aria-label="Collapse sidebar"
-                className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/80 shrink-0"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
+              {isMobileNav ? (
+                <button
+                  type="button"
+                  onClick={closeMobileNav}
+                  aria-label="Close menu"
+                  className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/80 shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-label="Collapse sidebar"
+                  className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/80 shrink-0"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -386,19 +415,19 @@ export function Sidebar() {
       </div>
 
       {/* Scrollable nav */}
-      <nav className={cn("flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-3", collapsed ? "px-2" : "px-4")}>
+      <nav className={cn("flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-3", railMode ? "px-2" : "px-4 max-md:px-3")}>
         <LayoutGroup id={layoutGroupId}>
           {isConsoleServerSidebar ? (
             <>
-              <div className={cn("mb-1.5", collapsed && "mt-4")}>
-                {!collapsed && (
+              <div className={cn("mb-1.5", railMode && "mt-4")}>
+                {!railMode && (
                   <p className="text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 mt-4">
                     General
                   </p>
                 )}
                 <div className="space-y-px">
                   <NavRow
-                    collapsed={collapsed}
+                    collapsed={railMode}
                     href="/remote-server"
                     label="Servers"
                     active={isActive("/remote-server")}
@@ -408,7 +437,7 @@ export function Sidebar() {
                 </div>
               </div>
               <div className="mb-1.5">
-                {!collapsed && (
+                {!railMode && (
                   <p className="text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 mt-3">
                     Docker
                   </p>
@@ -419,7 +448,7 @@ export function Sidebar() {
                     return (
                       <NavRow
                         key={item.href}
-                        collapsed={collapsed}
+                        collapsed={railMode}
                         href={item.href}
                         label={item.label}
                         active={active}
@@ -438,11 +467,11 @@ export function Sidebar() {
                   key={section.label}
                   className={cn(
                     "mb-1.5",
-                    collapsed && sectionIndex > 0 && "mt-1.5",
-                    collapsed && sectionIndex === 0 && "mt-4",
+                    railMode && sectionIndex > 0 && "mt-1.5",
+                    railMode && sectionIndex === 0 && "mt-4",
                   )}
                 >
-                  {!collapsed && (
+                  {!railMode && (
                     <p
                       className={`text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 ${
                         sectionIndex === 0 ? "mt-4" : "mt-3"
@@ -457,7 +486,7 @@ export function Sidebar() {
                       return (
                         <NavRow
                           key={item.href}
-                          collapsed={collapsed}
+                          collapsed={railMode}
                           href={item.href}
                           label={item.label}
                           active={active}
@@ -474,7 +503,7 @@ export function Sidebar() {
 
               {dockerNavDynamic.length > 0 ? (
                 <div className="mb-1.5">
-                  {!collapsed && (
+                  {!railMode && (
                     <p className="text-[10px] text-muted-foreground/80 tracking-widest uppercase font-mono px-4 mb-0.5 mt-3">
                       Docker
                     </p>
@@ -485,7 +514,7 @@ export function Sidebar() {
                       return (
                         <NavRow
                           key={item.href}
-                          collapsed={collapsed}
+                          collapsed={railMode}
                           href={item.href}
                           label={item.label}
                           active={active}
@@ -498,7 +527,7 @@ export function Sidebar() {
                 </div>
               ) : dockerShell && consoleNavBase == null ? (
                 <div className="mb-1.5">
-                  {collapsed ? (
+                  {railMode ? (
                     <Tooltip delayDuration={0}>
                       <TooltipTrigger asChild>
                         <Link
@@ -533,7 +562,7 @@ export function Sidebar() {
       <div className="flex-shrink-0 border-t border-border p-2.5">
         <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
           <DropdownMenuTrigger asChild>
-            {collapsed ? (
+            {railMode ? (
               <button
                 type="button"
                 className="w-full flex justify-center items-center px-2 py-2 rounded-xl hover:bg-accent/70 data-[state=open]:bg-accent/80 transition-colors outline-none focus-visible:outline-none focus-visible:ring-0"
@@ -584,12 +613,12 @@ export function Sidebar() {
             )}
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            side={collapsed ? "right" : "top"}
-            align={collapsed ? "start" : "end"}
+            side={railMode ? "right" : "top"}
+            align={railMode ? "start" : "end"}
             sideOffset={8}
             className={cn(
               "rounded-2xl border-border/60 p-2 shadow-2xl data-[state=open]:duration-300 data-[state=closed]:duration-200",
-              collapsed ? "w-56" : "w-[var(--radix-dropdown-menu-trigger-width)]",
+              railMode ? "w-56" : "w-[var(--radix-dropdown-menu-trigger-width)]",
             )}
           >
             <div className="px-2.5 py-2">

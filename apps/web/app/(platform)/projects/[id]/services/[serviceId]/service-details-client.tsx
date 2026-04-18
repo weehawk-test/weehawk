@@ -1062,31 +1062,43 @@ export default function ServiceDetails({
   const dbEngineLogoSrc = dbEngineId ? getDatabaseEngineById(dbEngineId)?.logoSrc : undefined;
 
   return (
-    <>
+    <div className="min-w-0 max-w-full">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-8">
-        <Link href="/">
-          <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors">
+      <div className="mb-6 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground sm:mb-8 sm:text-sm">
+        <Link href="/" className="shrink-0">
+          <span className="flex cursor-pointer items-center gap-1 transition-colors hover:text-foreground">
             <FolderKanban className="w-3.5 h-3.5" /> Projects
           </span>
         </Link>
-        <span className="text-muted-foreground/35">/</span>
-        <Link href={`/projects/${projectId}`}>
-          <span className="hover:text-foreground cursor-pointer transition-colors">{project?.name ?? "Project"}</span>
+        <span className="text-muted-foreground/35" aria-hidden>
+          /
+        </span>
+        <Link href={`/projects/${projectId}`} className="min-w-0 max-w-[42vw] shrink sm:max-w-[12rem]">
+          <span className="block cursor-pointer truncate transition-colors hover:text-foreground">
+            {project?.name ?? "Project"}
+          </span>
         </Link>
-        <span className="text-muted-foreground/35">/</span>
-        <span className="text-foreground font-medium">{service.name}</span>
+        <span className="text-muted-foreground/35" aria-hidden>
+          /
+        </span>
+        <span className="min-w-0 max-w-[min(100%,12rem)] truncate font-medium text-foreground sm:max-w-xs">
+          {service.name}
+        </span>
       </div>
 
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="space-y-4 md:space-y-6"
+      >
 
         {/* ── Hero Header ── */}
-        <div className={`glass-panel rounded-2xl p-6 relative overflow-hidden ${typeConf.glow}`}>
-          <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 blur-[80px] pointer-events-none" />
-          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-            <div className="flex items-center gap-5">
+        <div className={`glass-panel relative overflow-hidden rounded-2xl p-4 sm:p-6 ${typeConf.glow}`}>
+          <div className="pointer-events-none absolute right-0 top-0 h-64 w-64 bg-primary/5 blur-[80px]" />
+          <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
+            <div className="flex min-w-0 items-start gap-3 sm:gap-5">
               <div
-                className={`w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0 overflow-hidden ${
+                className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl sm:h-16 sm:w-16 ${
                   dbEngineLogoSrc
                     ? "border border-sky-500/25 bg-transparent p-2"
                     : typeConf.color
@@ -1105,9 +1117,9 @@ export default function ServiceDetails({
                   <TypeIcon className="w-8 h-8" />
                 )}
               </div>
-              <div>
-                <div className="flex items-center gap-2.5 flex-wrap mb-1">
-                  <h1 className="text-2xl font-bold tracking-tight">{service.name}</h1>
+              <div className="min-w-0">
+                <div className="mb-1 flex flex-wrap items-center gap-2 sm:gap-2.5">
+                  <h1 className="break-words text-xl font-bold tracking-tight sm:text-2xl">{service.name}</h1>
                   <span className={`text-xs border rounded-full px-2.5 py-1 font-semibold ${typeConf.color}`}>{typeConf.label}</span>
                   {isDatabaseService ? (
                     <span
@@ -1146,14 +1158,14 @@ export default function ServiceDetails({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
               {!isDatabaseService || hasDatabaseCompose ? (
                 <>
                   <button
                     type="button"
                     onClick={() => handleRunDocker("deploy")}
                     disabled={actionBusy}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-all text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-5 py-2.5 text-sm font-semibold text-primary transition-all hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                   >
                     {deploy.isPending && deploy.variables?.mode === "deploy" ? (
                       <><RefreshCw className="w-4 h-4 animate-spin" />Deploying…</>
@@ -1165,7 +1177,7 @@ export default function ServiceDetails({
                     type="button"
                     onClick={() => handleRunDocker("redeploy")}
                     disabled={actionBusy}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-border bg-muted text-foreground hover:bg-accent transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-muted px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                   >
                     {deploy.isPending && deploy.variables?.mode === "redeploy" ? (
                       <><RefreshCw className="w-4 h-4 animate-spin" />Redeploying…</>
@@ -1178,7 +1190,7 @@ export default function ServiceDetails({
                       type="button"
                       onClick={handleStop}
                       disabled={actionBusy}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-red-600/45 bg-red-600/12 text-red-700 hover:bg-red-600/22 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed dark:border-red-500/40 dark:bg-red-600/20 dark:text-red-400 dark:hover:bg-red-600/30"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-600/45 bg-red-600/12 px-4 py-2.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-600/22 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/40 dark:bg-red-600/20 dark:text-red-400 dark:hover:bg-red-600/30 sm:w-auto"
                     >
                       {shutdownService.isPending ? (
                         <><RefreshCw className="w-4 h-4 animate-spin" />Stopping…</>
@@ -1191,7 +1203,7 @@ export default function ServiceDetails({
                       type="button"
                       onClick={handleStartHost}
                       disabled={actionBusy}
-                      className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-emerald-600/40 bg-emerald-600/12 text-emerald-800 hover:bg-emerald-600/20 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-600/40 bg-emerald-600/12 px-4 py-2.5 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-600/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20 sm:w-auto"
                     >
                       {startService.isPending ? (
                         <><RefreshCw className="w-4 h-4 animate-spin" />Starting…</>
@@ -1202,24 +1214,28 @@ export default function ServiceDetails({
                   )}
                 </>
               ) : (
-                <p className="text-xs text-muted-foreground max-w-md leading-relaxed border border-sky-500/20 rounded-xl px-4 py-2.5 bg-sky-500/5">
-                  Fill the <span className="text-foreground font-medium">Postgres</span> form in the <span className="text-foreground font-medium">Database</span> tab to save the stack YAML, then use Deploy (<span className="font-mono text-[11px]">docker stack deploy</span>).
+                <p className="max-w-md rounded-xl border border-sky-500/20 bg-sky-500/5 px-4 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                  Fill the <span className="text-foreground font-medium">Postgres</span> form in the{" "}
+                  <span className="text-foreground font-medium">Database</span> tab to save the stack YAML, then use Deploy (
+                  <span className="font-mono text-[11px]">docker stack deploy</span>).
                 </p>
               )}
               <button
                 type="button"
                 onClick={handleDelete}
-                className="inline-flex items-center justify-center p-2 rounded-lg border border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm font-medium text-destructive transition-colors hover:bg-destructive/20 dark:border-destructive/35 dark:hover:bg-destructive/20 sm:w-auto sm:gap-0 sm:px-2.5 sm:py-2.5"
                 aria-label="Delete service"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="h-4 w-4 shrink-0 sm:h-3.5 sm:w-3.5" aria-hidden />
+                <span className="sm:sr-only">Delete service</span>
               </button>
             </div>
           </div>
         </div>
 
         {/* ── Tabs ── */}
-        <div className="flex gap-1 p-1 bg-card/50 rounded-xl border border-border w-fit overflow-x-auto">
+        <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-border bg-card/50 [-webkit-overflow-scrolling:touch] [scrollbar-width:thin]">
+          <div className="flex w-max min-w-full gap-1 p-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -1227,7 +1243,7 @@ export default function ServiceDetails({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`relative flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:gap-2 sm:px-4 sm:text-sm ${
                   active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
@@ -1245,6 +1261,7 @@ export default function ServiceDetails({
               </button>
             );
           })}
+          </div>
         </div>
 
         {/* ── Tab Content ── */}
@@ -1300,15 +1317,15 @@ export default function ServiceDetails({
           {/* ── CONFIGURATION ── */}
           {activeTab === "config" && (
             <motion.div key="config" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }} className="glass-panel rounded-2xl overflow-hidden">
+              transition={{ duration: 0.2 }}               className="glass-panel rounded-2xl overflow-hidden">
               {/* Toolbar */}
-              <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/60">
-                <div className="flex items-center gap-2">
-                  <FileCode className="w-4 h-4 text-primary" />
-                  <span className="text-sm font-semibold">{service.name}.yml</span>
-                  <span className={`text-xs border rounded-full px-2 py-0.5 ${typeConf.color}`}>{typeConf.label}</span>
+              <div className="flex flex-col gap-3 border-b border-border/60 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-3.5">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <FileCode className="h-4 w-4 shrink-0 text-primary" />
+                  <span className="truncate text-sm font-semibold">{service.name}.yml</span>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs ${typeConf.color}`}>{typeConf.label}</span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                   {editingConfig ? (
                     <>
                       <button onClick={() => setEditingConfig(false)}
@@ -1434,8 +1451,8 @@ export default function ServiceDetails({
           {activeTab === "logs" && (
             <motion.div key="logs" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}>
-              <div className="glass-panel rounded-xl overflow-hidden flex flex-col border border-border/60 min-h-[min(70vh,560px)] max-h-[min(88vh,760px)]">
-                <div className="px-5 pt-5 pb-3 border-b border-border/60 shrink-0">
+              <div className="glass-panel flex max-h-[min(88vh,760px)] min-h-[min(70vh,560px)] flex-col overflow-hidden rounded-xl border border-border/60">
+                <div className="shrink-0 border-b border-border/60 px-3 pb-3 pt-4 sm:px-5 sm:pt-5">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <ScrollText className="w-5 h-5 text-primary shrink-0" />
@@ -1452,8 +1469,8 @@ export default function ServiceDetails({
                   </div>
                 </div>
 
-                <Tabs defaultValue="live" className="flex flex-col flex-1 min-h-0">
-                  <div className="px-5 pt-3 pb-2 border-b border-border/40 shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <Tabs defaultValue="live" className="flex min-h-0 flex-1 flex-col">
+                  <div className="flex shrink-0 flex-col gap-2 border-b border-border/40 px-3 pb-2 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                     <TabsList className="h-9 w-full sm:w-auto justify-start">
                       <TabsTrigger value="live" className="text-xs sm:text-sm">
                         Live container
@@ -1474,11 +1491,11 @@ export default function ServiceDetails({
                     value="live"
                     className="mt-0 flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden data-[state=inactive]:hidden"
                   >
-                    <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 bg-muted/20 shrink-0 flex-wrap">
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/40 bg-muted/20 px-3 py-2 sm:gap-3 sm:px-5">
                       <button
                         type="button"
                         onClick={() => setLiveLogText("")}
-                        className="btn-secondary text-xs py-1.5 h-8 flex items-center gap-1.5"
+                        className="btn-secondary flex h-8 items-center gap-1.5 py-1.5 text-xs"
                       >
                         Clear
                       </button>
@@ -1496,7 +1513,7 @@ export default function ServiceDetails({
                     </div>
                     <div
                       ref={liveLogScrollRef}
-                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950"
+                      className="min-h-[200px] flex-1 overflow-auto bg-zinc-950 px-3 py-4 sm:px-5"
                     >
                       {isDatabaseService && !hasDatabaseCompose ? (
                         <p className="text-sm text-muted-foreground text-center py-16 px-4 leading-relaxed max-w-md mx-auto">
@@ -1537,7 +1554,7 @@ export default function ServiceDetails({
                     value="deploy"
                     className="mt-0 flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden data-[state=inactive]:hidden"
                   >
-                    <div className="flex items-center gap-3 px-5 py-2 border-b border-border/40 bg-muted/20 shrink-0 flex-wrap">
+                    <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/40 bg-muted/20 px-3 py-2 sm:gap-3 sm:px-5">
                       <button
                         type="button"
                         onClick={() => {
@@ -1551,7 +1568,7 @@ export default function ServiceDetails({
                           toast({ title: "Copied", description: "Deployment log copied to clipboard." });
                         }}
                         disabled={!deployLogQuery.data?.[0] && !(deploy.isPending && deployStreamText)}
-                        className="btn-secondary text-xs py-1.5 h-8 flex items-center gap-1.5 disabled:opacity-50"
+                        className="btn-secondary flex h-8 items-center gap-1.5 py-1.5 text-xs disabled:opacity-50"
                       >
                         <Copy className="w-3.5 h-3.5" />
                         Copy
@@ -1559,7 +1576,7 @@ export default function ServiceDetails({
                     </div>
                     <div
                       ref={deployLogScrollRef}
-                      className="flex-1 min-h-[200px] overflow-auto px-5 py-4 bg-zinc-950"
+                      className="min-h-[200px] flex-1 overflow-auto bg-zinc-950 px-3 py-4 sm:px-5"
                     >
                       {deploy.isPending && deployStreamText ? (
                         <>
@@ -1629,8 +1646,7 @@ export default function ServiceDetails({
           )}
         </AnimatePresence>
       </motion.div>
-
-    </>
+    </div>
   );
 }
 
@@ -2047,8 +2063,8 @@ function ServiceBackupPanel({
 
   if (isDatabaseService) {
     return (
-      <div className="glass-panel rounded-xl border border-border/60 p-10 md:p-14 text-center max-w-3xl mx-auto">
-        <div className="flex items-start gap-4 flex-col md:flex-row md:items-center md:justify-between">
+      <div className="glass-panel mx-auto max-w-3xl rounded-xl border border-border/60 p-5 text-center sm:p-8 md:p-14">
+        <div className="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <Database className="w-12 h-12 text-muted-foreground/80" />
             <div className="text-left">
@@ -2207,8 +2223,8 @@ function ServiceBackupPanel({
   }
 
   return (
-    <div className="glass-panel rounded-xl border border-border/60 p-10 md:p-14 text-center max-w-3xl mx-auto">
-      <div className="flex items-start gap-4 flex-col md:flex-row md:items-center md:justify-between">
+    <div className="glass-panel mx-auto max-w-3xl rounded-xl border border-border/60 p-5 text-center sm:p-8 md:p-14">
+      <div className="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex items-center gap-3">
           <HardDrive className="w-12 h-12 text-muted-foreground/80" />
           <div className="text-left">

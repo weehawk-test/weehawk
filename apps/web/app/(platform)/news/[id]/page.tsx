@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { Newspaper } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { fetchPlatformNewsById } from "../platform-news";
 import {
@@ -25,13 +25,22 @@ export default async function NewsDetailPage({ params }: Props) {
   return (
     <article className="space-y-8 max-w-3xl">
       <div>
-        <Link
-          href="/news"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden />
-          Back to news
-        </Link>
+        <nav className="mb-6 flex items-center gap-2.5 text-sm" aria-label="Breadcrumb">
+          <Newspaper className="h-4 w-4 shrink-0 text-muted-foreground/80" strokeWidth={1.75} aria-hidden />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Link
+              href="/news"
+              scroll={false}
+              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground/90"
+            >
+              News
+            </Link>
+            <span className="select-none text-muted-foreground/45" aria-hidden>
+              /
+            </span>
+            <span className="min-w-0 truncate font-semibold tracking-tight text-foreground">{item.title}</span>
+          </div>
+        </nav>
 
         <div className="flex flex-wrap items-center gap-2 gap-y-1.5 mb-4">
           <Badge

@@ -412,11 +412,11 @@ export function DeployDomainsClient({
   return (
     <div className="space-y-8 max-w-3xl">
       <header className="space-y-2">
-        <div className="flex items-center gap-3">
-          <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shadow-sm shadow-primary/10">
+        <div className="flex items-start gap-3">
+          <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shadow-sm shadow-primary/10 shrink-0">
             <Globe className="size-6 text-primary" />
           </div>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight">Domains</h1>
             <p className="text-sm text-muted-foreground max-w-2xl">
               Save your certificate email, then list site addresses per server.{" "}
