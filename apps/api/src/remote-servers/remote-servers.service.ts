@@ -3,7 +3,6 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
-  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -209,7 +208,7 @@ function normalizeDomainsJsonInput(raw: string | undefined): string | null {
 }
 
 @Injectable()
-export class RemoteServersService implements OnApplicationBootstrap {
+export class RemoteServersService {
   /**
    * Serialize Swarm webhook-agent deploys per remote server so concurrent API calls
    * do not race on `docker service rm` / `docker service create` (AlreadyExists).
@@ -222,28 +221,6 @@ export class RemoteServersService implements OnApplicationBootstrap {
     private readonly configService: ConfigService,
     private readonly traefikService: TraefikService,
   ) {}
-
-  /** Fix legacy rows: loopback SSH hosts are build-only, never deploy. */
-  async onApplicationBootstrap(): Promise<void> {
-    try {
-      const svcRepo =
-        this.remoteServerRepository.manager.getRepository(Service);
-      const rows = await this.remoteServerRepository.find();
-      for (const r of rows) {
-        if (isLoopbackSshHost(r.host) && r.serverRole === 'deploy') {
-          const n = await svcRepo.count({
-            where: { remoteServer: { id: r.id } },
-          });
-          if (n === 0) {
-            r.serverRole = 'build';
-            await this.remoteServerRepository.save(r);
-          }
-        }
-      }
-    } catch {
-      /* ignore if DB not ready */
-    }
-  }
 
   private runWebhookSwarmOpSerialized(
     remoteServerId: number,
@@ -337,10 +314,7 @@ export class RemoteServersService implements OnApplicationBootstrap {
       host: rs.host,
       port: rs.port,
       sshUser: rs.sshUser,
-      serverRole:
-        isLoopbackSshHost(rs.host) || rs.serverRole === 'build'
-          ? 'build'
-          : 'deploy',
+      serverRole: rs.serverRole === 'build' ? 'build' : 'deploy',
       authMode,
       hasPrivateKey,
       privateKeyPath: hasPath ? rs.privateKeyPath! : null,
@@ -2331,11 +2305,8 @@ done
 
     const hostTrimmed = dto.host.trim();
     await this.enforcePublicRemoteSshTargets(hostTrimmed, dto.publicIpv4);
-    const serverRole: 'deploy' | 'build' = isLoopbackSshHost(hostTrimmed)
-      ? 'build'
-      : dto.serverRole === 'build'
-        ? 'build'
-        : 'deploy';
+    const serverRole: 'deploy' | 'build' =
+      dto.serverRole === 'build' ? 'build' : 'deploy';
 
     const entity = this.remoteServerRepository.create({
       publicId: generatePublicId('rsv'),
@@ -2443,7 +2414,6 @@ done
           'The local machine (localhost / loopback) cannot be a deploy server. Point those services at a remote deploy host first, then set this entry to Build-only under Remote servers.',
         );
       }
-      merged.serverRole = 'build';
     }
     if (dto.host !== undefined || dto.publicIpv4 !== undefined) {
       await this.enforcePublicRemoteSshTargets(merged.host, merged.publicIpv4);

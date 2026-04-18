@@ -92,13 +92,13 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
         className="border-t border-border bg-zinc-100/90 dark:bg-muted/20"
         onToggle={(e) => setPanelOpen((e.target as HTMLDetailsElement).open)}
       >
-        <summary className="px-5 py-2.5 text-xs font-medium cursor-pointer select-none text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden flex items-center gap-2">
+        <summary className="px-4 py-2.5 text-xs font-medium cursor-pointer select-none text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 sm:px-5">
           <span className="inline-block rotate-0 transition-transform [[open]_&]:rotate-90 text-[10px] opacity-60">
             ▸
           </span>
           Server setup &amp; install
         </summary>
-        <div className="px-5 pb-4 space-y-3">
+        <div className="space-y-3 px-4 pb-4 sm:px-5">
           <p className="text-[11px] text-muted-foreground leading-relaxed">
             {row.serverRole === "build" ? (
               <>
@@ -136,12 +136,12 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
               I want the platform to run this script on <strong className="text-foreground">{row.host}</strong>.
             </span>
           </label>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <button
               type="button"
               disabled={!row.hasPrivateKey || !ack || enqueueMut.isPending}
               onClick={() => enqueueMut.mutate()}
-              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-amber-600/45 bg-amber-500/20 text-amber-950 hover:bg-amber-500/30 dark:border-amber-500/35 dark:bg-amber-500/15 dark:text-amber-100 dark:hover:bg-amber-500/20 disabled:opacity-40 disabled:pointer-events-none"
+              className="btn-primary inline-flex min-h-10 w-full items-center justify-center gap-1.5 text-xs disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
             >
               {enqueueMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
               Install
@@ -157,13 +157,13 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
         className="border-t border-border bg-zinc-100/90 dark:bg-muted/15"
         onToggle={(e) => setPurgeOpen((e.target as HTMLDetailsElement).open)}
       >
-        <summary className="px-5 py-2.5 text-xs font-medium cursor-pointer select-none text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden flex items-center gap-2">
+        <summary className="px-4 py-2.5 text-xs font-medium cursor-pointer select-none text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden flex items-center gap-2 sm:px-5">
           <span className="inline-block rotate-0 transition-transform [[open]_&]:rotate-90 text-[10px] opacity-60">
             ▸
           </span>
           Remove Docker (purge) — conflict cleanup
         </summary>
-        <div className="px-5 pb-4 space-y-3">
+        <div className="space-y-3 px-4 pb-4 sm:px-5">
           <p className="text-[11px] text-red-400/90 leading-relaxed border border-red-500/25 rounded-lg bg-red-500/5 p-2.5">
             <strong className="text-red-300">Danger:</strong> removes Docker and all images and containers on this
             server. Use only if Docker is broken. Then use <strong className="text-red-200">Install</strong> above for a
@@ -194,12 +194,12 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
               now.
             </span>
           </label>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <button
               type="button"
               disabled={!row.hasPrivateKey || !purgeAck || purgeMut.isPending}
               onClick={() => purgeMut.mutate()}
-              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-red-600/45 bg-red-500/20 text-red-950 hover:bg-red-500/30 dark:border-red-500/35 dark:bg-red-500/15 dark:text-red-100 dark:hover:bg-red-500/20 disabled:opacity-40 disabled:pointer-events-none"
+              className="btn-secondary inline-flex min-h-10 w-full items-center justify-center gap-1.5 border-destructive/40 bg-destructive/10 text-xs font-medium text-destructive hover:bg-destructive/15 disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
             >
               {purgeMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
               Run purge
@@ -212,7 +212,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
       </details>
 
       {jobId && jobQ.data && !jobLogDismissed ? (
-        <div className="border-t border-border bg-zinc-100/80 dark:bg-muted/10 px-5 py-3">
+        <div className="border-t border-border bg-zinc-100/80 px-4 py-3 dark:bg-muted/10 sm:px-5">
           <div className="rounded-lg border border-zinc-700/50 bg-zinc-950 p-3 space-y-2 shadow-inner dark:border-border dark:bg-black/40">
             <div className="flex items-start justify-between gap-2 flex-wrap">
               <p className="text-[11px] font-medium min-w-0 text-zinc-100">
@@ -257,7 +257,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
       ) : null}
 
       {jobId && jobQ.data && jobLogDismissed ? (
-        <div className="border-t border-border bg-zinc-100/80 dark:bg-muted/10 px-5 py-2">
+        <div className="border-t border-border bg-zinc-100/80 px-4 py-2 dark:bg-muted/10 sm:px-5">
           <button
             type="button"
             onClick={() => setJobLogDismissed(false)}

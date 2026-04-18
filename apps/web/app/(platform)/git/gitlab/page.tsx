@@ -105,7 +105,7 @@ export default function GitLabGitSettingsPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 pb-12">
+    <div className="w-full space-y-8 pb-12">
       <GitBreadcrumb current="gitlab" />
 
       <div className="flex items-start gap-4">

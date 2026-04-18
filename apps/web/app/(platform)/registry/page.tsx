@@ -51,8 +51,8 @@ const PROVIDERS: ProviderCard[] = [
 
 export default function RegistryPage() {
   return (
-    <div className="mx-auto max-w-4xl pb-10">
-      <header className="mb-10 md:mb-12 max-w-2xl">
+    <div className="w-full pb-10">
+      <header className="mb-10 md:mb-12">
         <h1 className="text-3xl font-bold tracking-tight text-foreground md:text-4xl">Registry</h1>
         <p className="mt-3 text-muted-foreground leading-relaxed">
           Choose where Weehawk stores credentials for pushing and pulling images.

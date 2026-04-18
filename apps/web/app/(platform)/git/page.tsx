@@ -6,8 +6,8 @@ import { ArrowRight } from "lucide-react";
 
 export default function GitLandingPage() {
   return (
-    <div className="mx-auto max-w-4xl pb-10">
-      <header className="mb-10 md:mb-12 max-w-2xl">
+    <div className="w-full pb-10">
+      <header className="mb-10 md:mb-12">
         <h1 className="text-3xl font-bold tracking-tight text-foreground md:text-4xl">Git</h1>
         <p className="mt-3 text-muted-foreground leading-relaxed">
           Choose where Weehawk stores credentials for pulling application source.

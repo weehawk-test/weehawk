@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { FolderKanban, Plus, Search, Trash2, ChevronRight, Clock, Boxes, Loader2 } from "lucide-react";
+import { FolderKanban, Plus, Search, Trash2, ChevronRight, Clock, Boxes, Loader2, X } from "lucide-react";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useProjectsPage, useCreateProject, useDeleteProject } from "@/hooks/use-projects";
@@ -68,8 +68,19 @@ function CreateProjectModal({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="absolute top-0 right-0 w-48 h-48 bg-primary/10 blur-[60px] pointer-events-none" />
-        <h2 className="text-2xl font-bold mb-1">New Project</h2>
-        <p className="text-muted-foreground text-sm mb-6">Create a new project to organize your services.</p>
+        <div className="relative z-10 flex items-center justify-between gap-3 mb-1">
+          <h2 className="text-2xl font-bold min-w-0">New Project</h2>
+          <button
+            type="button"
+            disabled={create.isPending}
+            onClick={closeModal}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-white/10"
+            aria-label="Close"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <p className="text-muted-foreground text-sm mb-6 relative z-10">Create a new project to organize your services.</p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 relative z-10">
           <div>

@@ -139,7 +139,7 @@ export default function GitHubGitSettingsPage() {
   const installUrl = data?.github.installAppUrl?.trim() || null;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 pb-12">
+    <div className="w-full space-y-8 pb-12">
       <GitBreadcrumb current="github" />
 
       <div className="flex items-start gap-4">

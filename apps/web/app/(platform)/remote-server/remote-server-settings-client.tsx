@@ -9,7 +9,6 @@ import {
   KeyRound,
   Loader2,
   Plus,
-  Server,
   Terminal,
   Trash2,
   PlugZap,
@@ -35,8 +34,6 @@ import { fetchTraefikSettings, type TraefikSettingsPayload } from "@/lib/traefik
 import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
-import { isLoopbackSshHost } from "@/lib/loopback-ssh-host";
-
 /** When Host is a dotted public IPv4, it is stored as `publicIpv4` (e.g. Magic traefik.me). Hostnames are SSH-only. */
 function parseDottedPublicIpv4(hostOrIp: string): string | null {
   const t = hostOrIp.trim();
@@ -90,15 +87,12 @@ export function RemoteServerSettingsClient({
   const qc = useQueryClient();
   const remoteServersQueryKey = ["remote-servers"] as const;
   const traefikSettingsQueryKey = ["traefik", "settings"] as const;
-  const hasInitialRemoteServers = initialRemoteServers !== undefined;
-
   const list = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken) && !hasInitialRemoteServers,
+    enabled: Boolean(accessToken),
     initialData: initialRemoteServers,
-    staleTime: hasInitialRemoteServers ? Infinity : 10_000,
-    refetchOnMount: hasInitialRemoteServers ? false : undefined,
+    staleTime: 10_000,
   });
 
   const traefikSettingsQ = useQuery({
@@ -139,18 +133,6 @@ export function RemoteServerSettingsClient({
       }
     }
   }, [editingId, list.data]);
-
-  useEffect(() => {
-    if (creating && isLoopbackSshHost(form.host)) {
-      setForm((f) => (f.serverRole !== "build" ? { ...f, serverRole: "build" } : f));
-    }
-  }, [creating, form.host]);
-
-  useEffect(() => {
-    if (editingId != null && isLoopbackSshHost(editDraft.host)) {
-      setEditDraft((d) => (d.serverRole !== "build" ? { ...d, serverRole: "build" } : d));
-    }
-  }, [editingId, editDraft.host]);
 
   useEffect(() => {
     if (editingId == null || list.data == null) return;
@@ -233,8 +215,12 @@ export function RemoteServerSettingsClient({
       }
       return updateRemoteServerApi(accessToken ?? "", row.id, patch);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: remoteServersQueryKey });
+    onSuccess: (updated) => {
+      qc.setQueryData<RemoteServerRow[]>(remoteServersQueryKey, (prev) => {
+        const rows = prev ?? [];
+        return rows.map((r) => (r.id === updated.id ? updated : r));
+      });
+      void qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       setEditingId(null);
       toast({ title: "Updated" });
     },
@@ -244,8 +230,11 @@ export function RemoteServerSettingsClient({
 
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteRemoteServerApi(accessToken ?? "", id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: remoteServersQueryKey });
+    onSuccess: (_data, id) => {
+      qc.setQueryData<RemoteServerRow[]>(remoteServersQueryKey, (prev) =>
+        (prev ?? []).filter((r) => r.id !== id),
+      );
+      void qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       toast({ title: "Removed" });
     },
     onError: (e: Error) =>
@@ -453,23 +442,16 @@ export function RemoteServerSettingsClient({
     editingId != null ? (list.data ?? []).find((r) => r.id === editingId) ?? null : null;
 
   return (
-    <div className="space-y-8 max-w-4xl">
+    <div className="w-full space-y-6 pb-[max(1rem,env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-0">
       <header className="space-y-2">
-        <div className="flex items-start gap-3">
-          <div className="rounded-xl bg-primary/10 border border-primary/20 p-2.5 shrink-0">
-            <Server className="size-6 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight">Remote servers</h1>
-            <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
-              Connect and manage remote hosts via SSH keys. Assign each server a specific role,{" "}
-              <strong className="font-semibold text-violet-900 dark:text-violet-100">Deploy</strong> for running containers
-              and stacks, or{" "}
-              <strong className="font-semibold text-violet-900 dark:text-violet-100">Build</strong> to handle heavy Docker
-              builds externally.
-            </p>
-          </div>
-        </div>
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Remote servers</h1>
+        <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
+          Connect and manage remote hosts via SSH keys. Assign each server a specific role,{" "}
+          <strong className="font-semibold text-violet-900 dark:text-violet-100">Deploy</strong> for running containers and
+          stacks, or{" "}
+          <strong className="font-semibold text-violet-900 dark:text-violet-100">Build</strong> to handle heavy Docker builds
+          externally.
+        </p>
       </header>
 
       {traefikSettingsQ.isLoading ? (
@@ -497,7 +479,7 @@ export function RemoteServerSettingsClient({
       ) : null}
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Hosts</h2>
           {!creating && (
             <button
@@ -509,7 +491,7 @@ export function RemoteServerSettingsClient({
                   : "Add a remote host"
               }
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/25 text-primary hover:bg-primary/15 disabled:opacity-40 disabled:pointer-events-none"
+              className="btn-primary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
             >
               <Plus className="size-3.5" />
               Add host
@@ -519,7 +501,7 @@ export function RemoteServerSettingsClient({
 
         <div className="space-y-2">
           {(list.data ?? []).length === 0 && !creating ? (
-            <p className="text-sm text-muted-foreground py-8 text-center border border-dashed border-border rounded-xl">
+            <p className="text-sm text-muted-foreground px-3 py-8 text-center border border-dashed border-border rounded-xl sm:px-4">
               {certEmailReady ? (
                 <>
                   No remote hosts yet. Add a host and paste a private key, or generate a new pair.
@@ -542,10 +524,10 @@ export function RemoteServerSettingsClient({
                 className="glass-panel rounded-xl border border-border overflow-hidden"
               >
                 <>
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-5 py-4">
-                    <div className="min-w-0">
+                  <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-3 sm:px-5 sm:py-4">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-medium text-sm truncate">{row.name}</p>
+                        <p className="min-w-0 max-w-full break-words font-medium text-sm sm:truncate">{row.name}</p>
                         <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
                           Remote
                         </span>
@@ -564,44 +546,44 @@ export function RemoteServerSettingsClient({
                           </span>
                         ) : null}
                       </div>
-                      <p className="text-xs text-muted-foreground font-mono mt-1 truncate">
+                      <p className="mt-1 break-all font-mono text-xs text-muted-foreground sm:truncate">
                         {row.sshUser}@{row.host}
                         {row.port !== 22 ? `:${row.port}` : ""}
                       </p>
                       {row.authMode === "file" && row.privateKeyPath ? (
-                        <p className="text-[11px] text-zinc-500 font-mono mt-1 truncate break-all">
+                        <p className="text-[11px] text-zinc-500 font-mono mt-1 break-all">
                           {row.privateKeyPath}
                         </p>
                       ) : null}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
                       {row.hasPrivateKey ? (
                         <Link
                           href={`/docker-manager/${row.publicId ?? row.id}/images`}
                           scroll={false}
-                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
+                          className="btn-secondary col-span-2 inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs sm:col-span-1 sm:min-h-0 sm:w-auto sm:py-1.5"
                           title="Open Docker console for this host (full Docker UI)"
                         >
-                          <Container className="size-3.5" />
-                          Docker Manager
+                          <Container className="size-3.5 shrink-0" />
+                          <span className="truncate">Docker Manager</span>
                         </Link>
                       ) : (
                         <span
-                          className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border opacity-40 cursor-not-allowed"
+                          className="btn-secondary col-span-2 inline-flex min-h-10 cursor-not-allowed items-center justify-center gap-1 px-2.5 py-2 text-xs opacity-40 sm:col-span-1 sm:min-h-0 sm:w-auto sm:py-1.5"
                           title="Configure a private key first"
                         >
-                          <Container className="size-3.5" />
-                          Docker Manager
+                          <Container className="size-3.5 shrink-0" />
+                          <span className="truncate">Docker Manager</span>
                         </span>
                       )}
                       <button
                         type="button"
                         disabled={!row.hasPrivateKey}
                         onClick={() => setTestModalRow(row)}
-                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                        className="btn-secondary inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs disabled:opacity-40 sm:min-h-0 sm:py-1.5"
                         title="Open test options"
                       >
-                        <FlaskConical className="size-3.5" />
+                        <FlaskConical className="size-3.5 shrink-0" />
                         Test
                       </button>
                       <button
@@ -610,10 +592,10 @@ export function RemoteServerSettingsClient({
                         onClick={() => {
                           setTerminalModalRow(row);
                         }}
-                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                        className="btn-secondary inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs disabled:opacity-40 sm:min-h-0 sm:py-1.5"
                         title="Open remote SSH terminal"
                       >
-                        <Terminal className="size-3.5" />
+                        <Terminal className="size-3.5 shrink-0" />
                         Terminal
                       </button>
                       <button
@@ -622,7 +604,7 @@ export function RemoteServerSettingsClient({
                           setGeneratedPublicKey(null);
                           setEditingId(row.id);
                         }}
-                        className="text-xs px-2.5 py-1.5 rounded-lg border border-border hover:bg-white/5"
+                        className="btn-secondary min-h-10 px-2.5 py-2 text-xs sm:min-h-0 sm:py-1.5"
                       >
                         Edit
                       </button>
@@ -641,9 +623,11 @@ export function RemoteServerSettingsClient({
                           if (!ok) return;
                           deleteMut.mutate(row.id);
                         }}
-                        className="text-xs p-1.5 rounded-lg border border-red-500/20 text-red-400 hover:bg-red-500/10"
+                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-destructive/45 bg-destructive/10 p-2 text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-40 sm:min-h-0 sm:p-1.5"
+                        title="Delete host"
+                        aria-label="Delete host"
                       >
-                        <Trash2 className="size-3.5" />
+                        <Trash2 className="size-3.5" aria-hidden />
                       </button>
                     </div>
                   </div>
@@ -657,38 +641,38 @@ export function RemoteServerSettingsClient({
       {typeof document !== "undefined" && creating
         ? createPortal(
             <div
-              className="fixed inset-0 z-[120] overflow-y-auto flex min-h-full items-center justify-center p-4 bg-black/40 backdrop-blur-xl dark:bg-black/55"
+              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto bg-black/40 p-0 backdrop-blur-xl dark:bg-black/55 sm:items-center sm:p-4"
               onClick={() => {
                 if (createMut.isPending) return;
                 dismissCreateHostModal();
               }}
             >
               <div
-                className="w-full max-w-2xl rounded-2xl glass-panel p-5 space-y-3 max-h-[90vh] overflow-y-auto shadow-2xl"
+                className="glass-panel max-h-[calc(100dvh-env(safe-area-inset-bottom))] w-full max-w-2xl space-y-3 overflow-y-auto rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5 sm:pb-5"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 pr-2">
                     <h3 className="text-base font-semibold">Add host</h3>
-                    <p className="text-xs text-muted-foreground mt-1">New remote Docker host</p>
+                    <p className="mt-1 text-xs text-muted-foreground">New remote Docker host</p>
                   </div>
                   <button
                     type="button"
                     disabled={createMut.isPending}
                     onClick={dismissCreateHostModal}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 sm:h-8 sm:w-8"
                     aria-label="Close add host dialog"
                   >
                     <X className="size-4" />
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                   <button
                     type="button"
                     disabled={generateMut.isPending || createMut.isPending}
                     onClick={() => generateMut.mutate("create")}
-                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-600/40 bg-violet-500/20 text-violet-950 hover:bg-violet-500/30 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-100 dark:hover:bg-violet-500/20 disabled:opacity-50"
+                    className="btn-secondary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-50 sm:w-auto sm:py-1.5"
                   >
                     {generateMut.isPending ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -701,7 +685,7 @@ export function RemoteServerSettingsClient({
                 {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
                 <div className="space-y-2">
                   <span className="text-xs text-muted-foreground">Server role</span>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                     {(
                       [
                         {
@@ -720,7 +704,7 @@ export function RemoteServerSettingsClient({
                         key={opt.value}
                         type="button"
                         onClick={() => setForm((f) => ({ ...f, serverRole: opt.value }))}
-                        className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
+                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors sm:min-w-[140px] sm:flex-1 ${
                           form.serverRole === opt.value
                             ? "border-primary/40 bg-primary/10 text-foreground"
                             : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
@@ -787,22 +771,22 @@ export function RemoteServerSettingsClient({
                     />
                   </label>
                 </div>
-                <div className="flex gap-2 pt-1">
-                  <button
-                    type="button"
-                    disabled={createMut.isPending || addHostBlocked}
-                    onClick={() => createMut.mutate()}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
-                  >
-                    {createMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-                  </button>
+                <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                   <button
                     type="button"
                     disabled={createMut.isPending}
                     onClick={dismissCreateHostModal}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground disabled:opacity-40"
+                    className="btn-secondary order-2 w-full text-sm disabled:opacity-40 sm:order-1 sm:w-auto"
                   >
                     Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={createMut.isPending || addHostBlocked}
+                    onClick={() => createMut.mutate()}
+                    className="btn-primary order-1 inline-flex w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:order-2 sm:w-auto"
+                  >
+                    {createMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
                   </button>
                 </div>
               </div>
@@ -813,20 +797,20 @@ export function RemoteServerSettingsClient({
       {typeof document !== "undefined" && editingRow
         ? createPortal(
             <div
-              className="fixed inset-0 z-[120] overflow-y-auto flex min-h-full items-center justify-center p-4 bg-black/40 backdrop-blur-xl dark:bg-black/55"
+              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto bg-black/40 p-0 backdrop-blur-xl dark:bg-black/55 sm:items-center sm:p-4"
               onClick={() => {
                 if (updateMut.isPending) return;
                 dismissEditHostModal();
               }}
             >
               <div
-                className="w-full max-w-2xl rounded-2xl glass-panel p-5 space-y-3 max-h-[90vh] overflow-y-auto shadow-2xl"
+                className="glass-panel max-h-[calc(100dvh-env(safe-area-inset-bottom))] w-full max-w-2xl space-y-3 overflow-y-auto rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5 sm:pb-5"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 pr-2">
                     <h3 className="text-base font-semibold">Edit host</h3>
-                    <p className="text-xs text-muted-foreground mt-1 truncate">
+                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground sm:text-xs sm:truncate">
                       {editingRow.name} · {editingRow.sshUser}@{editingRow.host}
                       {editingRow.port !== 22 ? `:${editingRow.port}` : ""}
                     </p>
@@ -835,22 +819,22 @@ export function RemoteServerSettingsClient({
                     type="button"
                     disabled={updateMut.isPending}
                     onClick={dismissEditHostModal}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40"
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 sm:h-8 sm:w-8"
                     aria-label="Close edit host dialog"
                   >
                     <X className="size-4" />
                   </button>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10 w-fit">
                     Remote
                   </span>
                   <button
                     type="button"
                     disabled={generateMut.isPending || updateMut.isPending}
                     onClick={() => generateMut.mutate("edit")}
-                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-violet-600/40 bg-violet-500/20 text-violet-950 hover:bg-violet-500/30 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-100 dark:hover:bg-violet-500/20 disabled:opacity-50"
+                    className="btn-secondary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-50 sm:w-auto sm:py-1.5"
                   >
                     {generateMut.isPending ? (
                       <Loader2 className="size-3.5 animate-spin" />
@@ -859,14 +843,14 @@ export function RemoteServerSettingsClient({
                     )}
                     Generate new key pair
                   </button>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-[11px] text-muted-foreground leading-snug sm:min-w-0 sm:flex-1">
                     Fills “replace” below; save to store the new private key
                   </span>
                 </div>
                 {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
                 <div className="space-y-2">
                   <span className="text-xs text-muted-foreground">Server role</span>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                     {(
                       [
                         {
@@ -885,7 +869,7 @@ export function RemoteServerSettingsClient({
                         key={opt.value}
                         type="button"
                         onClick={() => setEditDraft((d) => ({ ...d, serverRole: opt.value }))}
-                        className={`flex-1 min-w-[140px] text-left rounded-lg border px-3 py-2 transition-colors ${
+                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors sm:min-w-[140px] sm:flex-1 ${
                           editDraft.serverRole === opt.value
                             ? "border-primary/40 bg-primary/10 text-foreground"
                             : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
@@ -958,22 +942,22 @@ export function RemoteServerSettingsClient({
                     />
                   </label>
                 </div>
-                <div className="flex gap-2 pt-1">
-                  <button
-                    type="button"
-                    disabled={updateMut.isPending}
-                    onClick={() => updateMut.mutate(editingRow)}
-                    className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/25 text-emerald-400"
-                  >
-                    {updateMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-                  </button>
+                <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                   <button
                     type="button"
                     disabled={updateMut.isPending}
                     onClick={dismissEditHostModal}
-                    className="text-xs px-3 py-1.5 rounded-lg border border-border text-muted-foreground disabled:opacity-40"
+                    className="btn-secondary order-2 w-full text-sm disabled:opacity-40 sm:order-1 sm:w-auto"
                   >
                     Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={updateMut.isPending}
+                    onClick={() => updateMut.mutate(editingRow)}
+                    className="btn-primary order-1 inline-flex w-full items-center justify-center gap-1.5 text-sm disabled:opacity-40 sm:order-2 sm:w-auto"
+                  >
+                    {updateMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
                   </button>
                 </div>
               </div>
@@ -984,24 +968,24 @@ export function RemoteServerSettingsClient({
       {typeof document !== "undefined" && testModalRow
         ? createPortal(
             <div
-              className="fixed inset-0 z-[120] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4"
+              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto p-0 modal-scrim sm:items-center sm:p-4"
               onClick={() => setTestModalRow(null)}
             >
               <div
-                className="w-full max-w-md rounded-2xl glass-panel p-5 space-y-4"
+                className="glass-panel w-full max-w-md space-y-4 rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-2xl sm:p-5 sm:pb-5"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 pr-2">
                     <h3 className="text-base font-semibold">Test connection</h3>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 break-words text-xs text-muted-foreground">
                       {testModalRow.name} ({testModalRow.sshUser}@{testModalRow.host})
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setTestModalRow(null)}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
                     aria-label="Close test dialog"
                   >
                     <X className="size-4" />
@@ -1013,7 +997,7 @@ export function RemoteServerSettingsClient({
                     type="button"
                     disabled={testSshMut.isPending || testMut.isPending}
                     onClick={() => testSshMut.mutate(testModalRow.id)}
-                    className="w-full inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                    className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
                     title="SSH only: ssh2 + shell (echo + uname). Does not use Docker."
                   >
                     {testSshMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}
@@ -1023,7 +1007,7 @@ export function RemoteServerSettingsClient({
                     type="button"
                     disabled={testMut.isPending || testSshMut.isPending}
                     onClick={() => testMut.mutate(testModalRow.id)}
-                    className="w-full inline-flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-lg border border-border hover:bg-white/5 disabled:opacity-40"
+                    className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
                     title="Remote Docker API via Dockerode over SSH (same path as the Docker Manager)"
                   >
                     {testMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
@@ -1038,19 +1022,19 @@ export function RemoteServerSettingsClient({
       {typeof document !== "undefined" && terminalModalRow
         ? createPortal(
             <div
-              className="fixed inset-0 z-[120] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4"
+              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto p-0 modal-scrim sm:items-center sm:p-4"
               onClick={() => {
                 setTerminalModalRow(null);
               }}
             >
               <div
-                className="w-full max-w-4xl rounded-2xl glass-panel p-5 space-y-4"
+                className="glass-panel flex max-h-[calc(100dvh-env(safe-area-inset-bottom))] w-full max-w-4xl flex-col space-y-3 rounded-t-2xl p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:max-h-[90vh] sm:rounded-2xl sm:p-5 sm:pb-5"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 pr-2">
                     <h3 className="text-base font-semibold">Remote Terminal</h3>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground sm:text-xs">
                       {`${terminalModalRow.sshUser}@${terminalModalRow.host}${terminalModalRow.port !== 22 ? `:${terminalModalRow.port}` : ""}`}
                     </p>
                   </div>
@@ -1080,7 +1064,7 @@ export function RemoteServerSettingsClient({
                   )}
                   <div
                     ref={terminalContainerRef}
-                    className="h-[62vh] min-h-[360px] w-full rounded-lg overflow-hidden border border-border/50 bg-zinc-950"
+                    className="h-[52dvh] min-h-[220px] w-full max-h-[60dvh] rounded-lg border border-border/50 bg-zinc-950 overflow-hidden sm:h-[62vh] sm:max-h-none sm:min-h-[360px]"
                   />
                 </div>
               </div>

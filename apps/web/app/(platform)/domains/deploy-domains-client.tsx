@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Globe, Loader2, Mail, Minus, Plus, Server } from "lucide-react";
+import { Loader2, Mail, Minus, Plus, Server } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import {
   fetchRemoteServers,
@@ -212,7 +212,7 @@ function ServerDomainsCard({
 
           <div
             className={cn(
-              "rounded-xl border border-border/50 bg-muted/30 p-2 space-y-1.5 max-w-xl",
+              "rounded-xl border border-border/50 bg-muted/30 p-2 space-y-1.5",
               "ring-1 ring-black/5 dark:ring-white/5",
             )}
           >
@@ -270,31 +270,24 @@ function ServerDomainsCard({
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 max-w-xl">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
+              className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
               disabled={!domainsEnabled || isPending || !isDirty}
               onClick={onSave}
             >
               {isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
             </button>
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="sm"
               disabled={!domainsEnabled}
               onClick={addRow}
-              className={cn(
-                "h-9 px-3 gap-2 text-muted-foreground hover:text-foreground",
-                "hover:bg-primary/10 rounded-lg border border-transparent hover:border-primary/20",
-              )}
+              className="btn-secondary inline-flex h-9 items-center gap-2 px-3 text-sm"
             >
-              <span className="flex size-6 items-center justify-center rounded-md bg-primary/15 text-primary">
-                <Plus className="size-3.5 stroke-[2.5]" />
-              </span>
+              <Plus className="size-3.5 stroke-[2.5]" />
               Add domain field
-            </Button>
+            </button>
           </div>
         </div>
       </div>
@@ -410,26 +403,19 @@ export function DeployDomainsClient({
   }
 
   return (
-    <div className="space-y-8 max-w-3xl">
+    <div className="w-full space-y-8">
       <header className="space-y-2">
-        <div className="flex items-start gap-3">
-          <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shadow-sm shadow-primary/10 shrink-0">
-            <Globe className="size-6 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight">Domains</h1>
-            <p className="text-sm text-muted-foreground max-w-2xl">
-              Save your certificate email, then list site addresses per server.{" "}
-              <Link href="/remote-server" className="text-primary hover:underline">
-                Servers
-              </Link>
-            </p>
-          </div>
-        </div>
+        <h1 className="text-2xl font-bold tracking-tight">Domains</h1>
+        <p className="text-sm text-muted-foreground max-w-2xl">
+          Save your certificate email, then list site addresses per server.{" "}
+          <Link href="/remote-server" className="text-primary hover:underline">
+            Servers
+          </Link>
+        </p>
       </header>
 
       <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20">
-        <div className="rounded-[0.875rem] bg-card/50 p-5 space-y-4 max-w-xl">
+        <div className="rounded-[0.875rem] bg-card/50 p-5 space-y-4">
           <div className="flex items-start gap-3">
             <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shrink-0">
               <Mail className="size-5 text-primary" />
@@ -465,13 +451,13 @@ export function DeployDomainsClient({
                     setAcmeEmailLocal(e.target.value);
                   }}
                   placeholder="you@example.com"
-                  className="max-w-md"
+                  className="w-full max-w-md sm:max-w-lg"
                 />
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
+                  className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
                   disabled={
                     emailMutation.isPending ||
                     !acmeEmailChanged ||
@@ -496,7 +482,7 @@ export function DeployDomainsClient({
       </section>
 
       {!domainsUnlocked && traefikQ.data != null && (
-        <p className="text-sm text-amber-600/90 dark:text-amber-400/85 max-w-xl">
+        <p className="text-sm text-amber-600/90 dark:text-amber-400/85">
           Save your email above first.
         </p>
       )}

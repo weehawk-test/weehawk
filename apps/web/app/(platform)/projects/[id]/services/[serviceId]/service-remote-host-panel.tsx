@@ -571,11 +571,9 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   return (
     <div className="glass-panel rounded-2xl overflow-hidden border border-white/5">
       <div className="px-5 py-3.5 border-b border-white/5 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <div className="min-w-0 flex gap-3">
-          <div className="rounded-lg bg-primary/10 border border-primary/20 p-2 h-fit">
-            <Server className="size-4 text-primary shrink-0" />
-          </div>
-          <div>
+        <div className="min-w-0 flex items-start gap-2.5">
+          <Server className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+          <div className="min-w-0">
             <h3 className="text-sm font-semibold">Remote Docker host</h3>
             <p className="text-xs text-muted-foreground mt-1 max-w-md leading-relaxed">
               Choose the server to deploy to and the server to build on. The build server is optional when
@@ -588,7 +586,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
             type="button"
             disabled={saveDisabled}
             onClick={() => void save()}
-            className="text-xs px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-emerald-400 disabled:opacity-40 disabled:pointer-events-none"
+            className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
           >
             {updateService.isPending || saveFlowPending ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -617,7 +615,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                     target="_blank"
                     rel="noopener noreferrer"
                     title={displayRedeployTriggerUrl}
-                    className="min-w-0 flex-1 truncate rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-sm font-mono text-primary hover:underline"
+                    className="min-w-0 flex-1 truncate rounded-lg border border-border bg-muted/60 px-3 py-2 text-sm font-mono text-foreground hover:text-primary hover:underline dark:bg-black/40"
                   >
                     {abbreviateTriggerUrl(displayRedeployTriggerUrl)}
                   </a>
@@ -625,7 +623,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                     type="button"
                     disabled={regenerateWebhookPending || webhooksQ.isFetching}
                     onClick={() => void regenerateRedeployWebhook()}
-                    className="shrink-0 inline-flex items-center justify-center rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                    className="btn-secondary inline-flex shrink-0 items-center justify-center px-2.5 py-1.5 text-xs disabled:pointer-events-none disabled:opacity-50"
                     aria-label="New trigger URL"
                   >
                     {regenerateWebhookPending ? (
@@ -648,7 +646,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                         });
                       }
                     }}
-                    className="shrink-0 inline-flex items-center justify-center rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
+                    className="btn-secondary inline-flex shrink-0 items-center justify-center px-2.5 py-1.5 text-xs"
                     aria-label="Copy trigger URL"
                   >
                     <Copy className="size-3.5" />

@@ -7,7 +7,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff, X } from "lucide-react";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
@@ -275,8 +275,19 @@ function CreateServiceModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="absolute top-0 right-0 w-48 h-48 bg-primary/10 blur-[60px] pointer-events-none" />
-        <h2 className="text-2xl font-bold mb-1">New Service</h2>
-        <p className="text-muted-foreground text-sm mb-6">Add a service to this project.</p>
+        <div className="relative z-10 flex items-center justify-between gap-3 mb-1">
+          <h2 className="text-2xl font-bold min-w-0">New Service</h2>
+          <button
+            type="button"
+            disabled={create.isPending}
+            onClick={closeModal}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-white/10"
+            aria-label="Close"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+        <p className="text-muted-foreground text-sm mb-6 relative z-10">Add a service to this project.</p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 relative z-10">
           <input type="hidden" {...register("projectId")} />

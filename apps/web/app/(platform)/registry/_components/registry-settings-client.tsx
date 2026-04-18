@@ -205,7 +205,7 @@ export function RegistrySettingsClient({ preset }: Props) {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 pb-12">
+    <div className="w-full space-y-8 pb-12">
       <RegistryBreadcrumb current={preset} />
 
       <div className="flex items-start gap-4">
