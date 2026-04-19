@@ -78,8 +78,10 @@ function emptyEditDraft(): EditDraft {
 
 export function RemoteServerSettingsClient({
   initialRemoteServers,
+  initialTraefikSettings,
 }: {
   initialRemoteServers?: RemoteServerRow[];
+  initialTraefikSettings?: TraefikSettingsPayload | null;
 }) {
   const { accessToken, user } = useAuth();
   const { toast } = useToast();
@@ -87,19 +89,24 @@ export function RemoteServerSettingsClient({
   const qc = useQueryClient();
   const remoteServersQueryKey = ["remote-servers"] as const;
   const traefikSettingsQueryKey = ["traefik", "settings"] as const;
+  const hasInitialRemoteServers = initialRemoteServers !== undefined;
+  const hasInitialTraefik = initialTraefikSettings !== undefined;
   const list = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && !hasInitialRemoteServers,
     initialData: initialRemoteServers,
-    staleTime: 10_000,
+    staleTime: hasInitialRemoteServers ? Infinity : 10_000,
+    refetchOnMount: hasInitialRemoteServers ? false : undefined,
   });
 
   const traefikSettingsQ = useQuery({
     queryKey: traefikSettingsQueryKey,
     queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken),
-    staleTime: 10_000,
+    enabled: Boolean(accessToken) && !hasInitialTraefik,
+    initialData: initialTraefikSettings ?? undefined,
+    staleTime: hasInitialTraefik ? Infinity : 10_000,
+    refetchOnMount: hasInitialTraefik ? false : undefined,
   });
 
   const certEmailReady = isLetsEncryptEmailConfigured(traefikSettingsQ.data?.acmeEmail);

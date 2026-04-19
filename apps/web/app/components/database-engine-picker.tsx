@@ -83,7 +83,7 @@ export function DatabaseEnginePicker({
                             alt=""
                             width={112}
                             height={56}
-                            className={`object-contain max-h-12 w-auto max-w-[7rem] ${databaseLogoBlendClass(eng.id)} ${databaseLogoSizeClass(eng.id)}`}
+                            className={`object-contain h-auto w-auto max-h-12 max-w-[7rem] ${databaseLogoBlendClass(eng.id)} ${databaseLogoSizeClass(eng.id)}`}
                             sizes="112px"
                           />
                         </span>

@@ -638,7 +638,7 @@ export function NotificationsChannelsClient({
     mutationFn: async () => {
       if (!editChannel) throw new Error("No channel selected.");
       if (editDeployServerId === "") {
-        throw new Error("Select a deploy host.");
+        throw new Error("Select a host for Run test from.");
       }
       return updateNotificationChannel(accessToken!, editChannel.id, {
         name: editName.trim(),
@@ -661,10 +661,7 @@ export function NotificationsChannelsClient({
     setEditChannel(ch);
     setEditName(ch.name);
     setEditIsActive(ch.isActive);
-    const fallbackId = deployServers[0]?.id;
-    setEditDeployServerId(
-      ch.remoteServerId ?? (fallbackId !== undefined ? fallbackId : ""),
-    );
+    setEditDeployServerId(ch.remoteServerId ?? "");
     setShowEditChannel(true);
   };
 
@@ -1252,7 +1249,7 @@ export function NotificationsChannelsClient({
                     <span>Channel active</span>
                   </label>
                   <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">Deploy host</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">Run test from</label>
                     <select
                       className="input-field text-sm"
                       value={editDeployServerId === "" ? "" : String(editDeployServerId)}
@@ -1263,6 +1260,7 @@ export function NotificationsChannelsClient({
                       disabled={deployServers.length === 0 || updateChannelMutation.isPending}
                     >
                       {deployServers.length === 0 && <option value="">No deploy servers</option>}
+                      {deployServers.length > 0 && <option value="">Select a host…</option>}
                       {deployServers.map((srv) => (
                         <option key={srv.id} value={srv.id}>
                           {srv.name} ({srv.host})
@@ -1292,7 +1290,7 @@ export function NotificationsChannelsClient({
                         return;
                       }
                       if (editDeployServerId === "") {
-                        toast({ title: "Deploy host required", variant: "destructive" });
+                        toast({ title: "Run test from required", description: "Select a host.", variant: "destructive" });
                         return;
                       }
                       updateChannelMutation.mutate();
@@ -1432,11 +1430,6 @@ export function NotificationsChannelsClient({
                       <p className="text-sm text-muted-foreground mt-1 truncate">
                         {channelTypeLabel(ch.type)}
                       </p>
-                      {ch.remoteServerId == null ? (
-                        <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 truncate" title="This channel cannot deliver until a deploy host is set">
-                          No deploy host — recreate this channel or set remoteServerId via API
-                        </p>
-                      ) : null}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
@@ -1492,7 +1485,7 @@ export function NotificationsChannelsClient({
                       onClick={() => openEditChannel(ch)}
                       disabled={updateChannelMutation.isPending || testMutation.isPending}
                       className="text-primary hover:underline cursor-pointer font-medium inline-flex items-center gap-1 text-sm disabled:opacity-50"
-                      title="Edit name, active state, deploy host"
+                      title="Edit name, active state, Run test from"
                     >
                       {updateChannelMutation.isPending && editChannel?.id === ch.id ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -1506,7 +1499,7 @@ export function NotificationsChannelsClient({
                       onClick={() => openChannelActions(ch.id, ch.name)}
                       disabled={testMutation.isPending || updateChannelMutation.isPending}
                       className="text-primary hover:underline cursor-pointer font-medium inline-flex items-center gap-1 text-sm disabled:opacity-50"
-                      title="Test from deploy host"
+                      title="Run test from selected host"
                     >
                       {testMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
                       Test

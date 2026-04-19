@@ -911,7 +911,7 @@ export default function ProjectsIdClient({
                               alt=""
                               width={28}
                               height={28}
-                              className={`object-contain max-h-7 w-auto ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
+                              className={`object-contain h-auto w-auto max-h-7 ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                               sizes="36px"
                             />
                           ) : (

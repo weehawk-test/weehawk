@@ -1111,7 +1111,7 @@ export default function ServiceDetails({
                     alt=""
                     width={56}
                     height={56}
-                    className={`object-contain max-h-12 w-auto max-w-[3.5rem] ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
+                    className={`object-contain h-auto w-auto max-h-12 max-w-[3.5rem] ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                     sizes="64px"
                   />
                 ) : (

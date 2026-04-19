@@ -24,7 +24,8 @@ function buildRemoteSshBlocklist(): net.BlockList {
   b.addSubnet('fe80::', 10, 'ipv6');
   b.addSubnet('fc00::', 7, 'ipv6');
   b.addSubnet('ff00::', 8, 'ipv6');
-  b.addSubnet('::ffff:0:0', 96, 'ipv6');
+  // Do NOT add ::ffff:0:0/96 here. In Node.js, BlockList checks IPv4 literals against IPv6
+  // rules too by mapping them to ::ffff:a.b.c.d; a /96 here would mark every public IPv4 as blocked.
   return b;
 }
 
@@ -33,9 +34,10 @@ export function isRemoteSshIpBlocked(ip: string): boolean {
   if (v === 4) return blocklist.check(ip, 'ipv4');
   if (v === 6) {
     const lower = ip.toLowerCase();
+    // IPv4-mapped IPv6: only apply private/bogon rules to the embedded IPv4 (see ::ffff note above).
     if (lower.startsWith('::ffff:')) {
       const tail = lower.slice(7);
-      if (net.isIP(tail) === 4 && blocklist.check(tail, 'ipv4')) return true;
+      if (net.isIP(tail) === 4) return blocklist.check(tail, 'ipv4');
     }
     return blocklist.check(ip, 'ipv6');
   }
