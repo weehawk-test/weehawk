@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   Req,
   UnauthorizedException,
   Body,
   Controller,
   Get,
   HttpCode,
+  Param,
   Post,
   Put,
   Query,
@@ -79,6 +81,23 @@ export class GitController {
     });
   }
 
+  @Get('gitlab/projects/:projectId/branches')
+  @UseGuards(LocalSessionGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'List branch names for a GitLab project (requires GitLab token in settings)',
+  })
+  async listGitlabBranches(
+    @Req() req: { user?: { userId: number } },
+    @Param('projectId') projectId: string,
+  ) {
+    const id = parseInt(projectId, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      throw new BadRequestException('Invalid project id');
+    }
+    return this.gitService.listGitlabBranchNames(this.uid(req), id);
+  }
+
   @Get('github/repositories')
   @UseGuards(LocalSessionGuard)
   @ApiBearerAuth()
@@ -97,6 +116,29 @@ export class GitController {
       perPage: perPage ? parseInt(perPage, 10) : undefined,
       search,
     });
+  }
+
+  @Get('github/branches')
+  @UseGuards(LocalSessionGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary:
+      'List branch names for a repo (installation access token; repo = owner/name)',
+  })
+  async listGithubBranches(
+    @Req() req: { user?: { userId: number } },
+    @Query('installationId') installationId: string,
+    @Query('repo') repo: string,
+  ) {
+    const iid = parseInt(installationId, 10);
+    if (!Number.isFinite(iid) || iid <= 0) {
+      throw new BadRequestException('Invalid installationId');
+    }
+    const r = (repo ?? '').trim();
+    if (!r) {
+      throw new BadRequestException('repo query parameter is required (owner/repo)');
+    }
+    return this.gitService.listGithubBranchNames(this.uid(req), iid, r);
   }
 
   @Put('settings')

@@ -29,7 +29,7 @@ import {
 } from './database-generator.service';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
-import { getServiceDeploymentDir, toSafePathSegment } from './deployment-paths';
+import { toSafePathSegment } from './deployment-paths';
 import type { EventEmitter } from 'events';
 import type { DatabaseBackupConfig } from '../backup/database-backup.types';
 import { resolveBackupFormat } from '../backup/database-backup.types';
@@ -1160,63 +1160,6 @@ ${ports}    deploy:
 ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   }
 
-  private async listFilesRecursively(dir: string, relativePrefix = ''): Promise<string[]> {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    const out: string[] = [];
-    for (const entry of entries) {
-      const rel = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
-      const abs = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        out.push(...(await this.listFilesRecursively(abs, rel)));
-      } else if (entry.isFile()) {
-        out.push(rel.replace(/\\/g, '/'));
-      }
-    }
-    return out;
-  }
-
-  private async resolveDockerfilePath(
-    sourceDir: string,
-    buildPath: string,
-    requestedPath?: string,
-  ): Promise<string> {
-    const contextDir = path.join(sourceDir, buildPath);
-    await fs.access(contextDir);
-
-    const requested = (requestedPath || '').trim();
-    if (requested) {
-      const normalizedRequested = this.normalizeArchivePath(requested, 'Dockerfile');
-      const absRequested = path.join(contextDir, normalizedRequested);
-      const exists = await fs
-        .access(absRequested)
-        .then(() => true)
-        .catch(() => false);
-      if (exists) return normalizedRequested;
-    }
-
-    const files = await this.listFilesRecursively(contextDir);
-    const dockerfileCandidates = files.filter((rel) =>
-      /(^|\/)dockerfile(\.[^/]*)?$/i.test(rel),
-    );
-
-    if (dockerfileCandidates.length === 0) {
-      throw new BadRequestException(
-        `Dockerfile not found under build path "${buildPath}".`,
-      );
-    }
-
-    const exactRoot = dockerfileCandidates.find((p) => p === 'Dockerfile');
-    if (exactRoot) return exactRoot;
-
-    const caseInsensitiveRoot = dockerfileCandidates.find(
-      (p) => p.toLowerCase() === 'dockerfile',
-    );
-    if (caseInsensitiveRoot) return caseInsensitiveRoot;
-
-    dockerfileCandidates.sort((a, b) => a.split('/').length - b.split('/').length);
-    return dockerfileCandidates[0];
-  }
-
   /**
    * Update application stack networks (external attach + overlay keys) and regenerate
    * `dockerConfig` while preserving build metadata and env/secret wiring.
@@ -1249,7 +1192,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
   private async applyApplicationSourceFromDirectory(
     service: Service,
-    sourceDir: string,
     options:
       | {
           buildPath?: string;
@@ -1269,9 +1211,17 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const previousConfig = service.dockerConfig || '';
     const effectiveRemoteMarker =
       remoteGitMarker ?? this.parseStoredRemoteGitMarker(previousConfig);
+    if (!effectiveRemoteMarker) {
+      throw new BadRequestException(
+        'No Git repository linked. Use Fetch to link a repository before generating the stack.',
+      );
+    }
 
     let buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
-    let dockerfilePath = this.normalizeArchivePath(options?.dockerfilePath || '', '');
+    const dockerfilePath = this.normalizeArchivePath(
+      options?.dockerfilePath || 'Dockerfile',
+      'Dockerfile',
+    );
     const prevBuildRaw = this.parseConfigHeaderValue(previousConfig, 'buildMode')?.toLowerCase();
     const optBm = options?.buildMode?.toLowerCase();
     const mergedBm = optBm ?? prevBuildRaw ?? 'dockerfile';
@@ -1282,41 +1232,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     const replicas = Math.min(10, Math.max(1, Math.floor(options?.replicas ?? 1)));
     const parsedVars = this.parseApplicationVariables(options?.variablesJson);
     const valuesMap = this.resolveApplicationValuesMap(parsedVars);
-
-    const remoteGitOnly = Boolean(effectiveRemoteMarker);
-    try {
-      if (remoteGitOnly) {
-        dockerfilePath = this.normalizeArchivePath(
-          options?.dockerfilePath || 'Dockerfile',
-          'Dockerfile',
-        );
-      } else {
-        const contextDir = path.join(sourceDir, buildPath);
-        try {
-          await fs.access(contextDir);
-        } catch {
-          throw new BadRequestException(
-            `Build path not found in application source: "${buildPath}".`,
-          );
-        }
-
-        if (buildMode === 'nixpacks') {
-          dockerfilePath = this.normalizeArchivePath(
-            options?.dockerfilePath || 'Dockerfile',
-            'Dockerfile',
-          );
-        } else {
-          dockerfilePath = await this.resolveDockerfilePath(
-            sourceDir,
-            buildPath,
-            (options?.dockerfilePath || '').trim() || undefined,
-          );
-        }
-      }
-    } catch (e) {
-      if (e instanceof BadRequestException) throw e;
-      throw new BadRequestException('Could not read application build context.');
-    }
 
     await this.removeObsoleteManagedSecrets(service, previousConfig, {});
     const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
@@ -1351,9 +1266,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       network: networkMerged,
       traefik,
     });
-    if (effectiveRemoteMarker) {
-      nextConfig = this.injectRemoteGitHeaders(nextConfig, effectiveRemoteMarker);
-    }
+    nextConfig = this.injectRemoteGitHeaders(nextConfig, effectiveRemoteMarker);
     service.dockerConfig = nextConfig;
     const saved = await this.serviceRepository.save(service);
     const hydrated =
@@ -1362,53 +1275,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         relations: ['project', 'remoteServer'],
       })) ?? saved;
     return this.withMagicTraefikMeUrl(hydrated);
-  }
-
-  async uploadApplicationFromGitClone(
-    id: number,
-    options: {
-      gitlabProjectId?: number;
-      githubInstallationId?: number;
-      githubRepoFullName?: string;
-      httpUrlToRepo?: string;
-      branch?: string;
-      buildPath?: string;
-      dockerfilePath?: string;
-      buildMode?: 'dockerfile' | 'nixpacks';
-      containerPort?: number;
-      publishPort?: number;
-      replicas?: number;
-      variablesJson?: string;
-      networksJson?: string;
-      externalNetworks?: string;
-      stackNetworks?: string;
-    },
-    userId: number,
-  ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
-    if (service.composeType !== composeType.APPLICATION) {
-      throw new BadRequestException('This service is not an application-type service.');
-    }
-
-    const { marker } = await this.gitService.resolveRemoteGitApplicationBinding(
-      options,
-      userId,
-    );
-
-    const saved = await this.applyApplicationSourceFromDirectory(
-      service,
-      '',
-      options,
-      marker,
-    );
-    const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
-    return {
-      success: true,
-      message:
-        'Git repository linked and application stack generated (no source files stored on the API).',
-      service: saved,
-      remoteMirror,
-    };
   }
 
   /**
@@ -1472,8 +1338,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   }
 
   /**
-   * Build stack YAML from `app-source` on disk (legacy files) or from stored remote-git headers
-   * (after {@link stageApplicationGitClone} with no API-side files).
+   * Build stack YAML from stored remote-git headers (after {@link stageApplicationGitClone}).
+   * Source is cloned on the deploy host; the API does not read application files from disk.
    */
   async generateApplicationFromSource(
     id: number,
@@ -1496,28 +1362,14 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       throw new BadRequestException('This service is not an application-type service.');
     }
 
-    const deployDir = getServiceDeploymentDir(service.appName, service.id);
-    const sourceDir = path.join(deployDir, 'app-source');
     const storedRemote = this.parseStoredRemoteGitMarker(service.dockerConfig || '');
     if (!storedRemote) {
-      try {
-        await fs.access(sourceDir);
-      } catch {
-        throw new BadRequestException(
-          'No application source on disk. Link a Git repository (Fetch) or ensure app-source exists on this server.',
-        );
-      }
-      const entries = await fs.readdir(sourceDir);
-      if (entries.length === 0) {
-        throw new BadRequestException('Application source directory is empty.');
-      }
+      throw new BadRequestException(
+        'No Git repository linked. Use Fetch to link a repository before generating the stack.',
+      );
     }
 
-    const saved = await this.applyApplicationSourceFromDirectory(
-      service,
-      sourceDir,
-      options,
-    );
+    const saved = await this.applyApplicationSourceFromDirectory(service, options);
     const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
@@ -3755,7 +3607,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         return { success: false, output: `Service #${service.id} not found after update.` };
       }
 
-      await this.applyApplicationSourceFromDirectory(fresh, '', {}, marker);
+      await this.applyApplicationSourceFromDirectory(fresh, {}, marker);
       emit('[auto-deploy] Stack configuration generated.\n');
 
       emit('[auto-deploy] Syncing files to deploy host…\n');

@@ -870,7 +870,7 @@ export async function applicationGitCloneStageApi(
   return mapApiServiceToService(json.service);
 }
 
-/** Generate stack from existing app-source (after git-clone-stage or re-apply options). */
+/** Generate stack from stored remote-git binding (after git-clone-stage or to re-apply options). */
 export async function generateApplicationFromSourceApi(
   id: string,
   options: {
@@ -902,58 +902,6 @@ export async function generateApplicationFromSourceApi(
     body.networksJson = JSON.stringify(options.networks);
   }
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/generate-from-source`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
-  }
-  const json = JSON.parse(text) as { service?: unknown; remoteMirror?: unknown };
-  if (!json.service) throw new Error("Request succeeded but no service payload was returned.");
-  return {
-    service: mapApiServiceToService(json.service),
-    remoteMirror: parseRemoteMirrorPayload(json.remoteMirror),
-  };
-}
-
-/** @deprecated One-shot clone + stack; prefer `applicationGitCloneStageApi` + `generateApplicationFromSourceApi`. */
-export async function uploadApplicationGitCloneApi(
-  id: string,
-  options: {
-    gitlabProjectId?: number;
-    httpUrlToRepo?: string;
-    branch?: string;
-    buildPath?: string;
-    buildMode?: "dockerfile" | "nixpacks";
-    containerPort?: number;
-    publishPort?: number;
-    replicas?: number;
-    variables?: Array<{ key: string; value: string }>;
-    networks?: { external: string[]; stack: string[] };
-  },
-): Promise<{ service: Service; remoteMirror?: RemoteMirrorPayload }> {
-  const body: Record<string, unknown> = {
-    buildPath: options.buildPath,
-    buildMode: options.buildMode,
-    containerPort: options.containerPort,
-    publishPort: options.publishPort,
-    replicas: options.replicas,
-  };
-  if (options.gitlabProjectId != null) body.gitlabProjectId = options.gitlabProjectId;
-  if (options.httpUrlToRepo?.trim()) body.httpUrlToRepo = options.httpUrlToRepo.trim();
-  if (options.branch?.trim()) body.branch = options.branch.trim();
-  if (options.variables !== undefined) {
-    body.variablesJson = JSON.stringify(options.variables);
-  }
-  if (options.networks) {
-    const { external, stack } = options.networks;
-    body.externalNetworks = external.join("|");
-    body.stackNetworks = stack.join("|");
-    body.networksJson = JSON.stringify(options.networks);
-  }
-  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/git-clone`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

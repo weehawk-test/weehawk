@@ -2,7 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 
-/** Only clone into `app-source`; stack generation is a separate `generate-from-source` call. */
+/** Resolve Git ref and store binding; clone happens on the deploy host. Stack generation is a separate `generate-from-source` call. */
 export class ApplicationGitCloneStageDto {
   @ApiPropertyOptional({
     description:

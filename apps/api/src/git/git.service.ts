@@ -414,6 +414,66 @@ export class GitService implements OnModuleInit {
     return { projects, totalPages, page };
   }
 
+  /** Branch names for a GitLab project (`GET .../repository/branches`), paginated. */
+  async listGitlabBranchNames(
+    userId: number,
+    projectId: number,
+  ): Promise<{ branches: string[] }> {
+    const row = await this.gitlabSettingsRow(userId);
+    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+    if (!token) {
+      throw new BadRequestException(
+        'GitLab access token is not configured. Add a token in Git → GitLab.',
+      );
+    }
+    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
+      /\/+$/,
+      '',
+    );
+    const branches: string[] = [];
+    const seen = new Set<string>();
+    let page = 1;
+    const maxPages = 30;
+    for (; page <= maxPages; page += 1) {
+      const url = new URL(
+        `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/repository/branches`,
+      );
+      url.searchParams.set('per_page', '100');
+      url.searchParams.set('page', String(page));
+      const res = await fetch(url, {
+        headers: { 'PRIVATE-TOKEN': token },
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
+        );
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        throw new BadRequestException('Invalid JSON from GitLab (branches)');
+      }
+      if (!Array.isArray(raw) || raw.length === 0) {
+        break;
+      }
+      for (const item of raw) {
+        const o = item as Record<string, unknown>;
+        const name = typeof o.name === 'string' ? o.name.trim() : '';
+        if (name && !seen.has(name)) {
+          seen.add(name);
+          branches.push(name);
+        }
+      }
+      if (raw.length < 100) {
+        break;
+      }
+    }
+    branches.sort((a, b) => a.localeCompare(b, 'en'));
+    return { branches };
+  }
+
   /** Resolve clone URL and default branch for a GitLab project id (API). */
   async gitlabCloneInfoForProject(projectId: number, userId = 1): Promise<{
     cloneUrl: string;
@@ -1174,6 +1234,68 @@ export class GitService implements OnModuleInit {
     const slice = list.slice((page - 1) * perPage, page * perPage);
 
     return { repositories: slice, totalPages, page };
+  }
+
+  /** Branch names for a GitHub repo using an installation access token. */
+  async listGithubBranchNames(
+    userId: number,
+    installationId: number,
+    fullName: string,
+  ): Promise<{ branches: string[] }> {
+    const fn = fullName.trim();
+    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(fn)) {
+      throw new BadRequestException(
+        'repo must look like owner/name (letters, numbers, ._-).',
+      );
+    }
+    const row = await this.githubAppCredentialsRow(userId);
+    const appId = row.githubAppId?.trim();
+    const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+    if (!appId || !privateKey) {
+      throw new BadRequestException(
+        'GitHub App is not configured. Register the app under Git → GitHub.',
+      );
+    }
+    const appJwt = this.createGithubAppJwt(appId, privateKey);
+    const instTok = await this.githubInstallationAccessToken(
+      installationId,
+      appJwt,
+    );
+    const branches: string[] = [];
+    const seen = new Set<string>();
+    let page = 1;
+    const maxPages = 30;
+    for (; page <= maxPages; page += 1) {
+      const apiUrl = `https://api.github.com/repos/${encodeURIComponent(fn)}/branches?per_page=100&page=${page}`;
+      const { status, text } = await this.githubFetchJson(apiUrl, instTok);
+      if (!status.toString().startsWith('2')) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) || `GitHub branches error (${status})`,
+        );
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        throw new BadRequestException('Invalid JSON from GitHub (branches)');
+      }
+      if (!Array.isArray(raw) || raw.length === 0) {
+        break;
+      }
+      for (const item of raw) {
+        const o = item as Record<string, unknown>;
+        const name = typeof o.name === 'string' ? o.name.trim() : '';
+        if (name && !seen.has(name)) {
+          seen.add(name);
+          branches.push(name);
+        }
+      }
+      if (raw.length < 100) {
+        break;
+      }
+    }
+    branches.sort((a, b) => a.localeCompare(b, 'en'));
+    return { branches };
   }
 
   /** Web UI base (may include subpath, e.g. https://company.com/gitlab). */

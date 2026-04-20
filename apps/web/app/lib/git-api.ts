@@ -74,6 +74,19 @@ export async function fetchGitlabProjects(
   return res.json() as Promise<GitlabProjectsListResponse>;
 }
 
+export async function fetchGitlabBranches(
+  accessToken: string,
+  projectId: number,
+): Promise<{ branches: string[] }> {
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/git/gitlab/projects/${encodeURIComponent(String(projectId))}/branches`,
+    { method: "GET" },
+  );
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json() as Promise<{ branches: string[] }>;
+}
+
 export type GithubRepoListItem = {
   id: number;
   full_name: string;
@@ -101,6 +114,18 @@ export async function fetchGithubRepositories(
   const res = await authFetch(accessToken, u.toString(), { method: "GET" });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json() as Promise<GithubRepositoriesListResponse>;
+}
+
+export async function fetchGithubBranches(
+  accessToken: string,
+  params: { installationId: number; repo: string },
+): Promise<{ branches: string[] }> {
+  const u = new URL(`${API_BASE}/api/git/github/branches`);
+  u.searchParams.set("installationId", String(params.installationId));
+  u.searchParams.set("repo", params.repo.trim());
+  const res = await authFetch(accessToken, u.toString(), { method: "GET" });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json() as Promise<{ branches: string[] }>;
 }
 
 /** Shape of GET /api/git/github/manifest (public; used for GitHub’s POST manifest registration). */

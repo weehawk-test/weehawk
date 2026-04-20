@@ -26,7 +26,6 @@ import { UpdateServiceDto } from './dto/update-service.dto';
 import { RollMagicTraefikMeDto } from './dto/roll-magic-traefik-me.dto';
 import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
-import { ApplicationGitCloneDto } from './dto/application-git-clone.dto';
 import { ApplicationGitCloneStageDto } from './dto/application-git-clone-stage.dto';
 import { ApplicationGenerateFromSourceDto } from './dto/application-generate-from-source.dto';
 import { PatchApplicationNetworksDto } from './dto/patch-application-networks.dto';
@@ -313,31 +312,6 @@ export class ServicesController {
     );
   }
 
-  @Post(':id/application/git-clone')
-  @UsePipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-    }),
-  )
-  @ApiOperation({
-    summary:
-      'Link a Git repository and generate stack (ref via provider APIs; source fetched on deploy host)',
-  })
-  async uploadApplicationGitClone(
-    @Param('id') id: string,
-    @Body() dto: ApplicationGitCloneDto,
-    @Req() req: { user?: { userId: number } },
-  ) {
-    const resolvedId = await this.sid(id, req);
-    return this.servicesService.uploadApplicationFromGitClone(
-      resolvedId,
-      dto,
-      this.uid(req),
-    );
-  }
-
   @Post(':id/application/git-clone-stage')
   @UsePipes(
     new ValidationPipe({
@@ -373,7 +347,7 @@ export class ServicesController {
   )
   @ApiOperation({
     summary:
-      'Generate application stack from remote-git headers or existing app-source (after git-clone-stage or to re-apply options)',
+      'Generate application stack from stored remote-git binding (after git-clone-stage or to re-apply options)',
   })
   async generateApplicationFromSource(
     @Param('id') id: string,
