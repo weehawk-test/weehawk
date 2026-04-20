@@ -31,8 +31,11 @@ export class RemoteServerProvisionService {
   ) {}
 
   /** Same bash the worker runs over SSH — for UI preview. */
-  async getProvisionScriptPreview(role: 'deploy' | 'build'): Promise<{ script: string }> {
-    const traefikSettings = await this.traefikService.getSettings();
+  async getProvisionScriptPreview(
+    role: 'deploy' | 'build',
+    userId: number,
+  ): Promise<{ script: string }> {
+    const traefikSettings = await this.traefikService.getSettings(userId);
     return {
       script: buildWeehawkProvisionScript({
         role,
@@ -167,7 +170,7 @@ export class RemoteServerProvisionService {
         ctx.server.serverRole === 'build'
           ? undefined
           : await this.remoteServersService.getWebhookAgentProvisionInput();
-      const traefikSettings = await this.traefikService.getSettings();
+      const traefikSettings = await this.traefikService.getSettings(ownerId);
       const script =
         kind === 'docker_purge'
           ? buildDockerPurgeScript()

@@ -1,4 +1,4 @@
-import { API_BASE } from "./api";
+import { API_BASE, wsBase, wsBaseCandidates } from "./api";
 import { authFetch } from "./auth-fetch";
 
 export type RemoteServerAuthMode = "stored" | "file" | "none";
@@ -221,14 +221,17 @@ export async function runRemoteServerTerminalCommandApi(
 
 /** WebSocket: `GET /ws/remote-terminal?serverId=` — interactive SSH shell. */
 export function remoteTerminalWsUrl(serverId: string | number): string {
-  const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
-  return `${wsBase}/ws/remote-terminal?serverId=${encodeURIComponent(String(serverId))}`;
+  return `${wsBase()}/ws/remote-terminal?serverId=${encodeURIComponent(String(serverId))}`;
+}
+
+export function remoteTerminalWsUrlCandidates(serverId: string | number): string[] {
+  const sid = encodeURIComponent(String(serverId));
+  return wsBaseCandidates().map((base) => `${base}/ws/remote-terminal?serverId=${sid}`);
 }
 
 /** WebSocket: `GET /ws/local-terminal` — interactive local shell. */
 export function localTerminalWsUrl(): string {
-  const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
-  return `${wsBase}/ws/local-terminal`;
+  return `${wsBase()}/ws/local-terminal`;
 }
 
 export async function fetchDockerPurgeScriptApi(

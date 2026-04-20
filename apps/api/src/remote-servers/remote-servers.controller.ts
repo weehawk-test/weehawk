@@ -72,9 +72,12 @@ export class RemoteServersController {
     description: 'deploy (default) or build',
     enum: ['deploy', 'build'],
   })
-  getProvisionScript(@Query('role') role?: string) {
+  getProvisionScript(
+    @Query('role') role?: string,
+    @Req() req?: { user?: { userId: number } },
+  ) {
     const r = role === 'build' ? 'build' : 'deploy';
-    return this.remoteServerProvisionService.getProvisionScriptPreview(r);
+    return this.remoteServerProvisionService.getProvisionScriptPreview(r, this.uid(req));
   }
 
   @Get('docker-purge-script')

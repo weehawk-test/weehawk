@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Terminal } from "lucide-react";
-import { serviceTerminalWsUrl } from "@/lib/services-api";
+import { serviceTerminalWsUrlCandidates } from "@/lib/services-api";
 
 type Props = {
   serviceId: string;
@@ -79,47 +79,60 @@ export function ServiceTerminalPanel({ serviceId }: Props) {
       ro = new ResizeObserver(onResize);
       ro.observe(el);
 
-      ws = new WebSocket(serviceTerminalWsUrl(serviceId));
-      ws.binaryType = "arraybuffer";
-
-      ws.onopen = () => {
+      const urls = serviceTerminalWsUrlCandidates(serviceId);
+      let activeUrlIndex = 0;
+      const connect = (index: number) => {
         if (disposed) return;
-        setConnecting(false);
-        fa.fit();
-        pushResize();
-        t.focus();
-      };
+        activeUrlIndex = index;
+        const socket = new WebSocket(urls[index]);
+        ws = socket;
+        socket.binaryType = "arraybuffer";
+        let opened = false;
 
-      ws.onmessage = (ev: MessageEvent<string | ArrayBuffer>) => {
-        if (disposed) return;
-        if (typeof ev.data === "string") {
-          try {
-            const j = JSON.parse(ev.data) as { type?: string; message?: string };
-            if (j.type === "error" && j.message) {
-              setError(j.message);
-              return;
+        socket.onopen = () => {
+          if (disposed || ws !== socket) return;
+          opened = true;
+          setConnecting(false);
+          fa.fit();
+          pushResize();
+          t.focus();
+        };
+
+        socket.onmessage = (ev: MessageEvent<string | ArrayBuffer>) => {
+          if (disposed || ws !== socket) return;
+          if (typeof ev.data === "string") {
+            try {
+              const j = JSON.parse(ev.data) as { type?: string; message?: string };
+              if (j.type === "error" && j.message) {
+                setError(j.message);
+                return;
+              }
+            } catch {
+              t.write(ev.data);
             }
-          } catch {
-            t.write(ev.data);
+            return;
           }
-          return;
-        }
-        t.write(new Uint8Array(ev.data as ArrayBuffer));
-      };
+          t.write(new Uint8Array(ev.data as ArrayBuffer));
+        };
 
-      ws.onerror = () => {
-        if (disposed) return;
-        setConnecting(false);
-        setError("WebSocket connection failed.");
-      };
+        socket.onerror = () => {
+          if (disposed || ws !== socket) return;
+          // Wait for close to decide whether to fallback or fail.
+        };
 
-      ws.onclose = (ev) => {
-        if (disposed) return;
-        setConnecting(false);
-        if (ev.code !== 1000 && ev.reason) {
-          setError((prev) => prev ?? ev.reason);
-        }
+        socket.onclose = (ev) => {
+          if (disposed || ws !== socket) return;
+          if (!opened && activeUrlIndex < urls.length - 1) {
+            connect(activeUrlIndex + 1);
+            return;
+          }
+          setConnecting(false);
+          if (ev.code !== 1000) {
+            setError((prev) => prev ?? (ev.reason || "WebSocket connection failed."));
+          }
+        };
       };
+      connect(0);
 
       t.onData((data) => {
         if (ws?.readyState === WebSocket.OPEN) ws.send(textEnc.encode(data));

@@ -23,7 +23,7 @@ import {
   deleteRemoteServerApi,
   fetchRemoteServers,
   generateRemoteSshKeypairApi,
-  remoteTerminalWsUrl,
+  remoteTerminalWsUrlCandidates,
   testRemoteServerApi,
   testRemoteServerSshApi,
   updateRemoteServerApi,
@@ -94,19 +94,21 @@ export function RemoteServerSettingsClient({
   const list = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken) && !hasInitialRemoteServers,
+    enabled: Boolean(accessToken),
     initialData: initialRemoteServers,
-    staleTime: hasInitialRemoteServers ? Infinity : 10_000,
-    refetchOnMount: hasInitialRemoteServers ? false : undefined,
+    // Keep SSR-first paint, but always refresh from API so Domains edits appear without manual refresh.
+    staleTime: 10_000,
+    refetchOnMount: true,
   });
 
   const traefikSettingsQ = useQuery({
     queryKey: traefikSettingsQueryKey,
     queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken) && !hasInitialTraefik,
+    enabled: Boolean(accessToken),
     initialData: initialTraefikSettings ?? undefined,
-    staleTime: hasInitialTraefik ? Infinity : 10_000,
-    refetchOnMount: hasInitialTraefik ? false : undefined,
+    // Always refresh on mount so Domains edits appear immediately on navigation.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const certEmailReady = isLetsEncryptEmailConfigured(traefikSettingsQ.data?.acmeEmail);
@@ -124,6 +126,13 @@ export function RemoteServerSettingsClient({
   const terminalFailureNotifiedRef = useRef(false);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalConnecting, setTerminalConnecting] = useState(false);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    // Force fresh install-script previews on every Remote servers page entry.
+    void qc.refetchQueries({ queryKey: ["provision-script"], type: "active" });
+    void qc.invalidateQueries({ queryKey: ["provision-script"] });
+  }, [accessToken, qc]);
 
   useEffect(() => {
     if (editingId != null && list.data) {
@@ -342,69 +351,74 @@ export function RemoteServerSettingsClient({
       ro = new ResizeObserver(onResize);
       ro.observe(el);
 
-      ws = new WebSocket(remoteTerminalWsUrl(row.id));
-      ws.binaryType = "arraybuffer";
-      ws.onopen = () => {
+      const urls = remoteTerminalWsUrlCandidates(row.id);
+      let activeUrlIndex = 0;
+      const connect = (index: number) => {
         if (disposed) return;
-        setTerminalConnecting(false);
-        fa.fit();
-        pushResize();
-        t.focus();
-      };
-      ws.onmessage = (ev: MessageEvent<string | ArrayBuffer>) => {
-        if (disposed) return;
-        if (typeof ev.data === "string") {
-          try {
-            const j = JSON.parse(ev.data) as { type?: string; message?: string };
-            if (j.type === "error" && j.message) {
-              setTerminalError(j.message);
-              if (!terminalFailureNotifiedRef.current) {
-                terminalFailureNotifiedRef.current = true;
-                toast({
-                  title: "Terminal connection failed",
-                  description: j.message,
-                  variant: "destructive",
-                });
+        activeUrlIndex = index;
+        const socket = new WebSocket(urls[index]);
+        ws = socket;
+        socket.binaryType = "arraybuffer";
+        let opened = false;
+
+        socket.onopen = () => {
+          if (disposed || ws !== socket) return;
+          opened = true;
+          setTerminalConnecting(false);
+          fa.fit();
+          pushResize();
+          t.focus();
+        };
+        socket.onmessage = (ev: MessageEvent<string | ArrayBuffer>) => {
+          if (disposed || ws !== socket) return;
+          if (typeof ev.data === "string") {
+            try {
+              const j = JSON.parse(ev.data) as { type?: string; message?: string };
+              if (j.type === "error" && j.message) {
+                setTerminalError(j.message);
+                if (!terminalFailureNotifiedRef.current) {
+                  terminalFailureNotifiedRef.current = true;
+                  toast({
+                    title: "Terminal connection failed",
+                    description: j.message,
+                    variant: "destructive",
+                  });
+                }
+                return;
               }
-              return;
+            } catch {
+              t.write(ev.data);
             }
-          } catch {
-            t.write(ev.data);
+            return;
           }
-          return;
-        }
-        t.write(new Uint8Array(ev.data as ArrayBuffer));
-      };
-      ws.onerror = () => {
-        if (disposed) return;
-        setTerminalConnecting(false);
-        const message = "WebSocket connection failed.";
-        setTerminalError(message);
-        if (!terminalFailureNotifiedRef.current) {
-          terminalFailureNotifiedRef.current = true;
-          toast({
-            title: "Terminal connection failed",
-            description: message,
-            variant: "destructive",
-          });
-        }
-      };
-      ws.onclose = (ev) => {
-        if (disposed) return;
-        setTerminalConnecting(false);
-        if (ev.code !== 1000) {
-          const message = ev.reason || `Connection closed (code ${ev.code}).`;
-          setTerminalError((prev) => prev ?? message);
-          if (!terminalFailureNotifiedRef.current) {
-            terminalFailureNotifiedRef.current = true;
-            toast({
-              title: "Terminal session closed",
-              description: message,
-              variant: "destructive",
-            });
+          t.write(new Uint8Array(ev.data as ArrayBuffer));
+        };
+        socket.onerror = () => {
+          if (disposed || ws !== socket) return;
+          // Wait for close to determine fallback vs final failure.
+        };
+        socket.onclose = (ev) => {
+          if (disposed || ws !== socket) return;
+          if (!opened && activeUrlIndex < urls.length - 1) {
+            connect(activeUrlIndex + 1);
+            return;
           }
-        }
+          setTerminalConnecting(false);
+          if (ev.code !== 1000) {
+            const message = ev.reason || `Connection closed (code ${ev.code}).`;
+            setTerminalError((prev) => prev ?? message);
+            if (!terminalFailureNotifiedRef.current) {
+              terminalFailureNotifiedRef.current = true;
+              toast({
+                title: "Terminal session closed",
+                description: message,
+                variant: "destructive",
+              });
+            }
+          }
+        };
       };
+      connect(0);
 
       t.onData((data) => {
         if (ws?.readyState === WebSocket.OPEN) ws.send(textEnc.encode(data));

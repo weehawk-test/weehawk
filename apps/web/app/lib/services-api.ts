@@ -1,4 +1,4 @@
-import { API_BASE } from "./api";
+import { API_BASE, wsBase, wsBaseCandidates } from "./api";
 import { authFetch } from "./auth-fetch";
 import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
 import type { DatabaseEngineId } from "./database-engines";
@@ -1081,8 +1081,12 @@ export async function streamServiceLogs(
 
 /** WebSocket: `GET /ws/service-terminal?serviceId=` — interactive `docker exec` stream. */
 export function serviceTerminalWsUrl(serviceId: string): string {
-  const wsBase = API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
-  return `${wsBase}/ws/service-terminal?serviceId=${encodeURIComponent(serviceId)}`;
+  return `${wsBase()}/ws/service-terminal?serviceId=${encodeURIComponent(serviceId)}`;
+}
+
+export function serviceTerminalWsUrlCandidates(serviceId: string): string[] {
+  const sid = encodeURIComponent(serviceId);
+  return wsBaseCandidates().map((base) => `${base}/ws/service-terminal?serviceId=${sid}`);
 }
 
 /** Unwrap NestJS SSE payload from `EventSource` `message` data. */

@@ -311,19 +311,19 @@ export function DeployDomainsClient({
   const traefikQ = useQuery({
     queryKey: TRAEFIK_SETTINGS_QK,
     queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken) && !hasInitialTraefik,
+    enabled: Boolean(accessToken),
     initialData: initialTraefikSettings ?? undefined,
-    staleTime: hasInitialTraefik ? Infinity : 10_000,
-    refetchOnMount: hasInitialTraefik ? false : undefined,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const q = useQuery({
     queryKey: REMOTE_SERVERS_QK,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken) && !hasInitialRemoteServers,
+    enabled: Boolean(accessToken),
     initialData: initialRemoteServers,
-    staleTime: hasInitialRemoteServers ? Infinity : 10_000,
-    refetchOnMount: hasInitialRemoteServers ? false : undefined,
+    staleTime: 10_000,
+    refetchOnMount: true,
   });
 
   const [acmeEmailLocal, setAcmeEmailLocal] = useState(
@@ -340,8 +340,12 @@ export function DeployDomainsClient({
   const emailMutation = useMutation({
     mutationFn: (email: string) =>
       updateTraefikSettings(accessToken ?? "", { acmeEmail: email.trim() }),
-    onSuccess: async () => {
+    onSuccess: async (updated) => {
+      qc.setQueryData(TRAEFIK_SETTINGS_QK, updated);
       await qc.invalidateQueries({ queryKey: TRAEFIK_SETTINGS_QK });
+      // Provision script depends on ACME email; force refresh across pages.
+      await qc.invalidateQueries({ queryKey: ["provision-script"] });
+      await qc.invalidateQueries({ queryKey: REMOTE_SERVERS_QK });
       setAcmeEmailDirty(false);
       toast({ title: "Email saved" });
     },
