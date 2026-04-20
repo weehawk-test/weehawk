@@ -205,12 +205,28 @@ export function useDeleteService() {
   });
 }
 
+function setServiceRuntimeCached(
+  qc: ReturnType<typeof useQueryClient>,
+  serviceId: string,
+  ownerKey: string | number | undefined,
+  running: boolean,
+) {
+  const sid = String(serviceId);
+  const ok = ownerKey == null || ownerKey === "" ? "none" : ownerKey;
+  const owners = new Set<string | number>([ok]);
+  if (ok !== "none") owners.add("none");
+  for (const v of owners) {
+    qc.setQueryData(["service-runtime", v, sid], { running });
+  }
+}
+
 export function useShutdownService() {
   const qc = useQueryClient();
   const { user } = useAuth();
   return useMutation({
     mutationFn: (id: string) => shutdownServiceApi(id),
     onSuccess: (_, id) => {
+      setServiceRuntimeCached(qc, String(id), user?.userId ?? "none", false);
       qc.invalidateQueries({ queryKey: ["services"] });
       void invalidateServiceScopedQueries(qc, String(id), user?.userId ?? "none");
       scheduleServiceRuntimeRefetchBurst(qc, String(id), user?.userId ?? "none");
@@ -225,6 +241,7 @@ export function useStartService() {
   return useMutation({
     mutationFn: (id: string) => startServiceApi(id),
     onSuccess: (_, id) => {
+      setServiceRuntimeCached(qc, String(id), user?.userId ?? "none", true);
       qc.invalidateQueries({ queryKey: ["services"] });
       void invalidateServiceScopedQueries(qc, String(id), user?.userId ?? "none");
       scheduleServiceRuntimeRefetchBurst(qc, String(id), user?.userId ?? "none");

@@ -6,9 +6,8 @@ import {
   firstImageRefFromComposeYaml,
   parseConfigHeaderValue,
   parseContainerPortFromComposeYaml,
+  resolveNixpacksNodeMajorForRemoteBuild,
 } from '../executor/executor-compose-parse';
-import { buildEnsureDockerfileBashFragment } from './on-host-ensure-dockerfile-bash-fragment';
-
 /** Must match {@link WEEHAWK_REMOTE_DEPLOYMENTS_BASE} in `remote-servers.service.ts`. */
 export const ON_HOST_DEPLOY_BUNDLE_ROOT = '/opt/weehawk-deployments';
 
@@ -18,8 +17,8 @@ function shSingleQuote(s: string): string {
 }
 
 /**
- * Extra `.env` lines so the deploy host can run `docker build` using mirrored `app-source/`
- * (uploaded when you Save / Deploy / sync mirror from the Weehawk API). No callback to the API.
+ * Extra `.env` lines so the deploy host can run `docker build` / Nixpacks using `app-source/` under
+ * the persistent deploy dir (populated by Git clone on the host, not by uploading source from the API).
  */
 function dockerBuildEnvLinesForApplicationSwarm(service: Service): string[] {
   if (service.composeType !== composeType.APPLICATION) {
@@ -45,19 +44,29 @@ function dockerBuildEnvLinesForApplicationSwarm(service: Service): string[] {
     `${(service.appName ?? '').trim() || 'app'}:latest`;
   const containerPort =
     parseContainerPortFromComposeYaml(raw) ?? 3000;
-  return [
+  const bm = (parseConfigHeaderValue(raw, 'buildMode') || 'dockerfile').toLowerCase();
+  const weehawkBuildMode =
+    bm === 'nixpacks' || bm === 'buildpacks' ? 'nixpacks' : 'dockerfile';
+  const lines = [
     `WEEHAWK_DOCKER_ON_HOST=${remoteEnvFileQuote('1')}`,
     `WEEHAWK_BUILD_CONTEXT_REL=${remoteEnvFileQuote(buildCtxRel)}`,
     `WEEHAWK_DOCKERFILE_REL=${remoteEnvFileQuote(dockerfilePath)}`,
     `WEEHAWK_IMAGE_TAG=${remoteEnvFileQuote(imageTag)}`,
     `WEEHAWK_APP_CONTAINER_PORT=${remoteEnvFileQuote(String(containerPort))}`,
+    `WEEHAWK_BUILD_MODE=${remoteEnvFileQuote(weehawkBuildMode)}`,
   ];
+  if (weehawkBuildMode === 'nixpacks') {
+    lines.push(
+      `NIXPACKS_NODE_VERSION=${remoteEnvFileQuote(resolveNixpacksNodeMajorForRemoteBuild(raw))}`,
+    );
+  }
+  return lines;
 }
 
 /**
  * Bash run only on the deploy host (Go webhook agent). Does not call the Weehawk API.
  * - Compose: `docker compose up -d --build`
- * - Swarm: optional `docker build` from mirrored context, then `docker stack deploy` + rolling restart.
+ * - Swarm: optional `docker build` / Nixpacks from on-host source tree, then `docker stack deploy` + rolling restart.
  */
 export function buildOnHostRedeployScriptBody(service: Service): string {
   const appNameRaw = (service.appName ?? '').trim() || 'service';
@@ -65,7 +74,6 @@ export function buildOnHostRedeployScriptBody(service: Service): string {
   const segFallback = shSingleQuote(dirSeg);
   const nameFallback = shSingleQuote(appNameRaw);
   const rootDefault = ON_HOST_DEPLOY_BUNDLE_ROOT;
-  const ensureDockerfileBash = buildEnsureDockerfileBashFragment();
 
   const autoDeployGitClone = `# Auto-deploy: clone latest code from Git before building.
 AD_URL="\${WEEHAWK_AUTO_DEPLOY_CLONE_URL:-}"
@@ -129,14 +137,12 @@ if [ -n "\$AD_URL" ]; then
       exit 1
     }
   fi
-  weehawk_ensure_generated_dockerfile_in_context "\$AD_TARGET" "\${WEEHAWK_DOCKERFILE_REL:-Dockerfile}" || exit 1
   echo "=== Auto-deploy: source ready ==="
 fi
 `;
 
   if (service.composeType === composeType.COMPOSE) {
     return `set -euo pipefail
-${ensureDockerfileBash}
 BROOT="\${WEEHAWK_DEPLOY_BUNDLE_ROOT:-${rootDefault}}"
 BROOT="\$(printf '%s' "\$BROOT" | tr -d '\\r')"
 SEG="\${WEEHAWK_BUNDLE_SEGMENT:-}"
@@ -169,7 +175,6 @@ echo "=== Weehawk redeploy: OK (compose \$PROJ) ==="
   }
 
   return `set -euo pipefail
-${ensureDockerfileBash}
 BROOT="\${WEEHAWK_DEPLOY_BUNDLE_ROOT:-${rootDefault}}"
 BROOT="\$(printf '%s' "\$BROOT" | tr -d '\\r')"
 SEG="\${WEEHAWK_BUNDLE_SEGMENT:-}"
@@ -203,12 +208,34 @@ if [ "\${WEEHAWK_DOCKER_ON_HOST:-}" = "1" ]; then
   IMG_TAG="\${WEEHAWK_IMAGE_TAG:-}"
   CTX="\$ROOT/\$BUILD_CTX_REL"
   if [ -n "\$IMG_TAG" ] && [ -d "\$CTX" ]; then
-    weehawk_ensure_generated_dockerfile_in_context "\$CTX" "\$DF_REL" || exit 1
-    if [ -f "\$CTX/\$DF_REL" ]; then
+    if [ "\${WEEHAWK_BUILD_MODE:-dockerfile}" = "nixpacks" ]; then
+      export PATH="\$PATH:\$HOME/.local/bin:/root/.local/bin:/usr/local/bin"
+      if ! command -v nixpacks >/dev/null 2>&1; then
+        echo "ERROR: nixpacks not found — re-run Weehawk Install on this host or install https://nixpacks.com/docs/install" >&2
+        exit 1
+      fi
+      echo "--- nixpacks build on deploy host ---"
+      (
+        cd "\$CTX" || exit 1
+        weehawk_nixpacks_restore_dockerignore() {
+          if [ -f .dockerignore.weehawk-nixpacks-bak ]; then
+            mv -f .dockerignore.weehawk-nixpacks-bak .dockerignore
+          fi
+        }
+        trap weehawk_nixpacks_restore_dockerignore EXIT
+        if [ -f .dockerignore ]; then
+          mv -f .dockerignore .dockerignore.weehawk-nixpacks-bak
+        fi
+        rm -rf .nixpacks
+        _NPV="\${NIXPACKS_NODE_VERSION:-20}"
+        nixpacks build . --name "\$IMG_TAG" --env "NIXPACKS_NODE_VERSION=\$_NPV" --no-cache 2>&1
+      )
+    elif [ -f "\$CTX/\$DF_REL" ]; then
       echo "--- docker build on deploy host ---"
       docker build -f "\$CTX/\$DF_REL" -t "\$IMG_TAG" "\$CTX" 2>&1
     else
-      echo "WARN: No Dockerfile at \$CTX/\$DF_REL — skipping build." >&2
+      echo "ERROR: No Dockerfile at \$CTX/\$DF_REL — add a Dockerfile or choose Nixpacks build in Weehawk." >&2
+      exit 1
     fi
   else
     echo "WARN: Build context missing or WEEHAWK_IMAGE_TAG empty — skipping docker build." >&2

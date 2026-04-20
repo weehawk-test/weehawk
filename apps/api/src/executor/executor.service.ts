@@ -24,6 +24,7 @@ import {
   firstImageRefFromComposeYaml,
   parseConfigHeaderValue,
   parseEnv,
+  resolveNixpacksNodeMajorForRemoteBuild,
 } from './executor-compose-parse';
 import { removeDeploymentFolder } from './executor-deployment-fs';
 import { emitDeployLog, formatExecError, stderrIndicatesDockerFailure } from './executor-docker';
@@ -70,6 +71,26 @@ function pickDockerSshEnv(
   return o;
 }
 
+/**
+ * Bash fragment: run in the Nixpacks build context directory before `nixpacks build`.
+ * - Allowlist `.dockerignore` can hide `.nixpacks/` from Docker; we temporarily move `.dockerignore` aside.
+ * - `--no-cache` + fresh `.nixpacks/` + explicit `--env NIXPACKS_NODE_VERSION=…` avoids stale nodejs_18
+ *   plans (export alone is not always applied during `nixpacks plan` on some hosts).
+ */
+const NIXPACKS_BUILD_CLI_TAIL = '--no-cache';
+
+const NIXPACKS_ENSURE_DOT_NIXPACKS_IN_DOCKER_CONTEXT = `
+weehawk_nixpacks_restore_dockerignore() {
+  if [ -f .dockerignore.weehawk-nixpacks-bak ]; then
+    mv -f .dockerignore.weehawk-nixpacks-bak .dockerignore
+  fi
+}
+trap weehawk_nixpacks_restore_dockerignore EXIT
+if [ -f .dockerignore ]; then
+  mv -f .dockerignore .dockerignore.weehawk-nixpacks-bak
+fi
+`.trim();
+
 @Injectable()
 export class ExecutorService {
   constructor(
@@ -79,6 +100,64 @@ export class ExecutorService {
     private readonly remoteServersService: RemoteServersService,
     private readonly registryService: RegistryService,
   ) {}
+
+  /** Resolve Git clone URL for application services with `app.git.remoteOnly`. */
+  private async resolveApplicationRemoteGitCloneParams(
+    service: Service,
+    rawConfig: string,
+  ): Promise<{
+    isRemoteGit: boolean;
+    cloneUrl: string | null;
+    ref: string;
+    gitProviderLabel: string | undefined;
+  }> {
+    const isRemoteGit = parseConfigHeaderValue(rawConfig, 'app.git.remoteOnly') === 'true';
+    const ref = parseConfigHeaderValue(rawConfig, 'app.git.ref')?.trim() || 'main';
+    let cloneUrl: string | null = null;
+    let gitProviderLabel: string | undefined;
+    if (isRemoteGit) {
+      gitProviderLabel = parseConfigHeaderValue(rawConfig, 'app.git.provider')?.trim();
+      const ownerUserId = service.project?.userId ?? 1;
+      if (gitProviderLabel === 'gitlab') {
+        const glProjectId = parseInt(
+          parseConfigHeaderValue(rawConfig, 'app.git.gitlabProjectId') || '',
+          10,
+        );
+        if (Number.isFinite(glProjectId) && glProjectId > 0) {
+          cloneUrl = await this.servicesService.resolveGitlabProjectCloneUrl(
+            glProjectId,
+            ownerUserId,
+          );
+        } else {
+          const httpUrl = parseConfigHeaderValue(
+            rawConfig,
+            'app.git.httpUrlToRepo',
+          )?.trim();
+          if (httpUrl) {
+            cloneUrl = await this.servicesService.resolveGitlabAuthenticatedUrl(
+              httpUrl,
+              ownerUserId,
+            );
+          }
+        }
+      } else if (gitProviderLabel === 'github') {
+        const ghFullName = parseConfigHeaderValue(
+          rawConfig,
+          'app.git.githubRepoFullName',
+        )?.trim();
+        if (ghFullName) {
+          cloneUrl = `https://github.com/${ghFullName}.git`;
+        } else {
+          const httpUrl = parseConfigHeaderValue(
+            rawConfig,
+            'app.git.httpUrlToRepo',
+          )?.trim();
+          if (httpUrl) cloneUrl = httpUrl;
+        }
+      }
+    }
+    return { isRemoteGit, cloneUrl, ref, gitProviderLabel };
+  }
 
   private async getBaseProcessEnvForService(
     service: Service,
@@ -173,6 +252,7 @@ export class ExecutorService {
     };
     const deployLogEmitter = options?.deployLogEmitter;
     const emitChunk = (chunk: string) => emitDeployLog(deployLogEmitter, chunk);
+    const shQ = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
     try {
       if (isSwarmStackService(service)) {
         let buildLogPrefix = '';
@@ -186,6 +266,10 @@ export class ExecutorService {
           const registryPush = parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim();
           const defaultTag = `${service.appName}:latest`;
           const imageTag = registryPush?.length ? registryPush : defaultTag;
+          const buildModeHeader =
+            parseConfigHeaderValue(rawConfig, 'buildMode')?.toLowerCase() || 'dockerfile';
+          const isNixpacksBuild =
+            buildModeHeader === 'nixpacks' || buildModeHeader === 'buildpacks';
           const sourceRoot = path.join(deployDir, sourceDir);
           const fullContext = path.join(deployDir, sourceDir, buildPath);
           const sourceRootExists = await fs
@@ -193,21 +277,6 @@ export class ExecutorService {
             .then(() => true)
             .catch(() => false);
           if (deployMode !== 'image' && sourceRootExists) {
-            await fs.access(fullContext).catch(() => {
-              throw new InternalServerErrorException(
-                `Application build path not found: "${buildPath}" under ${sourceDir}.`,
-              );
-            });
-            const { relativePath: dockerfileRel } = await resolveEffectiveDockerfileRel(
-              fullContext,
-              dockerfilePath,
-            );
-            const fullDockerfile = path.join(fullContext, ...dockerfileRel.split('/'));
-            await fs.access(fullDockerfile).catch(() => {
-              throw new InternalServerErrorException(
-                `Dockerfile not found for build: "${dockerfileRel}" under build context.`,
-              );
-            });
             const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
             const buildBase = await this.getBaseProcessEnvForService(service);
             const projectUserId: number | null = null;
@@ -223,25 +292,122 @@ export class ExecutorService {
             const useRemoteDockerBuild = Boolean(pickDockerSshEnv(buildEnv));
             const buildRemoteServerId =
               sshIds.buildRemoteServerId ?? sshIds.remoteServerId;
+            if (!isNixpacksBuild || !useRemoteDockerBuild) {
+              await fs.access(fullContext).catch(() => {
+                throw new InternalServerErrorException(
+                  `Application build path not found: "${buildPath}" under ${sourceDir}.`,
+                );
+              });
+            }
             if (useRemoteDockerBuild) {
               if (buildRemoteServerId == null) {
                 throw new InternalServerErrorException(
                   'Remote Docker build is enabled but no remote server id was resolved for this service.',
                 );
               }
-              const dockerfilePosix = dockerfileRel.split(/[/\\]/).join('/');
-              emitChunk(`Building image on remote host #${buildRemoteServerId}…\n`);
-              const buildResult = await this.remoteServersService.buildImageUsingDockerodeSsh(
-                buildRemoteServerId,
-                {
-                  contextPath: fullContext,
-                  dockerfilePosix,
-                  tag: imageTag,
-                },
-                projectUserId,
-              );
-              buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
-              if (buildLogPrefix) emitChunk(buildLogPrefix);
+              if (isNixpacksBuild) {
+                const gitParams = await this.resolveApplicationRemoteGitCloneParams(
+                  service,
+                  rawConfig,
+                );
+                if (!gitParams.isRemoteGit || !gitParams.cloneUrl) {
+                  return {
+                    success: false,
+                    output:
+                      'Nixpacks builds on the remote host require a linked Git repository (source is cloned on the build machine only). The Weehawk API does not upload application source. Link GitHub or GitLab under Application source, or use Dockerfile build mode if you need another workflow.',
+                  };
+                }
+                const { cloneUrl, ref, gitProviderLabel } = gitParams;
+                const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
+                const remoteSourceRoot = `${persist}/${sourceDir.replace(/\\/g, '/')}`;
+                const remoteBuildPathSeg = buildPath.replace(/\\/g, '/');
+                const remoteContext =
+                  remoteBuildPathSeg === '.' || remoteBuildPathSeg === ''
+                    ? remoteSourceRoot
+                    : `${remoteSourceRoot}/${remoteBuildPathSeg}`;
+                emitChunk(
+                  `Cloning ${gitProviderLabel ?? 'git'} repository on build host #${buildRemoteServerId} (branch: ${ref}) for Nixpacks…\n`,
+                );
+                const remoteCloneScript = `set -euo pipefail
+TARGET=${shQ(remoteSourceRoot)}
+BR=${shQ(ref)}
+URL=${shQ(cloneUrl)}
+mkdir -p "$(dirname "$TARGET")"
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is not installed on deploy host."
+  exit 24
+fi
+if [ -d "$TARGET/.git" ]; then
+  git -C "$TARGET" remote set-url origin "$URL" 2>&1 || true
+  git -C "$TARGET" fetch --depth 1 origin "$BR" 2>&1
+  git -C "$TARGET" checkout -B "$BR" "origin/$BR" 2>&1
+  git -C "$TARGET" reset --hard "origin/$BR" 2>&1
+  git -C "$TARGET" clean -fdx 2>&1 || true
+else
+  rm -rf "$TARGET"
+  git clone --depth 1 --branch "$BR" "$URL" "$TARGET" 2>&1
+fi
+`;
+                await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                  buildRemoteServerId,
+                  projectUserId,
+                  remoteCloneScript,
+                  deployLogEmitter ? emitChunk : undefined,
+                );
+                emitChunk(
+                  `Building image with Nixpacks on remote host #${buildRemoteServerId} (${remoteContext})…\n`,
+                );
+                const nixNodeMajor = resolveNixpacksNodeMajorForRemoteBuild(rawConfig);
+                const nixNodeExport = `export NIXPACKS_NODE_VERSION=${shQ(nixNodeMajor)}\n`;
+                const remoteNixpacksScript = `set -euo pipefail
+CTX=${shQ(remoteContext)}
+export PATH="$PATH:$HOME/.local/bin:/root/.local/bin:/usr/local/bin"
+${nixNodeExport}if [ ! -d "$CTX" ]; then
+  echo "Build context not found on remote after clone: $CTX" >&2
+  exit 22
+fi
+if ! command -v nixpacks >/dev/null 2>&1; then
+  echo "nixpacks: command not found. Re-run Weehawk Install on this host (includes Nixpacks CLI)." >&2
+  exit 127
+fi
+cd "$CTX"
+${NIXPACKS_ENSURE_DOT_NIXPACKS_IN_DOCKER_CONTEXT}
+rm -rf .nixpacks
+nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${nixNodeMajor}`)} ${NIXPACKS_BUILD_CLI_TAIL}
+`;
+                const np = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                  buildRemoteServerId,
+                  projectUserId,
+                  remoteNixpacksScript,
+                  deployLogEmitter ? emitChunk : undefined,
+                );
+                buildLogPrefix = [np.stdout, np.stderr].filter((s) => s?.trim()).join('\n');
+                if (buildLogPrefix) emitChunk(`${buildLogPrefix}\n`);
+              } else {
+                const { relativePath: dockerfileRel } = await resolveEffectiveDockerfileRel(
+                  fullContext,
+                  dockerfilePath,
+                );
+                const fullDockerfile = path.join(fullContext, ...dockerfileRel.split('/'));
+                await fs.access(fullDockerfile).catch(() => {
+                  throw new InternalServerErrorException(
+                    `Dockerfile not found for build: "${dockerfileRel}" under build context.`,
+                  );
+                });
+                const dockerfilePosix = dockerfileRel.split(/[/\\]/).join('/');
+                emitChunk(`Building image on remote host #${buildRemoteServerId}…\n`);
+                const buildResult = await this.remoteServersService.buildImageUsingDockerodeSsh(
+                  buildRemoteServerId,
+                  {
+                    contextPath: fullContext,
+                    dockerfilePosix,
+                    tag: imageTag,
+                  },
+                  projectUserId,
+                );
+                buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
+                if (buildLogPrefix) emitChunk(buildLogPrefix);
+              }
             } else {
               return {
                 success: false,
@@ -284,6 +450,160 @@ export class ExecutorService {
                     `Docker registry push failed for "${registryPush}". Check saved registry credentials for this host and project permissions.\n\n` +
                     formatExecError(pushErr),
                 };
+              }
+            }
+          }
+          if (deployMode !== 'image' && !sourceRootExists) {
+            const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+            const remoteDeployId = sshIds.remoteServerId;
+            if (remoteDeployId == null) {
+              return {
+                success: false,
+                output:
+                  'No deploy host is set for this service. Open Remote Docker host, select a deploy server, save, then deploy again.',
+              };
+            }
+            const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
+            const remoteSourceRoot = `${persist}/${sourceDir.replace(/\\/g, '/')}`;
+            const remoteBuildPath = buildPath.replace(/\\/g, '/');
+            const remoteContext = remoteBuildPath === '.' ? remoteSourceRoot : `${remoteSourceRoot}/${remoteBuildPath}`;
+            const dockerfilePosix = dockerfilePath.replace(/\\/g, '/');
+
+            const { isRemoteGit, cloneUrl, ref, gitProviderLabel } =
+              await this.resolveApplicationRemoteGitCloneParams(service, rawConfig);
+
+            if (isRemoteGit && cloneUrl) {
+              emitChunk(
+                `Cloning ${gitProviderLabel ?? 'git'} repository on deploy host #${remoteDeployId} (branch: ${ref})…\n`,
+              );
+              const remoteCloneScript = `set -euo pipefail
+TARGET=${shQ(remoteSourceRoot)}
+BR=${shQ(ref)}
+URL=${shQ(cloneUrl)}
+mkdir -p "$(dirname "$TARGET")"
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is not installed on deploy host."
+  exit 24
+fi
+if [ -d "$TARGET/.git" ]; then
+  git -C "$TARGET" remote set-url origin "$URL" 2>&1 || true
+  git -C "$TARGET" fetch --depth 1 origin "$BR" 2>&1
+  git -C "$TARGET" checkout -B "$BR" "origin/$BR" 2>&1
+  git -C "$TARGET" reset --hard "origin/$BR" 2>&1
+  git -C "$TARGET" clean -fdx 2>&1 || true
+else
+  rm -rf "$TARGET"
+  git clone --depth 1 --branch "$BR" "$URL" "$TARGET" 2>&1
+fi
+`;
+              await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                remoteDeployId,
+                null,
+                remoteCloneScript,
+                deployLogEmitter ? emitChunk : undefined,
+              );
+            }
+
+            emitChunk(
+              `Local app-source is absent on API host; building on deploy host #${remoteDeployId} from remote tree (${remoteContext})…\n`,
+            );
+            const nixNodeMajorDeploy = isNixpacksBuild
+              ? resolveNixpacksNodeMajorForRemoteBuild(rawConfig)
+              : null;
+            const nixNodeExportDeploy = nixNodeMajorDeploy
+              ? `export NIXPACKS_NODE_VERSION=${shQ(nixNodeMajorDeploy)}\n`
+              : '';
+            const remoteBuildScript = isNixpacksBuild
+              ? `set -euo pipefail
+SRC=${shQ(remoteSourceRoot)}
+CTX=${shQ(remoteContext)}
+if [ ! -d "$SRC" ]; then
+  echo "Application source directory \\"${sourceDir}\\" was not found on deploy host (clone or path): $SRC"
+  exit 21
+fi
+if [ ! -d "$CTX" ]; then
+  echo "Build path \\"${buildPath}\\" not found under source on deploy host: $CTX"
+  exit 22
+fi
+export PATH="$PATH:$HOME/.local/bin:/root/.local/bin:/usr/local/bin"
+${nixNodeExportDeploy}if ! command -v nixpacks >/dev/null 2>&1; then
+  echo "nixpacks: command not found. Re-run Weehawk Install on this host (includes Nixpacks CLI)." >&2
+  exit 127
+fi
+cd "$CTX"
+${NIXPACKS_ENSURE_DOT_NIXPACKS_IN_DOCKER_CONTEXT}
+rm -rf .nixpacks
+nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${nixNodeMajorDeploy}`)} ${NIXPACKS_BUILD_CLI_TAIL}
+`
+              : `set -euo pipefail
+SRC=${shQ(remoteSourceRoot)}
+CTX=${shQ(remoteContext)}
+DF=${shQ(dockerfilePosix)}
+if [ ! -d "$SRC" ]; then
+  echo "Application source directory \\"${sourceDir}\\" was not found on deploy host (clone or path): $SRC"
+  exit 21
+fi
+if [ ! -d "$CTX" ]; then
+  echo "Build path \\"${buildPath}\\" not found under source on deploy host: $CTX"
+  exit 22
+fi
+cd "$CTX"
+if [ -f "$DF" ]; then
+  docker build -f "$DF" -t ${shQ(imageTag)} .
+elif [ -f "$SRC/$DF" ]; then
+  echo "Using Dockerfile at repo root ($SRC/$DF) with build context $CTX"
+  docker build -f "$SRC/$DF" -t ${shQ(imageTag)} .
+else
+  echo "Dockerfile not found at $CTX/$DF or $SRC/$DF"
+  echo "--- ls $SRC (top) ---"; ls -la "$SRC" 2>&1 | head -40
+  echo "--- ls $CTX (build context) ---"; ls -la "$CTX" 2>&1 | head -40
+  exit 23
+fi
+`;
+            let rb: { stdout: string; stderr: string };
+            try {
+              rb = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                remoteDeployId,
+                null,
+                remoteBuildScript,
+                deployLogEmitter ? emitChunk : undefined,
+              );
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              if (!/exit 21\b/i.test(msg)) {
+                throw e;
+              }
+              emitChunk(
+                'Remote application source path is missing; re-syncing compose bundle to deploy host and retrying remote build once…\n',
+              );
+              await this.syncRemoteDeploymentMirror(id, 0);
+              rb = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                remoteDeployId,
+                null,
+                remoteBuildScript,
+                deployLogEmitter ? emitChunk : undefined,
+              );
+            }
+            buildLogPrefix = [rb.stdout, rb.stderr].filter((s) => s?.trim()).join('\n');
+            if (buildLogPrefix) {
+              emitChunk(`${buildLogPrefix}\n`);
+            }
+            if (registryPush?.trim()) {
+              emitChunk(`Pushing image "${registryPush}" on deploy host…\n`);
+              const pushAuth =
+                await this.registryService.getRegistryAuthConfigForImageRef(registryPush);
+              const pushResult = await this.remoteServersService.pushImageUsingDockerodeSsh(
+                remoteDeployId,
+                {
+                  imageRef: registryPush,
+                  auth: pushAuth,
+                },
+                null,
+              );
+              if (pushResult.output) {
+                const pushChunk = pushResult.output + '\n';
+                buildLogPrefix = (buildLogPrefix || '') + pushChunk;
+                emitChunk(pushChunk);
               }
             }
           }
@@ -343,13 +663,6 @@ export class ExecutorService {
             const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
             const success = !stderrIndicatesFailure;
             if (success) {
-              if (service.composeType === composeType.APPLICATION) {
-                await this.maybeMirrorApplicationSourceForOnHostRedeploy(
-                  service,
-                  deployDir,
-                  remoteDeployId,
-                );
-              }
               await maybeRemoveApplicationSourceAfterDeploy(
                 service,
                 deployDir,
@@ -521,42 +834,10 @@ export class ExecutorService {
         },
       );
     }
-    if (isSwarmStackService(service) && service.composeType === composeType.APPLICATION) {
-      await fs.mkdir(deployDir, { recursive: true });
-      await this.maybeMirrorApplicationSourceForOnHostRedeploy(service, deployDir, remoteId);
-    }
     return { ok: true };
     } finally {
       await removeDeploymentFolder(deployDir);
     }
-  }
-
-  /**
-   * Copies `app-source/` to the deploy host mirror so on-host webhooks can `docker build` without the API running.
-   */
-  private async maybeMirrorApplicationSourceForOnHostRedeploy(
-    service: Service,
-    deployDir: string,
-    remoteId: number,
-  ): Promise<void> {
-    const raw = (service.dockerConfig || '').trim();
-    const deployMode = parseConfigHeaderValue(raw, 'deployMode')?.toLowerCase() || 'source';
-    if (deployMode === 'image') {
-      return;
-    }
-    const sourceDirName = parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
-    const localSourceRoot = path.join(deployDir, sourceDirName);
-    try {
-      await fs.access(localSourceRoot);
-    } catch {
-      return;
-    }
-    const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
-    const remoteTarget = `${persist}/${sourceDirName.replace(/\\/g, '/')}`;
-    await this.remoteServersService.mirrorLocalDirectoryToRemoteDeployment(remoteId, null, {
-      localRootAbsolute: localSourceRoot,
-      remoteDirAbsolute: remoteTarget,
-    });
   }
 
   /** Start stopped containers; compose tries `start` then `up -d --no-build`. Stack: stack deploy. */
@@ -625,7 +906,12 @@ export class ExecutorService {
               this.remoteServersService.execDockerCliOnRemoteViaSsh(
                 sshIds.remoteServerId,
                 projectUserId,
-                `docker stack services '${stackQ}' --format "{{.Replicas}}" 2>/dev/null || true`,
+                [
+                  `n=$(docker stack ps '${stackQ}' --filter desired-state=running -q 2>/dev/null | wc -l)`,
+                  `n=$(printf '%s' "$n" | tr -cd '0-9')`,
+                  `if [ "\${n:-0}" -gt 0 ] 2>/dev/null; then echo RUNNING; exit 0; fi`,
+                  `docker stack services '${stackQ}' --format "{{.Replicas}}" 2>/dev/null || true`,
+                ].join('\n'),
               ),
             );
             stdout = r.stdout;
@@ -634,6 +920,9 @@ export class ExecutorService {
           }
         } else {
           return { running: false };
+        }
+        if (/^RUNNING$/m.test(stdout.trim())) {
+          return { running: true };
         }
         const running = stdout.split(/\r?\n/).some((line) => {
           const m = line.trim().match(/^(\d+)\//);

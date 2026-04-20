@@ -31,7 +31,6 @@ import { DatabaseSetupDto } from './dto/database-setup.dto';
 import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { getServiceDeploymentDir, toSafePathSegment } from './deployment-paths';
 import type { EventEmitter } from 'events';
-import { DockerfileGeneratorService } from '../dockerfile-generator/dockerfile-generator.service';
 import type { DatabaseBackupConfig } from '../backup/database-backup.types';
 import { resolveBackupFormat } from '../backup/database-backup.types';
 import { RunServiceBackupDto } from './dto/run-service-backup.dto';
@@ -71,7 +70,6 @@ export class ServicesService {
     private readonly webhooksService: WebhooksService,
     private readonly configService: ConfigService,
     private readonly databaseGenerator: DatabaseGeneratorService,
-    private readonly dockerfileGenerator: DockerfileGeneratorService,
     private readonly s3Service: S3Service,
     private readonly gitService: GitService,
     private readonly traefikService: TraefikService,
@@ -532,8 +530,7 @@ export class ServicesService {
     sourceDir: string;
     buildPath: string;
     dockerfilePath: string;
-    buildMode: 'dockerfile' | 'buildpacks';
-    dockerfileGenerated?: boolean;
+    buildMode: 'dockerfile' | 'nixpacks';
     deployMode: 'source' | 'image';
     imageRef?: string;
     containerPort: number;
@@ -547,8 +544,8 @@ export class ServicesService {
     const dockerfilePath = this.parseConfigHeaderValue(raw, 'dockerfilePath') || 'Dockerfile';
     const buildModeRaw = this.parseConfigHeaderValue(raw, 'buildMode') || 'dockerfile';
     const bm = (buildModeRaw || 'dockerfile').toLowerCase();
-    const buildMode =
-      bm === 'nixpacks' || bm === 'buildpacks' ? 'buildpacks' : 'dockerfile';
+    const buildMode: 'dockerfile' | 'nixpacks' =
+      bm === 'nixpacks' || bm === 'buildpacks' ? 'nixpacks' : 'dockerfile';
 
     const envKeys: string[] = [];
     for (const line of raw.split(/\r?\n/)) {
@@ -583,10 +580,6 @@ export class ServicesService {
       const n = parseInt(rm[1], 10);
       if (!Number.isNaN(n)) replicas = Math.min(10, Math.max(1, n));
     }
-
-    const dg = this.parseConfigHeaderValue(raw, 'dockerfileGenerated');
-    const dockerfileGenerated =
-      dg === 'true' ? true : dg === 'false' ? false : undefined;
 
     const builtTag = `${service.appName}:latest`;
     const registryPushHeader = this.parseConfigHeaderValue(raw, 'registry.pushImage')?.trim();
@@ -624,7 +617,6 @@ export class ServicesService {
       buildPath,
       dockerfilePath,
       buildMode,
-      dockerfileGenerated,
       deployMode,
       imageRef,
       containerPort,
@@ -1053,7 +1045,6 @@ export class ServicesService {
       buildPath: args.buildPath,
       dockerfilePath: args.dockerfilePath,
       buildMode: args.buildMode,
-      dockerfileGenerated: args.dockerfileGenerated,
       deployMode: args.deployMode,
       imageRef: args.deployMode === 'image' ? args.imageRef : undefined,
       imageName,
@@ -1073,9 +1064,7 @@ export class ServicesService {
     sourceDir: string;
     buildPath: string;
     dockerfilePath: string;
-    buildMode: 'dockerfile' | 'buildpacks';
-    /** True when Weehawk generated Dockerfile; omitted when unknown (legacy). */
-    dockerfileGenerated?: boolean;
+    buildMode: 'dockerfile' | 'nixpacks';
     /** Source = build from uploaded context; image = use pre-built imageRef / imageName. */
     deployMode: 'source' | 'image';
     /** Echoed in header when deployMode is image. */
@@ -1137,10 +1126,6 @@ export class ServicesService {
       : '';
 
     const storageHeader = args.envKeys.map((k) => `# app.store.${k}: env`).join('\n');
-    const dockerfileGenLine =
-      args.dockerfileGenerated !== undefined
-        ? `# dockerfileGenerated: ${args.dockerfileGenerated ? 'true' : 'false'}\n`
-        : '';
     const imageRefLine =
       args.deployMode === 'image' && args.imageRef
         ? `# imageRef: ${args.imageRef}\n`
@@ -1160,7 +1145,7 @@ ${registryPushLine}# sourceDir: ${args.sourceDir}
 # dockerfilePath: ${args.dockerfilePath}
 # buildMode: ${args.buildMode}
 # deployMode: ${args.deployMode}
-${imageRefLine}${dockerfileGenLine}${traefikHeader}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
+${imageRefLine}${traefikHeader}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
 
 services:
   app:
@@ -1269,7 +1254,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       | {
           buildPath?: string;
           dockerfilePath?: string;
-          buildMode?: 'dockerfile' | 'buildpacks' | 'nixpacks';
+          buildMode?: 'dockerfile' | 'nixpacks';
           containerPort?: number;
           publishPort?: number;
           replicas?: number;
@@ -1287,15 +1272,17 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
     let buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
     let dockerfilePath = this.normalizeArchivePath(options?.dockerfilePath || '', '');
-    /** Dockerfile-first only; buildpacks/nixpacks are deprecated and mapped to this flow. */
-    const buildMode: 'dockerfile' = 'dockerfile';
+    const prevBuildRaw = this.parseConfigHeaderValue(previousConfig, 'buildMode')?.toLowerCase();
+    const optBm = options?.buildMode?.toLowerCase();
+    const mergedBm = optBm ?? prevBuildRaw ?? 'dockerfile';
+    const buildMode: 'dockerfile' | 'nixpacks' =
+      mergedBm === 'nixpacks' || mergedBm === 'buildpacks' ? 'nixpacks' : 'dockerfile';
     let containerPort = options?.containerPort ?? 3000;
     const publishPort = options?.publishPort;
     const replicas = Math.min(10, Math.max(1, Math.floor(options?.replicas ?? 1)));
     const parsedVars = this.parseApplicationVariables(options?.variablesJson);
     const valuesMap = this.resolveApplicationValuesMap(parsedVars);
 
-    let dockerfileGenerated: boolean | undefined;
     const remoteGitOnly = Boolean(effectiveRemoteMarker);
     try {
       if (remoteGitOnly) {
@@ -1303,7 +1290,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
           options?.dockerfilePath || 'Dockerfile',
           'Dockerfile',
         );
-        dockerfileGenerated = false;
       } else {
         const contextDir = path.join(sourceDir, buildPath);
         try {
@@ -1314,23 +1300,17 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
           );
         }
 
-        const gen = await this.dockerfileGenerator.ensureDockerfileForContext(contextDir, {
-          port: containerPort,
-        });
-
-        if (gen.usedUserDockerfile) {
-          dockerfileGenerated = false;
+        if (buildMode === 'nixpacks') {
+          dockerfilePath = this.normalizeArchivePath(
+            options?.dockerfilePath || 'Dockerfile',
+            'Dockerfile',
+          );
+        } else {
           dockerfilePath = await this.resolveDockerfilePath(
             sourceDir,
             buildPath,
-            dockerfilePath || undefined,
+            (options?.dockerfilePath || '').trim() || undefined,
           );
-        } else {
-          dockerfileGenerated = true;
-          dockerfilePath = 'Dockerfile';
-          if (gen.kind === 'static' && options?.containerPort === undefined) {
-            containerPort = 80;
-          }
         }
       }
     } catch (e) {
@@ -1362,7 +1342,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       buildMode,
       deployMode: 'source',
       imageRef: undefined,
-      dockerfileGenerated,
       imageName: imageNameForStack,
       registryPushImage: registryRef,
       containerPort,
@@ -1395,6 +1374,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       branch?: string;
       buildPath?: string;
       dockerfilePath?: string;
+      buildMode?: 'dockerfile' | 'nixpacks';
       containerPort?: number;
       publishPort?: number;
       replicas?: number;
@@ -1468,7 +1448,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         dockerfilePath: 'Dockerfile',
         buildMode: 'dockerfile',
         deployMode: 'source',
-        dockerfileGenerated: false,
         imageName: `${service.appName}:latest`,
         registryPushImage: undefined,
         containerPort: 3000,
@@ -1501,6 +1480,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     options: {
       buildPath?: string;
       dockerfilePath?: string;
+      buildMode?: 'dockerfile' | 'nixpacks';
       containerPort?: number;
       publishPort?: number;
       replicas?: number;
@@ -1596,7 +1576,6 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       buildMode: 'dockerfile',
       deployMode: 'image',
       imageRef,
-      dockerfileGenerated: undefined,
       imageName: imageRef,
       containerPort,
       publishPort,
@@ -1688,24 +1667,29 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   private firstComposeServiceName(config: string): string {
     const lines = config.split(/\r?\n/);
     let inServices = false;
+    let servicesIndent = 0;
     for (const line of lines) {
       const t = line.trim();
       if (!inServices) {
-        if (t === 'services:' || /^\s*services:\s*$/.test(line)) inServices = true;
+        if (t === 'services:' || /^\s*services:\s*$/.test(line)) {
+          inServices = true;
+          servicesIndent = line.match(/^\s*/)?.[0]?.length ?? 0;
+        }
         continue;
       }
       if (!t || t.startsWith('#')) continue;
-      if (/^[a-zA-Z_]/.test(line) && !line.startsWith(' ')) break;
-      const m = line.match(/^\s{2}([a-zA-Z0-9_.-]+)\s*:/);
-      if (m) return m[1];
+      const indent = line.match(/^\s*/)?.[0]?.length ?? 0;
+      if (indent <= servicesIndent) break;
+      const m = line.match(/^\s*([a-zA-Z0-9_.-]+)\s*:/);
+      if (m && indent > servicesIndent) return m[1];
     }
     return 'app';
   }
 
   /**
-   * Stream `docker compose logs -f` or `docker service logs -f` using the same paths and
-   * stack names as deploy (see `ExecutorService`).
-   * When a deploy remote host is set, runs Docker on that host over SSH (same idea as the service terminal).
+   * Stream service/container logs from the deploy host over SSH.
+   * - Swarm-backed services (stack/databases/application): `docker service` commands.
+   * - Compose services: `docker compose logs -f`.
    */
   getServiceLogsStream(id: number, userId: number): Observable<{ data: string }> {
     return new Observable((observer) => {
@@ -1726,10 +1710,16 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
             let bashBody: string;
             if (
               service.composeType === composeType.STACK ||
-              service.composeType === composeType.DATABASES
+              service.composeType === composeType.DATABASES ||
+              service.composeType === composeType.APPLICATION
             ) {
               const stackServiceName = `${service.appName}_${key}`;
-              bashBody = `docker service logs -f --tail 50 ${shQ(stackServiceName)}`;
+              const stackNameQ = shQ(service.appName);
+              if (service.composeType === composeType.APPLICATION) {
+                bashBody = `STACK=${stackNameQ}; CAND=${shQ(stackServiceName)}; SVC="$CAND"; if ! docker service inspect "$SVC" >/dev/null 2>&1; then SVC="$(docker stack services "$STACK" --format '{{.Name}}' | head -n 1 || true)"; fi; if [ -z "$SVC" ]; then echo "Nothing found in stack: $STACK"; echo "No such service in stack (candidate: $CAND). Deploy likely failed before service creation."; echo "Check Last deployment logs in this page."; exit 0; fi; echo "--- service inspect ($SVC) ---"; docker service inspect "$SVC" --format '{{.UpdateStatus.State}} | {{.UpdateStatus.Message}} | replicas={{if .Spec.Mode.Replicated}}{{.Spec.Mode.Replicated.Replicas}}{{else}}n/a{{end}}' 2>/dev/null || echo "none |  | replicas=n/a"; echo ""; echo "--- service tasks (docker service ps --no-trunc) ---"; docker service ps --no-trunc "$SVC" || true; echo ""; echo "--- live service logs ($SVC) ---"; docker service logs -f --tail 100 "$SVC"`;
+              } else {
+                bashBody = `STACK=${stackNameQ}; CAND=${shQ(stackServiceName)}; SVC="$CAND"; if ! docker service inspect "$SVC" >/dev/null 2>&1; then SVC="$(docker stack services "$STACK" --format '{{.Name}}' | head -n 1 || true)"; fi; if [ -z "$SVC" ]; then echo "Nothing found in stack: $STACK"; echo "No such service in stack (candidate: $CAND)."; exit 0; fi; docker service logs -f --tail 50 "$SVC"`;
+              }
             } else {
               const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
               const proj = shQ(service.appName);
@@ -1808,7 +1798,11 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
     }
 
     const result = await this.executorService.execute(id, mode, options);
+    let finalResult = result;
     if (result.success) {
+      finalResult = await this.validateApplicationRolloutAfterDeploy(id, result);
+    }
+    if (finalResult.success) {
       await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
       try {
         const sshTargets = await this.getDockerSshTargetIds(id);
@@ -1819,7 +1813,95 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         /* best effort — deploy already succeeded */
       }
     }
-    return result;
+    return finalResult;
+  }
+
+  /**
+   * `docker stack deploy` can exit 0 while tasks still fail moments later.
+   * For APPLICATION services, verify Swarm update state + current task states before reporting success.
+   */
+  private async validateApplicationRolloutAfterDeploy(
+    id: number,
+    result: { success: boolean; output: string },
+  ): Promise<{ success: boolean; output: string }> {
+    if (!result.success) return result;
+    const service = await this.serviceRepository.findOne({ where: { id } });
+    if (!service || service.composeType !== composeType.APPLICATION) return result;
+    const sshTargets = await this.getDockerSshTargetIds(id);
+    if (sshTargets.remoteServerId == null) return result;
+
+    const shQ = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    const key = this.firstComposeServiceName(service.dockerConfig || '');
+    const stackServiceName = `${service.appName}_${key}`;
+    const stackName = service.appName;
+    const script = `
+STACK=${shQ(stackName)}
+CAND=${shQ(stackServiceName)}
+SVC="$CAND"
+if ! docker service inspect "$SVC" >/dev/null 2>&1; then
+  SVC="$(docker stack services "$STACK" --format '{{.Name}}' | head -n 1 || true)"
+fi
+if [ -z "$SVC" ]; then
+  echo "none|stack service not found"
+  echo "STACK_NOT_FOUND|$STACK|$CAND"
+  exit 0
+fi
+echo "--- service inspect summary ---"
+docker service inspect "$SVC" --format '{{.UpdateStatus.State}}|{{.UpdateStatus.Message}}' 2>/dev/null || echo "none|"
+echo "--- service ps summary ---"
+docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentState}}|{{.Error}}' "$SVC"
+`;
+
+    try {
+      const { stdout, stderr } = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+        sshTargets.remoteServerId,
+        null,
+        script,
+      );
+      const out = [stdout, stderr].filter((s) => s?.trim()).join('\n');
+      const inspectLine = (stdout.split(/\r?\n/).find((l) => l.includes('|')) ?? '').trim();
+      const [updateStateRaw] = inspectLine.split('|');
+      const updateState = (updateStateRaw ?? '').trim().toLowerCase();
+      const updateFailed =
+        updateState === 'paused' ||
+        updateState.startsWith('rollback') ||
+        updateState === 'failed';
+
+      const taskFailed = stdout
+        .split(/\r?\n/)
+        .some((line) => {
+          const t = line.trim();
+          if (!t || !t.includes('|')) return false;
+          const parts = t.split('|');
+          if (parts.length < 4) return false;
+          const desired = (parts[1] ?? '').trim().toLowerCase();
+          const current = (parts[2] ?? '').toLowerCase();
+          const err = (parts[3] ?? '').trim();
+          if (desired !== 'running') return false;
+          return (
+            current.includes(' rejected ') ||
+            current.includes(' failed ') ||
+            current.startsWith('rejected') ||
+            current.startsWith('failed') ||
+            err.length > 0
+          );
+        });
+
+      if (!updateFailed && !taskFailed) return result;
+
+      const msg =
+        '\n[deploy verification] Swarm reports failed or unstable tasks after deploy. Marking deployment as failed.\n';
+      return {
+        success: false,
+        output: `${result.output}${msg}${out ? `\n${out}` : ''}`.trim(),
+      };
+    } catch (e) {
+      const reason = getErrorMessage(e);
+      return {
+        success: false,
+        output: `${result.output}\n[deploy verification] Could not verify Swarm service state: ${reason}`.trim(),
+      };
+    }
   }
 
   /**
@@ -1837,8 +1919,9 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   }
 
   /**
-   * After stack YAML + app-source exist on the API host, mirror to the deploy server so builds/webhooks
-   * can run there without this machine. Skips when no deploy host is selected.
+   * After stack YAML is saved, push the deploy bundle (compose, env, registry sidecars) to the deploy host
+   * so builds/webhooks can run there without this machine. Application source on the host comes from Git
+   * clone on deploy/build, not from uploading `app-source` from the API. Skips when no deploy host is selected.
    */
   private async pushApplicationMirrorToDeployHostIfConfigured(
     serviceId: number,
@@ -3347,6 +3430,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         projectId,
         url: triggerUrl,
         token: randomBytes(24).toString('hex'),
+        userId: service.project.userId,
       });
       service.autoDeployGitlabHookId = hookId;
       service.autoDeployGitlabHookProjectId = projectId;
@@ -3518,6 +3602,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
           projectId,
           url: triggerUrl,
           token: randomBytes(24).toString('hex'),
+          userId: service.project.userId,
         });
         service.autoDeployGitlabHookId = hookId;
         service.autoDeployGitlabHookProjectId = projectId;
@@ -3533,9 +3618,9 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
    * Resolve the authenticated HTTPS clone URL for a GitLab project (token embedded).
    * Used by the webhook env writer so the remote host can `git clone` private repos.
    */
-  async resolveGitlabProjectCloneUrl(projectId: number): Promise<string | null> {
+  async resolveGitlabProjectCloneUrl(projectId: number, userId = 1): Promise<string | null> {
     try {
-      const info = await this.gitService.gitlabCloneInfoForProject(projectId);
+      const info = await this.gitService.gitlabCloneInfoForProject(projectId, userId);
       return info.cloneUrl || null;
     } catch {
       return null;
@@ -3546,8 +3631,8 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
    * Resolve an authenticated HTTPS clone URL for a manual GitLab URL.
    * Injects the stored GitLab token when available (for private repos).
    */
-  async resolveGitlabAuthenticatedUrl(httpUrl: string): Promise<string> {
-    return this.gitService.resolveGitlabHttpCloneUrl(httpUrl);
+  async resolveGitlabAuthenticatedUrl(httpUrl: string, userId = 1): Promise<string> {
+    return this.gitService.resolveGitlabHttpCloneUrl(httpUrl, userId);
   }
 
   /**
@@ -3563,11 +3648,11 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
   }
 
   /** For on-host tarball fallback when `git` is missing (GitLab API archive). */
-  async getGitlabArchiveApiCredentials(): Promise<{
+  async getGitlabArchiveApiCredentials(userId = 1): Promise<{
     apiBase: string;
     privateToken: string;
   } | null> {
-    return this.gitService.getGitlabArchiveApiCredentials();
+    return this.gitService.getGitlabArchiveApiCredentials(userId);
   }
 
   /** Read auto-deploy settings (authenticated). */

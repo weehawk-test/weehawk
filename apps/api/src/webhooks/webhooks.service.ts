@@ -251,17 +251,25 @@ export class WebhooksService implements OnApplicationBootstrap {
         const projectId = parseInt(repoId, 10);
         if (!Number.isFinite(projectId)) {
           try {
-            const authUrl = await this.servicesService.resolveGitlabAuthenticatedUrl(repoId);
+            const authUrl = await this.servicesService.resolveGitlabAuthenticatedUrl(
+              repoId,
+              svc.project.userId,
+            );
             return { cloneUrl: authUrl, branch };
           } catch {
             return { cloneUrl: repoId, branch };
           }
         }
         try {
-          const url = await this.servicesService.resolveGitlabProjectCloneUrl(projectId);
+          const url = await this.servicesService.resolveGitlabProjectCloneUrl(
+            projectId,
+            svc.project.userId,
+          );
           if (url) {
             const glApi =
-              await this.servicesService.getGitlabArchiveApiCredentials();
+              await this.servicesService.getGitlabArchiveApiCredentials(
+                svc.project.userId,
+              );
             if (glApi) {
               return {
                 cloneUrl: url,

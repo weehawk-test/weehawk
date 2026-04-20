@@ -251,6 +251,23 @@ export async function fetchDockerPurgeScriptApi(
   return { script: j.script };
 }
 
+export async function fetchNixpacksInstallScriptApi(
+  accessToken: string,
+): Promise<{ script: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/nixpacks-install-script`, {
+    method: "GET",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { script?: string };
+  if (typeof j.script !== "string") {
+    throw new Error("Invalid nixpacks-install-script response");
+  }
+  return { script: j.script };
+}
+
 export async function fetchProvisionScriptApi(
   accessToken: string,
   role: RemoteServerRole,
@@ -272,7 +289,7 @@ export async function fetchProvisionScriptApi(
 
 export type ProvisionJobStatus = "pending" | "running" | "done" | "error";
 
-export type ProvisionJobKind = "provision" | "docker_purge";
+export type ProvisionJobKind = "provision" | "docker_purge" | "nixpacks_install";
 
 export type ProvisionJobRow = {
   id: string;
@@ -321,6 +338,24 @@ export async function enqueueRemoteDockerPurgeApi(
   return { jobId: j.jobId };
 }
 
+export async function enqueueRemoteNixpacksInstallApi(
+  accessToken: string,
+  serverId: string | number,
+): Promise<{ jobId: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${serverId}/nixpacks-install`, {
+    method: "POST",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { jobId?: string };
+  if (typeof j.jobId !== "string") {
+    throw new Error("Invalid nixpacks-install enqueue response");
+  }
+  return { jobId: j.jobId };
+}
+
 export async function fetchProvisionJobApi(
   accessToken: string,
   jobId: string,
@@ -337,7 +372,11 @@ export async function fetchProvisionJobApi(
   const j = JSON.parse(text) as Record<string, unknown>;
   const rawKind = j.jobKind;
   const jobKind: ProvisionJobKind =
-    rawKind === "docker_purge" ? "docker_purge" : "provision";
+    rawKind === "docker_purge"
+      ? "docker_purge"
+      : rawKind === "nixpacks_install"
+        ? "nixpacks_install"
+        : "provision";
   return {
     id: String(j.id ?? jobId),
     remoteServerId: typeof j.remoteServerId === "number" ? j.remoteServerId : Number(j.remoteServerId),

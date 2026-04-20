@@ -77,6 +77,7 @@ import {
 } from "@/lib/services-api";
 import {
   parseApplicationBuildPath,
+  parseApplicationBuildMode,
   parseApplicationDeployMode,
   parseApplicationImageRef,
   parseApplicationNetworkHeaders,
@@ -784,6 +785,8 @@ export default function ServiceDetails({
   const typeConf = service ? (SERVICE_TYPE_CONFIG[service.type as keyof typeof SERVICE_TYPE_CONFIG] ?? SERVICE_TYPE_CONFIG["docker-compose"]) : SERVICE_TYPE_CONFIG["docker-compose"];
   const isDatabaseService = service?.type === "databases";
   const isApplicationService = service?.type === "application";
+  const isDockerComposeService = service?.type === "docker-compose";
+  const isStackOrComposeService = service?.type === "stack" || service?.type === "docker-compose";
   const hasDatabaseCompose = Boolean(service?.config?.includes("services:"));
 
   const runningOnHost = runtime?.running ?? false;
@@ -802,12 +805,16 @@ export default function ServiceDetails({
       { id: "env", label: "Environment", icon: Variable, count: envEntryCount || undefined },
       { id: "remote", label: "Remote", icon: Server },
       { id: "backup", label: "Backup", icon: Archive },
-      {
-        id: "domain",
-        label: "Domains",
-        icon: Globe,
-        count: countTraefikRoutesOrDomains(service),
-      },
+      ...(!isStackOrComposeService
+        ? [
+            {
+              id: "domain" as Tab,
+              label: "Domains",
+              icon: Globe,
+              count: countTraefikRoutesOrDomains(service),
+            },
+          ]
+        : []),
       { id: "secrets", label: "Secrets", icon: Shield, count: secretsPaged?.totalAll },
       { id: "logs", label: "Logs", icon: ScrollText },
       { id: "terminal", label: "Terminal", icon: Terminal },
@@ -816,8 +823,11 @@ export default function ServiceDetails({
     const withoutAppComposeTabs = isApplicationService
       ? allTabs.filter((t) => t.id !== "config" && t.id !== "env" && t.id !== "secrets")
       : allTabs;
-    if (!isDatabaseService) return withoutAppComposeTabs;
-    const withoutDomainSecrets = withoutAppComposeTabs.filter(
+    const withoutComposeSecrets = isDockerComposeService
+      ? withoutAppComposeTabs.filter((t) => t.id !== "secrets")
+      : withoutAppComposeTabs;
+    if (!isDatabaseService) return withoutComposeSecrets;
+    const withoutDomainSecrets = withoutComposeSecrets.filter(
       (t) =>
         t.id !== "domain" &&
         t.id !== "secrets" &&
@@ -831,7 +841,9 @@ export default function ServiceDetails({
   }, [
     isDatabaseService,
     isApplicationService,
+    isDockerComposeService,
     hasDatabaseCompose,
+    isStackOrComposeService,
     envEntryCount,
     service?.domains?.length,
     service?.traefikRoutes,
@@ -1433,7 +1445,7 @@ export default function ServiceDetails({
           )}
 
           {/* ── DOMAIN ── */}
-          {activeTab === "domain" && (
+          {activeTab === "domain" && !isStackOrComposeService && (
             <motion.div key="domain" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}>
               <DomainsPanel service={service} />
@@ -3247,6 +3259,7 @@ function ApplicationArchivePanel({
     gitSettings?.github.appId?.trim() && gitSettings?.github.privateKeySet,
   );
   const [buildPath, setBuildPath] = useState(".");
+  const [appBuildStrategy, setAppBuildStrategy] = useState<"dockerfile" | "nixpacks">("dockerfile");
   const [replicas, setReplicas] = useState("1");
   /** Approximate progress while POST generate-from-source runs (no byte-level progress). */
   const [stackGenProgressPct, setStackGenProgressPct] = useState<number | null>(null);
@@ -3420,10 +3433,15 @@ function ApplicationArchivePanel({
 
   useEffect(() => {
     const cfg = serviceRow?.config ?? "";
-    if (!cfg.includes("# weehawk application service")) return;
+    if (!cfg.includes("# weehawk application service")) {
+      setAppBuildStrategy("dockerfile");
+      return;
+    }
     const savedPath = parseApplicationBuildPath(cfg);
     if (savedPath) setBuildPath(savedPath);
-  }, [serviceRow?.config]);
+    const savedMode = parseApplicationBuildMode(cfg);
+    if (savedMode) setAppBuildStrategy(savedMode);
+  }, [serviceRow?.id, serviceRow?.config]);
 
   useEffect(() => {
     const cfg = serviceRow?.config ?? "";
@@ -3761,6 +3779,7 @@ function ApplicationArchivePanel({
     try {
       const { remoteMirror } = await generateApplicationFromSourceApi(serviceId, {
         buildPath: buildPath.trim() || ".",
+        buildMode: appBuildStrategy,
         containerPort: cp,
         publishPort: rp,
         replicas: rep,
@@ -4644,11 +4663,30 @@ function ApplicationArchivePanel({
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Build path</label>
           <input className="input-field font-mono text-sm" value={buildPath} onChange={(e) => setBuildPath(e.target.value)} placeholder="." />
         </div>
-        <div className="sm:col-span-2 rounded-lg border border-border bg-muted/60 dark:bg-black/20 px-3 py-2.5">
-          <p className="text-xs font-medium text-foreground mb-1">Dockerfile-first build</p>
+        <div className="sm:col-span-2 space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground block">Build strategy</label>
+          <select
+            className="input-field font-mono text-sm max-w-md"
+            value={appBuildStrategy}
+            onChange={(e) => setAppBuildStrategy(e.target.value as "dockerfile" | "nixpacks")}
+          >
+            <option value="dockerfile">Dockerfile — docker build from Dockerfile in build path</option>
+            <option value="nixpacks">Nixpacks — auto-detect stack, build on deploy host</option>
+          </select>
           <p className="text-[11px] text-muted-foreground leading-relaxed">
-            If your project includes a <code className="text-[10px]">Dockerfile</code> in the build path, it is used as-is.
-            Otherwise Weehawk generates a multi-stage Dockerfile (Node, Go, Python, or static).
+            Dockerfile: needs a <code className="text-[10px]">Dockerfile</code> under the build path when source is on the API.
+            Nixpacks: runs <code className="text-[10px]">nixpacks build</code> on the remote host — install the CLI via that host&apos;s{" "}
+            <Link href="/remote-server" className="font-medium text-primary underline-offset-2 hover:underline">
+              Installs &amp; maintenance
+            </Link>{" "}
+            → Nixpacks CLI only.
+            {appBuildStrategy === "nixpacks" ? (
+              <>
+                {" "}
+                Nixpacks uses Node 20 on the build host by default. Deploys run <code className="text-[10px]">nixpacks build --no-cache</code> so
+                Docker does not reuse old layers from a previous Node 18 plan.
+              </>
+            ) : null}
           </p>
         </div>
         </>
@@ -4884,9 +4922,23 @@ function EnvFilePanel({ service }: { service: Service }) {
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [hideSecrets, setHideSecrets] = useState(true);
 
   const envText = service.env ?? "";
   const entries = countEnvEntries(editing ? draft : envText);
+  const displayEnvText = useMemo(() => {
+    if (!hideSecrets) return envText;
+    return envText
+      .split(/\r?\n/)
+      .map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#") || !line.includes("=")) return line;
+        const match = line.match(/^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*)(.*)$/);
+        if (!match) return line;
+        return `${match[1]}********`;
+      })
+      .join("\n");
+  }, [envText, hideSecrets]);
 
   const handleSave = () => {
     updateService.mutate(
@@ -4920,6 +4972,16 @@ function EnvFilePanel({ service }: { service: Service }) {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setHideSecrets((v) => !v)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
+            title={hideSecrets ? "Show secrets" : "Hide secrets"}
+            aria-label={hideSecrets ? "Show secrets" : "Hide secrets"}
+          >
+            {hideSecrets ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            {hideSecrets ? "Show secrets" : "Hide secrets"}
+          </button>
           {editing ? (
             <>
               <button
@@ -4979,7 +5041,7 @@ function EnvFilePanel({ service }: { service: Service }) {
       ) : (
         <pre className="w-full bg-zinc-100 text-zinc-800 dark:bg-black/70 dark:text-zinc-300 font-mono text-xs p-5 min-h-[200px] min-w-0 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
           {envText.trim() ? (
-            envText
+            displayEnvText
           ) : (
             <span className="text-zinc-600 italic">No environment variables. Click Edit to add a .env file.</span>
           )}

@@ -328,8 +328,8 @@ export class GitService implements OnModuleInit {
   /**
    * URL passed to `git clone`: embed token when set (private repos), otherwise plain HTTPS (public repos).
    */
-  async resolveGitlabHttpCloneUrl(httpUrlToRepo: string): Promise<string> {
-    const row = await this.gitlabSettingsRow();
+  async resolveGitlabHttpCloneUrl(httpUrlToRepo: string, userId = 1): Promise<string> {
+    const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     const trimmed = httpUrlToRepo.trim();
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
@@ -415,11 +415,11 @@ export class GitService implements OnModuleInit {
   }
 
   /** Resolve clone URL and default branch for a GitLab project id (API). */
-  async gitlabCloneInfoForProject(projectId: number): Promise<{
+  async gitlabCloneInfoForProject(projectId: number, userId = 1): Promise<{
     cloneUrl: string;
     defaultBranch: string | null;
   }> {
-    const row = await this.gitlabSettingsRow();
+    const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!token) {
       throw new BadRequestException(
@@ -462,12 +462,12 @@ export class GitService implements OnModuleInit {
    * GitLab.com often returns 403 for browser-style `/-/archive/...` URLs with `oauth2:token@`;
    * the REST archive endpoint with `PRIVATE-TOKEN` works reliably.
    */
-  async getGitlabArchiveApiCredentials(): Promise<{
+  async getGitlabArchiveApiCredentials(userId = 1): Promise<{
     apiBase: string;
     privateToken: string;
   } | null> {
     try {
-      const row = await this.gitlabSettingsRow();
+      const row = await this.gitlabSettingsRow(userId);
       const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
       if (!token) return null;
       const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
@@ -702,8 +702,9 @@ export class GitService implements OnModuleInit {
     projectId: number;
     url: string;
     token: string;
+    userId?: number;
   }): Promise<number> {
-    const row = await this.gitlabSettingsRow();
+    const row = await this.gitlabSettingsRow(params.userId ?? 1);
     const privateToken = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!privateToken) {
       throw new BadRequestException(

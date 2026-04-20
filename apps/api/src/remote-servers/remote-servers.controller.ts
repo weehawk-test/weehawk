@@ -89,10 +89,19 @@ export class RemoteServersController {
     return this.remoteServerProvisionService.getDockerPurgeScriptPreview();
   }
 
+  @Get('nixpacks-install-script')
+  @ApiOperation({
+    summary:
+      'Preview the bash that installs only the Nixpacks CLI on an already-provisioned host (no Docker/Swarm rerun)',
+  })
+  getNixpacksInstallScript() {
+    return this.remoteServerProvisionService.getNixpacksOnlyInstallScriptPreview();
+  }
+
   @Post(':id/provision')
   @ApiOperation({
     summary:
-      'Queue SSH provision on this host (install Docker, Swarm, weehawk overlay). Processed by provision-worker.',
+      'Queue SSH provision on this host (install Docker, Swarm, weehawk overlay). Nixpacks is not part of this script — use POST :id/nixpacks-install separately. Processed by provision-worker.',
   })
   enqueueProvision(
     @Param('id', ParseIntPipe) id: number,
@@ -111,6 +120,18 @@ export class RemoteServersController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.remoteServerProvisionService.enqueueDockerPurge(id, this.uid(req));
+  }
+
+  @Post(':id/nixpacks-install')
+  @ApiOperation({
+    summary:
+      'Queue Nixpacks CLI install only over SSH (host already provisioned). Same worker as Install; poll provision-jobs.',
+  })
+  enqueueNixpacksInstall(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.remoteServerProvisionService.enqueueNixpacksInstall(id, this.uid(req));
   }
 
   @Post('generate-keypair')

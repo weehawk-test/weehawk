@@ -876,6 +876,7 @@ export async function generateApplicationFromSourceApi(
   options: {
     buildPath?: string;
     dockerfilePath?: string;
+    buildMode?: "dockerfile" | "nixpacks";
     containerPort?: number;
     publishPort?: number;
     replicas?: number;
@@ -886,6 +887,7 @@ export async function generateApplicationFromSourceApi(
   const body: Record<string, unknown> = {
     buildPath: options.buildPath,
     dockerfilePath: options.dockerfilePath,
+    buildMode: options.buildMode,
     containerPort: options.containerPort,
     publishPort: options.publishPort,
     replicas: options.replicas,
@@ -924,6 +926,7 @@ export async function uploadApplicationGitCloneApi(
     httpUrlToRepo?: string;
     branch?: string;
     buildPath?: string;
+    buildMode?: "dockerfile" | "nixpacks";
     containerPort?: number;
     publishPort?: number;
     replicas?: number;
@@ -933,6 +936,7 @@ export async function uploadApplicationGitCloneApi(
 ): Promise<{ service: Service; remoteMirror?: RemoteMirrorPayload }> {
   const body: Record<string, unknown> = {
     buildPath: options.buildPath,
+    buildMode: options.buildMode,
     containerPort: options.containerPort,
     publishPort: options.publishPort,
     replicas: options.replicas,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -59,6 +60,7 @@ function CreateSecretModal({
   remoteServerId: DockerSecretsRemoteServerId;
   onClose: () => void;
 }) {
+  const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const create = useCreateDockerSecret(remoteServerId);
   const { toast } = useToast();
@@ -83,13 +85,26 @@ function CreateSecretModal({
     });
   };
 
-  return (
-    <div className="fixed inset-y-0 left-[var(--app-sidebar-width)] right-0 z-50 flex items-center justify-center p-4 modal-scrim">
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center p-4 modal-scrim"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
         className="glass-panel rounded-2xl p-8 w-full max-w-lg relative overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="absolute top-0 right-0 w-48 h-48 bg-primary/10 blur-[60px] pointer-events-none" />
         <div className="flex items-center gap-3 mb-1">
@@ -142,7 +157,8 @@ function CreateSecretModal({
           </div>
         </form>
       </motion.div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

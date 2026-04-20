@@ -4,6 +4,27 @@ export function parseConfigHeaderValue(config: string, key: string): string | nu
   return m?.[1]?.trim() || null;
 }
 
+/**
+ * Optional override: `# nixpacks.nodeVersion: 22` in service compose headers.
+ * If unset, {@link resolveNixpacksNodeMajorForRemoteBuild} uses {@link WEEHAWK_DEFAULT_NIXPACKS_NODE_MAJOR}.
+ */
+export function parseNixpacksNodeMajorFromConfigHeader(config: string): string | null {
+  const raw = parseConfigHeaderValue(config, 'nixpacks.nodeVersion')?.trim();
+  if (!raw) return null;
+  const major = raw.replace(/^v/i, '').trim();
+  if (!/^\d{1,2}$/.test(major)) return null;
+  const n = Number(major);
+  if (n < 16 || n > 30) return null;
+  return major;
+}
+
+/** Default Node major for Nixpacks on remote hosts (Next.js 16+ and current LTS expectations). */
+export const WEEHAWK_DEFAULT_NIXPACKS_NODE_MAJOR = '20';
+
+export function resolveNixpacksNodeMajorForRemoteBuild(config: string): string {
+  return parseNixpacksNodeMajorFromConfigHeader(config) ?? WEEHAWK_DEFAULT_NIXPACKS_NODE_MAJOR;
+}
+
 /** First `services:` key in compose YAML (which service to exec into). */
 /** First `image:` under a service block (indented) — for registry auth on `docker stack deploy --with-registry-auth`. */
 export function firstImageRefFromComposeYaml(yaml: string): string | null {
@@ -28,16 +49,21 @@ export function firstImageRefFromComposeYaml(yaml: string): string | null {
 export function firstComposeServiceName(config: string): string {
   const lines = config.split(/\r?\n/);
   let inServices = false;
+  let servicesIndent = 0;
   for (const line of lines) {
     const t = line.trim();
     if (!inServices) {
-      if (t === 'services:' || /^\s*services:\s*$/.test(line)) inServices = true;
+      if (t === 'services:' || /^\s*services:\s*$/.test(line)) {
+        inServices = true;
+        servicesIndent = line.match(/^\s*/)?.[0]?.length ?? 0;
+      }
       continue;
     }
     if (!t || t.startsWith('#')) continue;
-    if (/^[a-zA-Z_]/.test(line) && !line.startsWith(' ')) break;
-    const m = line.match(/^\s{2}([a-zA-Z0-9_.-]+)\s*:/);
-    if (m) return m[1];
+    const indent = line.match(/^\s*/)?.[0]?.length ?? 0;
+    if (indent <= servicesIndent) break;
+    const m = line.match(/^\s*([a-zA-Z0-9_.-]+)\s*:/);
+    if (m && indent > servicesIndent) return m[1];
   }
   return 'app';
 }

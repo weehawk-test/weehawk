@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class ApplicationGitCloneDto {
   @ApiPropertyOptional({
@@ -59,6 +59,11 @@ export class ApplicationGitCloneDto {
   @IsOptional()
   @IsString()
   dockerfilePath?: string;
+
+  @ApiPropertyOptional({ example: 'dockerfile', enum: ['dockerfile', 'nixpacks'] })
+  @IsOptional()
+  @IsIn(['dockerfile', 'nixpacks'])
+  buildMode?: 'dockerfile' | 'nixpacks';
 
   @ApiPropertyOptional({ example: 3000, default: 3000 })
   @IsOptional()

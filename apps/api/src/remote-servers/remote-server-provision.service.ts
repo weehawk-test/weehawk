@@ -12,6 +12,7 @@ import { RemoteServerProvisionJob } from './entities/remote-server-provision-job
 import { RemoteServersService } from './remote-servers.service';
 import {
   buildDockerPurgeScript,
+  buildNixpacksOnlyInstallScript,
   buildWeehawkProvisionScript,
 } from './remote-server-provision.script';
 import { TraefikService } from '../traefik/traefik.service';
@@ -51,6 +52,11 @@ export class RemoteServerProvisionService {
     return { script: buildDockerPurgeScript() };
   }
 
+  /** Bash run for `nixpacks_install` jobs — UI preview. */
+  getNixpacksOnlyInstallScriptPreview(): { script: string } {
+    return { script: buildNixpacksOnlyInstallScript() };
+  }
+
   async enqueueProvision(
     remoteServerId: number,
     userId: number,
@@ -78,6 +84,22 @@ export class RemoteServerProvisionService {
       status: 'pending',
       log: '',
       jobKind: 'docker_purge',
+    });
+    const saved = await this.jobRepo.save(row);
+    return { jobId: saved.id };
+  }
+
+  async enqueueNixpacksInstall(
+    remoteServerId: number,
+    userId: number,
+  ): Promise<{ jobId: string }> {
+    await this.remoteServersService.findOne(remoteServerId, userId);
+    const row = this.jobRepo.create({
+      remoteServerId,
+      userId,
+      status: 'pending',
+      log: '',
+      jobKind: 'nixpacks_install',
     });
     const saved = await this.jobRepo.save(row);
     return { jobId: saved.id };
@@ -166,20 +188,24 @@ export class RemoteServerProvisionService {
       const kind = await this.resolveJobKindFromDb(job.id);
 
       const ctx = await this.remoteServersService.getSshProvisionContext(serverId, ownerId);
-      const webhookAgent =
-        ctx.server.serverRole === 'build'
-          ? undefined
-          : await this.remoteServersService.getWebhookAgentProvisionInput();
-      const traefikSettings = await this.traefikService.getSettings(ownerId);
-      const script =
-        kind === 'docker_purge'
-          ? buildDockerPurgeScript()
-          : buildWeehawkProvisionScript({
-              role: ctx.server.serverRole === 'build' ? 'build' : 'deploy',
-              webhookAgent,
-              isProvisionJobPreview: false,
-              acmeEmail: traefikSettings.acmeEmail,
-            });
+      let script: string;
+      if (kind === 'docker_purge') {
+        script = buildDockerPurgeScript();
+      } else if (kind === 'nixpacks_install') {
+        script = buildNixpacksOnlyInstallScript();
+      } else {
+        const webhookAgent =
+          ctx.server.serverRole === 'build'
+            ? undefined
+            : await this.remoteServersService.getWebhookAgentProvisionInput();
+        const traefikSettings = await this.traefikService.getSettings(ownerId);
+        script = buildWeehawkProvisionScript({
+          role: ctx.server.serverRole === 'build' ? 'build' : 'deploy',
+          webhookAgent,
+          isProvisionJobPreview: false,
+          acmeEmail: traefikSettings.acmeEmail,
+        });
+      }
       this.logger.log(
         `Job ${job.id} remote_server_id=${serverId} resolved job_kind=${kind} (from DB column job_kind)`,
       );
@@ -200,18 +226,20 @@ export class RemoteServerProvisionService {
 
   /**
    * Read `job_kind` with QueryBuilder so mapping issues cannot pick the wrong script.
-   * If this returns `provision` for a purge you queued, check the worker is rebuilt and uses the same DB as the API.
+   * Kinds: `provision`, `docker_purge`, `nixpacks_install`.
    */
   private async resolveJobKindFromDb(
     jobId: string,
-  ): Promise<'provision' | 'docker_purge'> {
+  ): Promise<'provision' | 'docker_purge' | 'nixpacks_install'> {
     const raw = await this.jobRepo
       .createQueryBuilder('j')
       .select('j.job_kind', 'jobKind')
       .where('j.id = :id', { id: jobId })
       .getRawOne<{ jobKind: string | null }>();
     const k = raw?.jobKind?.trim();
-    return k === 'docker_purge' ? 'docker_purge' : 'provision';
+    if (k === 'docker_purge') return 'docker_purge';
+    if (k === 'nixpacks_install') return 'nixpacks_install';
+    return 'provision';
   }
 
   private async execSshBashScript(

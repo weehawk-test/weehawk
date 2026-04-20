@@ -7,6 +7,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
+import { AnimatePresence, motion } from "framer-motion";
 import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff, X } from "lucide-react";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
@@ -64,6 +65,112 @@ const SERVICE_TYPE_CONFIG = {
     placeholder: "",
   },
 } as const;
+type DockerAdvancedMode = "docker-compose" | "stack";
+
+function DockerModePicker({
+  open,
+  selectedMode,
+  onSelect,
+  onCancel,
+}: {
+  open: boolean;
+  selectedMode: DockerAdvancedMode;
+  onSelect: (mode: DockerAdvancedMode) => void;
+  onCancel: () => void;
+}) {
+  const options: Array<{
+    id: DockerAdvancedMode;
+    title: string;
+    description: string;
+    icon: typeof Container;
+  }> = [
+    {
+      id: "docker-compose",
+      title: "Docker Compose",
+      description: "Single-host compose workflow with docker compose.",
+      icon: Container,
+    },
+    {
+      id: "stack",
+      title: "Docker Stack",
+      description: "Swarm stack workflow with docker stack deploy.",
+      icon: Layers,
+    },
+  ];
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="docker-mode-picker-title"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-md dark:bg-black/70"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) onCancel();
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 12 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: 12 }}
+            transition={{ type: "spring", stiffness: 380, damping: 32 }}
+            className="relative flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-6 pb-4 pt-6">
+              <div>
+                <h2 id="docker-mode-picker-title" className="text-xl font-semibold tracking-tight text-foreground">
+                  Choose Docker mode
+                </h2>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+                  Select whether this advanced Docker service uses Compose or Swarm Stack.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onCancel}
+                className="shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="grid gap-3 p-6 sm:grid-cols-2">
+              {options.map((opt) => {
+                const Icon = opt.icon;
+                const active = selectedMode === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => onSelect(opt.id)}
+                    className={`flex min-h-[8rem] w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors ${
+                      active
+                        ? "border-primary/45 bg-primary/10 ring-1 ring-primary/20"
+                        : "border-border bg-muted/50 hover:border-primary/30 hover:bg-muted"
+                    }`}
+                  >
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-background/60">
+                      <Icon className="h-5 w-5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block font-medium text-foreground">{opt.title}</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{opt.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
 
 function dbPortByEngine(engine?: CreateServiceInput["databaseEngine"]): number {
   if (engine === "postgres") return 5432;
@@ -136,6 +243,7 @@ function CreateServiceModal({
   const create = useCreateService();
   const { toast } = useToast();
   const [dbPickerOpen, setDbPickerOpen] = useState(false);
+  const [dockerModePickerOpen, setDockerModePickerOpen] = useState(false);
   const [imageUnlocked, setImageUnlocked] = useState(false);
   const [showDbUserPass, setShowDbUserPass] = useState(false);
   const [showDbRootPass, setShowDbRootPass] = useState(false);
@@ -145,7 +253,7 @@ function CreateServiceModal({
     defaultValues: {
       name: "",
       projectId,
-      type: "docker-compose",
+      type: "application",
       config: "",
       description: "",
       databaseEngine: undefined,
@@ -166,6 +274,7 @@ function CreateServiceModal({
 
   const type = watch("type");
   const databaseEngine = watch("databaseEngine");
+  const isDockerAdvancedType = type === "docker-compose" || type === "stack";
 
   useEffect(() => {
     if (type !== "databases") {
@@ -271,8 +380,19 @@ function CreateServiceModal({
         onCancel={() => {
           setDbPickerOpen(false);
           if (!getValues("databaseEngine")) {
-            setValue("type", "docker-compose");
+            setValue("type", "application");
           }
+        }}
+      />
+      <DockerModePicker
+        open={dockerModePickerOpen}
+        selectedMode={type === "stack" ? "stack" : "docker-compose"}
+        onSelect={(mode) => {
+          setValue("type", mode, { shouldDirty: true });
+          setDockerModePickerOpen(false);
+        }}
+        onCancel={() => {
+          setDockerModePickerOpen(false);
         }}
       />
       <div
@@ -307,20 +427,47 @@ function CreateServiceModal({
               <label className="text-sm font-medium text-foreground mb-1.5 block">Type</label>
               <div className="relative">
                 <select
-                  {...register("type")}
+                  value={isDockerAdvancedType ? "docker-advanced" : type}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (next === "docker-advanced") {
+                      if (!isDockerAdvancedType) {
+                        setValue("type", "docker-compose", { shouldDirty: true });
+                      }
+                      setDockerModePickerOpen(true);
+                      return;
+                    }
+                    if (next === "application" || next === "databases") {
+                      setValue("type", next, { shouldDirty: true });
+                    }
+                  }}
                   className="input-field w-full appearance-none pr-10"
                   aria-label="Service type"
                 >
-                  <option value="docker-compose" className="bg-card">Docker Compose</option>
-                  <option value="stack" className="bg-card">Stack</option>
                   <option value="application" className="bg-card">Application</option>
                   <option value="databases" className="bg-card">Databases</option>
+                  <option value="docker-advanced" className="bg-card">Docker (Advanced)</option>
                 </select>
                 <ChevronDown
                   className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
                   aria-hidden
                 />
               </div>
+              {isDockerAdvancedType && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Mode:</span>
+                  <span className="text-xs font-medium text-zinc-300 border border-zinc-500/30 rounded-full px-2.5 py-0.5 bg-zinc-500/10">
+                    {type === "stack" ? "Docker Stack" : "Docker Compose"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDockerModePickerOpen(true)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
               {type === "databases" && databaseEngine && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">Engine:</span>

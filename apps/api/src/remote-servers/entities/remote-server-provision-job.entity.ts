@@ -26,9 +26,12 @@ export class RemoteServerProvisionJob {
   @Column({ name: 'error_message', type: 'text', nullable: true })
   errorMessage?: string | null;
 
-  /** `provision` = install Docker / Swarm / network; `docker_purge` = full Docker removal (conflict cleanup). */
+  /**
+   * `provision` = full install; `docker_purge` = remove Docker;
+   * `nixpacks_install` = install Nixpacks CLI only (host already provisioned).
+   */
   @Column({ name: 'job_kind', type: 'varchar', length: 24, default: 'provision' })
-  jobKind!: 'provision' | 'docker_purge';
+  jobKind!: 'provision' | 'docker_purge' | 'nixpacks_install';
 
   @CreateDateColumn()
   createdAt!: Date;

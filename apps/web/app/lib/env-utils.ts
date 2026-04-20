@@ -83,12 +83,12 @@ export function parseApplicationImageRef(config: string): string | null {
   return v.length ? v : null;
 }
 
-/** `# buildMode: dockerfile | buildpacks` (legacy `nixpacks` → buildpacks) from generated application stack header. */
-export function parseApplicationBuildMode(config: string): "dockerfile" | "buildpacks" | null {
+/** `# buildMode: dockerfile | nixpacks` (legacy header `buildpacks` reads as nixpacks). */
+export function parseApplicationBuildMode(config: string): "dockerfile" | "nixpacks" | null {
   const m = config.match(/^\s*#\s*buildMode:\s*(dockerfile|nixpacks|buildpacks)\s*$/im);
   if (!m?.[1]) return null;
   const v = m[1].toLowerCase();
-  if (v === "nixpacks" || v === "buildpacks") return "buildpacks";
+  if (v === "nixpacks" || v === "buildpacks") return "nixpacks";
   return "dockerfile";
 }
 

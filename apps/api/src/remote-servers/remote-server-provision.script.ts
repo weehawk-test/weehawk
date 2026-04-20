@@ -84,6 +84,63 @@ git_install_weehawk() {
 }
 `.trim();
 
+/** Install Nixpacks CLI (https://nixpacks.com/docs/install) for Dockerfile-less builds on the host. */
+const BASH_NIXPACKS_INSTALL_FN = `
+# Default Node major for manual \`nixpacks build\` in SSH sessions (matches Weehawk API). Override: export NIXPACKS_NODE_VERSION=22
+weehawk_write_nixpacks_profile_defaults() {
+  if [ "$(id -u)" -ne 0 ] || [ ! -d /etc/profile.d ]; then
+    return 0
+  fi
+  f=/etc/profile.d/weehawk-nixpacks-defaults.sh
+  cat > "$f" <<'WEEHAWK_NIXPACKS_PROFILE'
+# Managed by Weehawk — default Node for Nixpacks (Next.js 16+). Override per shell: export NIXPACKS_NODE_VERSION=18
+export NIXPACKS_NODE_VERSION="\${NIXPACKS_NODE_VERSION:-20}"
+WEEHAWK_NIXPACKS_PROFILE
+  chmod 644 "$f" 2>/dev/null || true
+}
+
+nixpacks_install_weehawk() {
+  weehawk_write_nixpacks_profile_defaults
+  if command -v nixpacks >/dev/null 2>&1; then
+    echo "Nixpacks already installed ($(nixpacks --version 2>/dev/null || echo ok))"
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "WARN: curl not found — skipping Nixpacks install. Install curl and re-run, or install Nixpacks manually." >&2
+    return 0
+  fi
+  echo "Installing Nixpacks CLI (for optional Nixpacks builds)..."
+  export NIXPACKS_INSTALL_NONINTERACTIVE=1
+  if curl -fsSL https://nixpacks.com/install.sh | bash; then
+    export PATH="$PATH:$HOME/.local/bin:/root/.local/bin:/usr/local/bin"
+    if command -v nixpacks >/dev/null 2>&1; then
+      echo "Nixpacks installed ($(nixpacks --version 2>/dev/null || echo ok))"
+    else
+      echo "WARN: Nixpacks install finished but \`nixpacks\` not on PATH — add ~/.local/bin or re-login." >&2
+    fi
+  else
+    echo "WARN: Nixpacks install script failed — install manually: https://nixpacks.com/docs/install" >&2
+  fi
+}
+`.trim();
+
+/**
+ * Minimal remote bash: only defines and runs `nixpacks_install_weehawk` (same helper as full provision).
+ * Use when the host is already set up and the user only wants the Nixpacks CLI.
+ */
+export function buildNixpacksOnlyInstallScript(): string {
+  return `
+set -e
+echo "Weehawk: Nixpacks CLI only — no Docker/Swarm/Traefik changes."
+export PATH="$PATH:$HOME/.local/bin:/root/.local/bin:/usr/local/bin"
+
+${BASH_NIXPACKS_INSTALL_FN}
+
+nixpacks_install_weehawk || true
+echo "Weehawk: Nixpacks step finished."
+`.trim();
+}
+
 /** YAML scalar for ACME email (quoted if needed). */
 function traefikYamlEmailScalar(email: string): string {
   const t = email.trim() || 'admin@example.com';

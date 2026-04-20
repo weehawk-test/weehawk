@@ -8,7 +8,6 @@ import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
 import { ProjectsModule } from 'src/projects/projects.module';
 import { DatabaseGeneratorService } from './database-generator.service';
 import { ExecutorModule } from '../executor/executor.module';
-import { DockerfileGeneratorModule } from '../dockerfile-generator/dockerfile-generator.module';
 import { S3Module } from '../s3/s3.module';
 import { GitModule } from '../git/git.module';
 import { TraefikModule } from '../traefik/traefik.module';
@@ -19,7 +18,6 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
   imports: [
     TypeOrmModule.forFeature([Service, RemoteServer]),
     ProjectsModule,
-    DockerfileGeneratorModule,
     forwardRef(() => ExecutorModule),
     forwardRef(() => WebhooksModule),
     RemoteServersModule,
