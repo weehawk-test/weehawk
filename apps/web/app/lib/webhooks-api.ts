@@ -11,7 +11,7 @@ export type WebhookServiceAction =
   | "docker_command"
   | "no_action";
 
-export type WebhookRemoteTriggerUrlScheme = "http" | "https";
+export type WebhookRemoteTriggerUrlScheme = "https";
 
 /** Must match apps/api/src/webhooks/hooks-public-host.ts */
 const WEEHAWK_HOOK_PUBLIC_HOST_PREFIX = "";
@@ -80,7 +80,7 @@ export type CreateWebhookBody = {
   notifyMessage?: string;
   /** Traefik hostname; API runs docker build on the deploy host unless WEEHAWK_WEBHOOK_AGENT_IMAGE is set. */
   hooksPublicHost?: string;
-  /** Default http. Shown in the remote trigger URL (hostname or IP:port). */
+  /** Trigger URLs always use https. */
   remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
   /** When true, omitted from the main /webhooks list (service auto webhooks). */
   hiddenFromWebhooksList?: boolean;
@@ -149,7 +149,7 @@ export async function fetchWebhooks(
       w.publicId == null || String(w.publicId).trim() === "" ? undefined : String(w.publicId),
     remoteTriggerUrl: w.remoteTriggerUrl ?? null,
     hooksPublicHost: w.hooksPublicHost ?? null,
-    remoteTriggerUrlScheme: w.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    remoteTriggerUrlScheme: "https",
     triggerType: "webhook" as const,
     cronExpression: null,
   }));
@@ -172,7 +172,7 @@ export async function fetchWebhook(accessToken: string, id: string | number): Pr
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
-    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    remoteTriggerUrlScheme: "https",
     triggerType: "webhook",
     cronExpression: null,
   };
@@ -203,7 +203,7 @@ export async function createWebhook(
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
-    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    remoteTriggerUrlScheme: "https",
     triggerType: "webhook",
     cronExpression: null,
   };
@@ -235,7 +235,7 @@ export async function updateWebhook(
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
-    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    remoteTriggerUrlScheme: "https",
     triggerType: "webhook",
     cronExpression: null,
   };

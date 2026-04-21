@@ -2,7 +2,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
-  IsIn,
   IsInt,
   Min,
   IsOptional,
@@ -85,14 +84,6 @@ export class UpdateWebhookDto {
   @IsString()
   @MaxLength(255)
   hooksPublicHost?: string | null;
-
-  @ApiPropertyOptional({
-    enum: ['http', 'https'],
-    description: 'Scheme for the remote trigger URL (docker_command only).',
-  })
-  @IsOptional()
-  @IsIn(['http', 'https'])
-  remoteTriggerUrlScheme?: 'http' | 'https';
 
   @ApiPropertyOptional({
     nullable: true,

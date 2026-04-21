@@ -317,7 +317,7 @@ if ! $SUDO_CMD docker image inspect "$WA_IMG" >/dev/null 2>&1; then
 elif $SUDO_CMD docker service ls --format '{{.Name}}' 2>/dev/null | grep -qx "$WA_SVC"; then
   echo "Weehawk: Swarm service $WA_SVC already exists."
 else
-  echo "Weehawk: creating Swarm service $WA_SVC (health: curl -sS http://127.0.0.1:\${WA_PORT}/healthz)..."
+  echo "Weehawk: creating Swarm service $WA_SVC (health: curl -sS http://127.0.0.1:\${WA_PORT}/\${WA_PFIX}/healthz)..."
   $SUDO_CMD docker service create \\
     --name "$WA_SVC" \\
     --network "$OVERLAY_NET" \\

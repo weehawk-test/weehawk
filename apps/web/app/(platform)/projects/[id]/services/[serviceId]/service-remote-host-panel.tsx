@@ -19,10 +19,7 @@ import {
   hooksPublicHostForDisplay,
   updateWebhook,
   webhookRouteId,
-  type WebhookRemoteTriggerUrlScheme,
 } from "@/lib/webhooks-api";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
   Collapsible,
   CollapsibleContent,
@@ -152,8 +149,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
 
   /** Public hostname from Domains page; API stores it as-is (no forced webhook subdomain). */
   const [webhookPublicHost, setWebhookPublicHost] = useState("");
-  const [webhookTriggerScheme, setWebhookTriggerScheme] =
-    useState<WebhookRemoteTriggerUrlScheme>("http");
   const [saveFlowPending, setSaveFlowPending] = useState(false);
   const [regenerateWebhookPending, setRegenerateWebhookPending] = useState(false);
   /** Shown here immediately after create; list refetch then supplies the same URL. */
@@ -240,16 +235,10 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         return webhookHostOptions[0] ?? "";
       });
     }
-    if (webhookRowForBaseline) {
-      setWebhookTriggerScheme(
-        webhookRowForBaseline.remoteTriggerUrlScheme === "https" ? "https" : "http",
-      );
-    }
   }, [
     webhookHostOptions,
     webhookRowForBaseline?.id,
     webhookRowForBaseline?.hooksPublicHost,
-    webhookRowForBaseline?.remoteTriggerUrlScheme,
   ]);
 
   /** Build and deploy use different Docker daemons → image must go through a registry (push/pull). */
@@ -287,14 +276,11 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   const savedWebhookDisplay = webhookRowForBaseline
     ? hooksPublicHostForDisplay(webhookRowForBaseline.hooksPublicHost).trim()
     : "";
-  const savedWebhookScheme: WebhookRemoteTriggerUrlScheme =
-    webhookRowForBaseline?.remoteTriggerUrlScheme === "https" ? "https" : "http";
   const webhookSettingsDirty = Boolean(
     webhookRowForBaseline &&
       value !== "" &&
       webhookHostOptions.length > 0 &&
-      (webhookPublicHost.trim().toLowerCase() !== savedWebhookDisplay.toLowerCase() ||
-        webhookTriggerScheme !== savedWebhookScheme),
+      webhookPublicHost.trim().toLowerCase() !== savedWebhookDisplay.toLowerCase(),
   );
 
   const dirty =
@@ -426,7 +412,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
             dockerCommand,
             remoteServerId: deployServerIdNum,
             hooksPublicHost: parentHost,
-            remoteTriggerUrlScheme: webhookTriggerScheme,
             hiddenFromWebhooksList: true,
           });
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
@@ -449,7 +434,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         try {
           const outer = await updateWebhook(accessToken, webhookRouteId(webhookRowForBaseline), {
             hooksPublicHost: parentHost,
-            remoteTriggerUrlScheme: webhookTriggerScheme,
           });
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
           await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -523,7 +507,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         dockerCommand: buildOnHostRedeployScript(service),
         remoteServerId: deployServerIdNum,
         hooksPublicHost: parentHost,
-        remoteTriggerUrlScheme: hit.remoteTriggerUrlScheme === "https" ? "https" : "http",
         hiddenFromWebhooksList: true,
       });
       let deleteProblem = "";
@@ -724,24 +707,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
                         <p className="text-[11px] text-muted-foreground leading-relaxed">
                           When you save, your redeploy webhook URL is generated from the domain you select.
                         </p>
-                        <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-background/80 px-3 py-2.5 dark:bg-background/40">
-                          <div className="min-w-0">
-                            <Label
-                              htmlFor="remote-panel-webhook-https"
-                              className="text-xs font-medium text-foreground cursor-pointer"
-                            >
-                              HTTPS
-                            </Label>
-                          </div>
-                          <Switch
-                            id="remote-panel-webhook-https"
-                            checked={webhookTriggerScheme === "https"}
-                            onCheckedChange={(v) =>
-                              setWebhookTriggerScheme(v ? "https" : "http")
-                            }
-                            className="shrink-0"
-                          />
-                        </div>
                       </>
                     )}
                   </div>

@@ -56,7 +56,7 @@ export type WebhookListRow = {
   remoteTriggerUrl: string | null;
   /** Traefik hostname for the Swarm webhook agent when configured. */
   hooksPublicHost: string | null;
-  /** http/https prefix for the remote trigger URL when the action is docker_command. */
+  /** Always https prefix for the remote trigger URL when the action is docker_command. */
   remoteTriggerUrlScheme: WebhookRemoteTriggerUrlScheme;
 };
 
@@ -367,8 +367,8 @@ export class WebhooksService implements OnApplicationBootstrap {
   private normalizeRemoteTriggerUrlScheme(
     raw: string | null | undefined,
   ): WebhookRemoteTriggerUrlScheme {
-    const t = String(raw ?? 'http').trim().toLowerCase();
-    return t === 'https' ? 'https' : 'http';
+    void raw;
+    return 'https';
   }
 
   private assertPlausibleHooksPublicHost(raw: string | null | undefined): void {
@@ -775,10 +775,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       notifyChannelId: dto.notifyChannelId?.trim() || null,
       notifyMessage: dto.notifyMessage?.trim() || null,
       hooksPublicHost: hooksPublicStored,
-      remoteTriggerUrlScheme:
-        dto.targetMode === 'service' && dto.serviceAction === 'docker_command'
-          ? this.normalizeRemoteTriggerUrlScheme(dto.remoteTriggerUrlScheme)
-          : 'http',
+      remoteTriggerUrlScheme: 'https',
       hooksTriggerOrigin: hooksTriggerOriginNormalized,
       hiddenFromWebhooksList: dto.hiddenFromWebhooksList === true,
     });
@@ -940,13 +937,8 @@ export class WebhooksService implements OnApplicationBootstrap {
       }
       w.hooksPublicHost = next;
     }
-    if (
-      dto.remoteTriggerUrlScheme !== undefined &&
-      w.serviceAction === 'docker_command'
-    ) {
-      w.remoteTriggerUrlScheme = this.normalizeRemoteTriggerUrlScheme(
-        dto.remoteTriggerUrlScheme,
-      );
+    if (w.serviceAction === 'docker_command') {
+      w.remoteTriggerUrlScheme = 'https';
     }
     if (dto.hooksTriggerOrigin !== undefined && w.serviceAction === 'docker_command') {
       if (dto.hooksTriggerOrigin === null || dto.hooksTriggerOrigin === '') {

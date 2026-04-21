@@ -33,6 +33,7 @@ import {
   useStartService,
   useServiceRuntime,
   useServiceVolumes,
+  useServices,
   useUpdateService,
 } from "@/hooks/use-services";
 import { useProject } from "@/hooks/use-projects";
@@ -105,9 +106,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
@@ -5397,6 +5396,7 @@ function EnvFilePanel({ service }: { service: Service }) {
 function DomainsPanel({ service }: { service: Service }) {
   const { toast } = useToast();
   const saveRoutesMutation = useUpdateService();
+  const { data: projectServices } = useServices(service.projectId);
 
   const seedKey = `${service.id}:${JSON.stringify(service.traefikRoutes)}:${JSON.stringify(service.domains)}`;
   const [routes, setRoutes] = useState<TraefikRouteRule[]>(() => buildInitialTraefikRoutes(service));
@@ -5411,7 +5411,6 @@ function DomainsPanel({ service }: { service: Service }) {
   const [draftPath, setDraftPath] = useState("");
   const [draftHost, setDraftHost] = useState("");
   const [draftInternalPort, setDraftInternalPort] = useState("");
-  const [draftHttps, setDraftHttps] = useState(false);
 
   const deployServer = service.remoteServer;
   const serverHostnames = useMemo(
@@ -5433,7 +5432,6 @@ function DomainsPanel({ service }: { service: Service }) {
     setDraftPath("");
     setDraftHost("");
     setDraftInternalPort("");
-    setDraftHttps(false);
     setEditingIndex(null);
   };
 
@@ -5443,7 +5441,6 @@ function DomainsPanel({ service }: { service: Service }) {
     setDraftPath("");
     setDraftHost("");
     setDraftInternalPort("");
-    setDraftHttps(false);
     setDialogOpen(true);
   };
 
@@ -5456,7 +5453,6 @@ function DomainsPanel({ service }: { service: Service }) {
     setDraftInternalPort(
       r.port != null && Number.isFinite(r.port) ? String(Math.floor(r.port)) : "",
     );
-    setDraftHttps(r.https !== false);
     setDialogOpen(true);
   };
 
@@ -5534,6 +5530,20 @@ function DomainsPanel({ service }: { service: Service }) {
       });
       return;
     }
+    const conflictingService = (projectServices ?? []).find((svc) => {
+      if (String(svc.id) === String(service.id)) return false;
+      return (svc.traefikRoutes ?? []).some(
+        (r) => (r.router ?? "").trim().toLowerCase() === router,
+      );
+    });
+    if (conflictingService) {
+      toast({
+        title: "Router name already used",
+        description: `This route will not work because "${router}" is already used by service "${conflictingService.name}". Choose a unique router name.`,
+        variant: "destructive",
+      });
+      return;
+    }
     let pathPrefix = draftPath.trim() || null;
     if (pathPrefix && !pathPrefix.startsWith("/")) pathPrefix = `/${pathPrefix}`;
 
@@ -5562,7 +5572,7 @@ function DomainsPanel({ service }: { service: Service }) {
       hosts,
       pathPrefix,
       port,
-      https: draftHttps,
+      https: true,
     };
     const next = [...routes];
     if (editingIndex === null) next.push(entry);
@@ -5768,19 +5778,6 @@ function DomainsPanel({ service }: { service: Service }) {
                   first.
                 </p>
               ) : null}
-            </div>
-            <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
-              <div className="space-y-0.5 min-w-0">
-                <Label htmlFor="route-https" className="text-sm font-medium text-foreground cursor-pointer">
-                  HTTPS
-                </Label>
-              </div>
-              <Switch
-                id="route-https"
-                checked={draftHttps}
-                onCheckedChange={(v) => setDraftHttps(Boolean(v))}
-                className="shrink-0"
-              />
             </div>
             <label className="block space-y-1.5">
               <span className="text-[11px] text-muted-foreground">

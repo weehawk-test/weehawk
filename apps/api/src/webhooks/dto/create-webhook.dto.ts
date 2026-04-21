@@ -3,7 +3,6 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
-  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -137,19 +136,6 @@ export class CreateWebhookDto {
   @IsString()
   @MaxLength(255)
   hooksPublicHost?: string;
-
-  @ApiPropertyOptional({
-    enum: ['http', 'https'],
-    description:
-      'Scheme for the remote trigger URL (public Traefik host or IP:port). Default http.',
-  })
-  @ValidateIf(
-    (o: CreateWebhookDto) =>
-      o.targetMode === 'service' && o.serviceAction === 'docker_command',
-  )
-  @IsOptional()
-  @IsIn(['http', 'https'])
-  remoteTriggerUrlScheme?: 'http' | 'https';
 
   @ApiPropertyOptional({
     description:

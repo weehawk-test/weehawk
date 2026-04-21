@@ -9,7 +9,6 @@ import {
   hooksPublicHostForDisplay,
   webhookRouteId,
   type WebhookDetail,
-  type WebhookRemoteTriggerUrlScheme,
 } from "@/lib/webhooks-api";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import type { NotificationChannel } from "@/lib/notifications-api";
@@ -19,8 +18,6 @@ import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { Service } from "@/lib/schema";
 import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
 import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 import {
@@ -91,10 +88,6 @@ export function EditWebhookClient({
   const [hooksPublicHost, setHooksPublicHost] = useState(
     hooksPublicHostForDisplay(initialWebhook.hooksPublicHost),
   );
-  const [remoteTriggerUrlScheme, setRemoteTriggerUrlScheme] =
-    useState<WebhookRemoteTriggerUrlScheme>(
-      initialWebhook.remoteTriggerUrlScheme === "https" ? "https" : "http",
-    );
   const [backupS3ProfileName, setBackupS3ProfileName] = useState(
     initialWebhook.backupS3ProfileName ?? "",
   );
@@ -233,7 +226,6 @@ export function EditWebhookClient({
               dockerCommand: bashScript.trim() || null,
               remoteServerId: parsedRemoteServerId,
               hooksPublicHost: hooksPublicHost.trim(),
-              remoteTriggerUrlScheme,
             }
           : {}),
       },
@@ -368,24 +360,6 @@ export function EditWebhookClient({
                     first.
                   </p>
                 ) : null}
-                <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 mb-3">
-                  <div className="space-y-0.5 min-w-0">
-                    <Label
-                      htmlFor="webhook-trigger-https"
-                      className="text-sm font-medium text-foreground cursor-pointer"
-                    >
-                      HTTPS
-                    </Label>
-                  </div>
-                  <Switch
-                    id="webhook-trigger-https"
-                    checked={remoteTriggerUrlScheme === "https"}
-                    onCheckedChange={(v) =>
-                      setRemoteTriggerUrlScheme(v ? "https" : "http")
-                    }
-                    className="shrink-0"
-                  />
-                </div>
                 <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
                 <div className="relative overflow-hidden rounded-xl border border-border bg-black/50 dark:bg-black">
                   <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>

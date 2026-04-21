@@ -21,7 +21,7 @@ export type WebhookServiceAction =
   | 'no_action';
 
 /** Scheme shown in the remote trigger URL (Traefik hostname or IP:port). */
-export type WebhookRemoteTriggerUrlScheme = 'http' | 'https';
+export type WebhookRemoteTriggerUrlScheme = 'https';
 
 @Entity({ name: 'webhooks' })
 export class Webhook {
@@ -103,13 +103,13 @@ export class Webhook {
 
   /**
    * URL scheme for the remote bash trigger URL when `serviceAction` is docker_command.
-   * Set per webhook in the API/UI (not a global env default).
+   * Always HTTPS.
    */
   @Column({
     name: 'remote_trigger_url_scheme',
     type: 'varchar',
     length: 8,
-    default: 'http',
+    default: 'https',
   })
   remoteTriggerUrlScheme!: WebhookRemoteTriggerUrlScheme;
 

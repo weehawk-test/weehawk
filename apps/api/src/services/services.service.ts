@@ -2540,6 +2540,31 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         }
         seen.add(name);
       }
+      if (seen.size > 0) {
+        const siblings = await this.serviceRepository
+          .createQueryBuilder('service')
+          .innerJoin('service.project', 'project')
+          .innerJoin('project.user', 'user')
+          .where('user.id = :userId', { userId })
+          .getMany();
+        const routeOwnerByName = new Map<string, string>();
+        for (const svc of siblings) {
+          if (svc.id === updated.id) continue;
+          const svcName = (svc.name ?? '').trim() || `service #${svc.id}`;
+          for (const route of svc.traefikRoutes ?? []) {
+            const routeName = (route?.router ?? '').trim().toLowerCase();
+            if (!routeName || routeOwnerByName.has(routeName)) continue;
+            routeOwnerByName.set(routeName, svcName);
+          }
+        }
+        for (const routeName of seen) {
+          const owner = routeOwnerByName.get(routeName);
+          if (!owner) continue;
+          throw new BadRequestException(
+            `Router name "${routeName}" is already used by another service ("${owner}"). This route will not work until you choose a unique router name.`,
+          );
+        }
+      }
     }
 
     const shouldRefreshAppCompose =

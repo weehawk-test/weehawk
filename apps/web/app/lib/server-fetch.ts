@@ -49,7 +49,7 @@ export async function fetchWebhookSSR(id: string): Promise<WebhookDetail | null>
     databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
-    remoteTriggerUrlScheme: data.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    remoteTriggerUrlScheme: "https",
     triggerType: "webhook",
     cronExpression: null,
   };
@@ -68,7 +68,7 @@ export async function fetchWebhooksSSR(): Promise<WebhookListItem[]> {
       w.publicId == null || String(w.publicId).trim() === "" ? undefined : String(w.publicId),
     remoteTriggerUrl: w.remoteTriggerUrl ?? null,
     hooksPublicHost: w.hooksPublicHost ?? null,
-    remoteTriggerUrlScheme: w.remoteTriggerUrlScheme === "https" ? "https" : "http",
+    remoteTriggerUrlScheme: "https",
     triggerType: "webhook" as const,
     cronExpression: null,
   }));

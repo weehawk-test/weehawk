@@ -182,11 +182,16 @@ function normalizeHooksPublicHosts(hosts: string[]): string[] {
   return [...out].sort();
 }
 
-/** Traefik rule fragment: `Host(\`a\`) || Host(\`b\`)` */
-function buildTraefikHostRuleForWebhookAgent(hosts: string[]): string {
+/** Traefik rule fragment: `(Host(\`a\`) || Host(\`b\`)) && PathPrefix(\`/weehawk-hooks\`)` */
+function buildTraefikHostRuleForWebhookAgent(hosts: string[], pathPrefix: string): string {
   const n = normalizeHooksPublicHosts(hosts);
   if (n.length === 0) return '';
-  return n.map((h) => `Host(\`${h.replace(/`/g, '')}\`)`).join(' || ');
+  const hostRule = n.map((h) => `Host(\`${h.replace(/`/g, '')}\`)`).join(' || ');
+  const normalizedPrefix = `/${(pathPrefix || '').trim().replace(/^\/+|\/+$/g, '')}`.replace(
+    /\/+/g,
+    '/',
+  );
+  return `(${hostRule}) && PathPrefix(\`${normalizedPrefix}\`)`;
 }
 
 export type RemoteServerSafe = {
@@ -1157,7 +1162,7 @@ rm -rf ${inDirQ}
    * `{@link WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/{token}.sh`.
    * Env: `WEEHAWK_REMOTE_WEBHOOK_HTTP_PORT` (default 8759),
    * `WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX` (default `weehawk-hooks` → path `/weehawk-hooks/{token}`).
-   * HTTP vs HTTPS for webhooks is set per webhook ({@code remoteTriggerUrlScheme}), not env.
+   * Webhook trigger URLs always use HTTPS.
    */
   /** HTTP port the on-host webhook agent must listen on (loopback health check + systemd unit). */
   resolveRemoteWebhookHttpPort(): number {
@@ -1352,7 +1357,7 @@ rm -rf ${inDirQ}
     const port = this.resolveRemoteWebhookHttpPort();
     const pathPrefix = this.resolveRemoteWebhookPathPrefix();
     const hostsNorm = normalizeHooksPublicHosts(hooksPublicHosts);
-    const rule = buildTraefikHostRuleForWebhookAgent(hostsNorm);
+    const rule = buildTraefikHostRuleForWebhookAgent(hostsNorm, pathPrefix);
     const entrypointsCsv = this.resolveWeehawkWebhookAgentTraefikEntrypoints();
     const entrypointsList = entrypointsCsv
       .split(',')
@@ -1527,20 +1532,22 @@ docker build -t '${tagQ}' .
   }
 
   /**
-   * True when loopback `http://127.0.0.1:{port}/healthz` responds (weehawk-webhook-agent).
+   * True when loopback `http://127.0.0.1:{port}/{pathPrefix}/healthz` responds (weehawk-webhook-agent).
    */
   async isRemoteWebhookAgentHealthy(
     remoteServerId: number,
     projectUserId: number | null,
   ): Promise<boolean> {
     const port = this.resolveRemoteWebhookHttpPort();
+    const pathPrefix = this.resolveRemoteWebhookPathPrefix();
+    const healthPath = `/${pathPrefix}/healthz`.replace(/\/+/g, '/');
     const body = `
 if command -v curl >/dev/null 2>&1; then
-  curl -sf --max-time 6 "http://127.0.0.1:${port}/healthz" >/dev/null
+  curl -sf --max-time 6 "http://127.0.0.1:${port}${healthPath}" >/dev/null
   exit 0
 fi
 if command -v wget >/dev/null 2>&1; then
-  wget -q -T 6 -O /dev/null "http://127.0.0.1:${port}/healthz"
+  wget -q -T 6 -O /dev/null "http://127.0.0.1:${port}${healthPath}"
   exit 0
 fi
 exit 1
@@ -1751,9 +1758,11 @@ WantedBy=multi-user.target
     }
 
     const port = this.resolveRemoteWebhookHttpPort();
+    const pathPrefix = this.resolveRemoteWebhookPathPrefix();
+    const healthPath = `/${pathPrefix}/healthz`.replace(/\/+/g, '/');
     throw new BadRequestException(
       (lastErr ? `${lastErr}\n\n` : '') +
-        `Remote server has no webhook agent on http://127.0.0.1:${port}/healthz. ` +
+        `Remote server has no webhook agent on http://127.0.0.1:${port}${healthPath}. ` +
         'Weehawk can install Go from go.dev under /usr/local/go, push agent source, and run go build (unless WEEHAWK_REMOTE_GO_AUTO_INSTALL is disabled). ' +
         'Optional: WEEHAWK_WEBHOOK_AGENT_DOWNLOAD_URL or WEEHAWK_WEBHOOK_AGENT_BINARY. ' +
         'The SSH user needs passwordless sudo for tar, /usr/local/go, and systemctl.',

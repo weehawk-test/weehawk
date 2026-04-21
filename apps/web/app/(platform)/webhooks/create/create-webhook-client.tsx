@@ -14,7 +14,6 @@ import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-js
 import { useCreateWebhook } from "@/hooks/use-webhooks";
 import {
   webhookRouteId,
-  type WebhookRemoteTriggerUrlScheme,
   type WebhookTargetMode,
 } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
@@ -24,8 +23,6 @@ import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 
 type Props = {
   initialServices: Service[];
@@ -63,8 +60,6 @@ export function CreateWebhookClient({
   const [targetMode] = useState<WebhookTargetMode>("service");
   const [remoteServerId, setRemoteServerId] = useState("");
   const [hooksPublicHost, setHooksPublicHost] = useState("");
-  const [remoteTriggerUrlScheme, setRemoteTriggerUrlScheme] =
-    useState<WebhookRemoteTriggerUrlScheme>("http");
   const [bashScript, setBashScript] = useState("");
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [notifyChannelId, setNotifyChannelId] = useState("");
@@ -141,7 +136,6 @@ export function CreateWebhookClient({
         serviceAction: "docker_command",
         dockerCommand: bashScript.trim(),
         remoteServerId: parsedRemoteServerId,
-        remoteTriggerUrlScheme,
         hooksPublicHost: host,
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId, notifyMessage: notifyMessage.trim() }
@@ -278,24 +272,6 @@ export function CreateWebhookClient({
                       first.
                     </p>
                   ) : null}
-                </div>
-                <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
-                  <div className="space-y-0.5 min-w-0">
-                    <Label
-                      htmlFor="webhook-trigger-https"
-                      className="text-sm font-medium text-foreground cursor-pointer"
-                    >
-                      HTTPS
-                    </Label>
-                  </div>
-                  <Switch
-                    id="webhook-trigger-https"
-                    checked={remoteTriggerUrlScheme === "https"}
-                    onCheckedChange={(v) =>
-                      setRemoteTriggerUrlScheme(v ? "https" : "http")
-                    }
-                    className="shrink-0"
-                  />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>

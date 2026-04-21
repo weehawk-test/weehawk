@@ -123,7 +123,7 @@ func requestHostName(r *http.Request) string {
 	return strings.ToLower(host)
 }
 
-// Triggers (not /healthz) must include a Host header unless WEEHAWK_HOOK_ALLOW_ANY_HOST is set.
+// Triggers (not /<prefix>/healthz) must include a Host header unless WEEHAWK_HOOK_ALLOW_ANY_HOST is set.
 func webhookTriggerHostAllowed(r *http.Request) bool {
 	if envTruthy("WEEHAWK_HOOK_ALLOW_ANY_HOST") {
 		return true
@@ -142,6 +142,7 @@ func main() {
 	timeout := parseTimeout(env("WEEHAWK_HOOK_TIMEOUT", "180s"))
 
 	urlPrefix := "/" + prefix
+	healthzPath := urlPrefix + "/healthz"
 
 	mux := http.NewServeMux()
 
@@ -154,7 +155,7 @@ func main() {
 			p = "/" + p
 		}
 
-		if p == "/healthz" {
+		if p == healthzPath {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte("ok\n"))
 			return
@@ -170,12 +171,10 @@ func main() {
 		}
 
 		if p == "/" {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"service": "weehawk-webhook-agent",
-				"trigger": urlPrefix + "/<64-hex-token>",
-				"healthz": "/healthz",
+			writeJSON(w, http.StatusNotFound, responseBody{
+				OK:     false,
+				Error:  "path not found",
+				Output: "Not found.",
 			})
 			return
 		}
