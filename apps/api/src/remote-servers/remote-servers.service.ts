@@ -1332,15 +1332,34 @@ rm -rf ${inDirQ}
     hooksPublicHosts: string[],
     options?: { pullImage?: boolean },
   ): Promise<void> {
-    await this.runWebhookSwarmOpSerialized(remoteServerId, () =>
-      this.recreateWeehawkWebhookSwarmServiceUnlocked(
-        remoteServerId,
-        projectUserId,
-        image,
-        hooksPublicHosts,
-        options,
-      ),
-    );
+    const maxAttempts = 3;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.runWebhookSwarmOpSerialized(remoteServerId, () =>
+          this.recreateWeehawkWebhookSwarmServiceUnlocked(
+            remoteServerId,
+            projectUserId,
+            image,
+            hooksPublicHosts,
+            options,
+          ),
+        );
+        return;
+      } catch (e) {
+        lastErr = e;
+        const msg = e instanceof Error ? e.message : String(e);
+        const retryable =
+          msg.includes('Docker Swarm is not active') ||
+          msg.includes('Cannot connect to the Docker daemon') ||
+          msg.includes('context deadline exceeded');
+        if (!retryable || attempt >= maxAttempts) {
+          throw e;
+        }
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
   private async recreateWeehawkWebhookSwarmServiceUnlocked(
@@ -1913,6 +1932,7 @@ sudo -n systemctl enable --now weehawk-webhook-agent
       envLines: notificationEnvLines,
       userScriptBody: scriptBody,
       defaults: REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
+      truncateLogOnStart: true,
       runUserScriptOnHostViaDockerSocket: true,
     });
     const deployBaseQ = WEEHAWK_REMOTE_DEPLOYMENTS_BASE.replace(/'/g, `'\\''`);
@@ -1947,6 +1967,46 @@ sudo -n systemctl enable --now weehawk-webhook-agent
     await this.withSshClient(rs, pem, async (client) => {
       await this.sshExecIgnoreFailure(client, `rm -f '${shQ}' '${envQ}'`);
     });
+  }
+
+  async readRemoteWebhookScriptLog(
+    remoteServerId: number,
+    projectUserId: number | null,
+    scriptToken: string,
+    opts?: { lines?: number },
+  ): Promise<string> {
+    if (!/^[a-f0-9]{64}$/.test(scriptToken)) {
+      throw new BadRequestException('Invalid webhook script token.');
+    }
+    const rs = await this.remoteServerRepository.findOne({ where: { id: remoteServerId } });
+    if (!rs) {
+      throw new NotFoundException(`Remote server #${remoteServerId} not found`);
+    }
+    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const linesRaw = opts?.lines ?? 200;
+    const lines =
+      Number.isFinite(linesRaw) && linesRaw > 0 ? Math.min(Math.floor(linesRaw), 2000) : 200;
+    const logPath = `${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${scriptToken}.log`.replace(
+      /'/g,
+      `'\\''`,
+    );
+    const script = `
+set -e
+if [ ! -f '${logPath}' ]; then
+  echo ''
+  exit 0
+fi
+if command -v tail >/dev/null 2>&1; then
+  tail -n ${lines} '${logPath}'
+else
+  cat '${logPath}'
+fi
+`;
+    const out = await this.withSshClient(rs, pem, async (client) =>
+      this.execSshBashScriptCollectOutputOnClient(client, script, undefined),
+    );
+    return out.stdout;
   }
 
   /**

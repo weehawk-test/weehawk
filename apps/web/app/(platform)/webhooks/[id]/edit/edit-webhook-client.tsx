@@ -230,7 +230,7 @@ export function EditWebhookClient({
           : {}),
       },
       {
-        onSuccess: (updated) => router.push(`/webhooks/${webhookRouteId(updated)}`),
+        onSuccess: (updated) => router.push(`/webhooks?provisioning=${encodeURIComponent(String(updated.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not update webhook", description: e.message, variant: "destructive" }),
       },

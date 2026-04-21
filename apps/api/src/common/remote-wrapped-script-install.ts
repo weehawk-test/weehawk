@@ -243,6 +243,8 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
   envLines: string[];
   userScriptBody: string;
   defaults: RemoteNotifyScriptDefaults;
+  /** When true, reset the log file at script start (keep only latest run). */
+  truncateLogOnStart?: boolean;
   /**
    * When true, run the user script on the remote host filesystem via Docker socket
    * (for webhook-agent-in-container deployments).
@@ -256,6 +258,11 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
     '#!/usr/bin/env bash',
     'set -euo pipefail',
     `ENV_FILE=${envPathQ}`,
+    'LOG_FILE="${0%.sh}.log"',
+    'mkdir -p "$(dirname "$LOG_FILE")"',
+    options.truncateLogOnStart === true ? ': >"$LOG_FILE"' : 'touch "$LOG_FILE"',
+    'chmod 600 "$LOG_FILE" || true',
+    'exec >>"$LOG_FILE" 2>&1',
     'if [ -f "$ENV_FILE" ]; then',
     '  set -a',
     '  # shellcheck disable=SC1090',
@@ -326,6 +333,7 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
       'fi',
       "docker run --rm -i -v /:/host alpine:3.20 sh -euo pipefail -c '",
       '  umask 077',
+      "  mkdir -p '/host/tmp'",
       "  script_path='/host/tmp/weehawk-user-webhook.sh'",
       '  cat > \"$script_path\"',
       '  chmod 700 \"$script_path\"',

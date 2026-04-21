@@ -13,7 +13,6 @@ import Link from "next/link";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { useCreateWebhook } from "@/hooks/use-webhooks";
 import {
-  webhookRouteId,
   type WebhookTargetMode,
 } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
@@ -142,7 +141,7 @@ export function CreateWebhookClient({
           : {}),
       },
       {
-        onSuccess: (w) => router.push(`/webhooks/${webhookRouteId(w)}`),
+        onSuccess: (created) => router.push(`/webhooks?provisioning=${encodeURIComponent(String(created.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not create webhook", description: e.message, variant: "destructive" }),
       },
@@ -192,7 +191,11 @@ export function CreateWebhookClient({
               </Link>
             </div>
 
-            <div className="space-y-6 relative z-10">
+            <div
+              className={`space-y-6 relative z-10 ${
+                createMutation.isPending ? "pointer-events-none opacity-80" : ""
+              }`}
+            >
               <div className="space-y-4">
                 <div>
                   <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-1.5">
@@ -368,7 +371,11 @@ echo "Webhook done"`}
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
-                <Link href="/webhooks"><button type="button" className="btn-secondary">Cancel</button></Link>
+                <Link href="/webhooks">
+                  <button type="button" className="btn-secondary" disabled={createMutation.isPending}>
+                    Cancel
+                  </button>
+                </Link>
                 <button type="button" onClick={submit} disabled={createMutation.isPending} className="btn-primary flex items-center gap-2">
                   {createMutation.isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Creating…</> : "Create webhook"}
                 </button>

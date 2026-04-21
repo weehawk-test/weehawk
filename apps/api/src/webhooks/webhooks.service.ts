@@ -3,6 +3,7 @@ import {
   forwardRef,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
@@ -75,6 +76,8 @@ export type WebhookDetailRow = WebhookListRow & {
 
 @Injectable()
 export class WebhooksService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(WebhooksService.name);
+
   constructor(
     @InjectRepository(Webhook)
     private readonly webhookRepo: Repository<Webhook>,
@@ -86,6 +89,16 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly remoteServersService: RemoteServersService,
     private readonly configService: ConfigService,
   ) {}
+
+  private runRemoteSyncInBackground(taskLabel: string, run: () => Promise<void>): void {
+    setTimeout(() => {
+      void run().catch((error: unknown) => {
+        this.logger.warn(
+          `Background webhook sync failed (${taskLabel}): ${getErrorMessage(error)}`,
+        );
+      });
+    }, 0);
+  }
 
   private async ensurePublicId(w: Webhook): Promise<Webhook> {
     if (w.publicId) return w;
@@ -702,37 +715,6 @@ export class WebhooksService implements OnApplicationBootstrap {
       }
     }
 
-    if (
-      dto.targetMode === 'service' &&
-      dto.serviceAction === 'docker_command' &&
-      dto.remoteServerId != null &&
-      resolvedDockerCommand
-    ) {
-      const mergedHosts = await this.mergeHooksPublicHostsForRemoteCreate(
-        dto.remoteServerId,
-        hooksPublicStored,
-      );
-      await this.remoteServersService.ensureRemoteWebhookListening(
-        dto.remoteServerId,
-        userId,
-        mergedHosts,
-      );
-      const notificationEnvLines = await this.mergeRemoteWebhookNotificationAndBundleEnv(
-        userId,
-        notifyOnTriggerCreate,
-        dto.notifyChannelId,
-        dto.notifyMessage,
-        dto.serviceId ?? null,
-      );
-      await this.remoteServersService.writeRemoteWebhookScript(
-        dto.remoteServerId,
-        userId,
-        secretToken,
-        resolvedDockerCommand,
-        notificationEnvLines,
-      );
-    }
-
     const w = this.webhookRepo.create({
       publicId: generatePublicId('whk'),
       userId,
@@ -780,6 +762,38 @@ export class WebhooksService implements OnApplicationBootstrap {
       hiddenFromWebhooksList: dto.hiddenFromWebhooksList === true,
     });
     const saved = await this.webhookRepo.save(w);
+    if (
+      dto.targetMode === 'service' &&
+      dto.serviceAction === 'docker_command' &&
+      dto.remoteServerId != null &&
+      resolvedDockerCommand
+    ) {
+      this.runRemoteSyncInBackground(`create webhook ${saved.id}`, async () => {
+        const mergedHosts = await this.mergeHooksPublicHostsForRemoteCreate(
+          dto.remoteServerId!,
+          hooksPublicStored,
+        );
+        await this.remoteServersService.ensureRemoteWebhookListening(
+          dto.remoteServerId!,
+          userId,
+          mergedHosts,
+        );
+        const notificationEnvLines = await this.mergeRemoteWebhookNotificationAndBundleEnv(
+          userId,
+          notifyOnTriggerCreate,
+          dto.notifyChannelId,
+          dto.notifyMessage,
+          dto.serviceId ?? null,
+        );
+        await this.remoteServersService.writeRemoteWebhookScript(
+          dto.remoteServerId!,
+          userId,
+          secretToken,
+          resolvedDockerCommand,
+          notificationEnvLines,
+        );
+      });
+    }
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
     return await this.toDetailRow(saved, remoteTriggerUrl);
   }
@@ -853,6 +867,27 @@ export class WebhooksService implements OnApplicationBootstrap {
     const w = await this.resolveEntity(userId, idOrPublicId);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
     return await this.toDetailRow(w, remoteTriggerUrl);
+  }
+
+  async readLastRunLog(
+    userId: number,
+    idOrPublicId: string | number,
+    opts?: { lines?: number },
+  ): Promise<{ log: string; source: string }> {
+    const w = await this.resolveEntity(userId, idOrPublicId);
+    if (w.serviceAction !== 'docker_command' || w.remoteServerId == null) {
+      return { log: '', source: 'not-applicable' };
+    }
+    if (this.shouldRunExecutorRedeployForDockerWebhook(w)) {
+      return { log: '', source: 'executor-redeploy' };
+    }
+    const log = await this.remoteServersService.readRemoteWebhookScriptLog(
+      w.remoteServerId,
+      userId,
+      w.secretToken,
+      { lines: opts?.lines ?? 200 },
+    );
+    return { log, source: 'remote-script-log' };
   }
 
   async update(
@@ -966,17 +1001,11 @@ export class WebhooksService implements OnApplicationBootstrap {
       beforeRemote != null &&
       !!(beforeDocker?.trim()) &&
       w.serviceAction === 'docker_command';
-    if (
+    const shouldRemoveOldRemoteFile =
       hadRemoteFile &&
       (saved.remoteServerId !== beforeRemote ||
         !saved.dockerCommand?.trim() ||
-        saved.serviceAction !== 'docker_command')
-    ) {
-      await this.remoteServersService
-        .removeRemoteWebhookScript(beforeRemote, userId, saved.secretToken)
-        .catch(() => undefined);
-      await this.syncWebhookAgentForRemoteServer(beforeRemote, userId);
-    }
+        saved.serviceAction !== 'docker_command');
 
     const scriptOrTargetChanged =
       saved.remoteServerId !== beforeRemote ||
@@ -1000,39 +1029,51 @@ export class WebhooksService implements OnApplicationBootstrap {
       !!saved.dockerCommand?.trim() &&
       (scriptOrTargetChanged || notifySettingsChanged || hooksPublicHostChanged);
 
-    if (needsAgentSync) {
-      await this.syncWebhookAgentForRemoteServer(saved.remoteServerId, userId);
-    }
-
-    if (needsScriptRewrite && saved.remoteServerId != null) {
-      let body = saved.dockerCommand!.trim();
-      if (
-        saved.serviceId != null &&
-        looksLikeGeneratedOnHostRedeployScript(body)
-      ) {
-        try {
-          const svc = await this.servicesService.findOne(saved.serviceId);
-          body = buildOnHostRedeployScriptBody(svc);
-          saved.dockerCommand = body;
-          await this.webhookRepo.save(saved);
-        } catch {
-          /* keep saved body */
+    if (shouldRemoveOldRemoteFile || needsAgentSync || needsScriptRewrite) {
+      this.runRemoteSyncInBackground(`update webhook ${saved.id}`, async () => {
+        if (shouldRemoveOldRemoteFile && beforeRemote != null) {
+          await this.remoteServersService
+            .removeRemoteWebhookScript(beforeRemote, userId, saved.secretToken)
+            .catch(() => undefined);
+          await this.syncWebhookAgentForRemoteServer(beforeRemote, userId);
         }
-      }
-      const notificationEnvLines = await this.mergeRemoteWebhookNotificationAndBundleEnv(
-        userId,
-        saved.notifyOnTrigger,
-        saved.notifyChannelId,
-        saved.notifyMessage,
-        saved.serviceId,
-      );
-      await this.remoteServersService.writeRemoteWebhookScript(
-        saved.remoteServerId,
-        userId,
-        saved.secretToken,
-        body,
-        notificationEnvLines,
-      );
+
+        if (needsAgentSync && saved.remoteServerId != null) {
+          await this.syncWebhookAgentForRemoteServer(saved.remoteServerId, userId);
+        }
+
+        if (needsScriptRewrite && saved.remoteServerId != null) {
+          let body = saved.dockerCommand!.trim();
+          if (
+            saved.serviceId != null &&
+            looksLikeGeneratedOnHostRedeployScript(body)
+          ) {
+            try {
+              const svc = await this.servicesService.findOne(saved.serviceId);
+              body = buildOnHostRedeployScriptBody(svc);
+              saved.dockerCommand = body;
+              await this.webhookRepo.save(saved);
+            } catch {
+              /* keep saved body */
+            }
+          }
+          const notificationEnvLines =
+            await this.mergeRemoteWebhookNotificationAndBundleEnv(
+              userId,
+              saved.notifyOnTrigger,
+              saved.notifyChannelId,
+              saved.notifyMessage,
+              saved.serviceId,
+            );
+          await this.remoteServersService.writeRemoteWebhookScript(
+            saved.remoteServerId,
+            userId,
+            saved.secretToken,
+            body,
+            notificationEnvLines,
+          );
+        }
+      });
     }
 
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);

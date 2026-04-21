@@ -62,6 +62,18 @@ export class WebhooksController {
     return this.webhooksService.findOne(this.uid(req), id);
   }
 
+  @Get(':id/last-log')
+  readLastRunLog(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('lines', new DefaultValuePipe(200)) lines: string,
+  ) {
+    const n = Number(lines);
+    return this.webhooksService.readLastRunLog(this.uid(req), id, {
+      lines: Number.isFinite(n) ? n : 200,
+    });
+  }
+
   @Patch(':id')
   update(
     @Req() req: AuthedReq,

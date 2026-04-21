@@ -249,3 +249,24 @@ export async function deleteWebhook(accessToken: string, id: string | number): P
   });
   if (!res.ok) throw new Error(await errorBody(res));
 }
+
+export async function fetchWebhookLastRunLog(
+  accessToken: string,
+  id: string | number,
+  lines = 200,
+): Promise<{ log: string; source: string }> {
+  const params = new URLSearchParams({ lines: String(lines) });
+  const res = await fetch(
+    `${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}/last-log?${params.toString()}`,
+    {
+      headers: authHeaders(accessToken),
+      credentials: "include",
+    },
+  );
+  if (!res.ok) throw new Error(await errorBody(res));
+  const data = (await res.json()) as { log?: string | null; source?: string | null };
+  return {
+    log: typeof data.log === "string" ? data.log : "",
+    source: typeof data.source === "string" ? data.source : "unknown",
+  };
+}
