@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Webhook, Plus, Search, Trash2, Clock, Pencil, Loader2, Copy, Check, Play, ScrollText, X } from "lucide-react";
 import { useDeleteWebhook } from "@/hooks/use-webhooks";
@@ -29,6 +29,8 @@ function formatDateUTC(dateInput: string): string {
 }
 
 export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookListItem[] }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [webhooks, setWebhooks] = useState<WebhookListItem[]>(initialWebhooks);
@@ -44,6 +46,15 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
   const [triggeringWebhookId, setTriggeringWebhookId] = useState<number | null>(null);
   const [runLogLoadingWebhookId, setRunLogLoadingWebhookId] = useState<number | null>(null);
   const [provisioningWebhookIds, setProvisioningWebhookIds] = useState<number[]>([]);
+  /** Must survive `router.replace` (searchParams change) — that re-runs the effect and would cancel a cleanup-bound timer. */
+  const provisioningClearTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    return () => {
+      for (const t of provisioningClearTimersRef.current) window.clearTimeout(t);
+      provisioningClearTimersRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     const raw = (searchParams.get("provisioning") ?? "").trim();
@@ -54,11 +65,17 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
       .filter((v) => Number.isFinite(v) && v > 0);
     if (ids.length === 0) return;
     setProvisioningWebhookIds((prev) => Array.from(new Set([...prev, ...ids])));
+    window.setTimeout(() => {
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.delete("provisioning");
+      const q = sp.toString();
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+    }, 0);
     const timer = window.setTimeout(() => {
       setProvisioningWebhookIds((prev) => prev.filter((id) => !ids.includes(id)));
     }, 15000);
-    return () => window.clearTimeout(timer);
-  }, [searchParams]);
+    provisioningClearTimersRef.current.push(timer);
+  }, [searchParams, pathname, router]);
 
   const filtered =
     (webhooks ?? []).filter(
@@ -89,6 +106,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
       },
     });
   };
+
   const handleBulkDelete = async () => {
     const ids = webhooksBulk.selectedInFiltered;
     if (ids.length === 0) return;
@@ -148,16 +166,29 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
     try {
       const out = await fetchWebhookLastRunLog(accessToken, webhookRouteId(webhook), 2000);
       const normalized = out.log.trim();
-      const fallback =
-        out.source === "executor-redeploy"
-          ? "This webhook runs via internal redeploy flow, so no remote script log file is generated for it."
-          : out.source === "not-applicable"
-            ? "This webhook type does not produce a remote script log."
-            : "No log file yet. Save the webhook once, then trigger it again.";
-      setLogTextByWebhookId((prev) => ({
-        ...prev,
-        [webhook.id]: normalized || fallback,
-      }));
+      if (out.source === "executor-redeploy") {
+        setLogTextByWebhookId((prev) => ({
+          ...prev,
+          [webhook.id]:
+            "This webhook runs via internal redeploy flow, so no remote script log file is generated for it.",
+        }));
+      } else if (out.source === "not-applicable") {
+        setLogTextByWebhookId((prev) => ({
+          ...prev,
+          [webhook.id]: "This webhook type does not produce a remote script log.",
+        }));
+      } else if (normalized) {
+        setLogTextByWebhookId((prev) => ({
+          ...prev,
+          [webhook.id]: normalized,
+        }));
+      } else {
+        setLogTextByWebhookId((prev) => {
+          const prevText = (prev[webhook.id] ?? "").trim();
+          if (prevText) return prev;
+          return { ...prev, [webhook.id]: "" };
+        });
+      }
     } catch (e) {
       if (!opts?.silent) {
         toast({
@@ -309,7 +340,9 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
               className={`relative glass-panel backdrop-blur-none rounded-2xl p-5 flex flex-col gap-3 group interactive-card border transition-colors ${
                 isProvisioning
                   ? "border-sky-300/70 shadow-[0_0_0_1px_rgba(125,211,252,0.5),0_0_20px_rgba(56,189,248,0.3),inset_0_0_16px_rgba(56,189,248,0.15)]"
-                  : "border-white/10 hover:border-primary/30"
+                  : !w.isActive
+                    ? "border-zinc-800/70 dark:border-zinc-950/95 bg-black/60 dark:bg-black/80 saturate-[0.82] shadow-[inset_0_0_48px_rgba(0,0,0,0.65),inset_0_1px_0_0_rgba(255,255,255,0.04)] hover:border-zinc-700/80"
+                    : "border-white/10 hover:border-primary/30"
               }`}
             >
                 {isProvisioning ? (
@@ -322,15 +355,22 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                 <div className="flex justify-between items-start gap-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div
-                      className={`p-2 rounded-lg flex-shrink-0 ${
-                        w.isActive ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                      className={`p-2 rounded-lg flex-shrink-0 border ${
+                        w.isActive
+                          ? "bg-primary/10 text-primary border-primary/20"
+                          : "bg-zinc-950/90 text-zinc-500 border-white/[0.06] dark:bg-black dark:text-zinc-500"
                       }`}
                     >
                       <Webhook className="w-5 h-5" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <h3 className="font-semibold text-lg leading-tight truncate" title={w.name}>
+                        <h3
+                          className={`font-semibold text-lg leading-tight truncate ${
+                            !isProvisioning && !w.isActive ? "text-foreground/55" : ""
+                          }`}
+                          title={w.name}
+                        >
                           {w.name}
                         </h3>
                         {isProvisioning ? (
@@ -369,7 +409,13 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                   </div>
                 </div>
 
-                <p className="text-sm text-muted-foreground line-clamp-2">
+                <p
+                  className={`text-sm line-clamp-2 ${
+                    !isProvisioning && !w.isActive
+                      ? "text-muted-foreground/60"
+                      : "text-muted-foreground"
+                  }`}
+                >
                   {(w.description || "").trim() || "No description"}
                 </p>
 
@@ -378,12 +424,25 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                     className={`rounded-lg border px-3 py-2.5 ${
                       isProvisioning
                         ? "border-white/5 bg-black/10 opacity-45 pointer-events-none select-none"
-                        : "border-white/10 bg-black/20"
+                        : !w.isActive
+                          ? "border-white/[0.05] bg-black/55 dark:bg-black/70 shadow-[inset_0_1px_8px_rgba(0,0,0,0.4)]"
+                          : "border-white/10 bg-black/20"
                     }`}
                   >
-                    <p className="text-[11px] text-muted-foreground mb-1.5">Trigger URL (deploy server)</p>
+                    <p
+                      className={`text-[11px] mb-1.5 ${
+                        !isProvisioning && !w.isActive ? "text-muted-foreground/55" : "text-muted-foreground"
+                      }`}
+                    >
+                      Trigger URL (deploy server)
+                    </p>
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <p className="text-xs text-foreground/90 truncate font-mono" title={w.remoteTriggerUrl}>
+                      <p
+                        className={`text-xs truncate font-mono ${
+                          !isProvisioning && !w.isActive ? "text-foreground/55" : "text-foreground/90"
+                        }`}
+                        title={w.remoteTriggerUrl}
+                      >
                         {w.remoteTriggerUrl}
                       </p>
                       <button
@@ -400,12 +459,18 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                   </div>
                 )}
 
-                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
+                <div
+                  className={`mt-auto pt-4 border-t flex items-center justify-between text-xs ${
+                    !isProvisioning && !w.isActive
+                      ? "border-white/[0.04] text-muted-foreground/70"
+                      : "border-white/5 text-muted-foreground"
+                  }`}
+                >
                   <div className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     {formatDateUTC(w.createdAt)}
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex flex-wrap items-center gap-3 justify-end">
                     {isProvisioning ? (
                       <span className="text-muted-foreground/70 font-medium flex items-center gap-1 cursor-not-allowed">
                         Edit <Pencil className="w-3 h-3" />

@@ -11,7 +11,6 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCreateCronJob } from "@/hooks/use-cron-jobs";
-import { cronJobRouteId } from "@/lib/cron-jobs-api";
 import { type WebhookTargetMode } from "@/lib/webhooks-api";
 import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
@@ -71,7 +70,7 @@ export function CreateCronJobClient({
     [initialRemoteServers],
   );
   const [remoteServerId, setRemoteServerId] = useState(
-    deployServers.length > 0 ? String(deployServers[0].id) : "",
+    "",
   );
   const [bashScript, setBashScript] = useState("");
   const [notificationEnabled, setNotificationEnabled] = useState(false);
@@ -126,7 +125,7 @@ export function CreateCronJobClient({
           : {}),
       },
       {
-        onSuccess: (j) => router.push(`/cron-jobs/${cronJobRouteId(j)}`),
+        onSuccess: (j) => router.push(`/cron-jobs?provisioning=${encodeURIComponent(String(j.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not create cron job", description: e.message, variant: "destructive" }),
       },
@@ -241,14 +240,18 @@ export function CreateCronJobClient({
 
             <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Server</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Deploy server</label>
                 <select
                   className="input-field"
                   value={remoteServerId}
                   onChange={(e) => setRemoteServerId(e.target.value)}
                   disabled={deployServers.length === 0}
                 >
-                  {deployServers.length === 0 && <option value="">No deploy servers available</option>}
+                  <option value="" disabled>
+                    {deployServers.length === 0
+                      ? "No deploy servers — add one under Remote servers"
+                      : "Select a deploy server…"}
+                  </option>
                   {deployServers.map((srv) => (
                     <option key={srv.id} value={srv.id}>
                       {srv.name} ({srv.host})

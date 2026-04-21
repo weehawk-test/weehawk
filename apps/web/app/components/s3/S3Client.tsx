@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { HardDrive, Plus, Search, Trash2, Loader2, PlugZap, Save, X, Pencil, ChevronRight, Clock, FolderOpen } from "lucide-react";
+import { HardDrive, Plus, Search, Trash2, Loader2, PlugZap, Save, X, Pencil, Clock, FolderOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
@@ -77,11 +77,7 @@ const S3_PROVIDER_PRESETS: S3ProviderPreset[] = [
   { id: "backblaze-b2", label: "Backblaze B2 (S3)", endpoint: "https://s3.us-west-000.backblazeb2.com", region: "us-west-000" },
 ];
 
-type S3ModalState =
-  | null
-  | { type: "add" }
-  | { type: "view"; profile: S3ProfilePublic }
-  | { type: "edit"; profile: S3ProfilePublic };
+type S3ModalState = null | { type: "add" } | { type: "edit"; profile: S3ProfilePublic };
 
 export function S3Client({
   initialProfiles,
@@ -503,6 +499,14 @@ export function S3Client({
                   <span title="Created (UTC)">{formatDateUTC(profileCreatedAtIso(item))}</span>
                 </div>
                 <div className="flex items-center gap-3 flex-wrap justify-end">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(item)}
+                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
+                  >
+                    <Pencil className="w-3 h-3" />
+                    Edit
+                  </button>
                   <Link
                     href={`/s3/bucket?name=${encodeURIComponent(item.name)}`}
                     className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
@@ -510,131 +514,12 @@ export function S3Client({
                     <FolderOpen className="w-3 h-3" />
                     Browse
                   </Link>
-                  <button
-                    type="button"
-                    onClick={() => openEdit(item)}
-                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
-                  >
-                    Edit <Pencil className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setModal({ type: "view", profile: item })}
-                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
-                  >
-                    View <ChevronRight className="w-3 h-3" />
-                  </button>
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
-
-      {typeof document !== "undefined" &&
-        createPortal(
-        <AnimatePresence>
-          {modal?.type === "view" && (
-          <motion.div
-            key="s3-view"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-center justify-center p-4 md:p-6"
-            onClick={closeModal}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: 14, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 14, scale: 0.98 }}
-              className="w-full max-w-2xl max-h-[min(88vh,calc(100vh-3rem))] overflow-y-auto glass-panel p-6 md:p-8 rounded-2xl relative overflow-x-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="mb-6 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h1 className="text-2xl md:text-3xl font-bold text-foreground">S3 destination</h1>
-                  <p className="text-sm text-muted-foreground mt-1.5">Read-only details.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  aria-label="Close"
-                  className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-6 text-sm relative z-10">
-                <div className="md:col-span-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Name</p>
-                  <p className="text-base font-medium text-foreground break-all">{modal.profile.name}</p>
-                </div>
-                <div className="md:col-span-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Endpoint</p>
-                  <p className="font-mono text-sm text-foreground break-all leading-relaxed">{modal.profile.endpoint}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Bucket</p>
-                  <p className="text-base text-foreground break-all">{modal.profile.bucket}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Region</p>
-                  <p className="text-base text-foreground">{modal.profile.region}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Access key ID</p>
-                  <p className="font-mono text-sm text-foreground break-all">{modal.profile.accessKeyId}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Secret</p>
-                  <p className="font-mono text-sm text-foreground">{modal.profile.secretAccessKeyMasked}</p>
-                </div>
-                <div className="md:col-span-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Addressing</p>
-                  <p className="text-base text-foreground">
-                    {modal.profile.forcePathStyle ? "Path-style" : "Virtual-hosted"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Created (UTC)</p>
-                  <p className="text-base text-foreground">{formatDateUTC(profileCreatedAtIso(modal.profile))}</p>
-                </div>
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1.5">Updated (UTC)</p>
-                  <p className="text-base text-foreground">{formatDateUTC(modal.profile.updatedAt)}</p>
-                </div>
-              </div>
-              <div className="mt-6 flex flex-wrap gap-2 justify-end relative z-10">
-                <button type="button" onClick={closeModal} className="btn-secondary text-sm">
-                  Close
-                </button>
-                <Link
-                  href={`/s3/bucket?name=${encodeURIComponent(modal.profile.name)}`}
-                  className="btn-secondary text-sm inline-flex items-center gap-2"
-                  onClick={closeModal}
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  Browse bucket
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const p = modal.profile;
-                    closeModal();
-                    openEdit(p);
-                  }}
-                  className="btn-primary text-sm flex items-center gap-2"
-                >
-                  <Pencil className="w-3.5 h-3.5" />
-                  Edit
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-        </AnimatePresence>,
-        document.body,
-        )}
 
       {typeof document !== "undefined" &&
         createPortal(

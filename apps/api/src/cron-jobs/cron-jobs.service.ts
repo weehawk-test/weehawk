@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -53,6 +54,7 @@ export type CronJobDetailRow = CronJobListRow & {
 
 @Injectable()
 export class CronJobsService {
+  private readonly logger = new Logger(CronJobsService.name);
   private readonly lastTickByJob = new Map<number, string>();
   private isTickRunning = false;
 
@@ -65,6 +67,16 @@ export class CronJobsService {
     private readonly s3Service: S3Service,
     private readonly remoteServersService: RemoteServersService,
   ) {}
+
+  private runRemoteSyncInBackground(taskLabel: string, run: () => Promise<void>): void {
+    setTimeout(() => {
+      void run().catch((error: unknown) => {
+        this.logger.warn(
+          `Background cron sync failed (${taskLabel}): ${getErrorMessage(error)}`,
+        );
+      });
+    }, 0);
+  }
 
   private async ensurePublicId(row: CronJob): Promise<CronJob> {
     if (row.publicId) return row;
@@ -118,7 +130,7 @@ export class CronJobsService {
       return buildRemoteNotificationEnvLinesFromChannel(false, null, null);
     }
     const channel = await this.notificationsService.getChannelRuntimeConfig(
-      1,
+      job.userId,
       job.notifyChannelId,
     );
     return buildRemoteNotificationEnvLinesFromChannel(
@@ -130,13 +142,19 @@ export class CronJobsService {
 
   private async resolveCronRemoteServerId(job: CronJob): Promise<number> {
     if (job.remoteServerId != null) {
-      await this.remoteServersService.assertDeployServerById(job.remoteServerId, null);
+      await this.remoteServersService.assertDeployServerById(
+        job.remoteServerId,
+        job.userId,
+      );
       return job.remoteServerId;
     }
     if (job.serviceId != null) {
       const ids = await this.servicesService.getDockerSshTargetIds(job.serviceId);
       if (ids.remoteServerId != null) {
-        await this.remoteServersService.assertDeployServerById(ids.remoteServerId, null);
+        await this.remoteServersService.assertDeployServerById(
+          ids.remoteServerId,
+          job.userId,
+        );
         return ids.remoteServerId;
       }
     }
@@ -155,6 +173,7 @@ export class CronJobsService {
 
   private async removeCrontabEntryForRemote(
     remoteServerId: number,
+    projectUserId: number,
     jobId: number,
   ): Promise<void> {
     const marker = this.cronMarker(jobId);
@@ -164,7 +183,11 @@ export class CronJobsService {
       'crontab "$tmp"',
       'rm -f "$tmp"',
     ].join('\n');
-    const r = await this.executorService.runSystemScript(script, remoteServerId, 1);
+    const r = await this.executorService.runSystemScript(
+      script,
+      remoteServerId,
+      projectUserId,
+    );
     if (!r.success) {
       throw new BadRequestException(
         `Failed to remove crontab entry for cron job ${jobId}: ${r.output}`,
@@ -174,6 +197,7 @@ export class CronJobsService {
 
   private async writeRemoteScriptFile(
     remoteServerId: number,
+    projectUserId: number,
     jobId: number,
     scriptBody: string,
     envLines: string[],
@@ -187,8 +211,14 @@ export class CronJobsService {
       envLines,
       userScriptBody: scriptBody,
       defaults: REMOTE_NOTIFY_DEFAULTS_CRON,
+      truncateLogOnStart: true,
+      runUserScriptOnHostViaDockerSocket: true,
     });
-    const r = await this.executorService.runSystemScript(installScript, remoteServerId, 1);
+    const r = await this.executorService.runSystemScript(
+      installScript,
+      remoteServerId,
+      projectUserId,
+    );
     if (!r.success) {
       throw new BadRequestException(
         `Failed to write cron script for job ${jobId}: ${r.output}`,
@@ -198,6 +228,7 @@ export class CronJobsService {
 
   private async removeRemoteScriptFile(
     remoteServerId: number,
+    projectUserId: number,
     jobId: number,
   ): Promise<void> {
     const scriptPath = this.scriptPathRemote(jobId);
@@ -205,7 +236,7 @@ export class CronJobsService {
     const r = await this.executorService.runSystemScript(
       `rm -f ${this.shQuote(scriptPath)} ${this.shQuote(envPath)} || true`,
       remoteServerId,
-      1,
+      projectUserId,
     );
     if (!r.success) {
       throw new BadRequestException(
@@ -217,8 +248,47 @@ export class CronJobsService {
   private async removeCrontabEntry(job: CronJob): Promise<void> {
     const remoteServerId = await this.tryResolveCronRemoteServerId(job);
     if (remoteServerId == null) return;
-    await this.removeCrontabEntryForRemote(remoteServerId, job.id);
-    await this.removeRemoteScriptFile(remoteServerId, job.id);
+    await this.removeCrontabEntryForRemote(remoteServerId, job.userId, job.id);
+    await this.removeRemoteScriptFile(remoteServerId, job.userId, job.id);
+  }
+
+  async readLastRunLog(
+    userId: number,
+    idOrPublicId: string | number,
+    opts?: { lines?: number },
+  ): Promise<{ log: string; source: string }> {
+    const job = await this.resolveEntity(userId, idOrPublicId);
+    if (job.serviceAction !== 'docker_command' || job.remoteServerId == null) {
+      return { log: '', source: 'not-applicable' };
+    }
+    const linesRaw = opts?.lines ?? 200;
+    const lines =
+      Number.isFinite(linesRaw) && linesRaw > 0 ? Math.min(Math.floor(linesRaw), 2000) : 200;
+    const logPath = `${this.scriptDirRemote()}/${job.id}.log`;
+    const script = `
+set -e
+if [ ! -f ${this.shQuote(logPath)} ]; then
+  echo ''
+  exit 0
+fi
+if command -v tail >/dev/null 2>&1; then
+  tail -n ${lines} ${this.shQuote(logPath)}
+else
+  cat ${this.shQuote(logPath)}
+fi
+`;
+    const out = await this.executorService.runSystemScript(
+      script,
+      job.remoteServerId,
+      job.userId,
+    );
+    if (!out.success) {
+      throw new BadRequestException(
+        `Failed to read cron run log for job "${job.name}": ${out.output}`,
+      );
+    }
+    const normalized = (out.output ?? '').trim() === '(no output)' ? '' : out.output ?? '';
+    return { log: normalized, source: 'remote-script-log' };
   }
 
   private async upsertCrontabEntry(job: CronJob): Promise<void> {
@@ -235,6 +305,7 @@ export class CronJobsService {
     const envLines = await this.buildNotificationEnvForJob(job);
     await this.writeRemoteScriptFile(
       remoteServerId,
+      job.userId,
       job.id,
       job.dockerCommand,
       envLines,
@@ -248,7 +319,11 @@ export class CronJobsService {
       'crontab "$tmp"',
       'rm -f "$tmp"',
     ].join('\n');
-    const r = await this.executorService.runSystemScript(script, remoteServerId, 1);
+    const r = await this.executorService.runSystemScript(
+      script,
+      remoteServerId,
+      job.userId,
+    );
     if (!r.success) {
       throw new BadRequestException(
         `Failed to install crontab entry for cron job "${job.name}": ${r.output}`,
@@ -580,14 +655,9 @@ export class CronJobsService {
       notifyMessage: dto.notifyMessage?.trim() || null,
     });
     const saved = await this.cronJobRepo.save(job);
-    try {
+    this.runRemoteSyncInBackground(`create cron job ${saved.id}`, async () => {
       await this.upsertCrontabEntry(saved);
-    } catch (e) {
-      await this.cronJobRepo.delete({ id: saved.id }).catch(() => {
-        /* best effort rollback */
-      });
-      throw e;
-    }
+    });
     return await this.toDetailRow(saved);
   }
 
@@ -682,10 +752,12 @@ export class CronJobsService {
     const saved = await this.cronJobRepo.save(job);
     const prevRemoteId = await this.tryResolveCronRemoteServerId(previousJob);
     const nextRemoteId = await this.tryResolveCronRemoteServerId(saved);
-    if (prevRemoteId != null && (nextRemoteId == null || prevRemoteId !== nextRemoteId)) {
-      await this.removeCrontabEntryForRemote(prevRemoteId, saved.id);
-    }
-    await this.upsertCrontabEntry(saved);
+    this.runRemoteSyncInBackground(`update cron job ${saved.id}`, async () => {
+      if (prevRemoteId != null && (nextRemoteId == null || prevRemoteId !== nextRemoteId)) {
+        await this.removeCrontabEntryForRemote(prevRemoteId, previousJob.userId, saved.id);
+      }
+      await this.upsertCrontabEntry(saved);
+    });
     return await this.toDetailRow(saved);
   }
 
@@ -696,7 +768,9 @@ export class CronJobsService {
     if (!res.affected) throw new NotFoundException('Cron job not found');
   }
 
-  private async execute(job: CronJob): Promise<void> {
+  private async execute(
+    job: CronJob,
+  ): Promise<{ success: boolean; output: string; action: string }> {
     let action = 'none';
     let success = true;
     let output = '';
@@ -806,9 +880,9 @@ export class CronJobsService {
         ) {
           action = 'docker_command';
           const r = await this.executorService.runSystemScript(
-            job.dockerCommand,
+            `/bin/bash ${this.shQuote(this.scriptPathRemote(job.id))}`,
             job.remoteServerId,
-            1,
+            job.userId,
           );
           success = r.success;
           output = r.output;
@@ -825,7 +899,7 @@ export class CronJobsService {
     if (job.notifyOnTrigger && job.notifyChannelId && job.notifyMessage) {
       try {
         await this.notificationsService.sendMessage(
-          1,
+          job.userId,
           job.notifyChannelId,
           normalizeRemoteNotificationMessage(job.notifyMessage),
         );
@@ -833,6 +907,24 @@ export class CronJobsService {
         // best effort
       }
     }
+    return { success, output, action };
+  }
+
+  async triggerNow(
+    userId: number,
+    idOrPublicId: string | number,
+  ): Promise<{ ok: boolean; success: boolean; action: string; output: string }> {
+    const job = await this.resolveEntity(userId, idOrPublicId);
+    if (!job.isActive) {
+      throw new BadRequestException('Cron job is inactive.');
+    }
+    const result = await this.execute(job);
+    return {
+      ok: result.success,
+      success: result.success,
+      action: result.action,
+      output: result.output,
+    };
   }
 
   async runDueCronJobs(): Promise<void> {

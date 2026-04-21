@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   UsePipes,
@@ -62,6 +63,23 @@ export class CronJobsController {
     @Body() dto: UpdateCronJobDto,
   ) {
     return this.cronJobsService.update(this.uid(req), id, dto);
+  }
+
+  @Post(':id/run')
+  runNow(@Req() req: AuthedReq, @Param('id') id: string) {
+    return this.cronJobsService.triggerNow(this.uid(req), id);
+  }
+
+  @Get(':id/last-run-log')
+  readLastRunLog(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('lines') lines?: string,
+  ) {
+    const parsed = lines == null ? undefined : Number(lines);
+    return this.cronJobsService.readLastRunLog(this.uid(req), id, {
+      lines: Number.isFinite(parsed) ? parsed : undefined,
+    });
   }
 
   @Delete(':id')

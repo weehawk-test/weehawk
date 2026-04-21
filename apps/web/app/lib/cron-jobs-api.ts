@@ -178,3 +178,33 @@ export async function deleteCronJob(accessToken: string, id: string | number): P
   });
   if (!res.ok) throw new Error(await errorBody(res));
 }
+
+export async function triggerCronJobNow(
+  accessToken: string,
+  id: string | number,
+): Promise<{ ok: boolean; success: boolean; action: string; output: string }> {
+  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}/run`, {
+    method: "POST",
+    headers: authHeaders(accessToken),
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return (await res.json()) as { ok: boolean; success: boolean; action: string; output: string };
+}
+
+export async function fetchCronJobLastRunLog(
+  accessToken: string,
+  id: string | number,
+  lines = 200,
+): Promise<{ log: string; source: string }> {
+  const qs = new URLSearchParams({ lines: String(lines) }).toString();
+  const res = await fetch(
+    `${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}/last-run-log?${qs}`,
+    {
+      headers: authHeaders(accessToken),
+      credentials: "include",
+    },
+  );
+  if (!res.ok) throw new Error(await errorBody(res));
+  return (await res.json()) as { log: string; source: string };
+}

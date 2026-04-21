@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUpdateCronJob } from "@/hooks/use-cron-jobs";
-import { cronJobRouteId, type CronJobDetail, type DatabaseBackupConfig } from "@/lib/cron-jobs-api";
+import { type CronJobDetail, type DatabaseBackupConfig } from "@/lib/cron-jobs-api";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
@@ -51,6 +51,28 @@ type Props = {
   initialRemoteServers: RemoteServerRow[];
 };
 
+type CronPreset =
+  | "custom"
+  | "every_minute"
+  | "every_hour"
+  | "every_day_midnight"
+  | "every_sunday_midnight"
+  | "every_month_1_midnight"
+  | "every_15_minutes"
+  | "every_weekday_midnight";
+
+function cronPresetFromExpression(expr: string): CronPreset {
+  const v = (expr || "").trim();
+  if (v === "* * * * *") return "every_minute";
+  if (v === "0 * * * *") return "every_hour";
+  if (v === "0 0 * * *") return "every_day_midnight";
+  if (v === "0 0 * * 0") return "every_sunday_midnight";
+  if (v === "0 0 1 * *") return "every_month_1_midnight";
+  if (v === "*/15 * * * *") return "every_15_minutes";
+  if (v === "0 0 * * 1-5") return "every_weekday_midnight";
+  return "custom";
+}
+
 export function EditCronJobClient({
   initialCronJob,
   initialChannels,
@@ -64,6 +86,9 @@ export function EditCronJobClient({
 
   const [name, setName] = useState(initialCronJob.name);
   const [description, setDescription] = useState(initialCronJob.description ?? "");
+  const [cronPreset, setCronPreset] = useState<CronPreset>(
+    cronPresetFromExpression(initialCronJob.cronExpression ?? ""),
+  );
   const [cronExpression, setCronExpression] = useState(initialCronJob.cronExpression ?? "");
   const [bashScript, setBashScript] = useState(initialCronJob.dockerCommand ?? "");
   const scriptLines = Math.max(1, bashScript.split("\n").length);
@@ -81,8 +106,7 @@ export function EditCronJobClient({
     if (initialCronJob.remoteServerId != null) {
       return String(initialCronJob.remoteServerId);
     }
-    const deploy = filterSshDeployServers(initialRemoteServers);
-    return deploy.length > 0 ? String(deploy[0].id) : "";
+    return "";
   });
   const [backupS3ProfileName, setBackupS3ProfileName] = useState(
     initialCronJob.backupS3ProfileName ?? "",
@@ -186,7 +210,7 @@ export function EditCronJobClient({
           : {}),
       },
       {
-        onSuccess: (updated) => router.push(`/cron-jobs/${cronJobRouteId(updated)}`),
+        onSuccess: (updated) => router.push(`/cron-jobs?provisioning=${encodeURIComponent(String(updated.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not update cron job", description: e.message, variant: "destructive" }),
       },
@@ -255,19 +279,61 @@ export function EditCronJobClient({
               </div>
             </div>
             <div className="space-y-3 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
-              <label className="text-xs text-muted-foreground mb-1 block">Cron expression</label>
-              <input className="input-field font-mono text-sm" value={cronExpression} onChange={(e) => setCronExpression(e.target.value)} />
+              <label className="text-xs text-muted-foreground mb-1 block">Cron presets</label>
+              <select
+                className="input-field"
+                value={cronPreset}
+                onChange={(e) => {
+                  const nextPreset = e.target.value as CronPreset;
+                  setCronPreset(nextPreset);
+                  if (nextPreset === "custom") return;
+                  const presetById: Record<Exclude<CronPreset, "custom">, string> = {
+                    every_minute: "* * * * *",
+                    every_hour: "0 * * * *",
+                    every_day_midnight: "0 0 * * *",
+                    every_sunday_midnight: "0 0 * * 0",
+                    every_month_1_midnight: "0 0 1 * *",
+                    every_15_minutes: "*/15 * * * *",
+                    every_weekday_midnight: "0 0 * * 1-5",
+                  };
+                  setCronExpression(presetById[nextPreset]);
+                }}
+              >
+                <option value="every_minute">Every minute (* * * * *)</option>
+                <option value="every_hour">Every hour (0 * * * *)</option>
+                <option value="every_day_midnight">Every day at midnight (0 0 * * *)</option>
+                <option value="every_sunday_midnight">Every Sunday at midnight (0 0 * * 0)</option>
+                <option value="every_month_1_midnight">Every month on the 1st at midnight (0 0 1 * *)</option>
+                <option value="every_15_minutes">Every 15 minutes (*/15 * * * *)</option>
+                <option value="every_weekday_midnight">Every weekday at midnight (0 0 * * 1-5)</option>
+                <option value="custom">Custom</option>
+              </select>
+              {cronPreset === "custom" && (
+                <>
+                  <label className="text-xs text-muted-foreground mb-1 block">Cron expression</label>
+                  <input
+                    className="input-field font-mono text-sm"
+                    value={cronExpression}
+                    onChange={(e) => setCronExpression(e.target.value)}
+                    placeholder="0 * * * *"
+                  />
+                </>
+              )}
             </div>
             {initialCronJob.serviceAction === "docker_command" && (
               <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
-                <label className="text-xs text-muted-foreground mb-1 block">Server</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Deploy server</label>
                 <select
                   className="input-field mb-3"
                   value={remoteServerId}
                   onChange={(e) => setRemoteServerId(e.target.value)}
                   disabled={deployServers.length === 0}
                 >
-                  {deployServers.length === 0 && <option value="">No deploy servers available</option>}
+                  <option value="" disabled>
+                    {deployServers.length === 0
+                      ? "No deploy servers — add one under Remote servers"
+                      : "Select a deploy server…"}
+                  </option>
                   {deployServers.map((srv) => (
                     <option key={srv.id} value={srv.id}>
                       {srv.name} ({srv.host})

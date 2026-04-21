@@ -109,8 +109,14 @@ html.dark {
   * {
     @apply border-border;
   }
+  /**
+   * Reserve scrollbar gutter so toggling overflow (e.g. short vs long pages) does not
+   * shift layout horizontally. Platform shell scrolls on `main`; login/public pages
+   * may use the viewport — cover both.
+   */
   html {
     background-color: hsl(var(--background));
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased selection:bg-primary/25 selection:text-primary-foreground;

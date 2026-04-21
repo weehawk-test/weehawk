@@ -1474,23 +1474,25 @@ export function NotificationsChannelsClient({
                   <p className="text-sm font-mono truncate">Target: {ch.targetPreview}</p>
                 </div>
 
-                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-sm text-muted-foreground gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Clock className="w-4 h-4 shrink-0" />
-                    <span className="truncate">{formatDateUTC(ch.createdAt)}</span>
+                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <Clock className="w-3 h-3 shrink-0" />
+                    <span className="truncate" title={`Created (UTC) ${formatDateUTC(ch.createdAt)}`}>
+                      {formatDateUTC(ch.createdAt)}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-3 flex-wrap justify-end shrink-0">
                     <button
                       type="button"
                       onClick={() => openEditChannel(ch)}
                       disabled={updateChannelMutation.isPending || testMutation.isPending}
-                      className="text-primary hover:underline cursor-pointer font-medium inline-flex items-center gap-1 text-sm disabled:opacity-50"
+                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:opacity-50"
                       title="Edit name, active state, Run test from"
                     >
                       {updateChannelMutation.isPending && editChannel?.id === ch.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <Loader2 className="w-3 h-3 animate-spin" />
                       ) : (
-                        <Pencil className="w-4 h-4" />
+                        <Pencil className="w-3 h-3" />
                       )}
                       Edit
                     </button>
@@ -1498,10 +1500,14 @@ export function NotificationsChannelsClient({
                       type="button"
                       onClick={() => openChannelActions(ch.id, ch.name)}
                       disabled={testMutation.isPending || updateChannelMutation.isPending}
-                      className="text-primary hover:underline cursor-pointer font-medium inline-flex items-center gap-1 text-sm disabled:opacity-50"
+                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:opacity-50"
                       title="Run test from selected host"
                     >
-                      {testMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
+                      {testMutation.isPending ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <FlaskConical className="w-3 h-3" />
+                      )}
                       Test
                     </button>
                   </div>

@@ -39,7 +39,7 @@ function PlatformShell({ children }: { children: ReactNode }) {
       <main
         ref={mainScrollRef}
         className={cn(
-          "relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain transition-[margin-left] duration-200 ease-out",
+          "relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain transition-[margin-left] duration-200 ease-out [scrollbar-gutter:stable]",
           "ml-[var(--app-sidebar-width)]",
         )}
       >
