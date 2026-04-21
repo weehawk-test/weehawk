@@ -14,15 +14,13 @@ export type WebhookServiceAction =
 export type WebhookRemoteTriggerUrlScheme = "http" | "https";
 
 /** Must match apps/api/src/webhooks/hooks-public-host.ts */
-const WEEHAWK_HOOK_PUBLIC_HOST_PREFIX = "weehawk-webhook.";
+const WEEHAWK_HOOK_PUBLIC_HOST_PREFIX = "";
 
-/** Strip Weehawk subdomain for edit form (user edits parent domain only). */
+/** Display value equals stored host (no forced subdomain). */
 export function hooksPublicHostForDisplay(stored: string | null | undefined): string {
   if (stored == null || !String(stored).trim()) return "";
   const t = String(stored).trim().toLowerCase();
-  return t.startsWith(WEEHAWK_HOOK_PUBLIC_HOST_PREFIX)
-    ? t.slice(WEEHAWK_HOOK_PUBLIC_HOST_PREFIX.length)
-    : t;
+  return t;
 }
 
 export type WebhookListItem = {
@@ -57,7 +55,7 @@ export type WebhookDetail = WebhookListItem & {
   notifyChannelId: string | null;
   notifyMessage: string | null;
   secretToken: string;
-  /** On-host agent URL when the script is deployed to a remote server (same path token as API `/hooks/{token}` by default). */
+  /** On-host agent URL when the script is deployed to a remote server (same path token as API `/weehawk-hooks/{token}` by default). */
   remoteTriggerUrl: string | null;
 };
 
@@ -87,7 +85,7 @@ export type CreateWebhookBody = {
   /** When true, omitted from the main /webhooks list (service auto webhooks). */
   hiddenFromWebhooksList?: boolean;
   /**
-   * Weehawk API origin only (from NEXT_PUBLIC_API_URL). Primary trigger URL becomes POST {origin}/hooks/{token}
+   * Weehawk API origin only (from NEXT_PUBLIC_API_URL). Primary trigger URL becomes POST {origin}/weehawk-hooks/{token}
    * (full UI redeploy). Omit to use the deploy-host agent URL.
    */
   hooksTriggerOrigin?: string;
@@ -128,7 +126,7 @@ function authHeaders(_accessToken: string): HeadersInit {
 }
 
 export function publicWebhookTriggerUrl(secretToken: string): string {
-  return `${API_BASE}/hooks/${secretToken}`;
+  return `${API_BASE}/weehawk-hooks/${secretToken}`;
 }
 
 export async function fetchWebhooks(

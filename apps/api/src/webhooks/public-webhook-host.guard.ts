@@ -11,10 +11,8 @@ import {
 } from './hooks-public-host';
 
 /**
- * Blocks {@code GET|POST /hooks/:token} unless {@code Host} contains {@code weehawk-webhook}
- * (e.g. magic {@code *.traefik.me} on the API alone no longer triggers), **or** the path is
- * {@code /hooks/{64-hex}} (token authenticates the request — same as UI redeploy via API origin).
- * Opt out: {@code WEEHAWK_HOOK_ALLOW_ANY_HOST=1}.
+ * Allows public trigger path {@code /weehawk-hooks/{64-hex}} and validates host policy.
+ * Opt out of host policy: {@code WEEHAWK_HOOK_ALLOW_ANY_HOST=1}.
  */
 @Injectable()
 export class PublicWebhookHostGuard implements CanActivate {
@@ -41,8 +39,8 @@ export class PublicWebhookHostGuard implements CanActivate {
       return true;
     }
     throw new ForbiddenException(
-      'Webhook triggers require a Host containing "weehawk-webhook" (e.g. weehawk-webhook.example.com), ' +
-        'or call POST/GET /hooks/{64-hex-token} with the correct path. ' +
+      'Webhook trigger blocked by host policy. ' +
+        'Call POST/GET /weehawk-hooks/{64-hex-token} with the correct path, ' +
         'Set WEEHAWK_HOOK_ALLOW_ANY_HOST=1 on the API to allow any Host.',
     );
   }

@@ -330,7 +330,7 @@ else
     -e "WEEHAWK_HOOK_PATH_PREFIX=$WA_PFIX" \\
     --publish mode=host,published="\${WA_PORT}",target="\${WA_PORT}" \\
     "$WA_IMG"
-  echo "Weehawk: $WA_SVC is up. Public URL via Traefik after you add a webhook public hostname; until then use http://<manager-ip>:\${WA_PORT}/hooks/<token>."
+  echo "Weehawk: $WA_SVC is up. Public URL via Traefik after you add a webhook public hostname; until then use http://<manager-ip>:\${WA_PORT}/weehawk-hooks/<token>."
 fi
 `.trim();
 }

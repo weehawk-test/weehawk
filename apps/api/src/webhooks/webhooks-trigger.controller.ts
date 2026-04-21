@@ -4,10 +4,10 @@ import { PublicWebhookHostGuard } from './public-webhook-host.guard';
 import { WebhooksService } from './webhooks.service';
 
 /**
- * Public ingress (no JWT). URL: `GET|POST {origin}/hooks/{secretToken}` (no `/api` prefix).
+ * Public ingress (no JWT). URL: `GET|POST {origin}/weehawk-hooks/{secretToken}` (no `/api` prefix).
  */
 @ApiTags('Triggers (public)')
-@Controller('hooks')
+@Controller('weehawk-hooks')
 @UseGuards(PublicWebhookHostGuard)
 export class WebhooksTriggerController {
   constructor(private readonly webhooksService: WebhooksService) {}

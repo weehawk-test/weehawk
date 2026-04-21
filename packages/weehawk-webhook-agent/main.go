@@ -6,12 +6,12 @@
 //	WEEHAWK_HOOK_LISTEN — bind address, default ":8759"
 //	  If unset, WEEHAWK_REMOTE_WEBHOOK_HTTP_PORT is used as ":{port}" (same name as the API).
 //	WEEHAWK_HOOK_SCRIPTS_DIR — default "/opt/weehawk-scripts/webhooks"
-//	WEEHAWK_HOOK_PATH_PREFIX — URL segment before token, default "hooks" → /hooks/{token}
+//	WEEHAWK_HOOK_PATH_PREFIX — URL segment before token, default "weehawk-hooks" → /weehawk-hooks/{token}
 //	  Falls back to WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX (same name as the API).
 //	WEEHAWK_HOOK_TIMEOUT — script timeout, default "180s"
-//	WEEHAWK_HOOK_ALLOW_ANY_HOST — if "1"/"true"/"yes", accept any Host on / and /hooks/… (default: require Host to contain "weehawk-webhook")
+//	WEEHAWK_HOOK_ALLOW_ANY_HOST — if "1"/"true"/"yes", accept any Host on / and /weehawk-hooks/… (default: host must be present)
 //
-// Example: curl -X POST "https://weehawk-webhook.example.com/hooks/<64-hex-token>"
+// Example: curl -X POST "https://example.com/weehawk-hooks/<64-hex-token>"
 package main
 
 import (
@@ -60,7 +60,7 @@ func pathPrefix() string {
 	if v := strings.Trim(strings.TrimSpace(os.Getenv("WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX")), "/"); v != "" {
 		return v
 	}
-	return "hooks"
+	return "weehawk-hooks"
 }
 
 func parseTimeout(s string) time.Duration {
@@ -107,8 +107,6 @@ func writeJSON(w http.ResponseWriter, status int, body responseBody) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-const requiredWebhookHostSubstring = "weehawk-webhook"
-
 func envTruthy(key string) bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	return v == "1" || v == "true" || v == "yes"
@@ -125,7 +123,7 @@ func requestHostName(r *http.Request) string {
 	return strings.ToLower(host)
 }
 
-// Triggers (not /healthz) must hit a Host containing weehawk-webhook unless WEEHAWK_HOOK_ALLOW_ANY_HOST is set.
+// Triggers (not /healthz) must include a Host header unless WEEHAWK_HOOK_ALLOW_ANY_HOST is set.
 func webhookTriggerHostAllowed(r *http.Request) bool {
 	if envTruthy("WEEHAWK_HOOK_ALLOW_ANY_HOST") {
 		return true
@@ -134,7 +132,7 @@ func webhookTriggerHostAllowed(r *http.Request) bool {
 	if h == "" {
 		return false
 	}
-	return strings.Contains(h, requiredWebhookHostSubstring)
+	return true
 }
 
 func main() {
@@ -166,7 +164,7 @@ func main() {
 			writeJSON(w, http.StatusForbidden, responseBody{
 				OK:     false,
 				Error:  "host not allowed",
-				Output: "Use a Host containing " + requiredWebhookHostSubstring + " (e.g. weehawk-webhook.example.com). Set WEEHAWK_HOOK_ALLOW_ANY_HOST=1 to disable.",
+				Output: "Provide a valid Host header (or set WEEHAWK_HOOK_ALLOW_ANY_HOST=1 to skip host checks).",
 			})
 			return
 		}

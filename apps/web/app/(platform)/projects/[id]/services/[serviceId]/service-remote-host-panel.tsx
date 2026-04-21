@@ -150,7 +150,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
 
   const [registryValue, setRegistryValue] = useState<string>(() => service.registryPushImage ?? "");
 
-  /** Parent domain from Domains page; API stores weehawk-webhook.<this-host>. */
+  /** Public hostname from Domains page; API stores it as-is (no forced webhook subdomain). */
   const [webhookPublicHost, setWebhookPublicHost] = useState("");
   const [webhookTriggerScheme, setWebhookTriggerScheme] =
     useState<WebhookRemoteTriggerUrlScheme>("http");
@@ -353,7 +353,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         toast({
           title: "Webhook domain required",
           description:
-            "Choose which hostname will expose the redeploy URL (weehawk-webhook.<your-domain> via Traefik).",
+            "Choose which hostname will expose the redeploy URL (<your-domain> via Traefik, no forced subdomain).",
           variant: "destructive",
         });
         return;
@@ -369,7 +369,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         toast({
           title: "Webhook domain required",
           description:
-            "Choose which hostname will expose the redeploy URL (weehawk-webhook.<your-domain> via Traefik).",
+            "Choose which hostname will expose the redeploy URL (<your-domain> via Traefik, no forced subdomain).",
           variant: "destructive",
         });
         return;

@@ -126,7 +126,7 @@ export class CreateWebhookDto {
 
   @ApiPropertyOptional({
     description:
-      'Parent domain only (e.g. example.com). Stored and routed as weehawk-webhook.example.com behind Traefik. DNS: point that hostname to this server.',
+      'Public hostname only (e.g. example.com or hooks.example.com). Routed as-is behind Traefik; no forced webhook subdomain.',
     example: 'example.com',
   })
   @ValidateIf(
@@ -153,7 +153,7 @@ export class CreateWebhookDto {
 
   @ApiPropertyOptional({
     description:
-      'Weehawk API origin only (e.g. https://api.example.com:8080). Primary trigger URL becomes POST {origin}/hooks/{token} (full UI redeploy). Omit to use the deploy-host agent URL.',
+      'Weehawk API origin only (e.g. https://api.example.com:8080). Primary trigger URL becomes POST {origin}/weehawk-hooks/{token} (full UI redeploy). Omit to use the deploy-host agent URL.',
   })
   @ValidateIf(
     (o: CreateWebhookDto) =>

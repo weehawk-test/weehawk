@@ -354,7 +354,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
   }
 
-  /** Resolves optional user domain to stored Traefik host {@code weehawk-webhook.<domain>}. */
+  /** Resolves optional user domain/host for Traefik routing (no forced webhook subdomain). */
   private resolveHooksPublicHostForStorage(
     raw: string | null | undefined,
   ): string | null {
@@ -381,7 +381,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
     if (/[\s\/:]/.test(t)) {
       throw new BadRequestException(
-        'hooksPublicHost must be a hostname only (no scheme, port, or path). Example: example.com → weehawk-webhook.example.com',
+        'hooksPublicHost must be a hostname only (no scheme, port, or path). Example: example.com',
       );
     }
     if (

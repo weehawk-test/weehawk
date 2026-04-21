@@ -14,12 +14,12 @@ const apiBase = normalizePublicApiOrigin(process.env.NEXT_PUBLIC_API_URL ?? "htt
 const nextConfig: NextConfig = {
   reactStrictMode: false,
   output: "standalone",
-  /** If the public webhook base URL points at this web app host, proxy /hooks/* to the API (avoids Next.js 404). */
+  /** If the public webhook base URL points at this web app host, proxy /weehawk-hooks/* to the API (avoids Next.js 404). */
   async rewrites() {
     return [
       {
-        source: "/hooks/:token",
-        destination: `${apiBase}/hooks/:token`,
+        source: "/weehawk-hooks/:token",
+        destination: `${apiBase}/weehawk-hooks/:token`,
       },
     ];
   },

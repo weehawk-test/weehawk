@@ -78,7 +78,7 @@ export class UpdateWebhookDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'Parent domain (e.g. example.com) → weehawk-webhook.example.com; null clears public host (IP:port URL).',
+      'Public hostname (e.g. example.com or hooks.example.com); null clears public host (IP:port URL).',
   })
   @IsOptional()
   @ValidateIf((_, v) => v != null && v !== '')
@@ -97,7 +97,7 @@ export class UpdateWebhookDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'API origin for POST /hooks/{token} (full UI redeploy). Null clears (use deploy-host agent URL).',
+      'API origin for POST /weehawk-hooks/{token} (full UI redeploy). Null clears (use deploy-host agent URL).',
   })
   @IsOptional()
   @ValidateIf((_, v) => v != null && v !== '')

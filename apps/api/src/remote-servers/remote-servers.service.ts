@@ -1156,7 +1156,7 @@ rm -rf ${inDirQ}
    * Public URL for the on-host webhook agent (e.g. Go) that runs
    * `{@link WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/{token}.sh`.
    * Env: `WEEHAWK_REMOTE_WEBHOOK_HTTP_PORT` (default 8759),
-   * `WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX` (default `hooks` → path `/hooks/{token}`).
+   * `WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX` (default `weehawk-hooks` → path `/weehawk-hooks/{token}`).
    * HTTP vs HTTPS for webhooks is set per webhook ({@code remoteTriggerUrlScheme}), not env.
    */
   /** HTTP port the on-host webhook agent must listen on (loopback health check + systemd unit). */
@@ -1172,7 +1172,8 @@ rm -rf ${inDirQ}
   /** URL path segment before the secret token (must match weehawk-webhook-agent). */
   resolveRemoteWebhookPathPrefix(): string {
     let pathPrefix =
-      this.configService.get<string>('WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX')?.trim() || 'hooks';
+      this.configService.get<string>('WEEHAWK_REMOTE_WEBHOOK_URL_PATH_PREFIX')?.trim() ||
+      'weehawk-hooks';
     return pathPrefix.replace(/^\/+|\/+$/g, '');
   }
 
@@ -1903,6 +1904,7 @@ sudo -n systemctl enable --now weehawk-webhook-agent
       envLines: notificationEnvLines,
       userScriptBody: scriptBody,
       defaults: REMOTE_NOTIFY_DEFAULTS_WEBHOOK,
+      runUserScriptOnHostViaDockerSocket: true,
     });
     const deployBaseQ = WEEHAWK_REMOTE_DEPLOYMENTS_BASE.replace(/'/g, `'\\''`);
     await this.withSshClient(rs, pem, async (client) => {

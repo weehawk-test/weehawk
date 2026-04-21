@@ -243,6 +243,11 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
   envLines: string[];
   userScriptBody: string;
   defaults: RemoteNotifyScriptDefaults;
+  /**
+   * When true, run the user script on the remote host filesystem via Docker socket
+   * (for webhook-agent-in-container deployments).
+   */
+  runUserScriptOnHostViaDockerSocket?: boolean;
 }): string {
   const envPathQ = remoteInstallShQuote(options.envPath);
   const scriptPathQ = remoteInstallShQuote(options.scriptPath);
@@ -311,6 +316,38 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
     d.completedMessageFallback,
     d.failedMessageFallback,
   );
+  if (options.runUserScriptOnHostViaDockerSocket === true) {
+    innerShLines.push(
+      '',
+      '# Execute the user script on the host (not inside webhook-agent container).',
+      'if ! command -v docker >/dev/null 2>&1; then',
+      '  echo "docker CLI not found; cannot run webhook script on host." >&2',
+      '  exit 127',
+      'fi',
+      "docker run --rm -i -v /:/host alpine:3.20 sh -euo pipefail -c '",
+      '  umask 077',
+      "  script_path='/host/tmp/weehawk-user-webhook.sh'",
+      '  cat > \"$script_path\"',
+      '  chmod 700 \"$script_path\"',
+      "  runner='/bin/bash'",
+      "  if [ ! -x '/host/bin/bash' ]; then",
+      "    runner='/bin/sh'",
+      '  fi',
+      "  if [ ! -x \"/host$runner\" ]; then",
+      '    echo \"host shell not found: $runner\" >&2',
+      '    exit 127',
+      '  fi',
+      '  chroot /host "$runner" -eu /tmp/weehawk-user-webhook.sh',
+      '  rc=$?',
+      '  rm -f "$script_path"',
+      '  exit "$rc"',
+      "' <<'WEEHAWK_USER_SCRIPT'",
+      stripOptionalShebang(options.userScriptBody),
+      'WEEHAWK_USER_SCRIPT',
+    );
+  } else {
+    innerShLines.push(stripOptionalShebang(options.userScriptBody));
+  }
 
   return [
     'set -eu',
@@ -322,7 +359,6 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
     `chmod 600 ${envPathQ}`,
     `cat > ${scriptPathQ} <<'WEEHAWK_EOF'`,
     ...innerShLines,
-    stripOptionalShebang(options.userScriptBody),
     'WEEHAWK_EOF',
     `chmod 700 ${scriptPathQ}`,
   ].join('\n');

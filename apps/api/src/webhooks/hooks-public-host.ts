@@ -1,35 +1,20 @@
-/**
- * Traefik Host() for bash webhooks: always {@code weehawk-webhook.<user-domain>}.
- * User enters e.g. {@code example.com}; stored / routed host is {@code weehawk-webhook.example.com}.
- */
-export const WEEHAWK_WEBHOOK_TRAEFIK_HOST_PREFIX = 'weehawk-webhook';
-
-const PREFIX_DOT = `${WEEHAWK_WEBHOOK_TRAEFIK_HOST_PREFIX}.`;
+/** Path segment used for public webhook triggers. */
+export const WEEHAWK_WEBHOOK_PUBLIC_PATH_PREFIX = 'weehawk-hooks';
 
 export function deriveHooksPublicHost(userDomainOrHost: string): string {
   const t = userDomainOrHost
     .trim()
     .toLowerCase()
     .replace(/\.+$/g, '');
-  if (!t) {
-    return '';
-  }
-  if (t.startsWith(PREFIX_DOT)) {
-    return t;
-  }
-  return `${PREFIX_DOT}${t}`;
+  return t;
 }
 
-/** Strip the Weehawk prefix for form display (edit webhook). */
+/** Display value equals stored host (no forced webhook subdomain). */
 export function hooksPublicHostForDisplay(stored: string | null | undefined): string {
   if (stored == null || !String(stored).trim()) {
     return '';
   }
-  const t = String(stored).trim().toLowerCase();
-  if (t.startsWith(PREFIX_DOT)) {
-    return t.slice(PREFIX_DOT.length);
-  }
-  return t;
+  return String(stored).trim().toLowerCase();
 }
 
 /** Strip optional :port (and bracketed IPv6) from Host header. */
@@ -51,15 +36,11 @@ export function hostHeaderHostname(hostHeader: string | undefined): string {
   return raw;
 }
 
-/**
- * Public /hooks triggers (API or agent) must use a Host containing {@link WEEHAWK_WEBHOOK_TRAEFIK_HOST_PREFIX},
- * unless {@code allowAnyHost}. Loopback may be allowed for local development.
- */
-/** Path-only check: `GET|POST /hooks/{64-hex token}` (public trigger; token is the secret). */
+/** Path-only check: `GET|POST /weehawk-hooks/{64-hex token}` (public trigger; token is the secret). */
 export function isPublicHooksTriggerPath(pathname: string | undefined): boolean {
   const raw = (pathname ?? '').trim();
   const p = raw.split('?')[0] ?? '';
-  return /^\/hooks\/[a-f0-9]{64}\/?$/i.test(p);
+  return new RegExp(`^/${WEEHAWK_WEBHOOK_PUBLIC_PATH_PREFIX}/[a-f0-9]{64}/?$`, 'i').test(p);
 }
 
 export function isPublicWebhookHostAllowed(
@@ -79,5 +60,5 @@ export function isPublicWebhookHostAllowed(
   ) {
     return true;
   }
-  return host.includes(WEEHAWK_WEBHOOK_TRAEFIK_HOST_PREFIX);
+  return true;
 }

@@ -24,7 +24,7 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     '/swagger-ui',
     '/swagger-json',
     '/v3/api-docs',
-    '/hooks/', // public webhook trigger endpoint
+    '/weehawk-hooks/', // public webhook trigger endpoint
     '/api/user/confirm-email-change',
     // GitHub App setup: GitHub servers GET the manifest (no API key); webhooks POST with signature only.
     '/api/git/github/manifest',
