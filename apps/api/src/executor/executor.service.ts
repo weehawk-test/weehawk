@@ -55,8 +55,8 @@ const SWARM_NEEDS_DEPLOY_HOST_MESSAGE =
 const COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE =
   'No deploy host is set for this compose service. Choose a remote Deploy server under Remote Docker host, save, then try again.';
 
-/** Keep runtime checks snappy when a deploy host is offline/unreachable. */
-const RUNTIME_STATUS_TIMEOUT_MS = 1_000;
+/** Keep runtime checks responsive without flapping to false on normal SSH latency. */
+const RUNTIME_STATUS_TIMEOUT_MS = 5_000;
 
 function pickDockerSshEnv(
   env: NodeJS.ProcessEnv,

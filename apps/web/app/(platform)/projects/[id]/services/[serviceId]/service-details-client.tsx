@@ -85,6 +85,7 @@ import {
   parseApplicationDeployMode,
   parseApplicationImageRef,
   parseApplicationNetworkHeaders,
+  parseApplicationVolumeHeaders,
   parseApplicationStoreHeaders,
   parseServiceEnvLines,
   parseYamlImage,
@@ -3310,7 +3311,9 @@ function ApplicationArchivePanel({
   const [showEnvPaste, setShowEnvPaste] = useState(false);
   const [connectionExternal, setConnectionExternal] = useState<string[]>([]);
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
-  const [openAppSection, setOpenAppSection] = useState<"connections" | "env" | null>(null);
+  type AppVolumeRow = { source: string; target: string; readOnly: boolean };
+  const [volumeRows, setVolumeRows] = useState<AppVolumeRow[]>([]);
+  const [openAppSection, setOpenAppSection] = useState<"connections" | "volumes" | "env" | null>(null);
   const [deployTarget, setDeployTarget] = useState<"source" | "image">("source");
   /** Only one of GitHub / GitLab deploy panels open at a time (accordion). */
   const [gitRepoDeployPanel, setGitRepoDeployPanel] = useState<"github" | "gitlab" | null>(null);
@@ -3528,12 +3531,22 @@ function ApplicationArchivePanel({
     () => variables.filter((v) => v.key.trim()).length,
     [variables],
   );
+  const filledVolumeCount = useMemo(
+    () => volumeRows.filter((v) => v.source.trim() && v.target.trim()).length,
+    [volumeRows],
+  );
 
   useEffect(() => {
     const cfg = serviceRow?.config ?? "";
     const p = parseApplicationNetworkHeaders(cfg);
     setConnectionExternal(p.external);
     setConnectionStackKeys(p.stack.length ? p.stack : []);
+  }, [serviceRow?.id, serviceRow?.config]);
+
+  useEffect(() => {
+    const cfg = serviceRow?.config ?? "";
+    const parsed = parseApplicationVolumeHeaders(cfg);
+    setVolumeRows(parsed);
   }, [serviceRow?.id, serviceRow?.config]);
 
   useEffect(() => {
@@ -3651,6 +3664,7 @@ function ApplicationArchivePanel({
     rep: number;
     cleanVars: Array<{ key: string; value: string }>;
     stk: string[];
+    volumes: Array<{ source: string; target: string; readOnly: boolean }>;
   } | null => {
     const cleanVars = variables
       .map((v) => ({ key: v.key.trim(), value: v.value }))
@@ -3691,7 +3705,43 @@ function ApplicationArchivePanel({
       }
       seen.add(low);
     }
-    return { cp, rp, rep, cleanVars, stk };
+    const volumes = volumeRows
+      .map((v) => ({
+        source: v.source.trim(),
+        target: v.target.trim(),
+        readOnly: Boolean(v.readOnly),
+      }))
+      .filter((v) => v.source || v.target);
+    const seenTargets = new Set<string>();
+    for (const v of volumes) {
+      if (!v.source || !v.target) {
+        toast({
+          title: "Incomplete volume mapping",
+          description: "Each volume row needs both source and target path.",
+          variant: "destructive",
+        });
+        return null;
+      }
+      if (!v.target.startsWith("/")) {
+        toast({
+          title: "Invalid volume target",
+          description: "Target path must start with / inside the container.",
+          variant: "destructive",
+        });
+        return null;
+      }
+      const t = v.target.toLowerCase();
+      if (seenTargets.has(t)) {
+        toast({
+          title: "Duplicate volume target",
+          description: `Target "${v.target}" is used more than once.`,
+          variant: "destructive",
+        });
+        return null;
+      }
+      seenTargets.add(t);
+    }
+    return { cp, rp, rep, cleanVars, stk, volumes };
   };
 
   /** Git stage: resolve binding on the API, then user sets port/env and clicks Generate. */
@@ -3883,7 +3933,7 @@ function ApplicationArchivePanel({
       onNavigateToRemoteDeployHost();
       return;
     }
-    const { cp, rp, rep, cleanVars, stk } = common;
+    const { cp, rp, rep, cleanVars, stk, volumes } = common;
     setStackGenerating(true);
     setStackGenProgressPct(5);
     if (stackGenProgressTimerRef.current != null) {
@@ -3906,6 +3956,7 @@ function ApplicationArchivePanel({
         replicas: rep,
         variables: cleanVars,
         networks: { external: connectionExternal, stack: stk },
+        volumes,
       });
       await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       if (pendingAd != null) {
@@ -4028,44 +4079,9 @@ function ApplicationArchivePanel({
       });
       return;
     }
-    const cp = 3000;
-    const rp: number | undefined = undefined;
-    const rep = parseInt(replicas || "1", 10);
-    const cleanVars = variables
-      .map((v) => ({ key: v.key.trim(), value: v.value }))
-      .filter((v) => v.key.length > 0);
-    for (const v of cleanVars) {
-      if (!/^[A-Z_][A-Z0-9_]*$/i.test(v.key)) {
-        toast({ title: "Invalid variable key", description: `Key "${v.key}" is invalid.`, variant: "destructive" });
-        return;
-      }
-    }
-    if (!Number.isInteger(rep) || rep < 1 || rep > 10) {
-      toast({ title: "Invalid replicas", description: "Use a value between 1 and 10.", variant: "destructive" });
-      return;
-    }
-    const stk = connectionStackKeys.map((k) => k.trim()).filter(Boolean);
-    const seen = new Set<string>();
-    for (const k of stk) {
-      if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,62}$/.test(k)) {
-        toast({
-          title: "Invalid overlay network name",
-          description: "Use letters and numbers; start with a letter.",
-          variant: "destructive",
-        });
-        return;
-      }
-      const low = k.toLowerCase();
-      if (seen.has(low)) {
-        toast({
-          title: "Duplicate name",
-          description: "Each overlay network name must be unique.",
-          variant: "destructive",
-        });
-        return;
-      }
-      seen.add(low);
-    }
+    const common = validateApplicationDeployForm();
+    if (!common) return;
+    const { cp, rp, rep, cleanVars, stk, volumes } = common;
 
     setSavingImage(true);
     try {
@@ -4076,6 +4092,7 @@ function ApplicationArchivePanel({
         replicas: rep,
         variables: cleanVars,
         networks: { external: connectionExternal, stack: stk },
+        volumes,
       });
       await invalidateServiceScopedQueries(queryClient, serviceId, authUser?.userId ?? "none");
       toast({
@@ -5047,6 +5064,101 @@ function ApplicationArchivePanel({
             open={openAppSection === "connections"}
             onOpenChange={(next) => setOpenAppSection(next ? "connections" : null)}
           />
+          <details className="group" open>
+            <summary
+              onClick={(e) => {
+                e.preventDefault();
+                setOpenAppSection((prev) => (prev === "volumes" ? null : "volumes"));
+              }}
+              className="flex cursor-pointer list-none items-center gap-3 rounded-xl border border-border bg-muted/35 px-3 py-2.5 text-left transition-colors hover:bg-muted/55 dark:bg-zinc-950/30 dark:hover:bg-accent/50 [&::-webkit-details-marker]:hidden"
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-violet-400/40 bg-violet-500/[0.12] dark:border-violet-500/30 dark:bg-violet-500/10">
+                <HardDrive className="h-3.5 w-3.5 text-violet-700 dark:text-violet-300" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-100">Volumes</h3>
+                  {filledVolumeCount > 0 && (
+                    <span className="rounded-md bg-violet-500/20 px-1.5 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
+                      {filledVolumeCount}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-zinc-600 dark:text-muted-foreground mt-0.5 leading-snug">
+                  Add volume mounts to persist app data. Saved into generated compose as <code>volumes:</code>.
+                </p>
+              </div>
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-zinc-500 dark:text-muted-foreground transition-transform duration-300 ${
+                  openAppSection === "volumes" ? "rotate-180" : ""
+                }`}
+              />
+            </summary>
+            <div
+              className={`grid min-h-0 overflow-hidden transition-[grid-template-rows,opacity] duration-300 ease-out ${
+                openAppSection === "volumes" ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-80"
+              }`}
+            >
+              <div className="min-h-0 space-y-2 pt-3">
+                {volumeRows.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No volumes yet. Add rows like <code>app-data</code> to <code>/data</code>.</p>
+                )}
+                {volumeRows.map((row, idx) => (
+                  <div key={idx} className="grid grid-cols-12 gap-2">
+                    <input
+                      className="input-field font-mono text-sm col-span-4"
+                      value={row.source}
+                      onChange={(e) =>
+                        setVolumeRows((prev) =>
+                          prev.map((v, i) => (i === idx ? { ...v, source: e.target.value } : v)),
+                        )
+                      }
+                      placeholder="source (e.g. app-data)"
+                    />
+                    <input
+                      className="input-field font-mono text-sm col-span-5"
+                      value={row.target}
+                      onChange={(e) =>
+                        setVolumeRows((prev) =>
+                          prev.map((v, i) => (i === idx ? { ...v, target: e.target.value } : v)),
+                        )
+                      }
+                      placeholder="/container/path"
+                    />
+                    <label className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-border text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={row.readOnly}
+                        onChange={(e) =>
+                          setVolumeRows((prev) =>
+                            prev.map((v, i) => (i === idx ? { ...v, readOnly: e.target.checked } : v)),
+                          )
+                        }
+                      />
+                      RO
+                    </label>
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs col-span-1"
+                      onClick={() => setVolumeRows((prev) => prev.filter((_, i) => i !== idx))}
+                      title="Remove row"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVolumeRows((prev) => [...prev, { source: "", target: "", readOnly: false }])
+                  }
+                  className="btn-secondary text-xs inline-flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add volume
+                </button>
+              </div>
+            </div>
+          </details>
           <details
             className="group"
             open
@@ -5170,7 +5282,7 @@ function ApplicationArchivePanel({
                       />
                       <div className="mt-2">
                         <button type="button" onClick={parseVariablesText} className="btn-secondary text-xs inline-flex items-center gap-1.5">
-                          <Plus className="w-3.5 h-3.5" /> Parse from .env
+                          <Plus className="w-3.5 h-3.5" /> Save .env values
                         </button>
                       </div>
                     </div>

@@ -148,3 +148,28 @@ export function parseApplicationStoreHeaders(
   }
   return out;
 }
+
+export type ApplicationVolumeHeaderRow = {
+  source: string;
+  target: string;
+  readOnly: boolean;
+};
+
+/** Parse `# app.volumes: src:/target[:ro]|...` headers from generated application config. */
+export function parseApplicationVolumeHeaders(config: string): ApplicationVolumeHeaderRow[] {
+  const line = (config || "").match(/^\s*#\s*app\.volumes:\s*(.+)$/im)?.[1]?.trim();
+  if (!line || line.toLowerCase() === "none") return [];
+  const rows: ApplicationVolumeHeaderRow[] = [];
+  for (const token of line.split("|")) {
+    const t = token.trim();
+    if (!t) continue;
+    const m = t.match(/^([^:]+):([^:]+)(:ro)?$/i);
+    if (!m?.[1] || !m?.[2]) continue;
+    rows.push({
+      source: m[1].trim(),
+      target: m[2].trim(),
+      readOnly: Boolean(m[3]),
+    });
+  }
+  return rows;
+}

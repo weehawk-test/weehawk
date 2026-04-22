@@ -435,6 +435,86 @@ export class ServicesService {
     return { external: ext, stack: stk };
   }
 
+  private parseApplicationVolumesFromConfig(
+    config: string,
+  ): Array<{ source: string; target: string; readOnly: boolean }> {
+    const raw = config || '';
+    const line = raw.match(/^\s*#\s*app\.volumes:\s*(.+)$/m)?.[1]?.trim();
+    if (!line || line.toLowerCase() === 'none') return [];
+    const out: Array<{ source: string; target: string; readOnly: boolean }> = [];
+    for (const token of line.split('|')) {
+      const t = token.trim();
+      if (!t) continue;
+      const m = t.match(/^([^:]+):([^:]+)(:ro)?$/i);
+      if (!m?.[1] || !m?.[2]) continue;
+      out.push({
+        source: m[1].trim(),
+        target: m[2].trim(),
+        readOnly: Boolean(m[3]),
+      });
+    }
+    return out;
+  }
+
+  private normalizeApplicationVolumePayload(rows: unknown): Array<{
+    source: string;
+    target: string;
+    readOnly: boolean;
+  }> {
+    if (!Array.isArray(rows)) return [];
+    const out: Array<{ source: string; target: string; readOnly: boolean }> = [];
+    const seenTarget = new Set<string>();
+    for (const item of rows) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      const source = String(row.source ?? '').trim();
+      const target = String(row.target ?? '').trim();
+      const readOnly = row.readOnly === true;
+      if (!source && !target) continue;
+      if (!source || !target) {
+        throw new BadRequestException('Each volume row must include source and target.');
+      }
+      if (source.includes('|') || source.includes('\n') || source.includes('\r')) {
+        throw new BadRequestException(`Invalid volume source: ${source}`);
+      }
+      if (!target.startsWith('/')) {
+        throw new BadRequestException(`Volume target must be an absolute container path: ${target}`);
+      }
+      if (target.includes('|') || target.includes('\n') || target.includes('\r')) {
+        throw new BadRequestException(`Invalid volume target: ${target}`);
+      }
+      const key = target.toLowerCase();
+      if (seenTarget.has(key)) {
+        throw new BadRequestException(`Duplicate volume target: ${target}`);
+      }
+      seenTarget.add(key);
+      out.push({ source, target, readOnly });
+    }
+    return out;
+  }
+
+  private parseVolumesJson(
+    raw: string,
+  ): Array<{ source: string; target: string; readOnly: boolean }> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new BadRequestException('volumesJson must be valid JSON.');
+    }
+    return this.normalizeApplicationVolumePayload(parsed);
+  }
+
+  private resolveUploadVolumes(
+    options: { volumesJson?: string } | undefined,
+    previousConfig: string,
+  ): Array<{ source: string; target: string; readOnly: boolean }> {
+    if (options?.volumesJson?.trim()) {
+      return this.parseVolumesJson(options.volumesJson);
+    }
+    return this.parseApplicationVolumesFromConfig(previousConfig);
+  }
+
   private splitPipeNetworkField(raw: string | undefined): string[] {
     if (raw === undefined || raw === '') return [];
     return raw
@@ -537,6 +617,7 @@ export class ServicesService {
     publishPort?: number;
     replicas: number;
     envKeys: string[];
+    volumes: Array<{ source: string; target: string; readOnly: boolean }>;
   } {
     const raw = service.dockerConfig || '';
     const sourceDir = this.parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
@@ -623,6 +704,7 @@ export class ServicesService {
       publishPort,
       replicas,
       envKeys,
+      volumes: this.parseApplicationVolumesFromConfig(raw),
     };
   }
 
@@ -1053,6 +1135,7 @@ export class ServicesService {
       publishPort: args.publishPort,
       replicas: args.replicas,
       envKeys: args.envKeys,
+      volumes: args.volumes,
       network,
       traefik,
     });
@@ -1076,6 +1159,7 @@ export class ServicesService {
     publishPort?: number;
     replicas: number;
     envKeys: string[];
+    volumes: Array<{ source: string; target: string; readOnly: boolean }>;
     network: { external: string[]; stack: string[] };
     traefik?: {
       certResolver: string;
@@ -1090,6 +1174,33 @@ export class ServicesService {
         : '';
     const envLines = args.envKeys.map((k) => `      ${k}: \${${k}}`);
     const envSection = envLines.length ? `    environment:\n${envLines.join('\n')}\n` : '';
+    const volumeRows = this.normalizeApplicationVolumePayload(args.volumes);
+    const volumeHeader =
+      volumeRows.length > 0
+        ? `# app.volumes: ${volumeRows
+            .map((v) => `${v.source}:${v.target}${v.readOnly ? ':ro' : ''}`)
+            .join('|')}\n`
+        : '# app.volumes: none\n';
+    const svcVolumesSection = volumeRows.length
+      ? `    volumes:\n${volumeRows
+          .map((v) => `      - ${v.source}:${v.target}${v.readOnly ? ':ro' : ''}`)
+          .join('\n')}\n`
+      : '';
+    const namedVolumeSources = Array.from(
+      new Set(
+        volumeRows
+          .map((v) => v.source.trim())
+          .filter((src) => {
+            if (!src) return false;
+            if (src.startsWith('/')) return false; // bind mount (absolute host path)
+            if (src.startsWith('./') || src.startsWith('../')) return false; // bind mount (relative host path)
+            return true; // named volume
+          }),
+      ),
+    );
+    const rootVolumesSection = namedVolumeSources.length
+      ? `volumes:\n${namedVolumeSources.map((name) => `  ${name}:\n    driver: local`).join('\n')}\n`
+      : '';
 
     const ext = (args.network.external ?? []).map((n) => n.trim()).filter(Boolean);
     const stk = (args.network.stack ?? []).map((k) => k.trim()).filter(Boolean);
@@ -1145,7 +1256,7 @@ ${registryPushLine}# sourceDir: ${args.sourceDir}
 # dockerfilePath: ${args.dockerfilePath}
 # buildMode: ${args.buildMode}
 # deployMode: ${args.deployMode}
-${imageRefLine}${traefikHeader}${networkHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
+${imageRefLine}${traefikHeader}${networkHeader}${volumeHeader}${storageHeader ? `${storageHeader}\n` : ''}version: '3.8'
 
 services:
   app:
@@ -1157,7 +1268,7 @@ ${ports}    deploy:
       placement:
         constraints:
           - node.role == manager
-${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
+${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${rootVolumesSection}${rootNetworkSection}`;
   }
 
   /**
@@ -1204,6 +1315,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
           networksJson?: string;
           externalNetworks?: string;
           stackNetworks?: string;
+          volumesJson?: string;
         }
       | undefined,
     remoteGitMarker?: WeehawkRemoteGitMarkerV1 | null,
@@ -1240,6 +1352,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
     const network = this.resolveUploadNetworks(options, previousConfig);
     const networkMerged = this.ensureTraefikExternalNetwork(network, service);
+    const volumes = this.resolveUploadVolumes(options, previousConfig);
     const traefik = await this.buildTraefikIngressForCompose(service, containerPort);
 
     const preservedRegistry = this.parseConfigHeaderValue(
@@ -1263,6 +1376,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       publishPort,
       replicas,
       envKeys: Object.keys(valuesMap),
+      volumes,
       network: networkMerged,
       traefik,
     });
@@ -1320,6 +1434,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
         publishPort: undefined,
         replicas: 1,
         envKeys: [],
+        volumes: [],
         network: { external: [], stack: [] },
         traefik: undefined,
       });
@@ -1354,6 +1469,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       networksJson?: string;
       externalNetworks?: string;
       stackNetworks?: string;
+      volumesJson?: string;
     },
     userId: number,
   ) {
@@ -1393,6 +1509,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       networksJson?: string;
       externalNetworks?: string;
       stackNetworks?: string;
+      volumesJson?: string;
     },
     userId: number,
   ) {
@@ -1419,6 +1536,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
 
     const network = this.resolveUploadNetworks(options, previousConfig);
     const networkMerged = this.ensureTraefikExternalNetwork(network, service);
+    const volumes = this.resolveUploadVolumes(options, previousConfig);
     const traefik = await this.buildTraefikIngressForCompose(service, containerPort);
 
     service.dockerConfig = this.composeApplicationDockerConfig({
@@ -1433,6 +1551,7 @@ ${traefikLabelsSection}${envSection}${svcNetworkSection}${rootNetworkSection}`;
       publishPort,
       replicas,
       envKeys: Object.keys(valuesMap),
+      volumes,
       network: networkMerged,
       traefik,
     });
@@ -2544,8 +2663,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         const siblings = await this.serviceRepository
           .createQueryBuilder('service')
           .innerJoin('service.project', 'project')
-          .innerJoin('project.user', 'user')
-          .where('user.id = :userId', { userId })
+          .where('project.userId = :userId', { userId })
           .getMany();
         const routeOwnerByName = new Map<string, string>();
         for (const svc of siblings) {

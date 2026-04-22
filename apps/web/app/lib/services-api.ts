@@ -882,6 +882,7 @@ export async function generateApplicationFromSourceApi(
     replicas?: number;
     variables?: Array<{ key: string; value: string }>;
     networks?: { external: string[]; stack: string[] };
+    volumes?: Array<{ source: string; target: string; readOnly?: boolean }>;
   },
 ): Promise<{ service: Service; remoteMirror?: RemoteMirrorPayload }> {
   const body: Record<string, unknown> = {
@@ -900,6 +901,9 @@ export async function generateApplicationFromSourceApi(
     body.externalNetworks = external.join("|");
     body.stackNetworks = stack.join("|");
     body.networksJson = JSON.stringify(options.networks);
+  }
+  if (options.volumes !== undefined) {
+    body.volumesJson = JSON.stringify(options.volumes);
   }
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/generate-from-source`, {
     method: "POST",
@@ -928,6 +932,7 @@ export async function patchApplicationImageDeployApi(
     replicas?: number;
     variables?: Array<{ key: string; value: string }>;
     networks?: { external: string[]; stack: string[] };
+    volumes?: Array<{ source: string; target: string; readOnly?: boolean }>;
   },
 ): Promise<Service> {
   const body: Record<string, unknown> = {
@@ -944,6 +949,9 @@ export async function patchApplicationImageDeployApi(
     body.externalNetworks = external.join("|");
     body.stackNetworks = stack.join("|");
     body.networksJson = JSON.stringify(options.networks);
+  }
+  if (options.volumes !== undefined) {
+    body.volumesJson = JSON.stringify(options.volumes);
   }
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/image`, {
     method: "PATCH",

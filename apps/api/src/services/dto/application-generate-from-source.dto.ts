@@ -62,4 +62,9 @@ export class ApplicationGenerateFromSourceDto {
   @IsOptional()
   @IsString()
   stackNetworks?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  volumesJson?: string;
 }

@@ -94,6 +94,10 @@ export class Webhook {
   @Column({ name: 'notify_message', type: 'text', nullable: true })
   notifyMessage: string | null = null;
 
+  /** Last trigger output (for internal redeploy path where no remote script log file exists). */
+  @Column({ name: 'last_run_output', type: 'text', nullable: true })
+  lastRunOutput: string | null = null;
+
   /**
    * Optional hostname for the on-server webhook agent behind Traefik (e.g. `hooks.example.com`).
    * Requires API `WEEHAWK_WEBHOOK_AGENT_IMAGE` and Swarm + overlay {@code weehawk} on the deploy host.

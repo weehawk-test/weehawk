@@ -57,4 +57,9 @@ export class PatchApplicationImageDeployDto {
   @IsOptional()
   @IsString()
   stackNetworks?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  volumesJson?: string;
 }
