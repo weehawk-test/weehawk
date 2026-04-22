@@ -210,8 +210,9 @@ export class WebhooksService implements OnApplicationBootstrap {
   }
 
   /**
-   * If the service has auto-deploy enabled, resolve clone credentials so the
-   * remote bash script can `git clone` private (and public) repos without the API.
+   * If the service has a linked Git repo, resolve clone credentials so the
+   * remote redeploy script can `git clone` / fetch without the API.
+   * (Independent of {@link Service.autoDeployEnabled}, which only gates provider push webhooks.)
    *
    * - **GitLab**: returns authenticated HTTPS URL (long-lived token embedded).
    * - **GitHub**: returns plain URL + App credentials (appId, installationId, PEM)
@@ -232,11 +233,9 @@ export class WebhooksService implements OnApplicationBootstrap {
     if (!serviceId || serviceId < 1) return null;
     try {
       const svc = await this.servicesService.findOne(serviceId);
-      if (
-        !svc.autoDeployEnabled ||
-        !svc.autoDeployGitProvider ||
-        !svc.autoDeployRepoId
-      ) {
+      // Redeploy webhooks need clone credentials whenever a Git repo is linked, even if push-trigger
+      // auto-deploy is disabled — otherwise on-host Dockerfile/Nixpacks runs never pull fresh source.
+      if (!svc.autoDeployGitProvider || !svc.autoDeployRepoId) {
         return null;
       }
       const provider = svc.autoDeployGitProvider;

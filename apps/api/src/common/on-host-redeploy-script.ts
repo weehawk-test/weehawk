@@ -33,10 +33,11 @@ function dockerBuildEnvLinesForApplicationSwarm(service: Service): string[] {
   const buildPath = parseConfigHeaderValue(raw, 'buildPath') || '.';
   const dockerfilePath = parseConfigHeaderValue(raw, 'dockerfilePath') || 'Dockerfile';
   const bp = buildPath.replace(/^\.\//, '').trim() || '.';
+  const sourceDirNorm = sourceDir.replace(/\\/g, '/');
   const buildCtxRel =
     bp === '.' || bp === ''
-      ? sourceDir.replace(/\\/g, '/')
-      : `${sourceDir.replace(/\\/g, '/')}/${bp}`.replace(/\/+/g, '/');
+      ? sourceDirNorm
+      : `${sourceDirNorm}/${bp}`.replace(/\/+/g, '/');
   const resolvedYaml = raw.replace(/\${APP_NAME}/g, service.appName);
   const imageTag =
     parseConfigHeaderValue(raw, 'registry.pushImage')?.trim() ||
@@ -49,6 +50,8 @@ function dockerBuildEnvLinesForApplicationSwarm(service: Service): string[] {
     bm === 'nixpacks' || bm === 'buildpacks' ? 'nixpacks' : 'dockerfile';
   const lines = [
     `WEEHAWK_DOCKER_ON_HOST=${remoteEnvFileQuote('1')}`,
+    /** Repo root on the host (git clone target); {@link buildCtxRel} may be a subfolder for `docker build`. */
+    `WEEHAWK_SOURCE_DIR_REL=${remoteEnvFileQuote(sourceDirNorm)}`,
     `WEEHAWK_BUILD_CONTEXT_REL=${remoteEnvFileQuote(buildCtxRel)}`,
     `WEEHAWK_DOCKERFILE_REL=${remoteEnvFileQuote(dockerfilePath)}`,
     `WEEHAWK_IMAGE_TAG=${remoteEnvFileQuote(imageTag)}`,
@@ -107,7 +110,8 @@ if [ -n "\$AD_URL" ]; then
     fi
   fi
   echo "=== Auto-deploy: fetching source (branch: \$AD_BRANCH) ==="
-  AD_SRC_REL="\${WEEHAWK_BUILD_CONTEXT_REL:-app-source}"
+  AD_SRC_REL="\${WEEHAWK_SOURCE_DIR_REL:-}"
+  if [ -z "\$AD_SRC_REL" ]; then AD_SRC_REL="\${WEEHAWK_BUILD_CONTEXT_REL:-app-source}"; fi
   AD_TARGET="\$ROOT/\$AD_SRC_REL"
   mkdir -p "\$(dirname "\$AD_TARGET")"
   if ! command -v git >/dev/null 2>&1; then
@@ -207,38 +211,43 @@ if [ "\${WEEHAWK_DOCKER_ON_HOST:-}" = "1" ]; then
   DF_REL="\${WEEHAWK_DOCKERFILE_REL:-Dockerfile}"
   IMG_TAG="\${WEEHAWK_IMAGE_TAG:-}"
   CTX="\$ROOT/\$BUILD_CTX_REL"
-  if [ -n "\$IMG_TAG" ] && [ -d "\$CTX" ]; then
-    if [ "\${WEEHAWK_BUILD_MODE:-dockerfile}" = "nixpacks" ]; then
-      export PATH="\$PATH:\$HOME/.local/bin:/root/.local/bin:/usr/local/bin"
-      if ! command -v nixpacks >/dev/null 2>&1; then
-        echo "ERROR: nixpacks not found — re-run Weehawk Install on this host or install https://nixpacks.com/docs/install" >&2
-        exit 1
-      fi
-      echo "--- nixpacks build on deploy host ---"
-      (
-        cd "\$CTX" || exit 1
-        weehawk_nixpacks_restore_dockerignore() {
-          if [ -f .dockerignore.weehawk-nixpacks-bak ]; then
-            mv -f .dockerignore.weehawk-nixpacks-bak .dockerignore
-          fi
-        }
-        trap weehawk_nixpacks_restore_dockerignore EXIT
-        if [ -f .dockerignore ]; then
-          mv -f .dockerignore .dockerignore.weehawk-nixpacks-bak
-        fi
-        rm -rf .nixpacks
-        _NPV="\${NIXPACKS_NODE_VERSION:-20}"
-        nixpacks build . --name "\$IMG_TAG" --env "NIXPACKS_NODE_VERSION=\$_NPV" --no-cache 2>&1
-      )
-    elif [ -f "\$CTX/\$DF_REL" ]; then
-      echo "--- docker build on deploy host ---"
-      docker build -f "\$CTX/\$DF_REL" -t "\$IMG_TAG" "\$CTX" 2>&1
-    else
-      echo "ERROR: No Dockerfile at \$CTX/\$DF_REL — add a Dockerfile or choose Nixpacks build in Weehawk." >&2
+  if [ -z "\$IMG_TAG" ]; then
+    echo "ERROR: WEEHAWK_IMAGE_TAG is empty — cannot run on-host Dockerfile/Nixpacks build." >&2
+    exit 1
+  fi
+  if [ ! -d "\$CTX" ]; then
+    echo "ERROR: Build context directory missing: \$CTX" >&2
+    echo "Link a Git repo in Weehawk (service → auto-deploy / repo) so redeploy can clone source, or sync app source to this path on the host." >&2
+    exit 1
+  fi
+  if [ "\${WEEHAWK_BUILD_MODE:-dockerfile}" = "nixpacks" ]; then
+    export PATH="\$PATH:\$HOME/.local/bin:/root/.local/bin:/usr/local/bin"
+    if ! command -v nixpacks >/dev/null 2>&1; then
+      echo "ERROR: nixpacks not found — re-run Weehawk Install on this host or install https://nixpacks.com/docs/install" >&2
       exit 1
     fi
+    echo "--- nixpacks build on deploy host ---"
+    (
+      cd "\$CTX" || exit 1
+      weehawk_nixpacks_restore_dockerignore() {
+        if [ -f .dockerignore.weehawk-nixpacks-bak ]; then
+          mv -f .dockerignore.weehawk-nixpacks-bak .dockerignore
+        fi
+      }
+      trap weehawk_nixpacks_restore_dockerignore EXIT
+      if [ -f .dockerignore ]; then
+        mv -f .dockerignore .dockerignore.weehawk-nixpacks-bak
+      fi
+      rm -rf .nixpacks
+      _NPV="\${NIXPACKS_NODE_VERSION:-20}"
+      nixpacks build . --name "\$IMG_TAG" --env "NIXPACKS_NODE_VERSION=\$_NPV" --no-cache 2>&1
+    )
+  elif [ -f "\$CTX/\$DF_REL" ]; then
+    echo "--- docker build on deploy host (no cache, pull base images) ---"
+    docker build --pull --no-cache -f "\$CTX/\$DF_REL" -t "\$IMG_TAG" "\$CTX" 2>&1
   else
-    echo "WARN: Build context missing or WEEHAWK_IMAGE_TAG empty — skipping docker build." >&2
+    echo "ERROR: No Dockerfile at \$CTX/\$DF_REL — add a Dockerfile or choose Nixpacks build in Weehawk." >&2
+    exit 1
   fi
 fi
 echo "--- docker stack deploy ---"
