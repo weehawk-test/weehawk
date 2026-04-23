@@ -39,7 +39,7 @@ function provisionJobKindLabel(kind: ProvisionJobKind | undefined): string {
 
 /** Script preview: wrap long lines — no horizontal scrollbar */
 const scriptPreviewPreClassName =
-  "min-w-0 max-w-full text-[10px] leading-snug font-mono max-h-60 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-zinc-700/60 bg-zinc-950 p-3 text-zinc-200 shadow-inner dark:border-border dark:bg-zinc-950/90 dark:text-zinc-300";
+  "min-w-0 max-w-full text-[10px] leading-snug font-mono max-h-60 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-slate-300 bg-slate-100 p-3 text-slate-800 shadow-inner dark:border-border dark:bg-zinc-950/90 dark:text-zinc-300";
 
 export function RemoteServerInstallBlock({ accessToken, row }: Props) {
   const { toast } = useToast();
@@ -144,7 +144,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
 
   return (
     <>
-      <div className="min-w-0 border-t border-border bg-zinc-100/90 dark:bg-muted/20 px-4 py-2.5 sm:px-5">
+      <div className="min-w-0 border-t border-border bg-slate-100/90 dark:bg-muted/20 px-4 py-2.5 sm:px-5">
         <Popover open={installMenuOpen} onOpenChange={setInstallMenuOpen}>
           <PopoverTrigger asChild>
             <button
@@ -375,12 +375,12 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
       </Dialog>
 
       {jobId && jobQ.data && !jobLogDismissed ? (
-        <div className="min-w-0 border-t border-border bg-zinc-100/80 px-4 py-3 dark:bg-muted/10 sm:px-5">
-          <div className="min-w-0 rounded-lg border border-zinc-700/50 bg-zinc-950 p-3 space-y-2 shadow-inner dark:border-border dark:bg-black/40">
+        <div className="min-w-0 border-t border-border bg-slate-100/80 px-4 py-3 dark:bg-muted/10 sm:px-5">
+          <div className="min-w-0 rounded-lg border border-slate-300 bg-slate-100 p-3 space-y-2 shadow-inner dark:border-border dark:bg-black/40">
             <div className="flex items-start justify-between gap-2 flex-wrap">
-              <p className="text-[11px] font-medium min-w-0 text-zinc-100">
+              <p className="text-[11px] font-medium min-w-0 text-slate-800 dark:text-zinc-100">
                 Job ({provisionJobKindLabel(jobQ.data.jobKind)}):{" "}
-                <span className="font-mono text-[10px] text-zinc-400">{jobId.slice(0, 8)}…</span>
+                <span className="font-mono text-[10px] text-slate-500 dark:text-zinc-400">{jobId.slice(0, 8)}…</span>
               </p>
               <div className="flex items-center gap-1.5 shrink-0">
                 <span
@@ -397,7 +397,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
                 <button
                   type="button"
                   onClick={() => setJobLogDismissed(true)}
-                  className="rounded-md p-1 text-zinc-400 hover:text-zinc-100 hover:bg-white/10"
+                  className="rounded-md p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 dark:text-zinc-400 dark:hover:text-zinc-100 dark:hover:bg-white/10"
                   aria-label="Close log"
                   title="Close log"
                 >
@@ -409,18 +409,18 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
               <p className="text-[11px] text-red-400 whitespace-pre-wrap">{jobQ.data.errorMessage}</p>
             ) : null}
             {jobQ.data.log ? (
-              <pre className="min-w-0 max-w-full text-[10px] font-mono whitespace-pre-wrap break-words max-h-56 overflow-x-hidden overflow-y-auto text-zinc-300 leading-snug">
+              <pre className="min-w-0 max-w-full text-[10px] font-mono whitespace-pre-wrap break-words max-h-56 overflow-x-hidden overflow-y-auto text-slate-700 dark:text-zinc-300 leading-snug">
                 {jobQ.data.log}
               </pre>
             ) : (
-              <p className="text-[11px] text-zinc-400">Waiting for log output…</p>
+              <p className="text-[11px] text-slate-500 dark:text-zinc-400">Waiting for log output…</p>
             )}
           </div>
         </div>
       ) : null}
 
       {jobId && jobQ.data && jobLogDismissed ? (
-        <div className="border-t border-border bg-zinc-100/80 px-4 py-2 dark:bg-muted/10 sm:px-5">
+        <div className="border-t border-border bg-slate-100/80 px-4 py-2 dark:bg-muted/10 sm:px-5">
           <button
             type="button"
             onClick={() => setJobLogDismissed(false)}

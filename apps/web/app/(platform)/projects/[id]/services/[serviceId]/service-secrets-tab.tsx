@@ -16,7 +16,7 @@ function ServiceSecretsTabInner({ remoteServerId }: { remoteServerId: number | n
     return (
       <div className="glass-panel rounded-xl border border-border p-5 text-sm text-muted-foreground space-y-2">
         <p>Choose a deploy remote server on the Remote tab to list Swarm secrets for that host.</p>
-        <p className="text-xs">Secrets are read over SSH on the server where stacks run, not on the Weehawk API machine.</p>
+        <p className="text-xs">Secrets are read over SSH directly on the server where stacks run.</p>
       </div>
     );
   }

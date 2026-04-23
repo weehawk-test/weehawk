@@ -24,6 +24,17 @@ function applyThemeClass(theme: Theme) {
   root.classList.toggle("dark", theme === "dark");
 }
 
+function applyThemeWithoutMotion(theme: Theme) {
+  const root = document.documentElement;
+  root.classList.add("theme-switching");
+  applyThemeClass(theme);
+  // Force style recalculation while transitions are disabled.
+  void root.offsetHeight;
+  window.setTimeout(() => {
+    root.classList.remove("theme-switching");
+  }, 120);
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     if (typeof document !== "undefined") {
@@ -43,14 +54,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
             ? "dark"
             : "light";
     setThemeState(nextTheme);
-    applyThemeClass(nextTheme);
+    applyThemeWithoutMotion(nextTheme);
     persistTheme(nextTheme);
   }, []);
 
   const setTheme = (nextTheme: Theme) => {
     setThemeState(nextTheme);
     persistTheme(nextTheme);
-    applyThemeClass(nextTheme);
+    applyThemeWithoutMotion(nextTheme);
   };
 
   const value = useMemo<ThemeContextValue>(

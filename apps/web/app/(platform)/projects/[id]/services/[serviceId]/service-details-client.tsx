@@ -1073,10 +1073,12 @@ export default function ServiceDetails({
       variant: "destructive",
     });
     if (!ok) return;
+    router.replace(`/projects/${projectId}`);
+    toast({ title: "Deleting service...", description: "The service is being removed." });
     deleteService.mutate(service.id, {
       onSuccess: () => {
         toast({ title: "Service Deleted" });
-        router.push(`/projects/${projectId}`);
+        router.refresh();
       },
       onError: (e: Error) =>
         toast({ title: "Could not delete service", description: e.message, variant: "destructive" }),
@@ -1556,7 +1558,7 @@ export default function ServiceDetails({
                     </div>
                     <div
                       ref={liveLogScrollRef}
-                      className="min-h-[200px] flex-1 overflow-auto bg-zinc-950 px-3 py-4 sm:px-5"
+                      className="min-h-[200px] flex-1 overflow-auto bg-slate-100 dark:bg-zinc-950 px-3 py-4 sm:px-5"
                     >
                       {isDatabaseService && !hasDatabaseCompose ? (
                         <p className="text-sm text-muted-foreground text-center py-16 px-4 leading-relaxed max-w-md mx-auto">
@@ -1565,7 +1567,7 @@ export default function ServiceDetails({
                       ) : liveLogError ? (
                         <div className="text-sm text-destructive whitespace-pre-wrap">{liveLogError}</div>
                       ) : deploy.isPending && deployStreamText ? (
-                        <pre className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                        <pre className="text-xs font-mono text-slate-800 dark:text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
                           {deployStreamText}
                         </pre>
                       ) : deploy.isPending ? (
@@ -1586,7 +1588,7 @@ export default function ServiceDetails({
                           </p>
                         </div>
                       ) : (
-                        <pre className="text-xs font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                        <pre className="text-xs font-mono text-slate-800 dark:text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
                           {liveLogText}
                         </pre>
                       )}
@@ -1619,7 +1621,7 @@ export default function ServiceDetails({
                     </div>
                     <div
                       ref={deployLogScrollRef}
-                      className="min-h-[200px] flex-1 overflow-auto bg-zinc-950 px-3 py-4 sm:px-5"
+                      className="min-h-[200px] flex-1 overflow-auto bg-slate-100 dark:bg-zinc-950 px-3 py-4 sm:px-5"
                     >
                       {deploy.isPending && deployStreamText ? (
                         <>
@@ -1627,7 +1629,7 @@ export default function ServiceDetails({
                             <span className="text-xs font-medium text-muted-foreground">Status</span>
                             <span className="text-xs text-amber-500/95">Running…</span>
                           </div>
-                          <pre className="text-[11px] font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                          <pre className="text-[11px] font-mono text-slate-800 dark:text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
                             {deployStreamText}
                           </pre>
                         </>
@@ -1660,7 +1662,7 @@ export default function ServiceDetails({
                               ) : null}
                             </span>
                           </div>
-                          <pre className="text-[11px] font-mono text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
+                          <pre className="text-[11px] font-mono text-slate-800 dark:text-zinc-200 whitespace-pre-wrap break-all leading-relaxed min-h-[4rem]">
                             {getDeployLogText(deployLogQuery.data[0]).trim() || "—"}
                           </pre>
                         </>
@@ -2106,50 +2108,51 @@ function ServiceBackupPanel({
 
   if (isDatabaseService) {
     return (
-      <div className="glass-panel mx-auto max-w-3xl rounded-xl border border-border/60 p-5 text-center sm:p-8 md:p-14">
-        <div className="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <Database className="w-12 h-12 text-muted-foreground/80" />
-            <div className="text-left">
-              <h2 className="text-lg font-semibold tracking-tight mb-1">Database backup &amp; restore</h2>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Back up or restore from S3. Compose targets come from your stack; export format only on Backup to S3.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 flex justify-center md:justify-start">
-          <BackupImportModeToggle
-            value={dbBackupTab}
-            onChange={setDbBackupTab}
-            disabled={saving || importDbSaving}
-            backupLabel="Backup to S3"
-            importLabel="Import from S3"
-          />
-        </div>
-
-        <div className="mt-8 space-y-4 text-left">
-          <div className="rounded-lg border border-border/50 bg-muted/20 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Database type</p>
-              {engineMeta ? (
-                <p className="text-sm font-medium mt-0.5">{engineMeta.name}</p>
-              ) : (
-                <p className="text-xs text-amber-400/90 mt-0.5">
-                  Add <code className="text-[11px] bg-muted px-1 rounded"># engine: …</code> to your compose so we can
-                  detect the engine.
+      <div className="glass-panel w-full min-w-0 rounded-2xl border border-border/60 p-5 text-left sm:p-8 md:p-10">
+        <div className="max-w-3xl">
+          <div className="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-start">
+            <div className="flex items-center gap-3">
+              <Database className="w-12 h-12 text-muted-foreground/80" />
+              <div className="text-left">
+                <h2 className="text-lg font-semibold tracking-tight mb-1">Database backup &amp; restore</h2>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Back up or restore from S3. Compose targets come from your stack; export format only on Backup to S3.
                 </p>
-              )}
-            </div>
-            {engineMeta?.logoSrc ? (
-              <div className="relative h-10 w-10 shrink-0 opacity-90">
-                <Image src={engineMeta.logoSrc} alt="" fill className={`object-contain ${databaseLogoSizeClass(engineMeta.id)}`} sizes="40px" />
               </div>
-            ) : null}
+            </div>
           </div>
 
-          {dbBackupTab === "backup" ? (
+          <div className="mt-6 flex justify-start">
+            <BackupImportModeToggle
+              value={dbBackupTab}
+              onChange={setDbBackupTab}
+              disabled={saving || importDbSaving}
+              backupLabel="Backup to S3"
+              importLabel="Import from S3"
+            />
+          </div>
+
+          <div className="mt-8 space-y-4 text-left">
+            <div className="rounded-lg border border-border/50 bg-muted/20 px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Database type</p>
+                {engineMeta ? (
+                  <p className="text-sm font-medium mt-0.5">{engineMeta.name}</p>
+                ) : (
+                  <p className="text-xs text-amber-400/90 mt-0.5">
+                    Add <code className="text-[11px] bg-muted px-1 rounded"># engine: …</code> to your compose so we can
+                    detect the engine.
+                  </p>
+                )}
+              </div>
+              {engineMeta?.logoSrc ? (
+                <div className="relative h-10 w-10 shrink-0 opacity-90">
+                  <Image src={engineMeta.logoSrc} alt="" fill className={`object-contain ${databaseLogoSizeClass(engineMeta.id)}`} sizes="40px" />
+                </div>
+              ) : null}
+            </div>
+
+            {dbBackupTab === "backup" ? (
             <>
               <div className="space-y-3">
                 <DatabaseBackupFormFields
@@ -2237,29 +2240,30 @@ function ServiceBackupPanel({
                 </pre>
               ) : null}
             </div>
-          )}
+            )}
 
-          <S3ImportObjectPicker
-            open={importDbPickerOpen}
-            onOpenChange={(next) => {
-              if (!next) clearS3ImportQuery();
-            }}
-            defaultProfileName={backupS3ProfileName}
-            initialProfiles={initialS3Profiles}
-            importPickerMode="db"
-            ssr={
-              s3ImportSsr?.mode === "db"
-                ? {
-                    profileName: s3ImportSsr.profileName,
-                    prefix: s3ImportSsr.prefix,
-                    initialList: s3ImportSsr.initialList,
-                  }
-                : null
-            }
-            title="Choose database dump"
-            description="Browse your bucket and select one file compatible with this database service."
-            onPick={(p) => setImportDbS3(p)}
-          />
+            <S3ImportObjectPicker
+              open={importDbPickerOpen}
+              onOpenChange={(next) => {
+                if (!next) clearS3ImportQuery();
+              }}
+              defaultProfileName={backupS3ProfileName}
+              initialProfiles={initialS3Profiles}
+              importPickerMode="db"
+              ssr={
+                s3ImportSsr?.mode === "db"
+                  ? {
+                      profileName: s3ImportSsr.profileName,
+                      prefix: s3ImportSsr.prefix,
+                      initialList: s3ImportSsr.initialList,
+                    }
+                  : null
+              }
+              title="Choose database dump"
+              description="Browse your bucket and select one file compatible with this database service."
+              onPick={(p) => setImportDbS3(p)}
+            />
+          </div>
         </div>
       </div>
     );
@@ -2304,7 +2308,7 @@ function ServiceBackupPanel({
               <span>Could not load volumes. Check the service configuration and try again.</span>
             </div>
           ) : volumesQuery.data?.error ? (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200/90 flex gap-2 items-start">
+            <div className="rounded-lg border border-sky-400/35 bg-sky-50 px-3 py-2 text-xs text-sky-900 dark:border-amber-500/30 dark:bg-amber-500/5 dark:text-amber-200/90 flex gap-2 items-start">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span className="whitespace-pre-wrap">{volumesQuery.data.error}</span>
             </div>
@@ -4119,14 +4123,14 @@ function ApplicationArchivePanel({
       <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
         {!hasDeployHost && (
           <div
-            className="sm:col-span-2 rounded-lg border border-amber-500/45 bg-amber-500/[0.12] dark:bg-amber-950/35 px-3 py-2.5 text-[11px] leading-snug text-amber-950 dark:text-amber-100/95"
+            className="sm:col-span-2 rounded-lg border border-sky-400/40 bg-sky-50 dark:border-amber-500/45 dark:bg-amber-950/35 px-3 py-2.5 text-[11px] leading-snug text-sky-900 dark:text-amber-100/95"
             role="status"
           >
             <span className="font-semibold">Select a deploy host first.</span>{" "}
             Open the{" "}
             <button
               type="button"
-              className="underline font-medium text-amber-900 dark:text-amber-50"
+              className="underline font-medium text-sky-900 dark:text-amber-50"
               onClick={() => onNavigateToRemoteDeployHost()}
             >
               Remote

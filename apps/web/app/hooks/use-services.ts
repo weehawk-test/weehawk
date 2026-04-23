@@ -197,6 +197,55 @@ export function useDeleteService() {
   const { user } = useAuth();
   return useMutation({
     mutationFn: (id: string) => deleteServiceApi(id),
+    onMutate: async (id) => {
+      const matchId = String(id);
+      const previousServicesQueries = qc.getQueriesData<ServicesPageResponse | Service[]>({
+        queryKey: ["services"],
+      });
+
+      for (const [queryKey, cached] of previousServicesQueries) {
+        if (Array.isArray(cached)) {
+          qc.setQueryData<Service[]>(
+            queryKey,
+            cached.filter((item) => String(item.id) !== matchId && String(item.publicId ?? "") !== matchId),
+          );
+          continue;
+        }
+        if (cached && Array.isArray(cached.data)) {
+          const removedCount = cached.data.filter(
+            (item) => String(item.id) === matchId || String(item.publicId ?? "") === matchId,
+          ).length;
+          if (removedCount > 0) {
+            qc.setQueryData<ServicesPageResponse>(queryKey, {
+              ...cached,
+              data: cached.data.filter(
+                (item) => String(item.id) !== matchId && String(item.publicId ?? "") !== matchId,
+              ),
+              total: Math.max(0, cached.total - removedCount),
+            });
+          }
+        }
+      }
+
+      const previousServiceQueries = qc.getQueriesData<Service>({ queryKey: ["service"] });
+      for (const [queryKey, cached] of previousServiceQueries) {
+        if (!cached) continue;
+        if (String(cached.id) === matchId || String(cached.publicId ?? "") === matchId) {
+          qc.setQueryData(queryKey, null);
+        }
+      }
+
+      return { previousServicesQueries, previousServiceQueries };
+    },
+    onError: (_error, _id, context) => {
+      if (!context) return;
+      for (const [queryKey, data] of context.previousServicesQueries) {
+        qc.setQueryData(queryKey, data);
+      }
+      for (const [queryKey, data] of context.previousServiceQueries) {
+        qc.setQueryData(queryKey, data);
+      }
+    },
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["services"] });
       void invalidateServiceScopedQueries(qc, String(id), user?.userId ?? "none");

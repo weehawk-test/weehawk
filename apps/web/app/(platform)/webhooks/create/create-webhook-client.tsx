@@ -278,11 +278,11 @@ export function CreateWebhookClient({
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
-                  <div className="relative overflow-hidden rounded-xl border border-border bg-zinc-900 dark:bg-black">
+                  <div className="relative overflow-hidden rounded-xl border border-border bg-slate-100 dark:bg-black">
                     <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>
                       <div
                         ref={scriptLineNumbersRef}
-                        className="h-full w-12 shrink-0 overflow-hidden border-r border-zinc-800 dark:border-neutral-900 bg-black px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
+                        className="h-full w-12 shrink-0 overflow-hidden border-r border-slate-300 dark:border-neutral-900 bg-slate-200 dark:bg-black px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
                       >
                         {Array.from({ length: scriptLines }, (_, i) => (
                           <div key={`ln-${i}`} className="leading-6">
@@ -290,7 +290,7 @@ export function CreateWebhookClient({
                           </div>
                         ))}
                       </div>
-                      <div className="relative min-h-0 flex-1 bg-zinc-800 dark:bg-black">
+                      <div className="relative min-h-0 flex-1 bg-slate-100 dark:bg-black">
                         <pre
                           ref={scriptHighlightRef}
                           aria-hidden="true"
@@ -299,7 +299,7 @@ export function CreateWebhookClient({
                           {renderHighlightedScript(bashScript)}
                         </pre>
                         <textarea
-                          className="relative z-10 h-full w-full resize-none bg-transparent p-3 font-mono text-sm leading-6 text-transparent caret-white placeholder:text-slate-400/80 selection:text-white selection:bg-primary/45 focus:outline-none"
+                          className="relative z-10 h-full w-full resize-none bg-transparent p-3 font-mono text-sm leading-6 text-transparent caret-slate-900 dark:caret-white placeholder:text-slate-500/90 dark:placeholder:text-slate-400/80 selection:text-white selection:bg-primary/45 focus:outline-none"
                           value={bashScript}
                           onChange={(e) => setBashScript(e.target.value)}
                           onScroll={(e) => {
@@ -322,11 +322,11 @@ echo "Webhook done"`}
                     <button
                       type="button"
                       onMouseDown={handleScriptResizeStart}
-                      className="h-6 w-full border-t border-zinc-800 dark:border-neutral-900 bg-black dark:bg-black hover:bg-zinc-950 dark:hover:bg-black cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
+                      className="h-6 w-full border-t border-slate-300 dark:border-neutral-900 bg-slate-200 dark:bg-black hover:bg-slate-300 dark:hover:bg-black cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
                       aria-label="Resize script editor"
                       title="Drag to resize"
                     >
-                      <span className="inline-flex items-center rounded-full border border-white/15 bg-white/5 p-1 text-white/70">
+                      <span className="inline-flex items-center rounded-full border border-slate-400/50 bg-white/70 text-slate-600 dark:border-white/15 dark:bg-white/5 dark:text-white/70 p-1">
                         <ChevronsUpDown className="h-3 w-3" />
                       </span>
                     </button>

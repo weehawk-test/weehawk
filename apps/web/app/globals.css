@@ -36,33 +36,33 @@
   /** Synced with sidebar expand/collapse (see `SidebarLayoutProvider`). */
   --app-sidebar-width: 16rem;
 
-  --background: 0 0% 98%;
-  --foreground: 240 10% 10%;
+  --background: 210 40% 98%;
+  --foreground: 224 28% 14%;
 
   --card: 0 0% 100%;
-  --card-foreground: 240 10% 10%;
+  --card-foreground: 224 28% 14%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 10%;
+  --popover-foreground: 224 28% 14%;
 
-  --primary: 240 6% 10%;
-  --primary-foreground: 0 0% 98%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 240 5% 96%;
-  --secondary-foreground: 240 6% 15%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 35% 20%;
 
-  --muted: 240 5% 94%;
-  --muted-foreground: 240 4% 42%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 42%;
 
-  --accent: 240 5% 92%;
-  --accent-foreground: 240 6% 15%;
+  --accent: 214 80% 94%;
+  --accent-foreground: 222 47% 18%;
 
-  --destructive: 0 72% 50%;
+  --destructive: 0 78% 56%;
   --destructive-foreground: 0 0% 98%;
 
-  --border: 240 6% 88%;
-  --input: 240 6% 88%;
-  --ring: 240 6% 35%;
+  --border: 214 28% 88%;
+  --input: 214 28% 88%;
+  --ring: 221 83% 53%;
 
   --radius: 0.75rem;
 }
@@ -103,6 +103,14 @@ html {
 
 html.dark {
   color-scheme: dark;
+}
+
+/* Prevent global transition/animation jitter while toggling dark/light mode. */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+  animation: none !important;
 }
 
 @layer base {
@@ -328,11 +336,11 @@ html.dark {
 
   /** Full-screen overlays: lighter scrim in light mode */
   .modal-scrim {
-    @apply bg-black/35 backdrop-blur-sm dark:bg-black/60;
+    @apply bg-slate-900/20 backdrop-blur-sm dark:bg-black/60;
   }
 
   .glass-panel {
-    @apply bg-card/85 backdrop-blur-md border border-border shadow-lg dark:border-white/5 dark:shadow-black/40;
+    @apply bg-card/90 backdrop-blur-md border border-border/80 shadow-[0_8px_30px_rgba(15,23,42,0.08)] dark:border-white/5 dark:shadow-black/40;
   }
   .interactive-card {
     @apply transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10 hover:border-primary/30;

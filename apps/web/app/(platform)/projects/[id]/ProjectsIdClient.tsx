@@ -828,11 +828,11 @@ export default function ProjectsIdClient({
       variant: "destructive",
     });
     if (!ok) return;
+    toast({ title: "Deleting service...", description: `"${name}" is being removed.` });
 
     deleteService.mutate(serviceId, {
       onSuccess: () => {
         toast({ title: "Service Deleted", description: `"${name}" removed.` });
-        router.refresh();
       },
       onError: (e: Error) =>
         toast({ title: "Could not delete service", description: e.message, variant: "destructive" }),
@@ -851,19 +851,22 @@ export default function ProjectsIdClient({
     if (!ok) return;
 
     setIsBulkDeleting(true);
+    toast({
+      title: "Services deleted",
+      description: `${ids.length} service(s) removed.`,
+    });
     try {
       const results = await Promise.allSettled(ids.map((id) => deleteService.mutateAsync(id)));
       const removed = results.filter((r) => r.status === "fulfilled").length;
       const fail = results.length - removed;
       servicesBulk.clear();
-      if (removed > 0) router.refresh();
-      toast({
-        title: fail ? "Some services could not be deleted" : "Services deleted",
-        description: fail
-          ? `${removed} removed, ${fail} failed.`
-          : `${removed} service(s) removed.`,
-        variant: fail ? "destructive" : "default",
-      });
+      if (fail > 0) {
+        toast({
+          title: "Some services could not be deleted",
+          description: `${removed} removed, ${fail} failed.`,
+          variant: "destructive",
+        });
+      }
     } catch (e) {
       toast({
         title: "Could not delete selected services",

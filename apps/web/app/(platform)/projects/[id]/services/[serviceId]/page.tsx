@@ -16,6 +16,7 @@ import { redirect } from "next/navigation";
 
 const SSR_SECRETS_TIMEOUT_MS = 1_500;
 const SSR_S3_TIMEOUT_MS = 1_500;
+const SSR_RUNTIME_TIMEOUT_MS = 250;
 
 async function withSsrTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   try {
@@ -46,7 +47,9 @@ export default async function ServiceDetailsPage({
   const [projectResult, serviceResult, runtimeResult] = await Promise.all([
     safeProjectId ? fetchProjectSSR(safeProjectId) : Promise.resolve(null),
     safeServiceId ? fetchServiceSSR(safeServiceId) : Promise.resolve(null),
-    safeServiceId ? fetchServiceRuntimeSSR(safeServiceId) : Promise.resolve(null),
+    safeServiceId
+      ? withSsrTimeout(fetchServiceRuntimeSSR(safeServiceId), SSR_RUNTIME_TIMEOUT_MS, null)
+      : Promise.resolve(null),
   ]);
   initialProject = projectResult;
   initialService = serviceResult;

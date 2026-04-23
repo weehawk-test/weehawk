@@ -309,7 +309,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
 
       {filtered.length === 0 ? (
         <div className="glass-panel backdrop-blur-none p-12 rounded-2xl flex flex-col items-center justify-center text-center">
-          <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-6">
+          <div className="w-20 h-20 bg-slate-100 dark:bg-white/5 rounded-full flex items-center justify-center mb-6">
             <Clock3 className="w-10 h-10 text-muted-foreground" />
           </div>
           <h3 className="text-xl font-bold mb-2">No cron jobs yet</h3>
@@ -334,8 +334,8 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                 isProvisioning
                   ? "border-sky-300/70 shadow-[0_0_0_1px_rgba(125,211,252,0.5),0_0_20px_rgba(56,189,248,0.3),inset_0_0_16px_rgba(56,189,248,0.15)]"
                   : !j.isActive
-                    ? "border-zinc-800/70 dark:border-zinc-950/95 bg-black/60 dark:bg-black/80 saturate-[0.82] shadow-[inset_0_0_48px_rgba(0,0,0,0.65),inset_0_1px_0_0_rgba(255,255,255,0.04)] hover:border-zinc-700/80"
-                    : "border-white/10 hover:border-primary/30"
+                    ? "border-slate-300 bg-slate-100/95 dark:border-zinc-950/95 dark:bg-black/80 saturate-[0.9] dark:shadow-[inset_0_0_48px_rgba(0,0,0,0.65),inset_0_1px_0_0_rgba(255,255,255,0.04)] hover:border-slate-400 dark:hover:border-zinc-700/80"
+                    : "border-slate-200 hover:border-primary/35"
               }`}
             >
                 {isProvisioning ? (
@@ -351,7 +351,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                       className={`p-2 rounded-lg flex-shrink-0 border ${
                         j.isActive
                           ? "bg-primary/10 text-primary border-primary/20"
-                          : "bg-zinc-950/90 text-zinc-500 border-white/[0.06] dark:bg-black dark:text-zinc-500"
+                          : "bg-slate-200 text-slate-600 border-slate-300 dark:bg-black dark:text-zinc-500 dark:border-white/[0.06]"
                       }`}
                     >
                       <Clock3 className="w-5 h-5" />
@@ -415,10 +415,10 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                 <div
                   className={`rounded-lg border px-3 py-2.5 ${
                     isProvisioning
-                      ? "border-white/5 bg-black/10 opacity-45 pointer-events-none select-none"
+                      ? "border-slate-200 bg-slate-100 opacity-55 pointer-events-none select-none dark:border-white/5 dark:bg-black/10"
                       : !j.isActive
-                        ? "border-white/[0.05] bg-black/55 dark:bg-black/70 shadow-[inset_0_1px_8px_rgba(0,0,0,0.4)]"
-                        : "border-white/10 bg-black/20"
+                        ? "border-slate-300 bg-slate-200/90 dark:border-white/[0.05] dark:bg-black/70 dark:shadow-[inset_0_1px_8px_rgba(0,0,0,0.4)]"
+                        : "border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-black/20"
                   }`}
                 >
                   <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -458,7 +458,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                   </div>
                   <p
                     className={`text-xs truncate font-mono ${
-                      !isProvisioning && !j.isActive ? "text-foreground/55" : "text-foreground/90"
+                      !isProvisioning && !j.isActive ? "text-foreground/60" : "text-foreground/90"
                     }`}
                     title={j.cronExpression}
                   >
@@ -469,8 +469,8 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                 <div
                   className={`mt-auto pt-4 border-t flex items-center justify-between text-xs ${
                     !isProvisioning && !j.isActive
-                      ? "border-white/[0.04] text-muted-foreground/70"
-                      : "border-white/5 text-muted-foreground"
+                      ? "border-slate-200 text-muted-foreground/80 dark:border-white/[0.04] dark:text-muted-foreground/70"
+                      : "border-slate-200 text-muted-foreground dark:border-white/5"
                   }`}
                 >
                   <div className="flex items-center gap-1">
@@ -537,14 +537,14 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                   <button
                     type="button"
                     onClick={() => setOpenLogCronJobId(null)}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-slate-100 dark:hover:bg-white/10 hover:text-foreground"
                     aria-label="Close logs"
                   >
                     <X className="h-4 w-4" />
                   </button>
                 </div>
               </div>
-              <pre className="h-[52dvh] min-h-[220px] w-full max-h-[60dvh] overflow-auto rounded-lg border border-border/50 bg-zinc-950 px-3 py-2 font-mono text-xs text-foreground whitespace-pre-wrap break-all sm:h-[62vh] sm:max-h-none sm:min-h-[360px]">
+              <pre className="h-[52dvh] min-h-[220px] w-full max-h-[60dvh] overflow-auto rounded-lg border border-border/50 bg-slate-100 text-slate-900 dark:bg-zinc-950 dark:text-foreground px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all sm:h-[62vh] sm:max-h-none sm:min-h-[360px]">
                 {(() => {
                   const current = logTextByCronJobId[openLogCronJobId] ?? "";
                   if (

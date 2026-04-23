@@ -334,11 +334,14 @@ export function RemoteServerSettingsClient({
       await import("@xterm/xterm/css/xterm.css");
       if (disposed) return;
 
+      const isDark = document.documentElement.classList.contains("dark");
       const t = new XTerm({
         cursorBlink: true,
         fontSize: 13,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-        theme: { background: "#09090b", foreground: "#e4e4e7" },
+        theme: isDark
+          ? { background: "#09090b", foreground: "#e4e4e7" }
+          : { background: "#f8fafc", foreground: "#0f172a" },
       });
       const fa = new FitAddon();
       t.loadAddon(fa);
@@ -1064,7 +1067,7 @@ export function RemoteServerSettingsClient({
                     onClick={() => {
                       setTerminalModalRow(null);
                     }}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-slate-100 dark:hover:bg-white/10 hover:text-foreground"
                     aria-label="Close terminal dialog"
                   >
                     <X className="size-4" />
@@ -1085,7 +1088,7 @@ export function RemoteServerSettingsClient({
                   )}
                   <div
                     ref={terminalContainerRef}
-                    className="h-[52dvh] min-h-[220px] w-full max-h-[60dvh] rounded-lg border border-border/50 bg-zinc-950 overflow-hidden sm:h-[62vh] sm:max-h-none sm:min-h-[360px]"
+                    className="h-[52dvh] min-h-[220px] w-full max-h-[60dvh] rounded-lg border border-border/50 bg-slate-100 dark:bg-zinc-950 overflow-hidden sm:h-[62vh] sm:max-h-none sm:min-h-[360px]"
                   />
                 </div>
               </div>

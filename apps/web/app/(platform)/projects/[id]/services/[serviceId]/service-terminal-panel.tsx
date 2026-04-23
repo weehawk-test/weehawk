@@ -59,14 +59,20 @@ export function ServiceTerminalPanel({ serviceId }: Props) {
 
       if (disposed) return;
 
+      const isDark = document.documentElement.classList.contains("dark");
       const t = new TerminalClass({
         cursorBlink: true,
         fontSize: 13,
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-        theme: {
-          background: "#09090b",
-          foreground: "#e4e4e7",
-        },
+        theme: isDark
+          ? {
+              background: "#09090b",
+              foreground: "#e4e4e7",
+            }
+          : {
+              background: "#f8fafc",
+              foreground: "#0f172a",
+            },
       });
       const fa = new FitAddon();
       t.loadAddon(fa);
@@ -172,7 +178,7 @@ export function ServiceTerminalPanel({ serviceId }: Props) {
             Connecting…
           </div>
         )}
-        <div ref={containerRef} className="flex-1 min-h-[280px] w-full rounded-lg overflow-hidden border border-border/50 bg-zinc-950" />
+        <div ref={containerRef} className="flex-1 min-h-[280px] w-full rounded-lg overflow-hidden border border-border/50 bg-slate-100 dark:bg-zinc-950" />
       </div>
     </div>
   );
