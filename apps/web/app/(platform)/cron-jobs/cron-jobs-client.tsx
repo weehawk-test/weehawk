@@ -78,13 +78,13 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
       .filter((v) => Number.isFinite(v) && v > 0);
     if (ids.length === 0) return;
     setProvisioningCronJobIds((prev) => Array.from(new Set([...prev, ...ids])));
-    window.setTimeout(() => {
+    setTimeout(() => {
       const sp = new URLSearchParams(searchParams.toString());
       sp.delete("provisioning");
       const q = sp.toString();
       router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
     }, 0);
-    const timer = window.setTimeout(() => {
+    const timer = setTimeout(() => {
       setProvisioningCronJobIds((prev) => prev.filter((id) => !ids.includes(id)));
     }, 15000);
     provisioningClearTimersRef.current.push(timer);

@@ -4431,7 +4431,7 @@ function ApplicationArchivePanel({
                               }}
                               className={`inline-flex items-center justify-center gap-1 text-[10px] !py-1 !px-2.5 shrink-0 rounded-md font-medium transition-colors ${
                                 isAdActive
-                                  ? "border border-amber-500/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+                                  ? "border border-amber-500/45 bg-amber-500/18 text-amber-800 hover:bg-amber-500/28 dark:text-amber-200"
                                   : "btn-secondary"
                               }`}
                             >
@@ -4569,7 +4569,7 @@ function ApplicationArchivePanel({
                       onClick={() => void onGithubFetchManualUrl()}
                       className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors ${
                         githubManualUrlStaged && !githubUrlStaging
-                          ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                          ? "border border-emerald-500/45 bg-emerald-500/18 text-emerald-800 hover:bg-emerald-500/28 dark:text-emerald-200"
                           : "btn-primary !py-0"
                       }`}
                     >
@@ -4816,7 +4816,7 @@ function ApplicationArchivePanel({
                             }}
                             className={`inline-flex items-center justify-center gap-1 text-[10px] !py-1 !px-2.5 shrink-0 rounded-md font-medium transition-colors ${
                               isAdActive
-                                ? "border border-amber-500/45 bg-amber-500/15 text-amber-200 hover:bg-amber-500/25"
+                                ? "border border-amber-500/45 bg-amber-500/18 text-amber-800 hover:bg-amber-500/28 dark:text-amber-200"
                                 : "btn-secondary"
                             }`}
                           >
@@ -4952,7 +4952,7 @@ function ApplicationArchivePanel({
                       onClick={() => void onGitlabFetchManualUrl()}
                       className={`inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg px-4 text-xs font-semibold transition-colors ${
                         gitlabManualUrlStaged && !gitlabUrlStaging
-                          ? "border border-emerald-500/45 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                          ? "border border-emerald-500/45 bg-emerald-500/18 text-emerald-800 hover:bg-emerald-500/28 dark:text-emerald-200"
                           : "btn-primary !py-0"
                       }`}
                     >

@@ -7,6 +7,7 @@ import type { S3ProfilePublic, S3BucketListResponse, S3PrefixSummaryResponse } f
 import type { RemoteServerRow } from "./remote-servers-api";
 import type { TraefikSettingsPayload } from "./traefik-api";
 import type { PaginatedSecretsResponse } from "./docker-paged-fetch";
+import type { GitSettingsPublic } from "./git-api";
 import {
   mapApiServiceToService,
   parseServicesPageResponse,
@@ -264,6 +265,16 @@ export async function fetchTraefikSettingsSSR(): Promise<TraefikSettingsPayload 
   });
   if (!res.ok) return null;
   return (await res.json()) as TraefikSettingsPayload;
+}
+
+/** Server-only: Git provider settings for Git/GitHub/GitLab screens. */
+export async function fetchGitSettingsSSR(): Promise<GitSettingsPublic | null> {
+  const res = await fetch(`${apiBase()}/api/git/settings`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as GitSettingsPublic;
 }
 
 /** Server-only: bucket listing at root prefix (no client Network tab on first paint). */

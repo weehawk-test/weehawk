@@ -65,13 +65,13 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
       .filter((v) => Number.isFinite(v) && v > 0);
     if (ids.length === 0) return;
     setProvisioningWebhookIds((prev) => Array.from(new Set([...prev, ...ids])));
-    window.setTimeout(() => {
+    setTimeout(() => {
       const sp = new URLSearchParams(searchParams.toString());
       sp.delete("provisioning");
       const q = sp.toString();
       router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
     }, 0);
-    const timer = window.setTimeout(() => {
+    const timer = setTimeout(() => {
       setProvisioningWebhookIds((prev) => prev.filter((id) => !ids.includes(id)));
     }, 15000);
     provisioningClearTimersRef.current.push(timer);

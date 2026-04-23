@@ -456,7 +456,7 @@ function CreateServiceModal({
               {isDockerAdvancedType && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">Mode:</span>
-                  <span className="text-xs font-medium text-zinc-300 border border-zinc-500/30 rounded-full px-2.5 py-0.5 bg-zinc-500/10">
+                  <span className="text-xs font-medium text-zinc-700 border border-zinc-400/50 rounded-full px-2.5 py-0.5 bg-zinc-200/60 dark:text-zinc-300 dark:border-zinc-500/30 dark:bg-zinc-500/10">
                     {type === "stack" ? "Docker Stack" : "Docker Compose"}
                   </span>
                   <button
