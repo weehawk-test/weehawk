@@ -276,7 +276,8 @@ export class ExecutorService {
             .access(sourceRoot)
             .then(() => true)
             .catch(() => false);
-          if (deployMode !== 'image' && sourceRootExists) {
+          /* Start (`execute(..., 'reload')` from startContainers) must not rebuild — only reapply the stack. */
+          if (mode !== 'reload' && deployMode !== 'image' && sourceRootExists) {
             const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
             const buildBase = await this.getBaseProcessEnvForService(service);
             const projectUserId: number | null = null;
@@ -453,7 +454,7 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
               }
             }
           }
-          if (deployMode !== 'image' && !sourceRootExists) {
+          if (mode !== 'reload' && deployMode !== 'image' && !sourceRootExists) {
             const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
             const remoteDeployId = sshIds.remoteServerId;
             if (remoteDeployId == null) {
