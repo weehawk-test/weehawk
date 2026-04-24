@@ -559,14 +559,8 @@ export function RemoteServerSettingsClient({
                           {row.serverRole === "build" ? "Build" : "Deploy"}
                         </span>
                         {row.authMode !== "stored" ? (
-                          <span
-                            className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border ${
-                              row.authMode === "file"
-                                ? "border-zinc-500/30 text-zinc-400 bg-zinc-500/10"
-                                : "border-amber-500/30 text-amber-400/90 bg-amber-500/10"
-                            }`}
-                          >
-                            {row.authMode === "file" ? "Legacy file" : "No key"}
+                          <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-amber-500/30 text-amber-400/90 bg-amber-500/10">
+                            No key
                           </span>
                         ) : null}
                       </div>
@@ -574,11 +568,6 @@ export function RemoteServerSettingsClient({
                         {row.sshUser}@{row.host}
                         {row.port !== 22 ? `:${row.port}` : ""}
                       </p>
-                      {row.authMode === "file" && row.privateKeyPath ? (
-                        <p className="text-[11px] text-zinc-500 font-mono mt-1 break-all">
-                          {row.privateKeyPath}
-                        </p>
-                      ) : null}
                     </div>
                     <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
                       {row.hasPrivateKey ? (
@@ -942,13 +931,6 @@ export function RemoteServerSettingsClient({
                       className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                     />
                   </label>
-                  {editingRow.authMode === "file" ? (
-                    <p className="text-xs text-muted-foreground sm:col-span-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                      Legacy: key file on API host at{" "}
-                      <code className="text-[11px] break-all">{editingRow.privateKeyPath}</code>. Paste a new private key
-                      below to migrate to encrypted storage.
-                    </p>
-                  ) : null}
                   <label className="space-y-1 block sm:col-span-2">
                     <span className="text-xs text-muted-foreground">Replace private key (optional PEM)</span>
                     <textarea

@@ -64,14 +64,6 @@ export class CreateRemoteServerDto {
 
   @ApiProperty({
     required: false,
-    description: 'Optional extra SSH client options (space-separated).',
-  })
-  @IsOptional()
-  @IsString()
-  extraSshOptions?: string;
-
-  @ApiProperty({
-    required: false,
     description:
       'Public IPv4 for Magic Traefik.me default hostnames on services deployed to this host.',
     example: '203.0.113.10',

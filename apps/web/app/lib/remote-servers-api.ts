@@ -1,7 +1,7 @@
 import { API_BASE, wsBase, wsBaseCandidates } from "./api";
 import { authFetch } from "./auth-fetch";
 
-export type RemoteServerAuthMode = "stored" | "file" | "none";
+export type RemoteServerAuthMode = "stored" | "none";
 
 export type RemoteServerRole = "deploy" | "build";
 
@@ -15,9 +15,6 @@ export type RemoteServerRow = {
   serverRole: RemoteServerRole;
   authMode: RemoteServerAuthMode;
   hasPrivateKey: boolean;
-  /** Only when authMode is `file`. */
-  privateKeyPath: string | null;
-  extraSshOptions: string | null;
   /** Public IPv4 for Magic traefik.me hostnames on deployed services. */
   publicIpv4: string | null;
   /** JSON string: domain labels / metadata (Domains page; deploy servers). */
@@ -53,8 +50,7 @@ function mapRemoteServer(row: unknown): RemoteServerRow {
   const ca = r.createdAt;
   const ua = r.updatedAt;
   const am = r.authMode;
-  const authMode: RemoteServerAuthMode =
-    am === "stored" || am === "file" || am === "none" ? am : "none";
+  const authMode: RemoteServerAuthMode = am === "stored" || am === "none" ? am : "none";
   const sr = r.serverRole;
   const serverRole: RemoteServerRole = sr === "build" ? "build" : "deploy";
   return {
@@ -70,14 +66,6 @@ function mapRemoteServer(row: unknown): RemoteServerRow {
     serverRole,
     authMode,
     hasPrivateKey: r.hasPrivateKey === true,
-    privateKeyPath:
-      r.privateKeyPath === null || r.privateKeyPath === undefined
-        ? null
-        : String(r.privateKeyPath),
-    extraSshOptions:
-      r.extraSshOptions === null || r.extraSshOptions === undefined
-        ? null
-        : String(r.extraSshOptions),
     publicIpv4:
       r.publicIpv4 === null || r.publicIpv4 === undefined
         ? null
@@ -118,7 +106,6 @@ export async function createRemoteServerApi(
     port?: number;
     sshUser: string;
     privateKey: string;
-    extraSshOptions?: string;
     serverRole?: RemoteServerRole;
     publicIpv4?: string;
     domainsJson?: string;
@@ -145,7 +132,6 @@ export async function updateRemoteServerApi(
     port: number;
     sshUser: string;
     privateKey: string;
-    extraSshOptions: string | null;
     serverRole: RemoteServerRole;
     publicIpv4: string | null;
     domainsJson?: string | null;

@@ -203,11 +203,9 @@ export type RemoteServerSafe = {
   sshUser: string;
   serverRole: 'deploy' | 'build';
   /** How SSH identity is provided (never exposes raw PEM or ciphertext). */
-  authMode: 'stored' | 'file' | 'none';
-  /** True when a key is configured (DB or file). */
+  authMode: 'stored' | 'none';
+  /** True when an encrypted key is stored in the database. */
   hasPrivateKey: boolean;
-  privateKeyPath: string | null;
-  extraSshOptions: string | null;
   /** Public IPv4 for Magic Traefik.me hostnames (optional). */
   publicIpv4: string | null;
   /** Optional JSON: domain labels / metadata (primarily for deploy servers). */
@@ -329,14 +327,8 @@ export class RemoteServersService {
 
   toSafe(rs: RemoteServer): RemoteServerSafe {
     const hasEnc = !!(rs.privateKeyEncrypted && rs.privateKeyEncrypted.trim());
-    const hasPath = !!(rs.privateKeyPath && rs.privateKeyPath.trim());
-    const hasPrivateKey = hasEnc || hasPath;
-    let authMode: 'stored' | 'file' | 'none' = 'none';
-    if (hasEnc) {
-      authMode = 'stored';
-    } else if (hasPath) {
-      authMode = 'file';
-    }
+    const hasPrivateKey = hasEnc;
+    const authMode: 'stored' | 'none' = hasEnc ? 'stored' : 'none';
     return {
       id: rs.id,
       publicId: rs.publicId,
@@ -347,8 +339,6 @@ export class RemoteServersService {
       serverRole: rs.serverRole === 'build' ? 'build' : 'deploy',
       authMode,
       hasPrivateKey,
-      privateKeyPath: hasPath ? rs.privateKeyPath! : null,
-      extraSshOptions: rs.extraSshOptions ?? null,
       publicIpv4: rs.publicIpv4?.trim() ? rs.publicIpv4.trim() : null,
       domainsJson: rs.domainsJson?.trim() ? rs.domainsJson.trim() : null,
       sshHostKeySha256: rs.sshHostKeySha256?.trim() ? rs.sshHostKeySha256.trim() : null,
@@ -420,7 +410,7 @@ export class RemoteServersService {
     this.pendingSshHostKeyByServerId.delete(remoteServerId);
   }
 
-  /** PEM text for Dockerode / temp file (decrypts DB or reads file path). */
+  /** PEM text for Dockerode / temp file (decrypts DB ciphertext). */
   private async resolvePrivateKeyPem(rs: RemoteServer): Promise<string> {
     if (rs.privateKeyEncrypted?.trim()) {
       try {
@@ -431,37 +421,22 @@ export class RemoteServersService {
         );
       }
     }
-    const p = (rs.privateKeyPath || '').trim();
-    if (p) {
-      await this.assertPrivateKeyPath(p);
-      return await fs.readFile(p, 'utf8');
-    }
     throw new BadRequestException(
       'Remote server has no SSH private key configured.',
     );
   }
 
   /**
-   * Resolves identity to a filesystem path for `ssh -i` (decrypts DB key to a temp file when needed).
+   * Filesystem path for `ssh -i` (decrypts DB key to a temp file).
    */
   private async resolveIdentityFilePath(rs: RemoteServer): Promise<string> {
-    if (rs.privateKeyEncrypted?.trim()) {
-      const pem = await this.resolvePrivateKeyPem(rs);
-      const dir = path.join(os.tmpdir(), 'weehawk-ssh-keys');
-      await fs.mkdir(dir, { recursive: true });
-      const fp = path.join(dir, `server-${rs.id}.key`);
-      await fs.writeFile(fp, pem, { encoding: 'utf8', mode: 0o600 });
-      await fs.chmod(fp, 0o600);
-      return fp;
-    }
-    const p = (rs.privateKeyPath || '').trim();
-    if (p) {
-      await this.assertPrivateKeyPath(p);
-      return p;
-    }
-    throw new BadRequestException(
-      'Remote server has no SSH private key configured.',
-    );
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const dir = path.join(os.tmpdir(), 'weehawk-ssh-keys');
+    await fs.mkdir(dir, { recursive: true });
+    const fp = path.join(dir, `server-${rs.id}.key`);
+    await fs.writeFile(fp, pem, { encoding: 'utf8', mode: 0o600 });
+    await fs.chmod(fp, 0o600);
+    return fp;
   }
 
   /**
@@ -2499,10 +2474,6 @@ done
       '-o StrictHostKeyChecking=accept-new',
       '-o NoHostAuthenticationForLocalhost=yes',
     ];
-    const extra = (rs.extraSshOptions || '').trim();
-    if (extra) {
-      parts.push(extra);
-    }
     return {
       DOCKER_HOST: `ssh://${userHost}`,
       DOCKER_SSH_OPTS: parts.join(' '),
@@ -2803,8 +2774,6 @@ curl -fsS -o /dev/null "$U"
       sshUser: dto.sshUser.trim(),
       serverRole,
       privateKeyEncrypted,
-      privateKeyPath: null,
-      extraSshOptions: dto.extraSshOptions?.trim() || null,
       publicIpv4: dto.publicIpv4?.trim() ? dto.publicIpv4.trim() : null,
       domainsJson:
         dto.domainsJson !== undefined && String(dto.domainsJson).trim()
@@ -2822,20 +2791,17 @@ curl -fsS -o /dev/null "$U"
   ): Promise<RemoteServerSafe> {
     const existing = await this.findEntityOrFail(id, userId);
     let privateKeyEncrypted: string | null | undefined = existing.privateKeyEncrypted;
-    let privateKeyPath: string | null | undefined = existing.privateKeyPath;
 
     // @IsOptional() skips validators when a field is null; never call .trim() on null (TypeError → 500).
     if (dto.privateKey != null) {
       const pem = String(dto.privateKey).trim();
       if (pem.length > 0) {
         privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
-        privateKeyPath = null;
       }
     }
 
     const nextEnc = privateKeyEncrypted ?? null;
-    const nextPath = privateKeyPath != null ? String(privateKeyPath).trim() || null : null;
-    if (!nextEnc?.trim() && !nextPath) {
+    if (!nextEnc?.trim()) {
       throw new BadRequestException(
         'An SSH private key is required. Paste a new privateKey (PEM) to replace it, or leave key fields unset to keep the current key.',
       );
@@ -2874,12 +2840,6 @@ curl -fsS -o /dev/null "$U"
           : dto.serverRole === 'deploy'
             ? 'deploy'
             : existing.serverRole,
-      extraSshOptions:
-        dto.extraSshOptions === undefined
-          ? existing.extraSshOptions
-          : dto.extraSshOptions != null
-            ? String(dto.extraSshOptions).trim() || null
-            : null,
       publicIpv4:
         dto.publicIpv4 === undefined
           ? existing.publicIpv4
@@ -2893,7 +2853,6 @@ curl -fsS -o /dev/null "$U"
               dto.domainsJson == null ? undefined : String(dto.domainsJson),
             ),
       privateKeyEncrypted: nextEnc,
-      privateKeyPath: nextPath,
       ...(hostOrPortChanged ? { sshHostKeySha256: null } : {}),
     });
     if (isLoopbackSshHost(merged.host) && merged.serverRole === 'deploy') {
@@ -3709,22 +3668,6 @@ curl -fsS -o /dev/null "$U"
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       throw new InternalServerErrorException(`Could not generate SSH keys: ${msg}`);
-    }
-  }
-
-  private async assertPrivateKeyPath(p: string): Promise<void> {
-    const t = (p || '').trim();
-    if (!t.startsWith('/') && !/^[A-Za-z]:\\/.test(t)) {
-      throw new BadRequestException(
-        'privateKeyPath must be an absolute path on the Weehawk API host.',
-      );
-    }
-    try {
-      await fs.access(t);
-    } catch {
-      throw new BadRequestException(
-        `SSH private key file not found or not readable: ${t}`,
-      );
     }
   }
 }

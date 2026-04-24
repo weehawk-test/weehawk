@@ -39,13 +39,6 @@ export class RemoteServer {
   serverRole!: 'deploy' | 'build';
 
   /**
-   * Optional: absolute path to a private key on the API host (legacy).
-   * Prefer {@link privateKeyEncrypted} for new entries.
-   */
-  @Column({ type: 'varchar', length: 1024, nullable: true })
-  privateKeyPath?: string | null;
-
-  /**
    * AES-256-GCM encrypted OpenSSH PEM (see ssh-key-crypto). Requires WEEHAWK_ENCRYPTION_KEY.
    */
   @Column({ type: 'text', nullable: true })
@@ -57,12 +50,6 @@ export class RemoteServer {
    */
   @Column({ name: 'ssh_host_key_sha256', type: 'varchar', length: 128, nullable: true })
   sshHostKeySha256?: string | null;
-
-  /**
-   * Extra arguments appended to DOCKER_SSH_OPTS (e.g. `-o IdentityAgent=none`).
-   */
-  @Column({ type: 'text', nullable: true })
-  extraSshOptions?: string | null;
 
   /**
    * Public IPv4 for Magic Traefik.me hostnames (`*.x.x.x.x.traefik.me`).
