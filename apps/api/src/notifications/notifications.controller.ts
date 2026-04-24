@@ -5,7 +5,6 @@ import {
   Delete,
   Get,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -81,7 +80,7 @@ export class NotificationsController {
   @Patch('channels/:id')
   updateChannel(
     @Req() req: AuthedReq,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() dto: UpdateNotificationChannelDto,
   ) {
     return this.notificationsService.updateChannel(this.userId(req), id, dto);
@@ -90,14 +89,14 @@ export class NotificationsController {
   @Delete('channels/:id')
   async deleteChannel(
     @Req() req: AuthedReq,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     await this.notificationsService.deleteChannel(this.userId(req), id);
     return { ok: true };
   }
 
   @Post('channels/:id/test')
-  testChannel(@Req() req: AuthedReq, @Param('id', ParseUUIDPipe) id: string) {
+  testChannel(@Req() req: AuthedReq, @Param('id') id: string) {
     return this.notificationsService.testChannel(this.userId(req), id);
   }
 

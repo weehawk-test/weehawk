@@ -77,7 +77,9 @@ export function EditWebhookClient({
   const [scriptEditorHeight, setScriptEditorHeight] = useState(SCRIPT_MIN_HEIGHT);
   const scriptHighlightRef = useRef<HTMLPreElement | null>(null);
   const scriptLineNumbersRef = useRef<HTMLDivElement | null>(null);
-  const [notifyChannelId, setNotifyChannelId] = useState(initialWebhook.notifyChannelId ?? "");
+  const [notifyChannelId, setNotifyChannelId] = useState(
+    initialWebhook.notifyChannelId != null ? String(initialWebhook.notifyChannelId) : "",
+  );
   const [notifyMessage, setNotifyMessage] = useState(initialWebhook.notifyMessage ?? "");
   const [notificationEnabled, setNotificationEnabled] = useState(
     Boolean(initialWebhook.notifyChannelId && initialWebhook.notifyMessage),
@@ -201,7 +203,7 @@ export function EditWebhookClient({
         id: initialWebhook.id,
         name: name.trim(),
         description: description.trim(),
-        notifyChannelId: hasNotifyChannel ? notifyChannelId : null,
+        notifyChannelId: hasNotifyChannel ? Number(notifyChannelId) : null,
         notifyMessage: hasNotifyMessage ? notifyMessage.trim() : null,
         ...(backup
           ? {
@@ -492,7 +494,7 @@ echo "Webhook done"`}
                     <select className="input-field" value={notifyChannelId} onChange={(e) => setNotifyChannelId(e.target.value)}>
                       <option value="">No notification</option>
                       {initialChannels.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={String(c.id)}>{c.name}</option>
                       ))}
                     </select>
                   </div>

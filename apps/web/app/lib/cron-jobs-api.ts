@@ -29,7 +29,7 @@ export type CronJobDetail = CronJobListItem & {
   databaseBackupConfig: DatabaseBackupConfig | null;
   databaseBackupPreview: string | null;
   backupS3ProfileName: string | null;
-  notifyChannelId: string | null;
+  notifyChannelId: number | null;
   notifyMessage: string | null;
 };
 
@@ -50,7 +50,7 @@ export type CreateCronJobBody = {
   dockerCommand?: string;
   databaseBackupConfig?: DatabaseBackupConfig;
   backupS3ProfileName?: string;
-  notifyChannelId?: string;
+  notifyChannelId?: number;
   notifyMessage?: string;
 };
 
@@ -61,7 +61,7 @@ export type UpdateCronJobBody = {
   isActive?: boolean;
   remoteServerId?: number | null;
   dockerCommand?: string | null;
-  notifyChannelId?: string | null;
+  notifyChannelId?: number | null;
   notifyMessage?: string | null;
   backupS3ProfileName?: string | null;
   databaseBackupConfig?: DatabaseBackupConfig | null;

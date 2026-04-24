@@ -6,7 +6,6 @@ import {
   Min,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   ValidateIf,
   ValidateNested,
@@ -33,11 +32,13 @@ export class UpdateWebhookDto {
   @MaxLength(4000)
   notifyMessage?: string | null;
 
-  @ApiPropertyOptional({ format: 'uuid', nullable: true })
+  @ApiPropertyOptional({ nullable: true, description: 'Numeric notification channel id, or null to clear.' })
   @IsOptional()
   @ValidateIf((_, v) => v != null && v !== '')
-  @IsUUID('4')
-  notifyChannelId?: string | null;
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  notifyChannelId?: number | null;
 
   @ApiPropertyOptional()
   @IsOptional()

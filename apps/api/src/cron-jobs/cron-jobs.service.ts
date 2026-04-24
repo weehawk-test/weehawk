@@ -48,7 +48,7 @@ export type CronJobDetailRow = CronJobListRow & {
   databaseBackupConfig: DatabaseBackupConfig | null;
   databaseBackupPreview: string | null;
   backupS3ProfileName: string | null;
-  notifyChannelId: string | null;
+  notifyChannelId: number | null;
   notifyMessage: string | null;
 };
 
@@ -403,7 +403,7 @@ fi
 
   private async assertNotificationChannel(
     userId: number,
-    channelId: string,
+    channelId: number,
   ): Promise<void> {
     const rows = await this.notificationsService.listChannels(userId);
     if (!rows.some((c) => c.id === channelId)) {
@@ -457,7 +457,8 @@ fi
         );
       }
     }
-    const hasNotifyChannel = Boolean(dto.notifyChannelId?.trim());
+    const hasNotifyChannel =
+      dto.notifyChannelId != null && dto.notifyChannelId >= 1;
     const hasNotifyMessage = Boolean(dto.notifyMessage?.trim());
     if (hasNotifyChannel !== hasNotifyMessage) {
       throw new BadRequestException(
@@ -588,7 +589,7 @@ fi
 
   async create(userId: number, dto: CreateCronJobDto): Promise<CronJobDetailRow> {
     this.validateCreate(dto);
-    if (dto.notifyChannelId) {
+    if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
     if (dto.targetMode === 'service' && dto.serviceId != null) {
@@ -649,9 +650,10 @@ fi
           : null,
       backupS3ProfileName: backupProfile,
       notifyOnTrigger:
-        Boolean(dto.notifyChannelId?.trim()) &&
+        dto.notifyChannelId != null &&
+        dto.notifyChannelId >= 1 &&
         Boolean(dto.notifyMessage?.trim()),
-      notifyChannelId: dto.notifyChannelId?.trim() || null,
+      notifyChannelId: dto.notifyChannelId ?? null,
       notifyMessage: dto.notifyMessage?.trim() || null,
     });
     const saved = await this.cronJobRepo.save(job);
@@ -693,7 +695,7 @@ fi
       job.cronExpression = expr;
     }
     if (dto.notifyChannelId !== undefined) {
-      job.notifyChannelId = dto.notifyChannelId?.trim() || null;
+      job.notifyChannelId = dto.notifyChannelId;
     }
     if (dto.notifyMessage !== undefined) {
       job.notifyMessage = dto.notifyMessage?.trim() || null;

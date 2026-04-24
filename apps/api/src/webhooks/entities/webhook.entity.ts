@@ -88,8 +88,8 @@ export class Webhook {
   @Column({ name: 'notify_on_trigger', default: false })
   notifyOnTrigger!: boolean;
 
-  @Column({ name: 'notify_channel_id', type: 'varchar', length: 36, nullable: true })
-  notifyChannelId: string | null = null;
+  @Column({ name: 'notify_channel_id', type: 'int', nullable: true })
+  notifyChannelId: number | null = null;
 
   @Column({ name: 'notify_message', type: 'text', nullable: true })
   notifyMessage: string | null = null;

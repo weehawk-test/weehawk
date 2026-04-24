@@ -97,7 +97,9 @@ export function EditCronJobClient({
   const [scriptEditorHeight, setScriptEditorHeight] = useState(SCRIPT_MIN_HEIGHT);
   const scriptHighlightRef = useRef<HTMLPreElement | null>(null);
   const scriptLineNumbersRef = useRef<HTMLDivElement | null>(null);
-  const [notifyChannelId, setNotifyChannelId] = useState(initialCronJob.notifyChannelId ?? "");
+  const [notifyChannelId, setNotifyChannelId] = useState(
+    initialCronJob.notifyChannelId != null ? String(initialCronJob.notifyChannelId) : "",
+  );
   const [notifyMessage, setNotifyMessage] = useState(initialCronJob.notifyMessage ?? "");
   const [notificationEnabled, setNotificationEnabled] = useState(
     Boolean(initialCronJob.notifyChannelId && initialCronJob.notifyMessage),
@@ -182,7 +184,7 @@ export function EditCronJobClient({
         name: name.trim(),
         description: description.trim(),
         cronExpression: cronExpression.trim(),
-        notifyChannelId: hasNotifyChannel ? notifyChannelId : null,
+        notifyChannelId: hasNotifyChannel ? Number(notifyChannelId) : null,
         notifyMessage: hasNotifyMessage ? notifyMessage.trim() : null,
         ...(backup
           ? {
@@ -471,7 +473,7 @@ echo "Cron job done"`}
                     <select className="input-field" value={notifyChannelId} onChange={(e) => setNotifyChannelId(e.target.value)}>
                       <option value="">No notification</option>
                       {initialChannels.map((c) => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={String(c.id)}>{c.name}</option>
                       ))}
                     </select>
                   </div>

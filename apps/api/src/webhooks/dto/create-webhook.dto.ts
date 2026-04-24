@@ -7,7 +7,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUUID,
   MaxLength,
   Min,
   ValidateIf,
@@ -112,10 +111,12 @@ export class CreateWebhookDto {
   @MaxLength(191)
   backupS3ProfileName?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({ example: 1, description: 'Numeric notification channel id.' })
   @IsOptional()
-  @IsUUID('4')
-  notifyChannelId?: string;
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  notifyChannelId?: number;
 
   @ApiPropertyOptional({ example: 'Backup completed successfully.' })
   @IsOptional()

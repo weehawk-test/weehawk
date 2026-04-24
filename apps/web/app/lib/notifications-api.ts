@@ -2,7 +2,9 @@ import { API_BASE } from "./api";
 import { authFetch } from "./auth-fetch";
 
 export type NotificationChannel = {
-  id: string;
+  id: number;
+  /** Public id (e.g. `nch_…`) when present; use with API paths that accept public id. */
+  publicId?: string;
   name: string;
   type: string;
   credentialPreview: string;
@@ -65,7 +67,7 @@ export async function fetchNotificationChannelsPaged(
   return res.json();
 }
 
-export async function bulkDeleteNotificationChannels(accessToken: string, ids: string[]): Promise<{ removed: number }> {
+export async function bulkDeleteNotificationChannels(accessToken: string, ids: number[]): Promise<{ removed: number }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/bulk-delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -96,7 +98,7 @@ export async function createNotificationChannel(
 
 export async function updateNotificationChannel(
   accessToken: string,
-  id: string,
+  id: number | string,
   body: Partial<{
     name: string;
     config: Record<string, unknown>;
@@ -115,7 +117,7 @@ export async function updateNotificationChannel(
 
 export async function deleteNotificationChannel(
   accessToken: string,
-  id: string,
+  id: number | string,
 ): Promise<void> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/${id}`, {
     method: "DELETE",
@@ -125,7 +127,7 @@ export async function deleteNotificationChannel(
 
 export async function testNotificationChannel(
   accessToken: string,
-  channelId: string,
+  channelId: number | string,
 ): Promise<{ success: boolean; message: string }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/${channelId}/test`, {
     method: "POST",

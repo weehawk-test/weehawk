@@ -447,13 +447,13 @@ export function NotificationsChannelsClient({
 
   const channelsPaged = channelsPagedQuery.data;
   const channels = channelsPaged?.items ?? [];
-  const channelKeys = useMemo(() => channels.map((c) => c.id), [channels]);
+  const channelKeys = useMemo(() => channels.map((c) => String(c.id)), [channels]);
   const channelsBulk = useBulkSelection(channelKeys);
 
   const [showAdd, setShowAdd] = useState(false);
   const [revealedTokens, setRevealedTokens] = useState<Set<string>>(new Set());
   const [showChannelAction, setShowChannelAction] = useState(false);
-  const [actionChannel, setActionChannel] = useState<{ id: string; name: string } | null>(null);
+  const [actionChannel, setActionChannel] = useState<{ id: number; name: string } | null>(null);
   const [showEditChannel, setShowEditChannel] = useState(false);
   const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
   const [editName, setEditName] = useState("");
@@ -603,7 +603,7 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not add channel", description: e.message, variant: "destructive" }),
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteNotificationChannel(accessToken!, id),
+    mutationFn: (id: number) => deleteNotificationChannel(accessToken!, id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
@@ -612,7 +612,7 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
   });
   const bulkDeleteChannelsMutation = useMutation({
-    mutationFn: (ids: string[]) => bulkDeleteNotificationChannels(accessToken!, ids),
+    mutationFn: (ids: number[]) => bulkDeleteNotificationChannels(accessToken!, ids),
     onSuccess: () => {
       channelsBulk.clear();
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -622,7 +622,7 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
   });
   const testMutation = useMutation({
-    mutationFn: (channelId: string) => testNotificationChannel(accessToken!, channelId),
+    mutationFn: (channelId: number) => testNotificationChannel(accessToken!, channelId),
     onSuccess: (res) => {
       if (res.success) {
         toast({ title: "Test succeeded", description: res.message });
@@ -696,7 +696,7 @@ export function NotificationsChannelsClient({
     }
     testDraftMutation.mutate();
   };
-  const openChannelActions = (channelId: string, channelName: string) => {
+  const openChannelActions = (channelId: number, channelName: string) => {
     setActionChannel({ id: channelId, name: channelName });
     setShowChannelAction(true);
   };
@@ -714,10 +714,10 @@ export function NotificationsChannelsClient({
       variant: "destructive",
     });
     if (!ok) return;
-    bulkDeleteChannelsMutation.mutate(ids);
+    bulkDeleteChannelsMutation.mutate(ids.map((k) => Number(k)));
   };
 
-  const handleDeleteChannel = async (id: string, name: string) => {
+  const handleDeleteChannel = async (id: number, name: string) => {
     const ok = await confirm({
       title: "Delete channel?",
       description: `“${name}” will be removed and can no longer receive notifications.`,
@@ -1444,14 +1444,14 @@ export function NotificationsChannelsClient({
                     </button>
                     <div
                       className={`transition-opacity ${
-                        channelsBulk.selected.has(ch.id)
+                        channelsBulk.selected.has(String(ch.id))
                           ? "opacity-100"
                           : "opacity-0 group-hover:opacity-100"
                       }`}
                     >
                       <DockerBulkCheckbox
-                        checked={channelsBulk.selected.has(ch.id)}
-                        onCheckedChange={() => channelsBulk.toggle(ch.id)}
+                        checked={channelsBulk.selected.has(String(ch.id))}
+                        onCheckedChange={() => channelsBulk.toggle(String(ch.id))}
                         aria-label={`Select channel ${ch.name}`}
                       />
                     </div>
@@ -1461,14 +1461,14 @@ export function NotificationsChannelsClient({
                 <div className="space-y-2 text-sm text-muted-foreground mb-4">
                   <div className="flex items-center gap-1.5 font-mono">
                     <span className="truncate">
-                      Credential: {revealedTokens.has(ch.id) ? ch.credentialPreview : "••••••••••••••••"}
+                      Credential: {revealedTokens.has(String(ch.id)) ? ch.credentialPreview : "••••••••••••••••"}
                     </span>
                     <button
                       type="button"
-                      onClick={() => toggleReveal(ch.id)}
+                      onClick={() => toggleReveal(String(ch.id))}
                       className="hover:text-foreground transition-colors flex-shrink-0"
                     >
-                      {revealedTokens.has(ch.id) ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      {revealedTokens.has(String(ch.id)) ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                   <p className="text-sm font-mono truncate">Target: {ch.targetPreview}</p>

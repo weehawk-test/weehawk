@@ -19,11 +19,14 @@ import { channelConfigRecord } from './providers/channel-config';
 import { ProviderSendResult } from './providers/provider.types';
 import { withRetry } from './utils/with-retry';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
+import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
 
 export type NotificationChannelRow = {
-  id: string;
+  id: number;
+  /** Opaque public identifier (e.g. `nch_…`), stable for URLs and sharing. */
+  publicId?: string;
   name: string;
   type: NotificationChannelType;
   credentialPreview: string;
@@ -36,7 +39,7 @@ export type NotificationChannelRow = {
 
 export type NotificationLogRow = {
   id: string;
-  channelId: string | null;
+  channelId: number | null;
   channelName: string;
   message: string;
   status: 'sent' | 'failed' | 'pending';
@@ -45,7 +48,7 @@ export type NotificationLogRow = {
 };
 
 export type NotificationChannelRuntimeConfig = {
-  id: string;
+  id: number;
   name: string;
   type: NotificationChannelType;
   config: Record<string, unknown>;
@@ -66,12 +69,33 @@ export class NotificationService {
     private readonly remoteServersService: RemoteServersService,
   ) {}
 
+  private async ensureChannelPublicId(row: NotificationChannel): Promise<NotificationChannel> {
+    if (row.publicId?.trim()) return row;
+    row.publicId = generatePublicId('nch');
+    return this.channelRepo.save(row);
+  }
+
+  private async findChannelForUser(
+    userId: number,
+    raw: string,
+  ): Promise<NotificationChannel | null> {
+    const t = String(raw).trim();
+    const where = isLikelyNumericId(t)
+      ? { id: Number(t), userId }
+      : { publicId: t, userId };
+    const ch = await this.channelRepo.findOne({ where });
+    if (!ch) return null;
+    return this.ensureChannelPublicId(ch);
+  }
+
   private toChannelRow(
     ch: NotificationChannel,
     preview: { credentialPreview: string; targetPreview: string },
   ): NotificationChannelRow {
+    const pid = ch.publicId?.trim();
     return {
       id: ch.id,
+      publicId: pid ? pid : undefined,
       name: ch.name,
       type: ch.type,
       credentialPreview: preview.credentialPreview,
@@ -181,12 +205,10 @@ export class NotificationService {
 
   async sendMessage(
     userId: number,
-    channelId: string,
+    channelId: number | string,
     message: string,
   ): Promise<NotificationLogRow> {
-    const channel = await this.channelRepo.findOne({
-      where: { id: channelId, userId },
-    });
+    const channel = await this.findChannelForUser(userId, String(channelId));
     if (!channel) throw new NotFoundException('Channel not found');
 
     const notification = this.notificationRepo.create({
@@ -223,11 +245,9 @@ export class NotificationService {
 
   async getChannelRuntimeConfig(
     userId: number,
-    channelId: string,
+    channelId: number | string,
   ): Promise<NotificationChannelRuntimeConfig> {
-    const channel = await this.channelRepo.findOne({
-      where: { id: channelId, userId },
-    });
+    const channel = await this.findChannelForUser(userId, String(channelId));
     if (!channel) throw new NotFoundException('Channel not found');
     return {
       id: channel.id,
@@ -244,9 +264,10 @@ export class NotificationService {
     });
     const rows: NotificationChannelRow[] = [];
     for (const channel of list) {
-      const provider = this.providerRegistry.get(channel.type);
-      const preview = await provider.preview(channel);
-      rows.push(this.toChannelRow(channel, preview));
+      const ch = await this.ensureChannelPublicId(channel);
+      const provider = this.providerRegistry.get(ch.type);
+      const preview = await provider.preview(ch);
+      rows.push(this.toChannelRow(ch, preview));
     }
     return rows;
   }
@@ -278,9 +299,10 @@ export class NotificationService {
     const [rows, total] = await qb.getManyAndCount();
     const items: NotificationChannelRow[] = [];
     for (const channel of rows) {
-      const provider = this.providerRegistry.get(channel.type);
-      const preview = await provider.preview(channel);
-      items.push(this.toChannelRow(channel, preview));
+      const ch = await this.ensureChannelPublicId(channel);
+      const provider = this.providerRegistry.get(ch.type);
+      const preview = await provider.preview(ch);
+      items.push(this.toChannelRow(ch, preview));
     }
     return {
       items,
@@ -321,7 +343,7 @@ export class NotificationService {
     id: string,
     dto: UpdateNotificationChannelDto,
   ): Promise<NotificationChannelRow> {
-    const ch = await this.channelRepo.findOne({ where: { id, userId } });
+    const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
     if (dto.name !== undefined) ch.name = dto.name.trim();
     if (dto.isActive !== undefined) ch.isActive = dto.isActive;
@@ -347,20 +369,22 @@ export class NotificationService {
   }
 
   async deleteChannel(userId: number, id: string): Promise<void> {
-    const res = await this.channelRepo.delete({ id, userId });
+    const ch = await this.findChannelForUser(userId, id);
+    if (!ch) throw new NotFoundException('Channel not found');
+    const res = await this.channelRepo.delete({ id: ch.id, userId });
     if (!res.affected) throw new NotFoundException('Channel not found');
   }
 
   async bulkDeleteChannels(
     userId: number,
-    ids: string[],
+    ids: number[],
   ): Promise<{ removed: number }> {
     if (ids.length === 0) return { removed: 0 };
     const res = await this.channelRepo
       .createQueryBuilder()
       .delete()
       .from(NotificationChannel)
-      .where('id = ANY(:ids)', { ids })
+      .where('id IN (:...ids)', { ids })
       .andWhere('user_id = :userId', { userId })
       .execute();
     return { removed: res.affected ?? 0 };
@@ -373,9 +397,7 @@ export class NotificationService {
     userId: number,
     channelId: string,
   ): Promise<{ success: boolean; message: string }> {
-    const channel = await this.channelRepo.findOne({
-      where: { id: channelId, userId },
-    });
+    const channel = await this.findChannelForUser(userId, channelId);
     if (!channel) throw new NotFoundException('Channel not found');
 
     const notification = this.notificationRepo.create({

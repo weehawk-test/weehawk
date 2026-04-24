@@ -1,11 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsInt } from 'class-validator';
 
 export class BulkDeleteChannelsDto {
-  @ApiProperty({ type: [String], format: 'uuid' })
+  @ApiProperty({ type: [Number], description: 'Numeric notification channel ids.' })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(500)
-  @IsUUID('4', { each: true })
-  ids!: string[];
+  @IsInt({ each: true })
+  @Type(() => Number)
+  ids!: number[];
 }

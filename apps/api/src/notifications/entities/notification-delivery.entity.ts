@@ -25,8 +25,8 @@ export class NotificationDelivery {
   notification!: Notification;
 
   /** Nullable for draft credential tests that are not tied to a saved channel. */
-  @Column({ name: 'channel_id', type: 'uuid', nullable: true })
-  channelId!: string | null;
+  @Column({ name: 'channel_id', type: 'int', nullable: true })
+  channelId!: number | null;
 
   @ManyToOne(() => NotificationChannel, {
     onDelete: 'CASCADE',

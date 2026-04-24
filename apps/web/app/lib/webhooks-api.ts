@@ -52,7 +52,7 @@ export type WebhookDetail = WebhookListItem & {
   databaseBackupConfig: DatabaseBackupConfig | null;
   databaseBackupPreview: string | null;
   backupS3ProfileName: string | null;
-  notifyChannelId: string | null;
+  notifyChannelId: number | null;
   notifyMessage: string | null;
   secretToken: string;
   /** On-host agent URL when the script is deployed to a remote server (same path token as API `/weehawk-hooks/{token}` by default). */
@@ -76,7 +76,7 @@ export type CreateWebhookBody = {
   dockerCommand?: string;
   databaseBackupConfig?: DatabaseBackupConfig;
   backupS3ProfileName?: string;
-  notifyChannelId?: string;
+  notifyChannelId?: number;
   notifyMessage?: string;
   /** Traefik hostname; API runs docker build on the deploy host unless WEEHAWK_WEBHOOK_AGENT_IMAGE is set. */
   hooksPublicHost?: string;
@@ -97,7 +97,7 @@ export type UpdateWebhookBody = {
   isActive?: boolean;
   remoteServerId?: number | null;
   dockerCommand?: string | null;
-  notifyChannelId?: string | null;
+  notifyChannelId?: number | null;
   notifyMessage?: string | null;
   backupS3ProfileName?: string | null;
   databaseBackupConfig?: DatabaseBackupConfig | null;

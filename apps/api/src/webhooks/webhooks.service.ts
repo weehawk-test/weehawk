@@ -67,7 +67,7 @@ export type WebhookDetailRow = WebhookListRow & {
   databaseBackupConfig: DatabaseBackupConfig | null;
   databaseBackupPreview: string | null;
   backupS3ProfileName: string | null;
-  notifyChannelId: string | null;
+  notifyChannelId: number | null;
   notifyMessage: string | null;
   secretToken: string;
   /** When script runs on a remote server: URL for the on-host agent (e.g. Go) at that server’s IP. */
@@ -187,7 +187,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   private async mergeRemoteWebhookNotificationAndBundleEnv(
     userId: number,
     notifyOnTrigger: boolean,
-    notifyChannelId: string | null | undefined,
+    notifyChannelId: number | null | undefined,
     notifyMessage: string | null | undefined,
     serviceId: number | null | undefined,
   ): Promise<string[]> {
@@ -352,7 +352,8 @@ export class WebhooksService implements OnApplicationBootstrap {
         );
       }
     }
-    const hasNotifyChannel = Boolean(dto.notifyChannelId?.trim());
+    const hasNotifyChannel =
+      dto.notifyChannelId != null && dto.notifyChannelId >= 1;
     const hasNotifyMessage = Boolean(dto.notifyMessage?.trim());
     if (hasNotifyChannel !== hasNotifyMessage) {
       throw new BadRequestException(
@@ -415,7 +416,7 @@ export class WebhooksService implements OnApplicationBootstrap {
 
   private async assertNotificationChannel(
     userId: number,
-    channelId: string,
+    channelId: number,
   ): Promise<void> {
     const rows = await this.notificationsService.listChannels(userId);
     if (!rows.some((c) => c.id === channelId)) {
@@ -427,7 +428,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   private async buildRemoteWebhookNotificationEnvLines(
     userId: number,
     notifyOnTrigger: boolean,
-    notifyChannelId: string | null | undefined,
+    notifyChannelId: number | null | undefined,
     notifyMessage: string | null | undefined,
   ): Promise<string[]> {
     if (!notifyOnTrigger || !notifyChannelId || !notifyMessage?.trim()) {
@@ -666,7 +667,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     ) {
       await this.remoteServersService.assertDeployServerById(dto.remoteServerId, userId);
     }
-    if (dto.notifyChannelId) {
+    if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
     if (dto.targetMode === 'service' && dto.serviceId != null) {
@@ -689,7 +690,8 @@ export class WebhooksService implements OnApplicationBootstrap {
 
     const secretToken = randomBytes(32).toString('hex');
     const notifyOnTriggerCreate =
-      Boolean(dto.notifyChannelId?.trim()) &&
+      dto.notifyChannelId != null &&
+      dto.notifyChannelId >= 1 &&
       Boolean(dto.notifyMessage?.trim());
     const hooksPublicStored =
       dto.serviceAction === 'docker_command'
@@ -753,7 +755,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           : null,
       backupS3ProfileName: backupProfile,
       notifyOnTrigger: notifyOnTriggerCreate,
-      notifyChannelId: dto.notifyChannelId?.trim() || null,
+      notifyChannelId: dto.notifyChannelId ?? null,
       notifyMessage: dto.notifyMessage?.trim() || null,
       hooksPublicHost: hooksPublicStored,
       remoteTriggerUrlScheme: 'https',
@@ -909,7 +911,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
     if (dto.isActive !== undefined) w.isActive = dto.isActive;
     if (dto.notifyChannelId !== undefined) {
-      w.notifyChannelId = dto.notifyChannelId?.trim() || null;
+      w.notifyChannelId = dto.notifyChannelId;
     }
     if (dto.notifyMessage !== undefined) {
       w.notifyMessage = dto.notifyMessage?.trim() || null;
@@ -1309,7 +1311,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     ) {
       try {
         await this.notificationsService.sendMessage(
-          1,
+          w.userId,
           w.notifyChannelId,
           w.notifyMessage,
         );

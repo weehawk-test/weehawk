@@ -137,7 +137,7 @@ export function CreateWebhookClient({
         remoteServerId: parsedRemoteServerId,
         hooksPublicHost: host,
         ...(hasNotifyChannel && hasNotifyMessage
-          ? { notifyChannelId, notifyMessage: notifyMessage.trim() }
+          ? { notifyChannelId: Number(notifyChannelId), notifyMessage: notifyMessage.trim() }
           : {}),
       },
       {
@@ -358,7 +358,7 @@ echo "Webhook done"`}
                       <select className="input-field" value={notifyChannelId} onChange={(e) => setNotifyChannelId(e.target.value)}>
                         <option value="">No notification</option>
                         {initialChannels.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
+                          <option key={c.id} value={String(c.id)}>{c.name}</option>
                         ))}
                       </select>
                     </div>
