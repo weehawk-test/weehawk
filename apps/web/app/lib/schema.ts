@@ -9,7 +9,6 @@ export const projectSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   description: z.string().optional().default(""),
   createdAt: z.string(),
-  isActive: z.boolean().default(true),
   /** Set when listing from API (nested `services` length). */
   serviceCount: z.number().int().nonnegative().optional(),
 });

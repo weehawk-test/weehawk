@@ -67,7 +67,6 @@ export function mapApiProjectToProject(raw: unknown): Project {
     name: String(row.name ?? ""),
     description: typeof row.description === "string" ? row.description : "",
     createdAt,
-    isActive: row.isActive !== false,
     serviceCount: explicitCount ?? services.length,
   };
 }
@@ -137,12 +136,11 @@ export async function createProjectApi(body: CreateProjectInput): Promise<Projec
 
 export async function updateProjectApi(
   id: string,
-  patch: Partial<Pick<Project, "name" | "description" | "isActive">>,
+  patch: Partial<Pick<Project, "name" | "description">>,
 ): Promise<Project> {
   const body: Record<string, unknown> = {};
   if (patch.name !== undefined) body.name = patch.name;
   if (patch.description !== undefined) body.description = patch.description;
-  if (patch.isActive !== undefined) body.isActive = patch.isActive;
 
   const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",

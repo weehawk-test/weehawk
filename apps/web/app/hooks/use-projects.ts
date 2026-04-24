@@ -6,7 +6,6 @@ import {
   deleteProjectApi,
   fetchProject,
   fetchProjectsPage,
-  updateProjectApi,
   type ProjectsPageResponse,
 } from "@/lib/projects-api";
 
@@ -75,17 +74,5 @@ export function useDeleteProject() {
   return useMutation({
     mutationFn: (id: string) => deleteProjectApi(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects", "list"], exact: false }),
-  });
-}
-
-export function useToggleProject() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
-      updateProjectApi(id, { isActive }),
-    onSuccess: (_, v) => {
-      void v;
-      qc.invalidateQueries({ queryKey: ["projects"], exact: false });
-    },
   });
 }
