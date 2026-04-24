@@ -1,8 +1,4 @@
 import { API_BASE } from "./api";
-import type { DatabaseBackupConfig } from "./database-backup-preview";
-import type { WebhookServiceAction, WebhookTargetMode } from "./webhooks-api";
-
-export type { DatabaseBackupConfig };
 
 export type CronJobListItem = {
   id: number;
@@ -13,22 +9,14 @@ export type CronJobListItem = {
   isActive: boolean;
   triggerType: "cron";
   cronExpression: string;
-  targetMode: WebhookTargetMode;
-  serviceId: number | null;
-  remoteServerId: number | null;
-  serviceAction: WebhookServiceAction | null;
+  remoteServerId: number;
   notifyOnTrigger: boolean;
-  notifyMessage?: string | null;
   createdAt: string;
   summary: string;
 };
 
 export type CronJobDetail = CronJobListItem & {
-  volumeSource: string | null;
-  dockerCommand: string | null;
-  databaseBackupConfig: DatabaseBackupConfig | null;
-  databaseBackupPreview: string | null;
-  backupS3ProfileName: string | null;
+  bashScript: string;
   notifyChannelId: number | null;
   notifyMessage: string | null;
 };
@@ -42,14 +30,8 @@ export type CreateCronJobBody = {
   name: string;
   description?: string;
   cronExpression: string;
-  targetMode: WebhookTargetMode;
-  serviceId?: number;
-  remoteServerId?: number;
-  serviceAction?: WebhookServiceAction;
-  volumeSource?: string;
-  dockerCommand?: string;
-  databaseBackupConfig?: DatabaseBackupConfig;
-  backupS3ProfileName?: string;
+  remoteServerId: number;
+  bashScript: string;
   notifyChannelId?: number;
   notifyMessage?: string;
 };
@@ -59,12 +41,10 @@ export type UpdateCronJobBody = {
   description?: string;
   cronExpression?: string;
   isActive?: boolean;
-  remoteServerId?: number | null;
-  dockerCommand?: string | null;
+  remoteServerId?: number;
+  bashScript?: string;
   notifyChannelId?: number | null;
   notifyMessage?: string | null;
-  backupS3ProfileName?: string | null;
-  databaseBackupConfig?: DatabaseBackupConfig | null;
 };
 
 async function errorBody(res: Response): Promise<string> {
@@ -109,8 +89,6 @@ export async function fetchCronJob(accessToken: string, id: string | number): Pr
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
   };
 }
@@ -136,8 +114,6 @@ export async function createCronJob(
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
   };
 }
@@ -164,8 +140,6 @@ export async function updateCronJob(
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
   };
 }

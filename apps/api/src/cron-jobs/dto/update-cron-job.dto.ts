@@ -8,9 +8,7 @@ import {
   IsString,
   MaxLength,
   ValidateIf,
-  ValidateNested,
 } from 'class-validator';
-import { DatabaseBackupConfigDto } from '../../webhooks/dto/database-backup-config.dto';
 
 export class UpdateCronJobDto {
   @ApiPropertyOptional()
@@ -36,14 +34,12 @@ export class UpdateCronJobDto {
   @IsBoolean()
   isActive?: boolean;
 
-  @ApiPropertyOptional({
-    nullable: true,
-    description: 'Optional remote server id for docker_command. Null runs on API host.',
-  })
+  @ApiPropertyOptional({ description: 'Deploy remote server id.' })
   @IsOptional()
   @IsInt()
   @Min(1)
-  remoteServerId?: number | null;
+  @Type(() => Number)
+  remoteServerId?: number;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
@@ -60,24 +56,9 @@ export class UpdateCronJobDto {
   @Type(() => Number)
   notifyChannelId?: number | null;
 
-  @ApiPropertyOptional({
-    nullable: true,
-    description: 'Saved S3 profile name for backup upload, or null to clear.',
-  })
+  @ApiPropertyOptional({ description: 'Bash script body.' })
   @IsOptional()
   @IsString()
-  @MaxLength(191)
-  backupS3ProfileName?: string | null;
-
-  @ApiPropertyOptional({ type: DatabaseBackupConfigDto, nullable: true })
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => DatabaseBackupConfigDto)
-  databaseBackupConfig?: DatabaseBackupConfigDto | null;
-
-  @ApiPropertyOptional({ nullable: true, description: 'Bash script to execute for docker_command action.' })
-  @IsOptional()
-  @IsString()
-  @MaxLength(4000)
-  dockerCommand?: string | null;
+  @MaxLength(400_000)
+  bashScript?: string;
 }

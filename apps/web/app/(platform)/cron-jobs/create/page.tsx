@@ -1,24 +1,10 @@
-import {
-  fetchNotificationChannelsSSR,
-  fetchRemoteServersSSR,
-  fetchServicesSSR,
-  fetchS3ProfilesSSR,
-} from "@/lib/server-fetch";
+import { fetchNotificationChannelsSSR, fetchRemoteServersSSR } from "@/lib/server-fetch";
 import { CreateCronJobClient } from "./create-cron-job-client";
 
 export default async function Page() {
-  const [initialServices, initialChannels, initialS3Profiles, initialRemoteServers] = await Promise.all([
-    fetchServicesSSR(),
+  const [initialChannels, initialRemoteServers] = await Promise.all([
     fetchNotificationChannelsSSR(),
-    fetchS3ProfilesSSR(),
     fetchRemoteServersSSR(),
   ]);
-  return (
-    <CreateCronJobClient
-      initialServices={initialServices}
-      initialChannels={initialChannels}
-      initialS3Profiles={initialS3Profiles}
-      initialRemoteServers={initialRemoteServers}
-    />
-  );
+  return <CreateCronJobClient initialChannels={initialChannels} initialRemoteServers={initialRemoteServers} />;
 }

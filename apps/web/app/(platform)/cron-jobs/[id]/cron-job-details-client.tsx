@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { X, Bell, Clock, Hash, Trash2, Pencil, Terminal, Activity } from "lucide-react";
+import { X, Bell, Clock, Hash, Trash2, Pencil, Terminal, Activity, Server } from "lucide-react";
 import { format } from "date-fns";
 import { createPortal } from "react-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useDeleteCronJob, useUpdateCronJob } from "@/hooks/use-cron-jobs";
 import { cronJobRouteId, type CronJobDetail } from "@/lib/cron-jobs-api";
-import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
 import { motion } from "framer-motion";
 
 type Props = {
@@ -107,7 +106,7 @@ export function CronJobDetailsClient({ initialCronJob }: Props) {
           <div className="bg-background rounded-xl p-5 relative z-10">
             <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
               <Clock className="w-3.5 h-3.5" />
-              Cron Schedule
+              Cron schedule
             </label>
             <div className="font-mono text-primary text-sm break-all selection:bg-primary/30 leading-relaxed">
               {cronJob.cronExpression}
@@ -116,73 +115,27 @@ export function CronJobDetailsClient({ initialCronJob }: Props) {
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div className="glass-panel p-4 rounded-2xl max-h-[62vh] overflow-y-auto">
-            {cronJob.serviceAction !== "docker_command" && (
-              <div className="flex items-center gap-3 mb-4">
+          <div className="glass-panel p-4 rounded-2xl max-h-[62vh] overflow-y-auto space-y-5">
+            <div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Server className="w-5 h-5 text-primary" />
+                </div>
+                <h3 className="font-semibold text-base">Deploy server</h3>
+              </div>
+              <p className="text-xs text-muted-foreground mb-1">Remote server ID</p>
+              <p className="font-mono text-sm text-foreground">{cronJob.remoteServerId}</p>
+            </div>
+            <div>
+              <div className="flex items-center gap-3 mb-3">
                 <div className="p-2 bg-primary/10 rounded-lg">
                   <Terminal className="w-5 h-5 text-primary" />
                 </div>
-                <h3 className="font-semibold text-base">Target</h3>
+                <h3 className="font-semibold text-base">Bash script</h3>
               </div>
-            )}
-            <div className="space-y-2.5 text-sm">
-              {!(cronJob.serviceAction === "docker_command") && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Action</p>
-                  <p className="font-medium text-foreground">{cronJob.serviceAction ?? cronJob.targetMode}</p>
-                </div>
-              )}
-              {cronJob.targetMode === "service" && cronJob.serviceAction !== "docker_command" && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Service ID</p>
-                  <p className="font-mono">{cronJob.serviceId ?? "—"}</p>
-                </div>
-              )}
-              {cronJob.volumeSource && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Volume</p>
-                  <p className="font-mono text-xs break-all">{cronJob.volumeSource}</p>
-                  {cronJob.serviceAction === "volume_backup" && (
-                    <VolumeBackupDbWarning className="mt-2" />
-                  )}
-                </div>
-              )}
-              {cronJob.serviceAction === "database_backup" && cronJob.databaseBackupPreview && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">What will run</p>
-                  <p className="font-mono text-xs text-foreground/95 whitespace-pre-wrap break-all leading-relaxed">
-                    {cronJob.databaseBackupPreview}
-                  </p>
-                </div>
-              )}
-              {cronJob.dockerCommand &&
-                (cronJob.serviceAction === "docker_command" ||
-                  (cronJob.serviceAction === "database_backup" && !cronJob.databaseBackupConfig)) && (
-                  <div>
-                    {cronJob.serviceAction === "docker_command" && (
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="p-2 bg-primary/10 rounded-lg">
-                          <Terminal className="w-5 h-5 text-primary" />
-                        </div>
-                        <h3 className="font-semibold text-base">Bash Script</h3>
-                      </div>
-                    )}
-                    {cronJob.serviceAction === "database_backup" && (
-                      <p className="text-xs text-muted-foreground mb-1">Legacy command</p>
-                    )}
-                    <pre className="bg-black/40 dark:bg-black px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all min-h-[220px] max-h-[46vh] overflow-y-auto">
-                      {cronJob.dockerCommand}
-                    </pre>
-                  </div>
-                )}
-              {(cronJob.serviceAction === "volume_backup" || cronJob.serviceAction === "database_backup") && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">S3 destination</p>
-                  <p className="font-mono text-sm">
-                    {cronJob.backupS3ProfileName ?? "Not set — edit and choose a profile"}
-                  </p>
-                </div>
-              )}
+              <pre className="bg-black/40 dark:bg-black px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all min-h-[220px] max-h-[46vh] overflow-y-auto">
+                {cronJob.bashScript}
+              </pre>
             </div>
           </div>
 
@@ -196,22 +149,24 @@ export function CronJobDetailsClient({ initialCronJob }: Props) {
             <div className="space-y-2.5 text-sm">
               <div>
                 <p className="text-xs text-muted-foreground mb-1">Notification on trigger</p>
-                <p className="font-medium text-foreground">{cronJob.notifyChannelId && cronJob.notifyMessage ? "Enabled" : "Off"}</p>
+                <p className="font-medium text-foreground">
+                  {cronJob.notifyChannelId && cronJob.notifyMessage ? "Enabled" : "Off"}
+                </p>
               </div>
-              {cronJob.notifyChannelId && (
+              {cronJob.notifyChannelId ? (
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Channel ID</p>
                   <p className="font-mono text-xs break-all">{cronJob.notifyChannelId}</p>
                 </div>
-              )}
-              {cronJob.notifyMessage && (
+              ) : null}
+              {cronJob.notifyMessage ? (
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">Message</p>
                   <pre className="bg-black/40 dark:bg-black px-3 py-2 rounded-lg border border-white/5 font-mono text-xs whitespace-pre-wrap break-all max-h-28 overflow-y-auto">
                     {cronJob.notifyMessage}
                   </pre>
                 </div>
-              )}
+              ) : null}
             </div>
             <div className="flex items-center gap-3 mt-5 pt-4 border-t border-white/5">
               <div className="p-2 bg-primary/10 rounded-lg">

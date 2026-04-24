@@ -1,53 +1,20 @@
 "use client";
 
-import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUpdateCronJob } from "@/hooks/use-cron-jobs";
-import { type CronJobDetail, type DatabaseBackupConfig } from "@/lib/cron-jobs-api";
+import { type CronJobDetail } from "@/lib/cron-jobs-api";
 import type { NotificationChannel } from "@/lib/notifications-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
-import type { S3ProfilePublic } from "@/lib/s3-api";
-import type { Service } from "@/lib/schema";
 import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { DatabaseBackupFormFields } from "@/components/database-backup-form-fields";
-import { VolumeBackupDbWarning } from "@/components/volume-backup-db-warning";
-import {
-  resolveBackupFormat,
-  validateDatabaseBackupForm,
-  type DatabaseBackupFormValues,
-} from "@/lib/database-backup-preview";
-
-function renderHighlightedScript(script: string) {
-  const lines = (script || "").split("\n");
-  return lines.map((line, index) => {
-    const isComment = /^\s*#/.test(line);
-    return (
-      <div key={`line-${index}`}>
-        <span className={isComment ? "text-emerald-400" : "text-foreground"}>{line || " "}</span>
-      </div>
-    );
-  });
-}
-
-function backupConfigToForm(cfg: DatabaseBackupConfig | null): DatabaseBackupFormValues {
-  return {
-    engine: cfg?.engine ?? "postgres",
-    composeService: cfg?.composeService ?? "",
-    databaseName: cfg?.databaseName ?? "",
-    dbUser: cfg?.dbUser ?? "",
-    backupFormat: cfg?.backupFormat,
-  };
-}
 
 type Props = {
   initialCronJob: CronJobDetail;
   initialChannels: NotificationChannel[];
-  initialS3Profiles: S3ProfilePublic[];
-  initialServices: Service[];
   initialRemoteServers: RemoteServerRow[];
 };
 
@@ -61,6 +28,18 @@ type CronPreset =
   | "every_15_minutes"
   | "every_weekday_midnight";
 
+function renderHighlightedScript(script: string): ReactNode[] {
+  const lines = (script || "").split("\n");
+  return lines.map((line, index) => {
+    const isComment = /^\s*#/.test(line);
+    return (
+      <div key={`line-${index}`}>
+        <span className={isComment ? "text-emerald-400" : "text-foreground"}>{line || " "}</span>
+      </div>
+    );
+  });
+}
+
 function cronPresetFromExpression(expr: string): CronPreset {
   const v = (expr || "").trim();
   if (v === "* * * * *") return "every_minute";
@@ -73,13 +52,7 @@ function cronPresetFromExpression(expr: string): CronPreset {
   return "custom";
 }
 
-export function EditCronJobClient({
-  initialCronJob,
-  initialChannels,
-  initialS3Profiles,
-  initialServices,
-  initialRemoteServers,
-}: Props) {
+export function EditCronJobClient({ initialCronJob, initialChannels, initialRemoteServers }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const updateMutation = useUpdateCronJob();
@@ -90,7 +63,7 @@ export function EditCronJobClient({
     cronPresetFromExpression(initialCronJob.cronExpression ?? ""),
   );
   const [cronExpression, setCronExpression] = useState(initialCronJob.cronExpression ?? "");
-  const [bashScript, setBashScript] = useState(initialCronJob.dockerCommand ?? "");
+  const [bashScript, setBashScript] = useState(initialCronJob.bashScript ?? "");
   const scriptLines = Math.max(1, bashScript.split("\n").length);
   const SCRIPT_MIN_HEIGHT = 180;
   const SCRIPT_MAX_HEIGHT = 520;
@@ -104,24 +77,10 @@ export function EditCronJobClient({
   const [notificationEnabled, setNotificationEnabled] = useState(
     Boolean(initialCronJob.notifyChannelId && initialCronJob.notifyMessage),
   );
-  const [remoteServerId, setRemoteServerId] = useState(() => {
-    if (initialCronJob.remoteServerId != null) {
-      return String(initialCronJob.remoteServerId);
-    }
-    return "";
-  });
-  const [backupS3ProfileName, setBackupS3ProfileName] = useState(
-    initialCronJob.backupS3ProfileName ?? "",
-  );
-  const [dbBackup, setDbBackup] = useState<DatabaseBackupFormValues>(() =>
-    backupConfigToForm(initialCronJob.databaseBackupConfig),
+  const [remoteServerId, setRemoteServerId] = useState(
+    initialCronJob.remoteServerId != null ? String(initialCronJob.remoteServerId) : "",
   );
 
-  const selectedService = useMemo(() => {
-    const sid = initialCronJob.serviceId;
-    if (sid == null) return null;
-    return initialServices.find((s) => Number(s.id) === sid) ?? null;
-  }, [initialServices, initialCronJob.serviceId]);
   const deployServers = useMemo(
     () => filterSshDeployServers(initialRemoteServers),
     [initialRemoteServers],
@@ -136,44 +95,18 @@ export function EditCronJobClient({
       toast({ title: "Cron expression required", variant: "destructive" });
       return;
     }
+    if (!bashScript.trim()) {
+      toast({ title: "Bash script required", variant: "destructive" });
+      return;
+    }
     const hasNotifyChannel = notificationEnabled && Boolean(notifyChannelId.trim());
     const hasNotifyMessage = notificationEnabled && Boolean(notifyMessage.trim());
     if (hasNotifyChannel !== hasNotifyMessage) {
       toast({ title: "Choose channel and message together", variant: "destructive" });
       return;
     }
-
-    const backup =
-      initialCronJob.serviceAction === "volume_backup" ||
-      initialCronJob.serviceAction === "database_backup";
-    if (backup && initialS3Profiles.length === 0) {
-      toast({
-        title: "Add an S3 destination first",
-        description: "Backups require a saved S3 profile.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (backup && !backupS3ProfileName.trim()) {
-      toast({
-        title: "S3 destination required",
-        description: "Choose which saved S3 profile to use.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (initialCronJob.serviceAction === "database_backup") {
-      const v = validateDatabaseBackupForm(dbBackup);
-      if (!v.ok) {
-        toast({ title: "Database backup", description: v.message, variant: "destructive" });
-        return;
-      }
-    }
     const parsedRemoteServerId = Number(remoteServerId);
-    if (
-      initialCronJob.serviceAction === "docker_command" &&
-      (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1)
-    ) {
+    if (!Number.isInteger(parsedRemoteServerId) || parsedRemoteServerId < 1) {
       toast({ title: "Select a deploy server", variant: "destructive" });
       return;
     }
@@ -184,35 +117,14 @@ export function EditCronJobClient({
         name: name.trim(),
         description: description.trim(),
         cronExpression: cronExpression.trim(),
+        bashScript: bashScript.trim(),
+        remoteServerId: parsedRemoteServerId,
         notifyChannelId: hasNotifyChannel ? Number(notifyChannelId) : null,
         notifyMessage: hasNotifyMessage ? notifyMessage.trim() : null,
-        ...(backup
-          ? {
-              backupS3ProfileName: backupS3ProfileName.trim() || null,
-            }
-          : {}),
-        ...(initialCronJob.serviceAction === "database_backup"
-          ? {
-              databaseBackupConfig: {
-                engine: dbBackup.engine,
-                composeService: dbBackup.composeService.trim(),
-                backupFormat: resolveBackupFormat(dbBackup.engine, dbBackup.backupFormat),
-                ...(dbBackup.engine !== "redis"
-                  ? { databaseName: dbBackup.databaseName.trim() }
-                  : {}),
-                ...(dbBackup.dbUser.trim() ? { dbUser: dbBackup.dbUser.trim() } : {}),
-              },
-            }
-          : {}),
-        ...(initialCronJob.serviceAction === "docker_command"
-          ? {
-              dockerCommand: bashScript.trim() || null,
-              remoteServerId: parsedRemoteServerId,
-            }
-          : {}),
       },
       {
-        onSuccess: (updated) => router.push(`/cron-jobs?provisioning=${encodeURIComponent(String(updated.id))}`),
+        onSuccess: (updated) =>
+          router.push(`/cron-jobs?provisioning=${encodeURIComponent(String(updated.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not update cron job", description: e.message, variant: "destructive" }),
       },
@@ -247,12 +159,12 @@ export function EditCronJobClient({
   };
 
   return createPortal(
-      <div
-        className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-start justify-center px-4 py-6 md:px-6 md:py-8"
-        onClick={closeModal}
-      >
-        <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
-          <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
+    <div
+      className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-start justify-center px-4 py-6 md:px-6 md:py-8"
+      onClick={closeModal}
+    >
+      <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
           <div className="mb-6 flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-foreground">Edit cron job</h1>
             <Link href="/cron-jobs" aria-label="Close">
@@ -268,16 +180,21 @@ export function EditCronJobClient({
           <div className="space-y-6 relative z-10">
             <div className="space-y-4">
               <div>
-              <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-1.5">
-                <Type className="w-4 h-4 text-primary" /> Name
-              </label>
-              <input className="input-field" value={name} onChange={(e) => setName(e.target.value)} />
+                <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-1.5">
+                  <Type className="w-4 h-4 text-primary" /> Name
+                </label>
+                <input className="input-field" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div>
-              <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-1.5">
-                <AlignLeft className="w-4 h-4 text-primary" /> Description <span className="text-muted-foreground font-normal">(optional)</span>
-              </label>
-              <textarea className="input-field min-h-[72px] resize-none" value={description} onChange={(e) => setDescription(e.target.value)} />
+                <label className="flex items-center gap-2 text-sm font-medium text-foreground mb-1.5">
+                  <AlignLeft className="w-4 h-4 text-primary" /> Description{" "}
+                  <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <textarea
+                  className="input-field min-h-[72px] resize-none"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
               </div>
             </div>
             <div className="space-y-3 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
@@ -322,133 +239,82 @@ export function EditCronJobClient({
                 </>
               )}
             </div>
-            {initialCronJob.serviceAction === "docker_command" && (
-              <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
-                <label className="text-xs text-muted-foreground mb-1 block">Deploy server</label>
-                <select
-                  className="input-field mb-3"
-                  value={remoteServerId}
-                  onChange={(e) => setRemoteServerId(e.target.value)}
-                  disabled={deployServers.length === 0}
-                >
-                  <option value="" disabled>
-                    {deployServers.length === 0
-                      ? "No deploy servers — add one under Remote servers"
-                      : "Select a deploy server…"}
+
+            <div className="space-y-4 rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4">
+              <label className="text-xs text-muted-foreground mb-1 block">Deploy server</label>
+              <select
+                className="input-field mb-3"
+                value={remoteServerId}
+                onChange={(e) => setRemoteServerId(e.target.value)}
+                disabled={deployServers.length === 0}
+              >
+                <option value="" disabled>
+                  {deployServers.length === 0
+                    ? "No deploy servers — add one under Remote servers"
+                    : "Select a deploy server…"}
+                </option>
+                {deployServers.map((srv) => (
+                  <option key={srv.id} value={srv.id}>
+                    {srv.name} ({srv.host})
                   </option>
-                  {deployServers.map((srv) => (
-                    <option key={srv.id} value={srv.id}>
-                      {srv.name} ({srv.host})
-                    </option>
-                  ))}
-                </select>
-                <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
-                <div className="relative overflow-hidden rounded-xl border border-border bg-slate-100 dark:bg-black">
-                  <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>
-                    <div
-                      ref={scriptLineNumbersRef}
-                      className="h-full w-12 shrink-0 overflow-hidden border-r border-slate-300 dark:border-white/10 bg-slate-200 dark:bg-black px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
-                    >
-                      {Array.from({ length: scriptLines }, (_, i) => (
-                        <div key={`ln-${i}`} className="leading-6">
-                          {i + 1}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="relative flex-1 bg-slate-100 dark:bg-black">
-                      <pre
-                        ref={scriptHighlightRef}
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 overflow-auto p-3 font-mono text-sm leading-6 whitespace-pre-wrap break-words"
-                      >
-                        {renderHighlightedScript(bashScript)}
-                      </pre>
-                      <textarea
-                        className="relative z-10 h-full w-full resize-none bg-transparent p-3 font-mono text-sm leading-6 text-transparent caret-slate-900 dark:caret-white placeholder:text-slate-500/90 dark:placeholder:text-slate-400/80 selection:text-white selection:bg-primary/45 focus:outline-none"
-                        value={bashScript}
-                        onChange={(e) => setBashScript(e.target.value)}
-                        onScroll={(e) => {
-                          const top = e.currentTarget.scrollTop;
-                          const left = e.currentTarget.scrollLeft;
-                          if (scriptHighlightRef.current) {
-                            scriptHighlightRef.current.scrollTop = top;
-                            scriptHighlightRef.current.scrollLeft = left;
-                          }
-                          if (scriptLineNumbersRef.current) {
-                            scriptLineNumbersRef.current.scrollTop = top;
-                          }
-                        }}
-                        spellCheck={false}
-                        placeholder={`#!/usr/bin/env bash
-echo "Cron job done"`}
-                      />
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onMouseDown={handleScriptResizeStart}
-                    className="h-6 w-full border-t border-slate-300 dark:border-white/10 bg-slate-200 dark:bg-black hover:bg-slate-300 dark:hover:bg-black cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
-                    aria-label="Resize script editor"
-                    title="Drag to resize"
+                ))}
+              </select>
+              <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
+              <div className="relative overflow-hidden rounded-xl border border-border bg-slate-100 dark:bg-black">
+                <div className="flex overflow-hidden" style={{ height: `${scriptEditorHeight}px` }}>
+                  <div
+                    ref={scriptLineNumbersRef}
+                    className="h-full w-12 shrink-0 overflow-hidden border-r border-slate-300 dark:border-white/10 bg-slate-200 dark:bg-black px-2 py-3 font-mono text-xs text-muted-foreground text-right select-none"
                   >
-                    <span className="inline-flex items-center rounded-full border border-slate-400/50 bg-white/70 text-slate-600 dark:border-white/15 dark:bg-white/5 dark:text-white/70 p-1">
-                      <ChevronsUpDown className="h-3 w-3" />
-                    </span>
-                  </button>
-                </div>
-              </div>
-            )}
-            {initialCronJob.serviceAction === "database_backup" && (
-              <div className="rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4 space-y-3">
-                <p className="text-sm font-medium">Backup options</p>
-                {!initialCronJob.databaseBackupConfig && (
-                  <p className="text-xs text-amber-400/90">
-                    This job used a legacy Docker command. Set engine and service below so backups use the
-                    structured runner; the old command is shown on the detail page until then.
-                  </p>
-                )}
-                <DatabaseBackupFormFields
-                  service={
-                    selectedService?.type === "databases" ? selectedService : null
-                  }
-                  values={dbBackup}
-                  onChange={(patch) => setDbBackup((prev) => ({ ...prev, ...patch }))}
-                  onReplaceValues={setDbBackup}
-                />
-              </div>
-            )}
-            {(initialCronJob.serviceAction === "volume_backup" ||
-              initialCronJob.serviceAction === "database_backup") && (
-              <div className="rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4 space-y-3">
-                {initialCronJob.serviceAction === "volume_backup" && (
-                  <VolumeBackupDbWarning className="mb-1" />
-                )}
-                <p className="text-sm font-medium">Backup destination</p>
-                <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">S3 destination (required)</label>
-                  <select
-                    className="input-field"
-                    value={backupS3ProfileName}
-                    onChange={(e) => setBackupS3ProfileName(e.target.value)}
-                    required
-                  >
-                    <option value="">Select S3 profile…</option>
-                    {initialS3Profiles.map((p) => (
-                      <option key={p.name} value={p.name}>
-                        {p.name} — {p.bucket}
-                      </option>
+                    {Array.from({ length: scriptLines }, (_, i) => (
+                      <div key={`ln-${i}`} className="leading-6">
+                        {i + 1}
+                      </div>
                     ))}
-                  </select>
-                  {initialS3Profiles.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground mt-2">
-                      <Link href="/s3" className="text-primary hover:underline">
-                        Add an S3 destination
-                      </Link>
-                    </p>
-                  ) : null}
+                  </div>
+                  <div className="relative flex-1 bg-slate-100 dark:bg-black">
+                    <pre
+                      ref={scriptHighlightRef}
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 overflow-auto p-3 font-mono text-sm leading-6 whitespace-pre-wrap break-words"
+                    >
+                      {renderHighlightedScript(bashScript)}
+                    </pre>
+                    <textarea
+                      className="relative z-10 h-full w-full resize-none bg-transparent p-3 font-mono text-sm leading-6 text-transparent caret-slate-900 dark:caret-white placeholder:text-slate-500/90 dark:placeholder:text-slate-400/80 selection:text-white selection:bg-primary/45 focus:outline-none"
+                      value={bashScript}
+                      onChange={(e) => setBashScript(e.target.value)}
+                      onScroll={(e) => {
+                        const top = e.currentTarget.scrollTop;
+                        const left = e.currentTarget.scrollLeft;
+                        if (scriptHighlightRef.current) {
+                          scriptHighlightRef.current.scrollTop = top;
+                          scriptHighlightRef.current.scrollLeft = left;
+                        }
+                        if (scriptLineNumbersRef.current) {
+                          scriptLineNumbersRef.current.scrollTop = top;
+                        }
+                      }}
+                      spellCheck={false}
+                      placeholder={`#!/usr/bin/env bash
+echo "Cron job done"`}
+                    />
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onMouseDown={handleScriptResizeStart}
+                  className="h-6 w-full border-t border-slate-300 dark:border-white/10 bg-slate-200 dark:bg-black hover:bg-slate-300 dark:hover:bg-black cursor-default hover:cursor-ns-resize transition-colors flex items-center justify-center"
+                  aria-label="Resize script editor"
+                  title="Drag to resize"
+                >
+                  <span className="inline-flex items-center rounded-full border border-slate-400/50 bg-white/70 text-slate-600 dark:border-white/15 dark:bg-white/5 dark:text-white/70 p-1">
+                    <ChevronsUpDown className="h-3 w-3" />
+                  </span>
+                </button>
               </div>
-            )}
+            </div>
+
             <div className="rounded-xl border border-border bg-muted/65 dark:bg-black/30 p-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-medium">Notification (optional)</p>
@@ -470,24 +336,50 @@ echo "Cron job done"`}
                 <>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Notification channel</label>
-                    <select className="input-field" value={notifyChannelId} onChange={(e) => setNotifyChannelId(e.target.value)}>
+                    <select
+                      className="input-field"
+                      value={notifyChannelId}
+                      onChange={(e) => setNotifyChannelId(e.target.value)}
+                    >
                       <option value="">No notification</option>
                       {initialChannels.map((c) => (
-                        <option key={c.id} value={String(c.id)}>{c.name}</option>
+                        <option key={c.id} value={String(c.id)}>
+                          {c.name}
+                        </option>
                       ))}
                     </select>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Message content</label>
-                    <textarea className="input-field min-h-[80px] resize-y" value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} />
+                    <textarea
+                      className="input-field min-h-[80px] resize-y"
+                      value={notifyMessage}
+                      onChange={(e) => setNotifyMessage(e.target.value)}
+                    />
                   </div>
                 </>
               )}
             </div>
             <div className="flex justify-end gap-3 pt-2">
-              <Link href="/cron-jobs"><button type="button" className="btn-secondary">Cancel</button></Link>
-              <button type="button" onClick={submit} disabled={updateMutation.isPending} className="btn-primary flex items-center gap-2">
-                {updateMutation.isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : "Save changes"}
+              <Link href="/cron-jobs">
+                <button type="button" className="btn-secondary">
+                  Cancel
+                </button>
+              </Link>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={updateMutation.isPending}
+                className="btn-primary flex items-center gap-2"
+              >
+                {updateMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  "Save changes"
+                )}
               </button>
             </div>
           </div>

@@ -88,8 +88,6 @@ export async function fetchCronJobSSR(id: string): Promise<CronJobDetail | null>
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     triggerType: "cron",
   };
 }

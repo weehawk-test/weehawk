@@ -3,8 +3,6 @@ import {
   fetchCronJobSSR,
   fetchNotificationChannelsSSR,
   fetchRemoteServersSSR,
-  fetchS3ProfilesSSR,
-  fetchServicesSSR,
 } from "@/lib/server-fetch";
 import { EditCronJobClient } from "./edit-cron-job-client";
 
@@ -15,11 +13,9 @@ type PageProps = {
 export default async function EditCronJobPage({ params }: PageProps) {
   const { id: rawId } = await params;
   const id = rawId.trim();
-  const [cronJob, initialChannels, initialS3Profiles, initialServices, initialRemoteServers] = await Promise.all([
+  const [cronJob, initialChannels, initialRemoteServers] = await Promise.all([
     fetchCronJobSSR(id),
     fetchNotificationChannelsSSR(),
-    fetchS3ProfilesSSR(),
-    fetchServicesSSR(),
     fetchRemoteServersSSR(),
   ]);
   if (!cronJob) notFound();
@@ -30,8 +26,6 @@ export default async function EditCronJobPage({ params }: PageProps) {
     <EditCronJobClient
       initialCronJob={cronJob}
       initialChannels={initialChannels}
-      initialS3Profiles={initialS3Profiles}
-      initialServices={initialServices}
       initialRemoteServers={initialRemoteServers}
     />
   );

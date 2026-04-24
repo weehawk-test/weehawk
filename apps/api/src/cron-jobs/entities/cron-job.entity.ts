@@ -6,8 +6,6 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
-import type { WebhookServiceAction, WebhookTargetMode } from '../../webhooks/entities/webhook.entity';
 import { generatePublicId } from '../../common/public-id';
 
 @Entity({ name: 'cron_jobs' })
@@ -33,34 +31,13 @@ export class CronJob {
   @Column({ name: 'cron_expression', type: 'varchar', length: 64 })
   cronExpression!: string;
 
-  @Column({ name: 'target_mode', type: 'varchar', length: 24 })
-  targetMode!: WebhookTargetMode;
+  /** Deploy host where the script is installed and crontab runs. */
+  @Column({ name: 'remote_server_id', type: 'int' })
+  remoteServerId!: number;
 
-  @Column({ name: 'service_id', type: 'int', nullable: true })
-  serviceId: number | null = null;
-
-  @Column({ name: 'remote_server_id', type: 'int', nullable: true })
-  remoteServerId: number | null = null;
-
-  @Column({
-    name: 'service_action',
-    type: 'varchar',
-    length: 32,
-    nullable: true,
-  })
-  serviceAction: WebhookServiceAction | null = null;
-
-  @Column({ name: 'volume_source', type: 'varchar', length: 512, nullable: true })
-  volumeSource: string | null = null;
-
-  @Column({ name: 'docker_command', type: 'text', nullable: true })
-  dockerCommand: string | null = null;
-
-  @Column({ name: 'database_backup_config', type: 'json', nullable: true })
-  databaseBackupConfig: DatabaseBackupConfig | null = null;
-
-  @Column({ name: 'backup_s3_profile_name', type: 'varchar', length: 191, nullable: true })
-  backupS3ProfileName: string | null = null;
+  /** Bash body executed on the deploy host (wrapped script + Docker socket). */
+  @Column({ name: 'bash_script', type: 'text' })
+  bashScript!: string;
 
   @Column({ name: 'notify_on_trigger', default: false })
   notifyOnTrigger!: boolean;

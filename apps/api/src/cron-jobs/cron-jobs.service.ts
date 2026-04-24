@@ -15,12 +15,8 @@ import {
   REMOTE_NOTIFY_DEFAULTS_CRON,
 } from '../common/remote-wrapped-script-install';
 import { ExecutorService } from '../executor/executor.service';
-import { S3Service } from '../s3/s3.service';
-import { ServicesService } from '../services/services.service';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { getErrorMessage } from '../utils/error-message';
-import type { DatabaseBackupConfig } from '../backup/database-backup.types';
-import { describeDatabaseBackupPreview } from '../backup/database-backup.types';
 import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
@@ -33,21 +29,14 @@ export type CronJobListRow = {
   description: string;
   isActive: boolean;
   cronExpression: string;
-  targetMode: string;
-  serviceId: number | null;
-  remoteServerId: number | null;
-  serviceAction: string | null;
+  remoteServerId: number;
   notifyOnTrigger: boolean;
   createdAt: string;
   summary: string;
 };
 
 export type CronJobDetailRow = CronJobListRow & {
-  volumeSource: string | null;
-  dockerCommand: string | null;
-  databaseBackupConfig: DatabaseBackupConfig | null;
-  databaseBackupPreview: string | null;
-  backupS3ProfileName: string | null;
+  bashScript: string;
   notifyChannelId: number | null;
   notifyMessage: string | null;
 };
@@ -55,16 +44,12 @@ export type CronJobDetailRow = CronJobListRow & {
 @Injectable()
 export class CronJobsService {
   private readonly logger = new Logger(CronJobsService.name);
-  private readonly lastTickByJob = new Map<number, string>();
-  private isTickRunning = false;
 
   constructor(
     @InjectRepository(CronJob)
     private readonly cronJobRepo: Repository<CronJob>,
-    private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
-    private readonly s3Service: S3Service,
     private readonly remoteServersService: RemoteServersService,
   ) {}
 
@@ -115,9 +100,9 @@ export class CronJobsService {
   }
 
   private buildRemoteCrontabLine(job: CronJob): string {
-    if (job.serviceAction !== 'docker_command' || !job.dockerCommand?.trim()) {
+    if (!job.bashScript?.trim()) {
       throw new BadRequestException(
-        'Only docker_command cron jobs are supported for direct Linux crontab execution.',
+        'Cron job must have a bash script for Linux crontab execution.',
       );
     }
     const scriptPath = this.scriptPathRemote(job.id);
@@ -141,26 +126,16 @@ export class CronJobsService {
   }
 
   private async resolveCronRemoteServerId(job: CronJob): Promise<number> {
-    if (job.remoteServerId != null) {
-      await this.remoteServersService.assertDeployServerById(
-        job.remoteServerId,
-        job.userId,
+    if (job.remoteServerId == null) {
+      throw new BadRequestException(
+        `Cron job "${job.name}" needs a remote deploy server to install Linux crontab via SSH.`,
       );
-      return job.remoteServerId;
     }
-    if (job.serviceId != null) {
-      const ids = await this.servicesService.getDockerSshTargetIds(job.serviceId);
-      if (ids.remoteServerId != null) {
-        await this.remoteServersService.assertDeployServerById(
-          ids.remoteServerId,
-          job.userId,
-        );
-        return ids.remoteServerId;
-      }
-    }
-    throw new BadRequestException(
-      `Cron job "${job.name}" needs a remote deploy server to install Linux crontab via SSH.`,
+    await this.remoteServersService.assertDeployServerById(
+      job.remoteServerId,
+      job.userId,
     );
+    return job.remoteServerId;
   }
 
   private async tryResolveCronRemoteServerId(job: CronJob): Promise<number | null> {
@@ -258,7 +233,7 @@ export class CronJobsService {
     opts?: { lines?: number },
   ): Promise<{ log: string; source: string }> {
     const job = await this.resolveEntity(userId, idOrPublicId);
-    if (job.serviceAction !== 'docker_command' || job.remoteServerId == null) {
+    if (job.remoteServerId == null) {
       return { log: '', source: 'not-applicable' };
     }
     const linesRaw = opts?.lines ?? 200;
@@ -280,7 +255,7 @@ fi
     const out = await this.executorService.runSystemScript(
       script,
       job.remoteServerId,
-      job.userId,
+      userId,
     );
     if (!out.success) {
       throw new BadRequestException(
@@ -297,9 +272,9 @@ fi
       return;
     }
     const remoteServerId = await this.resolveCronRemoteServerId(job);
-    if (job.serviceAction !== 'docker_command' || !job.dockerCommand?.trim()) {
+    if (!job.bashScript?.trim()) {
       throw new BadRequestException(
-        'Cron over SSH currently supports docker_command only. Set action to docker_command and provide a script.',
+        'Cron job must have a bash script to install on the deploy host.',
       );
     }
     const envLines = await this.buildNotificationEnvForJob(job);
@@ -307,7 +282,7 @@ fi
       remoteServerId,
       job.userId,
       job.id,
-      job.dockerCommand,
+      job.bashScript,
       envLines,
     );
     const line = this.buildRemoteCrontabLine(job);
@@ -367,40 +342,6 @@ fi
     );
   }
 
-  private matchesCronField(field: string, current: number): boolean {
-    const f = field.trim();
-    if (f === '*') return true;
-    if (f.startsWith('*/')) {
-      const step = Number(f.slice(2));
-      return step > 0 && current % step === 0;
-    }
-    if (f.includes(',')) {
-      return f.split(',').some((part) => this.matchesCronField(part.trim(), current));
-    }
-    const rangeMatch = /^(\d+)-(\d+)$/.exec(f);
-    if (rangeMatch) {
-      const a = Number(rangeMatch[1]);
-      const b = Number(rangeMatch[2]);
-      return current >= a && current <= b;
-    }
-    if (/^\d+$/.test(f)) {
-      return Number(f) === current;
-    }
-    return false;
-  }
-
-  private matchesCron(expr: string, now: Date): boolean {
-    const parts = expr.trim().split(/\s+/);
-    if (parts.length !== 5) return false;
-    return (
-      this.matchesCronField(parts[0], now.getMinutes()) &&
-      this.matchesCronField(parts[1], now.getHours()) &&
-      this.matchesCronField(parts[2], now.getDate()) &&
-      this.matchesCronField(parts[3], now.getMonth() + 1) &&
-      this.matchesCronField(parts[4], now.getDay())
-    );
-  }
-
   private async assertNotificationChannel(
     userId: number,
     channelId: number,
@@ -415,47 +356,11 @@ fi
     if (!this.isValidCronExpression(dto.cronExpression)) {
       throw new BadRequestException('Invalid cron expression.');
     }
-    if (dto.targetMode === 'service') {
-      if (dto.serviceAction == null) {
-        throw new BadRequestException(
-          'Service cron jobs require serviceAction.',
-        );
-      }
-      if (dto.serviceAction !== 'no_action' && dto.serviceId == null) {
-        if (dto.serviceAction === 'docker_command') {
-          // Docker command cron jobs run as system scripts and may not target a service.
-        } else {
-        throw new BadRequestException(
-          'serviceId is required unless action is no_action.',
-        );
-        }
-      }
-      if (dto.serviceAction === 'volume_backup' && !dto.volumeSource?.trim()) {
-        throw new BadRequestException('volumeSource is required for volume backup.');
-      }
-      if (
-        dto.serviceAction === 'docker_command' &&
-        !dto.dockerCommand?.trim()
-      ) {
-        throw new BadRequestException('dockerCommand is required.');
-      }
-      if (
-        dto.serviceAction === 'database_backup' &&
-        !dto.databaseBackupConfig
-      ) {
-        throw new BadRequestException(
-          'databaseBackupConfig is required for database backup.',
-        );
-      }
-      if (
-        (dto.serviceAction === 'volume_backup' ||
-          dto.serviceAction === 'database_backup') &&
-        !dto.backupS3ProfileName?.trim()
-      ) {
-        throw new BadRequestException(
-          'backupS3ProfileName is required: backups are stored in S3 only.',
-        );
-      }
+    if (!dto.bashScript?.trim()) {
+      throw new BadRequestException('bashScript is required.');
+    }
+    if (dto.remoteServerId == null || dto.remoteServerId < 1) {
+      throw new BadRequestException('remoteServerId is required.');
     }
     const hasNotifyChannel =
       dto.notifyChannelId != null && dto.notifyChannelId >= 1;
@@ -468,20 +373,7 @@ fi
   }
 
   private summaryLabel(w: CronJob): string {
-    const a = w.serviceAction ?? '—';
-    if (a === 'redeploy') return `[Cron ${w.cronExpression}] Redeploy`;
-    if (a === 'volume_backup') {
-      return `[Cron ${w.cronExpression}] Volume → S3: ${w.volumeSource ?? '—'}`;
-    }
-    if (a === 'database_backup') {
-      const eng = w.databaseBackupConfig?.engine;
-      return eng
-        ? `[Cron ${w.cronExpression}] Database → S3 (${eng})`
-        : `[Cron ${w.cronExpression}] Database → S3`;
-    }
-    if (a === 'docker_command') return `[Cron ${w.cronExpression}] Docker command`;
-    if (a === 'no_action') return `[Cron ${w.cronExpression}] No action`;
-    return `[Cron ${w.cronExpression}] ${a}`;
+    return `[Cron ${w.cronExpression}] Bash on deploy host`;
   }
 
   private async toListRow(w: CronJob): Promise<CronJobListRow> {
@@ -493,10 +385,7 @@ fi
       description: row.description ?? '',
       isActive: row.isActive,
       cronExpression: row.cronExpression,
-      targetMode: row.targetMode,
-      serviceId: row.serviceId,
       remoteServerId: row.remoteServerId,
-      serviceAction: row.serviceAction,
       notifyOnTrigger: row.notifyOnTrigger,
       createdAt: row.createdAt.toISOString(),
       summary: this.summaryLabel(row),
@@ -505,86 +394,12 @@ fi
 
   private async toDetailRow(w: CronJob): Promise<CronJobDetailRow> {
     const row = await this.ensurePublicId(w);
-    const cfg = row.databaseBackupConfig;
     return {
       ...(await this.toListRow(row)),
-      volumeSource: row.volumeSource,
-      dockerCommand: row.dockerCommand,
-      databaseBackupConfig: cfg,
-      databaseBackupPreview: cfg ? describeDatabaseBackupPreview(cfg) : null,
-      backupS3ProfileName: row.backupS3ProfileName,
+      bashScript: row.bashScript,
       notifyChannelId: row.notifyChannelId,
       notifyMessage: row.notifyMessage,
     };
-  }
-
-  private async finalizeBackupWithS3(
-    userId: number,
-    contextId: number,
-    profileName: string | null | undefined,
-    r: {
-      success: boolean;
-      output: string;
-      archiveBasename?: string;
-      remoteArtifact?: {
-        remoteServerId: number;
-        projectUserId: number | null;
-        stagingDir: string;
-        remoteFilePath: string;
-      };
-    },
-  ): Promise<{ success: boolean; output: string }> {
-    if (!r.success || !r.archiveBasename) {
-      return { success: r.success, output: r.output };
-    }
-    const trimmed = profileName?.trim();
-    if (!trimmed) {
-      return {
-        success: false,
-        output: `${r.output}\nS3 destination is not configured.`,
-      };
-    }
-    const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
-    const ra = r.remoteArtifact;
-    if (!ra) {
-      return {
-        success: false,
-        output: `${r.output}\nBackup archive was not created on the deploy host.`,
-      };
-    }
-    try {
-      const put = await this.s3Service.presignPutObject(userId, trimmed, key, {
-        contentType: r.archiveBasename.toLowerCase().endsWith('.gz')
-          ? 'application/gzip'
-          : 'application/octet-stream',
-      });
-      await this.remoteServersService.curlPresignedPutFromRemoteFile(
-        ra.remoteServerId,
-        ra.projectUserId,
-        ra.remoteFilePath,
-        put.url,
-        put.contentType,
-      );
-      await this.remoteServersService.removeRemoteTreeBestEffort(
-        ra.remoteServerId,
-        ra.projectUserId,
-        ra.stagingDir,
-      );
-      return {
-        success: true,
-        output: `${r.output}\nUploaded to s3://${put.bucket}/${put.key}`,
-      };
-    } catch (e) {
-      await this.remoteServersService.removeRemoteTreeBestEffort(
-        ra.remoteServerId,
-        ra.projectUserId,
-        ra.stagingDir,
-      );
-      return {
-        success: false,
-        output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
-      };
-    }
   }
 
   async create(userId: number, dto: CreateCronJobDto): Promise<CronJobDetailRow> {
@@ -592,23 +407,7 @@ fi
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
-    if (dto.targetMode === 'service' && dto.serviceId != null) {
-      try {
-        await this.servicesService.assertServiceOwnedByUser(dto.serviceId, userId);
-      } catch {
-        throw new BadRequestException('Service not found.');
-      }
-    }
-
-    const backupProfile =
-      dto.targetMode === 'service' &&
-      (dto.serviceAction === 'volume_backup' ||
-        dto.serviceAction === 'database_backup')
-        ? dto.backupS3ProfileName!.trim()
-        : null;
-    if (backupProfile) {
-      await this.s3Service.assertProfileExists(backupProfile);
-    }
+    await this.remoteServersService.assertDeployServerById(dto.remoteServerId, userId);
 
     const job = this.cronJobRepo.create({
       publicId: generatePublicId('crn'),
@@ -617,38 +416,8 @@ fi
       description: dto.description?.trim() ?? null,
       isActive: true,
       cronExpression: dto.cronExpression.trim(),
-      targetMode: dto.targetMode,
-      serviceId:
-        dto.targetMode === 'service' && dto.serviceAction !== 'no_action'
-          && dto.serviceAction !== 'docker_command'
-          ? dto.serviceId
-          : null,
-      remoteServerId:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'docker_command' &&
-        dto.remoteServerId != null
-          ? dto.remoteServerId
-          : null,
-      serviceAction: dto.targetMode === 'service' ? dto.serviceAction : null,
-      volumeSource:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'volume_backup' &&
-        dto.volumeSource
-          ? dto.volumeSource.trim()
-          : null,
-      dockerCommand:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'docker_command' &&
-        dto.dockerCommand
-          ? dto.dockerCommand.trim()
-          : null,
-      databaseBackupConfig:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'database_backup' &&
-        dto.databaseBackupConfig
-          ? (dto.databaseBackupConfig as unknown as DatabaseBackupConfig)
-          : null,
-      backupS3ProfileName: backupProfile,
+      remoteServerId: dto.remoteServerId,
+      bashScript: dto.bashScript.trim(),
       notifyOnTrigger:
         dto.notifyChannelId != null &&
         dto.notifyChannelId >= 1 &&
@@ -700,46 +469,20 @@ fi
     if (dto.notifyMessage !== undefined) {
       job.notifyMessage = dto.notifyMessage?.trim() || null;
     }
-    if (dto.backupS3ProfileName !== undefined) {
-      const v = dto.backupS3ProfileName?.trim() || null;
-      if (v) {
-        await this.s3Service.assertProfileExists(v);
-      }
-      if (
-        (job.serviceAction === 'volume_backup' ||
-          job.serviceAction === 'database_backup') &&
-        !v
-      ) {
-        throw new BadRequestException(
-          'S3 destination is required for backup actions.',
-        );
-      }
-      job.backupS3ProfileName = v;
-    }
-    if (dto.databaseBackupConfig !== undefined) {
-      if (job.serviceAction === 'database_backup') {
-        if (!dto.databaseBackupConfig) {
-          throw new BadRequestException(
-            'databaseBackupConfig is required for database backup.',
-          );
-        }
-        job.databaseBackupConfig =
-          dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
-        job.dockerCommand = null;
-      }
-    }
-    if (dto.dockerCommand !== undefined) {
-      if (job.serviceAction === 'docker_command') {
-        job.dockerCommand = dto.dockerCommand?.trim() || null;
-      }
+    if (dto.bashScript !== undefined) {
+      job.bashScript = dto.bashScript?.trim() ?? '';
     }
     if (dto.remoteServerId !== undefined) {
-      if (job.serviceAction === 'docker_command') {
-        job.remoteServerId = dto.remoteServerId ?? null;
-      } else {
-        job.remoteServerId = null;
-      }
+      job.remoteServerId = dto.remoteServerId;
     }
+
+    if (!job.bashScript?.trim()) {
+      throw new BadRequestException('bashScript cannot be empty.');
+    }
+    if (job.remoteServerId == null || job.remoteServerId < 1) {
+      throw new BadRequestException('remoteServerId is required.');
+    }
+
     if (job.notifyChannelId && job.notifyMessage) {
       job.notifyOnTrigger = true;
       await this.assertNotificationChannel(userId, job.notifyChannelId);
@@ -750,6 +493,8 @@ fi
         'Provide both notifyChannelId and notifyMessage, or clear both.',
       );
     }
+
+    await this.remoteServersService.assertDeployServerById(job.remoteServerId, userId);
 
     const saved = await this.cronJobRepo.save(job);
     const prevRemoteId = await this.tryResolveCronRemoteServerId(previousJob);
@@ -778,120 +523,18 @@ fi
     let output = '';
 
     try {
-      if (job.targetMode === 'service') {
-        if (job.serviceAction === 'no_action') {
-          action = 'no_action';
-          output = 'No Docker action selected.';
-        } else if (job.serviceAction === 'redeploy' && job.serviceId != null) {
-          action = 'redeploy';
-          const r = await this.servicesService.executeDeployment(
-            job.serviceId,
-            'redeploy',
-            { actingUserId: job.userId },
-          );
-          success = Boolean(r.success);
-          output = String(r.output ?? '');
-        } else if (
-          job.serviceAction === 'volume_backup' &&
-          job.volumeSource &&
-          job.serviceId != null
-        ) {
-          action = 'volume_backup';
-          if (!job.backupS3ProfileName?.trim()) {
-            success = false;
-            output =
-              'S3 destination is not configured. Edit the cron job and choose a saved S3 profile.';
-          } else {
-            try {
-              const ssh = await this.servicesService.getDockerSshTargetIds(job.serviceId);
-              if (ssh.remoteServerId == null) {
-                success = false;
-                output =
-                  'This service has no deploy host; volume backup runs on the remote Docker machine. Set Remote Docker host on the service.';
-              } else {
-                const r = await this.executorService.backupDockerVolume(
-                  job.volumeSource,
-                  ssh.remoteServerId,
-                  null,
-                );
-                const final = await this.finalizeBackupWithS3(
-                  job.userId,
-                  job.id,
-                  job.backupS3ProfileName,
-                  r,
-                );
-                success = final.success;
-                output = final.output;
-              }
-            } catch (e) {
-              success = false;
-              output = getErrorMessage(e);
-            }
-          }
-        } else if (job.serviceAction === 'database_backup' && job.serviceId != null) {
-          action = 'database_backup';
-          if (!job.backupS3ProfileName?.trim()) {
-            success = false;
-            output =
-              'S3 destination is not configured. Edit the cron job and choose a saved S3 profile.';
-          } else if (job.databaseBackupConfig) {
-            try {
-              const r = await this.executorService.backupDatabaseStructured(
-                job.serviceId,
-                job.databaseBackupConfig,
-              );
-              const final = await this.finalizeBackupWithS3(
-                job.userId,
-                job.id,
-                job.backupS3ProfileName,
-                r,
-              );
-              success = final.success;
-              output = final.output;
-            } catch (e) {
-              success = false;
-              output = getErrorMessage(e);
-            }
-          } else if (job.dockerCommand) {
-            try {
-              const r = await this.executorService.backupDatabaseFromDockerCommand(
-                job.serviceId,
-                job.dockerCommand,
-                '',
-              );
-              const final = await this.finalizeBackupWithS3(
-                job.userId,
-                job.id,
-                job.backupS3ProfileName,
-                r,
-              );
-              success = final.success;
-              output = final.output;
-            } catch (e) {
-              success = false;
-              output = getErrorMessage(e);
-            }
-          } else {
-            success = false;
-            output =
-              'Database backup is not configured (missing databaseBackupConfig).';
-          }
-        } else if (
-          job.serviceAction === 'docker_command' &&
-          job.dockerCommand
-        ) {
-          action = 'docker_command';
-          const r = await this.executorService.runSystemScript(
-            `/bin/bash ${this.shQuote(this.scriptPathRemote(job.id))}`,
-            job.remoteServerId,
-            job.userId,
-          );
-          success = r.success;
-          output = r.output;
-        } else {
-          success = false;
-          output = 'Cron job is misconfigured (missing action details).';
-        }
+      if (job.bashScript?.trim() && job.remoteServerId != null) {
+        action = 'bash_script';
+        const r = await this.executorService.runSystemScript(
+          `/bin/bash ${this.shQuote(this.scriptPathRemote(job.id))}`,
+          job.remoteServerId,
+          job.userId,
+        );
+        success = r.success;
+        output = r.output;
+      } else {
+        success = false;
+        output = 'Cron job is misconfigured (missing script or deploy server).';
       }
     } catch (e) {
       success = false;
@@ -930,7 +573,6 @@ fi
   }
 
   async runDueCronJobs(): Promise<void> {
-    // Deprecated path: cron execution now uses Linux crontab + SSH-triggered HTTP callbacks.
     return;
   }
 }
