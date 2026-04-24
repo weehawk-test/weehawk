@@ -15,7 +15,6 @@ import { RegistryAccount } from '../registry/entities/registry-account.entity';
 import { S3Profile } from '../s3/entities/s3-profile.entity';
 import { GitIntegrationSettings } from '../git/entities/git-integration.entity';
 import { TraefikSettings } from '../traefik/entities/traefik-settings.entity';
-import { Notification } from '../notifications/entities/notification.entity';
 import { NotificationChannel } from '../notifications/entities/notification-channel.entity';
 import { RefreshToken } from '../token/refresh-token.entity';
 
@@ -62,7 +61,6 @@ export class UserService {
     await manager.delete(S3Profile, { userId });
     await manager.delete(GitIntegrationSettings, { userId });
     await manager.delete(TraefikSettings, { userId });
-    await manager.delete(Notification, { userId });
     await manager.delete(NotificationChannel, { userId });
     await manager.delete(RefreshToken, { userId });
   }

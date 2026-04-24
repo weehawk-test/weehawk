@@ -25,7 +25,7 @@ export class PagedLogsQueryDto {
   @Max(200)
   pageSize: number = 20;
 
-  @ApiPropertyOptional({ description: 'Search in channel name + message' })
+  @ApiPropertyOptional({ description: 'Search in channel name and type' })
   @IsOptional()
   @IsString()
   @MaxLength(200)

@@ -1,7 +1,6 @@
 import { NotificationChannel } from '../entities/notification-channel.entity';
 import { NotificationChannelType } from '../entities/notification-channel-type.enum';
-import { Notification } from '../entities/notification.entity';
-import { ChannelPreview, ProviderSendResult } from './provider.types';
+import { ChannelPreview } from './provider.types';
 
 export interface NotificationProvider {
   readonly type: NotificationChannelType;
@@ -10,9 +9,4 @@ export interface NotificationProvider {
   normalizeConfig(config: Record<string, unknown>): Record<string, unknown>;
 
   preview(channel: NotificationChannel): Promise<ChannelPreview>;
-
-  send(
-    channel: NotificationChannel,
-    notification: Notification,
-  ): Promise<ProviderSendResult>;
 }

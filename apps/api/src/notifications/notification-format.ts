@@ -1,8 +1,7 @@
-import { Notification } from './entities/notification.entity';
-
-export function notificationPlainText(n: Notification): string {
-  const t = n.title.trim();
-  const m = n.message.trim();
+/** Plain text for providers / remote curl (title + body). */
+export function formatNotificationPlainText(title: string, message: string): string {
+  const t = title.trim();
+  const m = message.trim();
   if (!t) return m;
   if (!m) return t;
   return `${t}\n\n${m}`;
