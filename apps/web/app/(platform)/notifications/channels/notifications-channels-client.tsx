@@ -453,11 +453,15 @@ export function NotificationsChannelsClient({
   const [showAdd, setShowAdd] = useState(false);
   const [revealedTokens, setRevealedTokens] = useState<Set<string>>(new Set());
   const [showChannelAction, setShowChannelAction] = useState(false);
-  const [actionChannel, setActionChannel] = useState<{ id: number; name: string } | null>(null);
+  const [actionChannel, setActionChannel] = useState<{
+    id: number;
+    name: string;
+    remoteServerId: number | null;
+  } | null>(null);
+  const [testActionRemoteId, setTestActionRemoteId] = useState<number | "">("");
   const [showEditChannel, setShowEditChannel] = useState(false);
   const [editChannel, setEditChannel] = useState<NotificationChannel | null>(null);
   const [editName, setEditName] = useState("");
-  const [editIsActive, setEditIsActive] = useState(true);
   const [editDeployServerId, setEditDeployServerId] = useState<number | "">("");
 
   const [form, setForm] = useState({ name: "", type: "telegram" });
@@ -622,8 +626,24 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
   });
   const testMutation = useMutation({
-    mutationFn: (channelId: number) => testNotificationChannel(accessToken!, channelId),
+    mutationFn: async ({
+      channelId,
+      remoteServerId,
+      previousRemoteId,
+    }: {
+      channelId: number;
+      remoteServerId: number;
+      previousRemoteId: number | null;
+    }) => {
+      if (!accessToken) throw new Error("Not signed in.");
+      if (remoteServerId !== previousRemoteId) {
+        await updateNotificationChannel(accessToken, channelId, { remoteServerId });
+      }
+      return testNotificationChannel(accessToken, channelId);
+    },
     onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
       if (res.success) {
         toast({ title: "Test succeeded", description: res.message });
         setShowChannelAction(false);
@@ -642,7 +662,6 @@ export function NotificationsChannelsClient({
       }
       return updateNotificationChannel(accessToken!, editChannel.id, {
         name: editName.trim(),
-        isActive: editIsActive,
         remoteServerId: editDeployServerId as number,
       });
     },
@@ -660,7 +679,6 @@ export function NotificationsChannelsClient({
   const openEditChannel = (ch: NotificationChannel) => {
     setEditChannel(ch);
     setEditName(ch.name);
-    setEditIsActive(ch.isActive);
     setEditDeployServerId(ch.remoteServerId ?? "");
     setShowEditChannel(true);
   };
@@ -696,13 +714,31 @@ export function NotificationsChannelsClient({
     }
     testDraftMutation.mutate();
   };
-  const openChannelActions = (channelId: number, channelName: string) => {
-    setActionChannel({ id: channelId, name: channelName });
+  const openChannelActions = (ch: NotificationChannel) => {
+    setActionChannel({
+      id: ch.id,
+      name: ch.name,
+      remoteServerId: ch.remoteServerId,
+    });
+    setTestActionRemoteId(ch.remoteServerId ?? "");
     setShowChannelAction(true);
   };
   const runChannelTest = () => {
     if (!actionChannel) return;
-    testMutation.mutate(actionChannel.id);
+    if (testActionRemoteId === "") {
+      toast({
+        title: "Select a deploy host",
+        description: "Choose which server runs the test over SSH.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (deployServers.length === 0) return;
+    testMutation.mutate({
+      channelId: actionChannel.id,
+      remoteServerId: testActionRemoteId as number,
+      previousRemoteId: actionChannel.remoteServerId,
+    });
   };
   const handleBulkDeleteChannels = async () => {
     const ids = channelsBulk.selectedInFiltered;
@@ -1162,11 +1198,36 @@ export function NotificationsChannelsClient({
                 </button>
               </div>
 
-              <div className="rounded-xl border border-primary/20 bg-primary/[0.06] p-4 mb-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
-                <p className="text-sm text-foreground font-medium mb-1">Runs on the deploy host only</p>
-                <p className="text-xs text-muted-foreground">
-                  A fixed test payload is sent from this channel&apos;s deploy server over SSH (same path as automated notifications). Nothing is sent from the app server.
+              <div className="rounded-xl border border-primary/20 bg-primary/[0.06] p-3 mb-4 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Test message is sent from the deploy host you pick through SSH—not from the app server.
                 </p>
+              </div>
+
+              <div className="mb-4">
+                <label className="text-sm text-muted-foreground mb-1 block">Run test from</label>
+                <select
+                  className="input-field text-sm"
+                  value={testActionRemoteId === "" ? "" : String(testActionRemoteId)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setTestActionRemoteId(v === "" ? "" : Number(v));
+                  }}
+                  disabled={testMutation.isPending || deployServers.length === 0}
+                >
+                  {deployServers.length === 0 && <option value="">No deploy servers</option>}
+                  {deployServers.length > 0 && <option value="">Select a host…</option>}
+                  {deployServers.map((srv) => (
+                    <option key={srv.id} value={srv.id}>
+                      {srv.name} ({srv.host})
+                    </option>
+                  ))}
+                </select>
+                {deployServers.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground mt-1.5">
+                    Add a deploy server under Remote servers first.
+                  </p>
+                ) : null}
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1181,7 +1242,11 @@ export function NotificationsChannelsClient({
                 <button
                   type="button"
                   onClick={runChannelTest}
-                  disabled={testMutation.isPending}
+                  disabled={
+                    testMutation.isPending ||
+                    testActionRemoteId === "" ||
+                    deployServers.length === 0
+                  }
                   className="btn-secondary text-sm border border-primary/40 text-primary inline-flex items-center justify-center gap-1.5 h-9 min-h-9 px-3 disabled:opacity-50"
                 >
                   {testMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />}
@@ -1238,16 +1303,6 @@ export function NotificationsChannelsClient({
                       disabled={updateChannelMutation.isPending}
                     />
                   </div>
-                  <label className="flex items-center gap-2 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      className="rounded border-border"
-                      checked={editIsActive}
-                      onChange={(e) => setEditIsActive(e.target.checked)}
-                      disabled={updateChannelMutation.isPending}
-                    />
-                    <span>Channel active</span>
-                  </label>
                   <div>
                     <label className="text-sm text-muted-foreground mb-1 block">Run test from</label>
                     <select
@@ -1487,7 +1542,7 @@ export function NotificationsChannelsClient({
                       onClick={() => openEditChannel(ch)}
                       disabled={updateChannelMutation.isPending || testMutation.isPending}
                       className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:opacity-50"
-                      title="Edit name, active state, Run test from"
+                      title="Edit name and Run test from host"
                     >
                       {updateChannelMutation.isPending && editChannel?.id === ch.id ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
@@ -1498,10 +1553,10 @@ export function NotificationsChannelsClient({
                     </button>
                     <button
                       type="button"
-                      onClick={() => openChannelActions(ch.id, ch.name)}
+                      onClick={() => openChannelActions(ch)}
                       disabled={testMutation.isPending || updateChannelMutation.isPending}
                       className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:opacity-50"
-                      title="Run test from selected host"
+                      title="Run test (pick deploy host in dialog)"
                     >
                       {testMutation.isPending ? (
                         <Loader2 className="w-3 h-3 animate-spin" />

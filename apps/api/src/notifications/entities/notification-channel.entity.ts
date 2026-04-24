@@ -45,9 +45,6 @@ export class NotificationChannel {
   @Column({ name: 'remote_server_id', type: 'int', nullable: true })
   remoteServerId!: number | null;
 
-  @Column({ name: 'is_active', default: true })
-  isActive!: boolean;
-
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;
 

@@ -9,7 +9,6 @@ export type NotificationChannel = {
   type: string;
   credentialPreview: string;
   targetPreview: string;
-  isActive: boolean;
   /** Deploy host used for delivery (SSH + curl on this server). */
   remoteServerId: number | null;
   createdAt: string;
@@ -102,7 +101,6 @@ export async function updateNotificationChannel(
   body: Partial<{
     name: string;
     config: Record<string, unknown>;
-    isActive: boolean;
     remoteServerId: number;
   }>,
 ): Promise<NotificationChannel> {

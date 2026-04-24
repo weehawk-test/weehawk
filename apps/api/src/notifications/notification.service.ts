@@ -28,7 +28,6 @@ export type NotificationChannelRow = {
   type: NotificationChannelType;
   credentialPreview: string;
   targetPreview: string;
-  isActive: boolean;
   /** When set, Send/Test uses SSH on this deploy host (curl from customer network). */
   remoteServerId: number | null;
   createdAt: string;
@@ -83,7 +82,6 @@ export class NotificationService {
       type: ch.type,
       credentialPreview: preview.credentialPreview,
       targetPreview: preview.targetPreview,
-      isActive: ch.isActive,
       remoteServerId: ch.remoteServerId ?? null,
       createdAt: ch.createdAt.toISOString(),
     };
@@ -241,7 +239,6 @@ export class NotificationService {
       userId,
       name: dto.name.trim(),
       type: dto.type as NotificationChannelType,
-      isActive: true,
       config,
       remoteServerId: remoteId,
     });
@@ -258,7 +255,6 @@ export class NotificationService {
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
     if (dto.name !== undefined) ch.name = dto.name.trim();
-    if (dto.isActive !== undefined) ch.isActive = dto.isActive;
     if (dto.config !== undefined) {
       const provider = this.providerRegistry.get(ch.type);
       ch.config = provider.normalizeConfig({
