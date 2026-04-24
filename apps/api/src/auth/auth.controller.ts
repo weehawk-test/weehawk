@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Post,
   Query,
   Req,
@@ -42,6 +43,8 @@ const AUTH_THROTTLE_BLOCK_MS = IS_DEV ? 1 : 15 * 60 * 1000;
 @Controller('/api/auth')
 @UseGuards(JwtAuthGuard)
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly emailConfirmationService: EmailConfirmationService,
@@ -160,7 +163,11 @@ export class AuthController {
     if (email) {
       try {
         await this.passwordResetService.sendResetPasswordEmail(email);
-      } catch {
+      } catch (error) {
+        const err = error as { message?: string };
+        this.logger.warn(
+          `FORGOT_PASSWORD_EMAIL_FAILED: email="${email}" reason="${err?.message ?? 'unknown'}"`,
+        );
         // Same message to avoid email enumeration
       }
     }

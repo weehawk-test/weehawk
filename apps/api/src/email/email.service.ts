@@ -33,7 +33,7 @@ export class EmailService {
             ? ['true', '1', 'on', 'yes'].includes(logBodyRaw.toLowerCase().trim())
             : this.config.get<boolean>('mail.logBody', false);
         this.logger.debug(
-          `MAIL_DISABLED: skipped email to="${request.to}" subject="${request.subject}" (${request.isHtml ? 'html' : 'text'})`,
+          `MAIL_DISABLED: MAIL_ENABLED="${enabledRaw ?? 'undefined'}"; skipped email to="${request.to}" subject="${request.subject}" (${request.isHtml ? 'html' : 'text'})`,
         );
         if (logBody) {
           this.logger.debug(
@@ -46,11 +46,20 @@ export class EmailService {
       return;
     }
 
-    const result = await this.mailer.sendMail({
-      to: request.to,
-      subject: request.subject,
-      ...(request.isHtml ? { html: request.body } : { text: request.body }),
-    });
+    let result: unknown;
+    try {
+      result = await this.mailer.sendMail({
+        to: request.to,
+        subject: request.subject,
+        ...(request.isHtml ? { html: request.body } : { text: request.body }),
+      });
+    } catch (error) {
+      const err = error as { code?: string; response?: string; message?: string };
+      this.logger.error(
+        `MAIL_SEND_FAILED: to="${request.to}" subject="${request.subject}" code="${err?.code ?? 'unknown'}" message="${err?.message ?? 'unknown'}"${err?.response ? ` response="${err.response}"` : ''}`,
+      );
+      throw error;
+    }
     const env = this.config.get<string>('app.env', 'development');
     if (env !== 'production') {
       const messageId = (result as any)?.messageId;

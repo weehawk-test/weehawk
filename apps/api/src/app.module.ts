@@ -19,6 +19,9 @@ import { AuthModule } from './auth/auth.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RedisService } from './common/redis/redis.service';
 import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
+import { existsSync } from 'fs';
+
+const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) => existsSync(filePath));
 
 @Module({
   imports: [
@@ -26,6 +29,7 @@ import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
     RedisModule,
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: ENV_FILE_PATHS,
     }),
     ThrottlerModule.forRootAsync({
       imports: [RedisModule],
@@ -47,6 +51,8 @@ import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
       useFactory: (configService: ConfigService) => {
         const dbType = (configService.get<string>('DB_TYPE') ?? 'postgres').trim().toLowerCase();
         const synchronize = (configService.get<string>('DB_SYNCHRONIZE') ?? 'true').toLowerCase() === 'true';
+        const dropSchema =
+          (configService.get<string>('DB_DROP_SCHEMA') ?? 'false').toLowerCase().trim() === 'true';
         return {
           type: dbType as any,
           host: configService.get<string>('DB_HOST', 'localhost'),
@@ -56,6 +62,7 @@ import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
           database: configService.get<string>('DB_DATABASE', 'weehawk'),
           autoLoadEntities: true,
           synchronize,
+          dropSchema,
         };
       },
     }),
