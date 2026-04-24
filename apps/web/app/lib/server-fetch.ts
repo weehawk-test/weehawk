@@ -46,8 +46,6 @@ export async function fetchWebhookSSR(id: string): Promise<WebhookDetail | null>
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
     remoteTriggerUrlScheme: "https",

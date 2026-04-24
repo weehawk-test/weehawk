@@ -15,11 +15,8 @@ import * as net from 'net';
 import { Like, Repository } from 'typeorm';
 import { NotificationService } from '../notifications/notification.service';
 import { ExecutorService } from '../executor/executor.service';
-import { S3Service } from '../s3/s3.service';
 import { ServicesService } from '../services/services.service';
 import { getErrorMessage } from '../utils/error-message';
-import type { DatabaseBackupConfig } from '../backup/database-backup.types';
-import { describeDatabaseBackupPreview } from '../backup/database-backup.types';
 import {
   RemoteServersService,
   WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR,
@@ -45,11 +42,8 @@ export type WebhookListRow = {
   publicId: string;
   name: string;
   description: string;
-  isActive: boolean;
-  targetMode: string;
   serviceId: number | null;
   remoteServerId: number | null;
-  serviceAction: string | null;
   notifyOnTrigger: boolean;
   createdAt: string;
   summary: string;
@@ -57,20 +51,16 @@ export type WebhookListRow = {
   remoteTriggerUrl: string | null;
   /** Traefik hostname for the Swarm webhook agent when configured. */
   hooksPublicHost: string | null;
-  /** Always https prefix for the remote trigger URL when the action is docker_command. */
+  /** Always https prefix for the remote trigger URL. */
   remoteTriggerUrlScheme: WebhookRemoteTriggerUrlScheme;
 };
 
 export type WebhookDetailRow = WebhookListRow & {
-  volumeSource: string | null;
-  dockerCommand: string | null;
-  databaseBackupConfig: DatabaseBackupConfig | null;
-  databaseBackupPreview: string | null;
-  backupS3ProfileName: string | null;
+  bashScript: string | null;
   notifyChannelId: number | null;
   notifyMessage: string | null;
   secretToken: string;
-  /** When script runs on a remote server: URL for the on-host agent (e.g. Go) at that server’s IP. */
+  /** When script runs on a remote server: URL for the on-host agent at that server’s public host. */
   remoteTriggerUrl: string | null;
 };
 
@@ -85,7 +75,6 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
-    private readonly s3Service: S3Service,
     private readonly remoteServersService: RemoteServersService,
     private readonly configService: ConfigService,
   ) {}
@@ -122,52 +111,11 @@ export class WebhooksService implements OnApplicationBootstrap {
     return /^(1|true|yes|on)$/i.test(String(raw).trim());
   }
 
-  /** Deploy hosts cannot reach the developer machine via localhost; never persist loopback as callback origin. */
-  private isLoopbackApiHostname(hostname: string): boolean {
-    const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-    return (
-      h === 'localhost' ||
-      h === '127.0.0.1' ||
-      h === '::1' ||
-      h === '0:0:0:0:0:0:0:1'
-    );
-  }
-
-  /** Normalize optional client-supplied API origin (no path). */
-  private normalizeHooksTriggerOriginInput(
-    raw: string | undefined | null,
-  ): string | null {
-    const t = raw?.trim();
-    if (!t) {
-      return null;
-    }
-    try {
-      const u = new URL(/:\/\//.test(t) ? t : `http://${t}`);
-      if (this.isLoopbackApiHostname(u.hostname)) {
-        return null;
-      }
-      if (u.pathname !== '/' && u.pathname !== '') {
-        throw new BadRequestException(
-          'hooksTriggerOrigin must be an origin only (e.g. https://api.example.com:8080), without a path.',
-        );
-      }
-      return u.origin;
-    } catch (e) {
-      if (e instanceof BadRequestException) {
-        throw e;
-      }
-      throw new BadRequestException(
-        'hooksTriggerOrigin must be a valid http(s) URL.',
-      );
-    }
-  }
-
   /** One-time style backfill: older auto redeploy rows had no flag; align them with new creates. */
   async onApplicationBootstrap(): Promise<void> {
     try {
       const legacy = await this.webhookRepo.find({
         where: {
-          serviceAction: 'docker_command',
           name: Like('Redeploy ·%'),
           hiddenFromWebhooksList: false,
         },
@@ -303,66 +251,25 @@ export class WebhooksService implements OnApplicationBootstrap {
   }
 
   private validateCreate(dto: CreateWebhookDto): void {
-    if (dto.targetMode === 'service') {
-      if (dto.serviceAction == null) {
-        throw new BadRequestException(
-          'Service webhooks require serviceAction.',
-        );
-      }
-      if (dto.serviceAction !== 'no_action' && dto.serviceId == null) {
-        if (dto.serviceAction !== 'docker_command') {
-          throw new BadRequestException(
-            'serviceId is required unless action is no_action.',
-          );
-        }
-      }
-      if (dto.serviceAction === 'volume_backup' && !dto.volumeSource?.trim()) {
-        throw new BadRequestException(
-          'volumeSource is required for volume backup.',
-        );
-      }
-      if (
-        dto.serviceAction === 'docker_command' &&
-        !dto.dockerCommand?.trim()
-      ) {
-        throw new BadRequestException('dockerCommand is required.');
-      }
-      if (dto.serviceAction === 'docker_command') {
-        if (dto.remoteServerId == null || dto.remoteServerId < 1) {
-          throw new BadRequestException(
-            'A deploy remote server is required for bash webhooks.',
-          );
-        }
-      }
-      if (
-        dto.serviceAction === 'database_backup' &&
-        !dto.databaseBackupConfig
-      ) {
-        throw new BadRequestException(
-          'databaseBackupConfig is required for database backup.',
-        );
-      }
-      if (
-        (dto.serviceAction === 'volume_backup' ||
-          dto.serviceAction === 'database_backup') &&
-        !dto.backupS3ProfileName?.trim()
-      ) {
-        throw new BadRequestException(
-          'backupS3ProfileName is required: backups are stored in S3 only.',
-        );
-      }
+    if (!dto.bashScript?.trim()) {
+      throw new BadRequestException('bashScript is required.');
     }
+    if (dto.remoteServerId == null || dto.remoteServerId < 1) {
+      throw new BadRequestException(
+        'A deploy remote server is required for bash webhooks.',
+      );
+    }
+    const host = this.resolveHooksPublicHostForStorage(dto.hooksPublicHost);
+    if (!host?.trim()) {
+      throw new BadRequestException('hooksPublicHost is required.');
+    }
+    this.assertPlausibleHooksPublicHost(host);
     const hasNotifyChannel =
       dto.notifyChannelId != null && dto.notifyChannelId >= 1;
     const hasNotifyMessage = Boolean(dto.notifyMessage?.trim());
     if (hasNotifyChannel !== hasNotifyMessage) {
       throw new BadRequestException(
         'Provide both notifyChannelId and notifyMessage, or leave both empty.',
-      );
-    }
-    if (dto.serviceAction === 'docker_command') {
-      this.assertPlausibleHooksPublicHost(
-        this.resolveHooksPublicHostForStorage(dto.hooksPublicHost),
       );
     }
   }
@@ -445,7 +352,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     remoteServerId: number,
   ): Promise<string[]> {
     const rows = await this.webhookRepo.find({
-      where: { remoteServerId, serviceAction: 'docker_command' },
+      where: { remoteServerId },
       select: ['hooksPublicHost'],
     });
     const out = new Set<string>();
@@ -478,17 +385,8 @@ export class WebhooksService implements OnApplicationBootstrap {
     await this.remoteServersService.ensureRemoteWebhookListening(remoteServerId, userId, hosts);
   }
 
-  private summaryLabel(w: Webhook): string {
-    const a = w.serviceAction ?? '—';
-    if (a === 'redeploy') return 'Redeploy';
-    if (a === 'volume_backup') return `Volume → S3: ${w.volumeSource ?? '—'}`;
-    if (a === 'database_backup') {
-      const eng = w.databaseBackupConfig?.engine;
-      return eng ? `Database → S3 (${eng})` : 'Database → S3';
-    }
-    if (a === 'docker_command') return 'Docker command';
-    if (a === 'no_action') return 'No action';
-    return a;
+  private summaryLabel(): string {
+    return 'On-host bash';
   }
 
   private baseListFields(w: Webhook): Omit<WebhookListRow, 'remoteTriggerUrl'> {
@@ -497,14 +395,11 @@ export class WebhooksService implements OnApplicationBootstrap {
       publicId: w.publicId,
       name: w.name,
       description: w.description ?? '',
-      isActive: w.isActive,
-      targetMode: w.targetMode,
       serviceId: w.serviceId,
       remoteServerId: w.remoteServerId,
-      serviceAction: w.serviceAction,
       notifyOnTrigger: w.notifyOnTrigger,
       createdAt: w.createdAt.toISOString(),
-      summary: this.summaryLabel(w),
+      summary: this.summaryLabel(),
       secretToken: w.secretToken,
       hooksPublicHost: w.hooksPublicHost ?? null,
       remoteTriggerUrlScheme: this.normalizeRemoteTriggerUrlScheme(w.remoteTriggerUrlScheme),
@@ -525,15 +420,10 @@ export class WebhooksService implements OnApplicationBootstrap {
     remoteTriggerUrl: string | null = null,
   ): Promise<WebhookDetailRow> {
     const row = await this.ensurePublicId(w);
-    const cfg = row.databaseBackupConfig;
     return {
       ...this.baseListFields(row),
       remoteTriggerUrl,
-      volumeSource: row.volumeSource,
-      dockerCommand: row.dockerCommand,
-      databaseBackupConfig: cfg,
-      databaseBackupPreview: cfg ? describeDatabaseBackupPreview(cfg) : null,
-      backupS3ProfileName: row.backupS3ProfileName,
+      bashScript: row.bashScript,
       notifyChannelId: row.notifyChannelId,
       notifyMessage: row.notifyMessage,
     };
@@ -547,7 +437,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     if (w.serviceId == null || w.serviceId < 1) {
       return false;
     }
-    if (looksLikeGeneratedOnHostRedeployScript(w.dockerCommand)) {
+    if (looksLikeGeneratedOnHostRedeployScript(w.bashScript)) {
       return true;
     }
     return typeof w.name === 'string' && w.name.startsWith('Redeploy ·');
@@ -557,11 +447,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     userId: number,
     w: Webhook,
   ): Promise<string | null> {
-    if (
-      w.serviceAction !== 'docker_command' ||
-      w.remoteServerId == null ||
-      !w.dockerCommand?.trim()
-    ) {
+    if (w.remoteServerId == null || !w.bashScript?.trim()) {
       return null;
     }
     /** Public trigger URL is always the deploy-host agent (Traefik hostname or IP:port), not the API origin. */
@@ -586,91 +472,21 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
   }
 
-  private async finalizeBackupWithS3(
-    userId: number,
-    contextId: number,
-    profileName: string | null | undefined,
-    r: {
-      success: boolean;
-      output: string;
-      archiveBasename?: string;
-      remoteArtifact?: {
-        remoteServerId: number;
-        projectUserId: number | null;
-        stagingDir: string;
-        remoteFilePath: string;
-      };
-    },
-  ): Promise<{ success: boolean; output: string }> {
-    if (!r.success || !r.archiveBasename) {
-      return { success: r.success, output: r.output };
-    }
-    const trimmed = profileName?.trim();
-    if (!trimmed) {
-      return {
-        success: false,
-        output: `${r.output}\nS3 destination is not configured.`,
-      };
-    }
-    const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
-    const ra = r.remoteArtifact;
-    if (!ra) {
-      return {
-        success: false,
-        output: `${r.output}\nBackup archive was not created on the deploy host.`,
-      };
-    }
-    try {
-      const put = await this.s3Service.presignPutObject(userId, trimmed, key, {
-        contentType: r.archiveBasename.toLowerCase().endsWith('.gz')
-          ? 'application/gzip'
-          : 'application/octet-stream',
-      });
-      await this.remoteServersService.curlPresignedPutFromRemoteFile(
-        ra.remoteServerId,
-        ra.projectUserId,
-        ra.remoteFilePath,
-        put.url,
-        put.contentType,
-      );
-      await this.remoteServersService.removeRemoteTreeBestEffort(
-        ra.remoteServerId,
-        ra.projectUserId,
-        ra.stagingDir,
-      );
-      return {
-        success: true,
-        output: `${r.output}\nUploaded to s3://${put.bucket}/${put.key}`,
-      };
-    } catch (e) {
-      await this.remoteServersService.removeRemoteTreeBestEffort(
-        ra.remoteServerId,
-        ra.projectUserId,
-        ra.stagingDir,
-      );
-      return {
-        success: false,
-        output: `${r.output}\nS3 upload failed: ${getErrorMessage(e)}`,
-      };
-    }
-  }
-
   async create(
     userId: number,
     dto: CreateWebhookDto,
   ): Promise<WebhookDetailRow> {
     this.validateCreate(dto);
-    if (
-      dto.targetMode === 'service' &&
-      dto.serviceAction === 'docker_command' &&
-      dto.remoteServerId != null
-    ) {
-      await this.remoteServersService.assertDeployServerById(dto.remoteServerId, userId);
+    if (dto.remoteServerId != null) {
+      await this.remoteServersService.assertDeployServerById(
+        dto.remoteServerId,
+        userId,
+      );
     }
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
-    if (dto.targetMode === 'service' && dto.serviceId != null) {
+    if (dto.serviceId != null) {
       try {
         await this.servicesService.assertServiceOwnedByUser(dto.serviceId, userId);
       } catch {
@@ -678,39 +494,23 @@ export class WebhooksService implements OnApplicationBootstrap {
       }
     }
 
-    const backupProfile =
-      dto.targetMode === 'service' &&
-      (dto.serviceAction === 'volume_backup' ||
-        dto.serviceAction === 'database_backup')
-        ? dto.backupS3ProfileName!.trim()
-        : null;
-    if (backupProfile) {
-      await this.s3Service.assertProfileExists(backupProfile);
-    }
-
     const secretToken = randomBytes(32).toString('hex');
     const notifyOnTriggerCreate =
       dto.notifyChannelId != null &&
       dto.notifyChannelId >= 1 &&
       Boolean(dto.notifyMessage?.trim());
-    const hooksPublicStored =
-      dto.serviceAction === 'docker_command'
-        ? this.resolveHooksPublicHostForStorage(dto.hooksPublicHost)
-        : null;
-    const hooksTriggerOriginNormalized =
-      dto.targetMode === 'service' && dto.serviceAction === 'docker_command'
-        ? this.normalizeHooksTriggerOriginInput(dto.hooksTriggerOrigin)
-        : null;
-    let resolvedDockerCommand = dto.dockerCommand?.trim() ?? '';
+    const hooksPublicStored = this.resolveHooksPublicHostForStorage(
+      dto.hooksPublicHost,
+    );
+    let resolvedBashScript = dto.bashScript?.trim() ?? '';
     if (
       dto.serviceId != null &&
-      dto.serviceAction === 'docker_command' &&
-      resolvedDockerCommand &&
-      looksLikeGeneratedOnHostRedeployScript(resolvedDockerCommand)
+      resolvedBashScript &&
+      looksLikeGeneratedOnHostRedeployScript(resolvedBashScript)
     ) {
       try {
         const svc = await this.servicesService.findOne(dto.serviceId);
-        resolvedDockerCommand = buildOnHostRedeployScriptBody(svc);
+        resolvedBashScript = buildOnHostRedeployScriptBody(svc);
       } catch {
         /* keep client body */
       }
@@ -722,53 +522,19 @@ export class WebhooksService implements OnApplicationBootstrap {
       secretToken,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
-      isActive: true,
-      targetMode: dto.targetMode,
-      serviceId:
-        dto.targetMode === 'service' && dto.serviceAction !== 'no_action'
-          ? dto.serviceId ?? null
-          : null,
+      serviceId: dto.serviceId ?? null,
       remoteServerId:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'docker_command' &&
-        dto.remoteServerId != null
-          ? dto.remoteServerId
-          : null,
-      serviceAction: dto.targetMode === 'service' ? dto.serviceAction : null,
-      volumeSource:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'volume_backup' &&
-        dto.volumeSource
-          ? dto.volumeSource.trim()
-          : null,
-      dockerCommand:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'docker_command' &&
-        resolvedDockerCommand
-          ? resolvedDockerCommand
-          : null,
-      databaseBackupConfig:
-        dto.targetMode === 'service' &&
-        dto.serviceAction === 'database_backup' &&
-        dto.databaseBackupConfig
-          ? (dto.databaseBackupConfig as unknown as DatabaseBackupConfig)
-          : null,
-      backupS3ProfileName: backupProfile,
+        dto.remoteServerId != null ? dto.remoteServerId : null,
+      bashScript: resolvedBashScript ? resolvedBashScript : null,
       notifyOnTrigger: notifyOnTriggerCreate,
       notifyChannelId: dto.notifyChannelId ?? null,
       notifyMessage: dto.notifyMessage?.trim() || null,
       hooksPublicHost: hooksPublicStored,
       remoteTriggerUrlScheme: 'https',
-      hooksTriggerOrigin: hooksTriggerOriginNormalized,
       hiddenFromWebhooksList: dto.hiddenFromWebhooksList === true,
     });
     const saved = await this.webhookRepo.save(w);
-    if (
-      dto.targetMode === 'service' &&
-      dto.serviceAction === 'docker_command' &&
-      dto.remoteServerId != null &&
-      resolvedDockerCommand
-    ) {
+    if (dto.remoteServerId != null && resolvedBashScript) {
       this.runRemoteSyncInBackground(`create webhook ${saved.id}`, async () => {
         const mergedHosts = await this.mergeHooksPublicHostsForRemoteCreate(
           dto.remoteServerId!,
@@ -790,7 +556,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           dto.remoteServerId!,
           userId,
           secretToken,
-          resolvedDockerCommand,
+          resolvedBashScript,
           notificationEnvLines,
         );
       });
@@ -807,16 +573,13 @@ export class WebhooksService implements OnApplicationBootstrap {
     const service = await this.servicesService.findOne(serviceId);
     const canonical = buildOnHostRedeployScriptBody(service);
     const rows = await this.webhookRepo.find({
-      where: {
-        serviceId,
-        serviceAction: 'docker_command',
-      },
+      where: { serviceId },
     });
     const userId = service.project?.userId ?? 0;
     for (const w of rows) {
       if (w.remoteServerId == null) continue;
-      if (!looksLikeGeneratedOnHostRedeployScript(w.dockerCommand)) continue;
-      w.dockerCommand = canonical;
+      if (!looksLikeGeneratedOnHostRedeployScript(w.bashScript)) continue;
+      w.bashScript = canonical;
       await this.webhookRepo.save(w);
       const notificationEnvLines = await this.mergeRemoteWebhookNotificationAndBundleEnv(
         userId,
@@ -876,7 +639,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     opts?: { lines?: number },
   ): Promise<{ log: string; source: string }> {
     const w = await this.resolveEntity(userId, idOrPublicId);
-    if (w.serviceAction !== 'docker_command' || w.remoteServerId == null) {
+    if (!w.bashScript?.trim() || w.remoteServerId == null) {
       return { log: '', source: 'not-applicable' };
     }
     if (this.shouldRunExecutorRedeployForDockerWebhook(w)) {
@@ -899,7 +662,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     const w = await this.resolveEntity(userId, idOrPublicId);
 
     const beforeRemote = w.remoteServerId;
-    const beforeDocker = w.dockerCommand;
+    const beforeBash = w.bashScript;
     const beforeNotifyOnTrigger = w.notifyOnTrigger;
     const beforeNotifyChannelId = w.notifyChannelId;
     const beforeNotifyMessage = w.notifyMessage;
@@ -909,61 +672,26 @@ export class WebhooksService implements OnApplicationBootstrap {
     if (dto.description !== undefined) {
       w.description = dto.description.trim() || null;
     }
-    if (dto.isActive !== undefined) w.isActive = dto.isActive;
     if (dto.notifyChannelId !== undefined) {
       w.notifyChannelId = dto.notifyChannelId;
     }
     if (dto.notifyMessage !== undefined) {
       w.notifyMessage = dto.notifyMessage?.trim() || null;
     }
-    if (dto.backupS3ProfileName !== undefined) {
-      const v = dto.backupS3ProfileName?.trim() || null;
-      if (v) {
-        await this.s3Service.assertProfileExists(v);
-      }
-      if (
-        (w.serviceAction === 'volume_backup' ||
-          w.serviceAction === 'database_backup') &&
-        !v
-      ) {
-        throw new BadRequestException(
-          'S3 destination is required for backup actions.',
-        );
-      }
-      w.backupS3ProfileName = v;
-    }
-    if (dto.databaseBackupConfig !== undefined) {
-      if (w.serviceAction === 'database_backup') {
-        if (!dto.databaseBackupConfig) {
-          throw new BadRequestException(
-            'databaseBackupConfig is required for database backup.',
-          );
-        }
-        w.databaseBackupConfig =
-          dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
-        w.dockerCommand = null;
-      }
-    }
-    if (dto.dockerCommand !== undefined) {
-      if (w.serviceAction === 'docker_command') {
-        w.dockerCommand = dto.dockerCommand?.trim() || null;
-      }
+    if (dto.bashScript !== undefined) {
+      w.bashScript = dto.bashScript?.trim() || null;
     }
     if (dto.remoteServerId !== undefined) {
-      if (w.serviceAction === 'docker_command') {
-        const nextId = dto.remoteServerId ?? null;
-        if (nextId == null || nextId < 1) {
-          throw new BadRequestException(
-            'A deploy remote server is required for bash webhooks.',
-          );
-        }
-        await this.remoteServersService.assertDeployServerById(nextId, userId);
-        w.remoteServerId = nextId;
-      } else {
-        w.remoteServerId = null;
+      const nextId = dto.remoteServerId ?? null;
+      if (nextId == null || nextId < 1) {
+        throw new BadRequestException(
+          'A deploy remote server is required for bash webhooks.',
+        );
       }
+      await this.remoteServersService.assertDeployServerById(nextId, userId);
+      w.remoteServerId = nextId;
     }
-    if (dto.hooksPublicHost !== undefined && w.serviceAction === 'docker_command') {
+    if (dto.hooksPublicHost !== undefined) {
       const next =
         dto.hooksPublicHost === null || dto.hooksPublicHost === ''
           ? null
@@ -973,18 +701,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       }
       w.hooksPublicHost = next;
     }
-    if (w.serviceAction === 'docker_command') {
-      w.remoteTriggerUrlScheme = 'https';
-    }
-    if (dto.hooksTriggerOrigin !== undefined && w.serviceAction === 'docker_command') {
-      if (dto.hooksTriggerOrigin === null || dto.hooksTriggerOrigin === '') {
-        w.hooksTriggerOrigin = null;
-      } else {
-        w.hooksTriggerOrigin = this.normalizeHooksTriggerOriginInput(
-          dto.hooksTriggerOrigin,
-        );
-      }
-    }
+    w.remoteTriggerUrlScheme = 'https';
     if (w.notifyChannelId && w.notifyMessage) {
       w.notifyOnTrigger = true;
       await this.assertNotificationChannel(userId, w.notifyChannelId);
@@ -998,19 +715,14 @@ export class WebhooksService implements OnApplicationBootstrap {
 
     const saved = await this.webhookRepo.save(w);
 
-    const hadRemoteFile =
-      beforeRemote != null &&
-      !!(beforeDocker?.trim()) &&
-      w.serviceAction === 'docker_command';
+    const hadRemoteFile = beforeRemote != null && !!(beforeBash?.trim());
     const shouldRemoveOldRemoteFile =
       hadRemoteFile &&
-      (saved.remoteServerId !== beforeRemote ||
-        !saved.dockerCommand?.trim() ||
-        saved.serviceAction !== 'docker_command');
+      (saved.remoteServerId !== beforeRemote || !saved.bashScript?.trim());
 
     const scriptOrTargetChanged =
       saved.remoteServerId !== beforeRemote ||
-      (beforeDocker?.trim() ?? '') !== (saved.dockerCommand?.trim() ?? '');
+      (beforeBash?.trim() ?? '') !== (saved.bashScript?.trim() ?? '');
     const notifySettingsChanged =
       saved.notifyOnTrigger !== beforeNotifyOnTrigger ||
       saved.notifyChannelId !== beforeNotifyChannelId ||
@@ -1020,14 +732,12 @@ export class WebhooksService implements OnApplicationBootstrap {
       (saved.hooksPublicHost?.trim() ?? '') !==
         (beforeHooksPublicHost?.trim() ?? '');
     const needsScriptRewrite =
-      saved.serviceAction === 'docker_command' &&
       saved.remoteServerId != null &&
-      !!saved.dockerCommand?.trim() &&
+      !!saved.bashScript?.trim() &&
       (scriptOrTargetChanged || notifySettingsChanged);
     const needsAgentSync =
-      saved.serviceAction === 'docker_command' &&
       saved.remoteServerId != null &&
-      !!saved.dockerCommand?.trim() &&
+      !!saved.bashScript?.trim() &&
       (scriptOrTargetChanged || notifySettingsChanged || hooksPublicHostChanged);
 
     if (shouldRemoveOldRemoteFile || needsAgentSync || needsScriptRewrite) {
@@ -1044,7 +754,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         }
 
         if (needsScriptRewrite && saved.remoteServerId != null) {
-          let body = saved.dockerCommand!.trim();
+          let body = saved.bashScript!.trim();
           if (
             saved.serviceId != null &&
             looksLikeGeneratedOnHostRedeployScript(body)
@@ -1052,7 +762,7 @@ export class WebhooksService implements OnApplicationBootstrap {
             try {
               const svc = await this.servicesService.findOne(saved.serviceId);
               body = buildOnHostRedeployScriptBody(svc);
-              saved.dockerCommand = body;
+              saved.bashScript = body;
               await this.webhookRepo.save(saved);
             } catch {
               /* keep saved body */
@@ -1084,11 +794,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   async remove(userId: number, idOrPublicId: string | number): Promise<void> {
     const w = await this.resolveEntity(userId, idOrPublicId);
     const remoteId = w.remoteServerId;
-    if (
-      w.serviceAction === 'docker_command' &&
-      w.remoteServerId != null &&
-      w.dockerCommand?.trim()
-    ) {
+    if (w.remoteServerId != null && w.bashScript?.trim()) {
       await this.remoteServersService
         .removeRemoteWebhookScript(w.remoteServerId, userId, w.secretToken)
         .catch(() => undefined);
@@ -1113,182 +819,66 @@ export class WebhooksService implements OnApplicationBootstrap {
     const w = await this.webhookRepo.findOne({
       where: { secretToken: token },
     });
-    if (!w || !w.isActive) {
-      throw new NotFoundException('Unknown or inactive webhook');
+    if (!w) {
+      throw new NotFoundException('Unknown webhook');
     }
     let action = 'none';
     let success = true;
     let output = '';
 
     try {
-      if (w.targetMode === 'service') {
-        if (w.serviceAction === 'no_action') {
-          action = 'no_action';
-          output = 'No Docker action selected.';
-        } else if (w.serviceAction === 'redeploy' && w.serviceId != null) {
-          const svcRow = await this.servicesService.findOne(w.serviceId);
-          const useAutoDeploy =
-            svcRow?.autoDeployEnabled &&
-            svcRow.autoDeployGitProvider &&
-            svcRow.autoDeployRepoId;
-          if (useAutoDeploy) {
+      if (w.bashScript) {
+        const useExecutorRedeploy =
+          this.shouldRunExecutorRedeployForDockerWebhook(w);
+        if (useExecutorRedeploy) {
+          const svcRowCmd = w.serviceId
+            ? await this.servicesService.findOne(w.serviceId)
+            : null;
+          const useAutoDeployCmd =
+            svcRowCmd?.autoDeployEnabled &&
+            svcRowCmd.autoDeployGitProvider &&
+            svcRowCmd.autoDeployRepoId;
+          if (useAutoDeployCmd) {
             action = 'auto_deploy';
             const r = await this.servicesService.runAutoDeployCloneAndDeploy(
-              w.serviceId,
+              w.serviceId!,
             );
             success = r.success;
             output = r.output;
           } else {
             action = 'redeploy';
             const r = await this.servicesService.executeDeployment(
-              w.serviceId,
+              w.serviceId!,
               'redeploy',
               { actingUserId: w.userId },
             );
             success = Boolean(r.success);
             output = String(r.output ?? '');
           }
-        } else if (
-          w.serviceAction === 'volume_backup' &&
-          w.volumeSource &&
-          w.serviceId != null
-        ) {
-          action = 'volume_backup';
-          if (!w.backupS3ProfileName?.trim()) {
-            success = false;
-            output =
-              'S3 destination is not configured. Edit the webhook and choose a saved S3 profile.';
-          } else {
-            try {
-              const ssh = await this.servicesService.getDockerSshTargetIds(w.serviceId);
-              if (ssh.remoteServerId == null) {
-                success = false;
-                output =
-                  'This service has no deploy host; volume backup runs on the remote Docker machine. Set Remote Docker host on the service, then try again.';
-              } else {
-                const r = await this.executorService.backupDockerVolume(
-                  w.volumeSource,
-                  ssh.remoteServerId,
-                  null,
-                );
-                const final = await this.finalizeBackupWithS3(
-                  w.userId,
-                  w.id,
-                  w.backupS3ProfileName,
-                  r,
-                );
-                success = final.success;
-                output = final.output;
-              }
-            } catch (e) {
-              success = false;
-              output = getErrorMessage(e);
-            }
-          }
-        } else if (w.serviceAction === 'database_backup' && w.serviceId != null) {
-          action = 'database_backup';
-          if (!w.backupS3ProfileName?.trim()) {
-            success = false;
-            output =
-              'S3 destination is not configured. Edit the webhook and choose a saved S3 profile.';
-          } else if (w.databaseBackupConfig) {
-            try {
-              const r = await this.executorService.backupDatabaseStructured(
-                w.serviceId,
-                w.databaseBackupConfig,
-              );
-              const final = await this.finalizeBackupWithS3(
-                w.userId,
-                w.id,
-                w.backupS3ProfileName,
-                r,
-              );
-              success = final.success;
-              output = final.output;
-            } catch (e) {
-              success = false;
-              output = getErrorMessage(e);
-            }
-          } else if (w.dockerCommand) {
-            try {
-              const r = await this.executorService.backupDatabaseFromDockerCommand(
-                w.serviceId,
-                w.dockerCommand,
-                '',
-              );
-              const final = await this.finalizeBackupWithS3(
-                w.userId,
-                w.id,
-                w.backupS3ProfileName,
-                r,
-              );
-              success = final.success;
-              output = final.output;
-            } catch (e) {
-              success = false;
-              output = getErrorMessage(e);
-            }
-          } else {
-            success = false;
-            output =
-              'Database backup is not configured (missing databaseBackupConfig).';
-          }
-        } else if (
-          w.serviceAction === 'docker_command' &&
-          w.dockerCommand
-        ) {
-          const useExecutorRedeploy =
-            this.shouldRunExecutorRedeployForDockerWebhook(w);
-          if (useExecutorRedeploy) {
-            const svcRowCmd = w.serviceId
-              ? await this.servicesService.findOne(w.serviceId)
-              : null;
-            const useAutoDeployCmd =
-              svcRowCmd?.autoDeployEnabled &&
-              svcRowCmd.autoDeployGitProvider &&
-              svcRowCmd.autoDeployRepoId;
-            if (useAutoDeployCmd) {
-              action = 'auto_deploy';
-              const r =
-                await this.servicesService.runAutoDeployCloneAndDeploy(
-                  w.serviceId!,
-                );
-              success = r.success;
-              output = r.output;
-            } else {
-              action = 'redeploy';
-              const r = await this.servicesService.executeDeployment(
-                w.serviceId!,
-                'redeploy',
-                { actingUserId: 1 },
-              );
-              success = Boolean(r.success);
-              output = String(r.output ?? '');
-            }
-          } else {
-            const scriptToRun =
-              w.remoteServerId != null
-                ? `bash '${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${w.secretToken}.sh'`
-                : w.dockerCommand;
-            const r = await this.executorService.runSystemScript(
-              scriptToRun,
-              w.remoteServerId,
-              1,
-            );
-            success = r.success;
-            output = r.output;
-          }
         } else {
-          success = false;
-          output = 'Webhook is misconfigured (missing action details).';
+          action = 'bash_script';
+          const scriptToRun =
+            w.remoteServerId != null
+              ? `bash '${WEEHAWK_REMOTE_WEBHOOK_SCRIPTS_DIR}/${w.secretToken}.sh'`
+              : w.bashScript;
+          const r = await this.executorService.runSystemScript(
+            scriptToRun,
+            w.remoteServerId,
+            1,
+          );
+          success = r.success;
+          output = r.output;
         }
+      } else {
+        success = false;
+        output = 'Webhook is misconfigured (missing bash script).';
       }
     } catch (e) {
       success = false;
       output = e instanceof Error ? e.message : String(e);
     }
 
-    const actionLabel = action === 'docker_command' ? 'bash_script' : action;
+    const actionLabel = action;
 
     const payload = {
       ok: success,
@@ -1298,9 +888,8 @@ export class WebhooksService implements OnApplicationBootstrap {
     };
 
     const ranRemoteBashOnly =
-      w.serviceAction === 'docker_command' &&
       w.remoteServerId != null &&
-      w.dockerCommand != null &&
+      w.bashScript != null &&
       !this.shouldRunExecutorRedeployForDockerWebhook(w);
     const notificationSentOnRemote = ranRemoteBashOnly;
     if (

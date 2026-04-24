@@ -340,9 +340,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
               className={`relative glass-panel backdrop-blur-none rounded-2xl p-5 flex flex-col gap-3 group interactive-card border transition-colors ${
                 isProvisioning
                   ? "border-sky-300/70 shadow-[0_0_0_1px_rgba(125,211,252,0.5),0_0_20px_rgba(56,189,248,0.3),inset_0_0_16px_rgba(56,189,248,0.15)]"
-                  : !w.isActive
-                    ? "border-slate-300 bg-slate-100/95 dark:border-zinc-950/95 dark:bg-black/80 saturate-[0.9] dark:shadow-[inset_0_0_48px_rgba(0,0,0,0.65),inset_0_1px_0_0_rgba(255,255,255,0.04)] hover:border-slate-400 dark:hover:border-zinc-700/80"
-                    : "border-slate-200 hover:border-primary/35"
+                  : "border-slate-200 hover:border-primary/35"
               }`}
             >
                 {isProvisioning ? (
@@ -354,23 +352,12 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                 ) : null}
                 <div className="flex justify-between items-start gap-3">
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div
-                      className={`p-2 rounded-lg flex-shrink-0 border ${
-                        w.isActive
-                          ? "bg-primary/10 text-primary border-primary/20"
-                          : "bg-slate-200 text-slate-600 border-slate-300 dark:bg-black dark:text-zinc-500 dark:border-white/[0.06]"
-                      }`}
-                    >
+                    <div className="p-2 rounded-lg flex-shrink-0 border bg-primary/10 text-primary border-primary/20">
                       <Webhook className="w-5 h-5" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <h3
-                          className={`font-semibold text-lg leading-tight truncate ${
-                            !isProvisioning && !w.isActive ? "text-foreground/55" : ""
-                          }`}
-                          title={w.name}
-                        >
+                        <h3 className="font-semibold text-lg leading-tight truncate" title={w.name}>
                           {w.name}
                         </h3>
                         {isProvisioning ? (
@@ -409,13 +396,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                   </div>
                 </div>
 
-                <p
-                  className={`text-sm line-clamp-2 ${
-                    !isProvisioning && !w.isActive
-                      ? "text-muted-foreground/60"
-                      : "text-muted-foreground"
-                  }`}
-                >
+                <p className="text-sm line-clamp-2 text-muted-foreground">
                   {(w.description || "").trim() || "No description"}
                 </p>
 
@@ -424,25 +405,14 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                     className={`rounded-lg border px-3 py-2.5 ${
                       isProvisioning
                         ? "border-slate-200 bg-slate-100 opacity-55 pointer-events-none select-none dark:border-white/5 dark:bg-black/10"
-                        : !w.isActive
-                          ? "border-slate-300 bg-slate-200/90 dark:border-white/[0.05] dark:bg-black/70 dark:shadow-[inset_0_1px_8px_rgba(0,0,0,0.4)]"
-                          : "border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-black/20"
+                        : "border-slate-200 bg-slate-50 dark:border-white/10 dark:bg-black/20"
                     }`}
                   >
-                    <p
-                      className={`text-[11px] mb-1.5 ${
-                        !isProvisioning && !w.isActive ? "text-muted-foreground/55" : "text-muted-foreground"
-                      }`}
-                    >
+                    <p className="text-[11px] mb-1.5 text-muted-foreground">
                       Trigger URL (deploy server)
                     </p>
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <p
-                        className={`text-xs truncate font-mono ${
-                          !isProvisioning && !w.isActive ? "text-foreground/60" : "text-foreground/90"
-                        }`}
-                        title={w.remoteTriggerUrl}
-                      >
+                      <p className="text-xs truncate font-mono text-foreground/90" title={w.remoteTriggerUrl}>
                         {w.remoteTriggerUrl}
                       </p>
                       <button
@@ -459,13 +429,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                   </div>
                 )}
 
-                <div
-                  className={`mt-auto pt-4 border-t flex items-center justify-between text-xs ${
-                    !isProvisioning && !w.isActive
-                      ? "border-slate-200 text-muted-foreground/80 dark:border-white/[0.04] dark:text-muted-foreground/70"
-                      : "border-slate-200 text-muted-foreground dark:border-white/5"
-                  }`}
-                >
+                <div className="mt-auto pt-4 border-t border-slate-200 dark:border-white/5 flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     {formatDateUTC(w.createdAt)}

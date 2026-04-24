@@ -316,8 +316,10 @@ export function onHostWebhookBundleEnvLines(
 }
 
 /** True for scripts generated from the Weehawk on-host redeploy template (safe to overwrite after deploy). */
-export function looksLikeGeneratedOnHostRedeployScript(dockerCommand: string | null | undefined): boolean {
-  const t = (dockerCommand ?? '').trim();
+export function looksLikeGeneratedOnHostRedeployScript(
+  bashScript: string | null | undefined,
+): boolean {
+  const t = (bashScript ?? '').trim();
   if (!t) return false;
   return (
     (t.includes(ON_HOST_DEPLOY_BUNDLE_ROOT) || t.includes('WEEHAWK_BUNDLE_SEGMENT')) &&

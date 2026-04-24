@@ -828,7 +828,6 @@ export default function ProjectsIdClient({
       variant: "destructive",
     });
     if (!ok) return;
-    toast({ title: "Deleting service...", description: `"${name}" is being removed.` });
 
     deleteService.mutate(serviceId, {
       onSuccess: () => {

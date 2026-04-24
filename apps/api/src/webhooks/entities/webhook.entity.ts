@@ -6,19 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import type { DatabaseBackupConfig } from '../../backup/database-backup.types';
 import { generatePublicId } from '../../common/public-id';
-
-/** service = run Docker action on a service */
-export type WebhookTargetMode = 'service';
-
-/** Action when targetMode is service */
-export type WebhookServiceAction =
-  | 'redeploy'
-  | 'volume_backup'
-  | 'database_backup'
-  | 'docker_command'
-  | 'no_action';
 
 /** Scheme shown in the remote trigger URL (Traefik hostname or IP:port). */
 export type WebhookRemoteTriggerUrlScheme = 'https';
@@ -44,46 +32,15 @@ export class Webhook {
   @Column({ type: 'text', nullable: true })
   description: string | null = null;
 
-  @Column({ name: 'is_active', default: true })
-  isActive!: boolean;
-
-  @Column({ name: 'target_mode', type: 'varchar', length: 24 })
-  targetMode!: WebhookTargetMode;
-
   @Column({ name: 'service_id', type: 'int', nullable: true })
   serviceId: number | null = null;
 
   @Column({ name: 'remote_server_id', type: 'int', nullable: true })
   remoteServerId: number | null = null;
 
-  @Column({
-    name: 'service_action',
-    type: 'varchar',
-    length: 32,
-    nullable: true,
-  })
-  serviceAction: WebhookServiceAction | null = null;
-
-  /** Named volume name (or compose volume source) for volume_backup */
-  @Column({
-    name: 'volume_source',
-    type: 'varchar',
-    length: 512,
-    nullable: true,
-  })
-  volumeSource: string | null = null;
-
-  /** Full docker CLI line; server enforces `docker` prefix */
-  @Column({ name: 'docker_command', type: 'text', nullable: true })
-  dockerCommand: string | null = null;
-
-  /** Structured database backup (preferred over `docker_command` for database_backup) */
-  @Column({ name: 'database_backup_config', type: 'json', nullable: true })
-  databaseBackupConfig: DatabaseBackupConfig | null = null;
-
-  /** Saved S3 profile name (`s3_profiles.name`) for optional upload after volume/database backup */
-  @Column({ name: 'backup_s3_profile_name', type: 'varchar', length: 191, nullable: true })
-  backupS3ProfileName: string | null = null;
+  /** Bash body deployed to the remote webhook agent */
+  @Column({ name: 'bash_script', type: 'text', nullable: true })
+  bashScript: string | null = null;
 
   @Column({ name: 'notify_on_trigger', default: false })
   notifyOnTrigger!: boolean;
@@ -94,10 +51,6 @@ export class Webhook {
   @Column({ name: 'notify_message', type: 'text', nullable: true })
   notifyMessage: string | null = null;
 
-  /** Last trigger output (for internal redeploy path where no remote script log file exists). */
-  @Column({ name: 'last_run_output', type: 'text', nullable: true })
-  lastRunOutput: string | null = null;
-
   /**
    * Optional hostname for the on-server webhook agent behind Traefik (e.g. `hooks.example.com`).
    * Requires API `WEEHAWK_WEBHOOK_AGENT_IMAGE` and Swarm + overlay {@code weehawk} on the deploy host.
@@ -106,7 +59,7 @@ export class Webhook {
   hooksPublicHost: string | null = null;
 
   /**
-   * URL scheme for the remote bash trigger URL when `serviceAction` is docker_command.
+   * URL scheme for the remote bash trigger URL.
    * Always HTTPS.
    */
   @Column({
@@ -116,12 +69,6 @@ export class Webhook {
     default: 'https',
   })
   remoteTriggerUrlScheme!: WebhookRemoteTriggerUrlScheme;
-
-  /**
-   * Optional legacy field; on-host redeploy no longer calls back to the API. May be null.
-   */
-  @Column({ name: 'hooks_trigger_origin', type: 'varchar', length: 512, nullable: true })
-  hooksTriggerOrigin: string | null = null;
 
   /**
    * When true, omitted from GET /api/webhooks (manual list); use ?includeHidden=true to list for service UI.

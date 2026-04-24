@@ -3470,11 +3470,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       service.project.userId,
     );
     for (const w of webhooks) {
-      if (
-        w.serviceAction === 'docker_command' &&
-        w.remoteServerId != null &&
-        w.remoteTriggerUrl
-      ) {
+      if (w.remoteServerId != null && w.remoteTriggerUrl) {
         return w.remoteTriggerUrl;
       }
     }

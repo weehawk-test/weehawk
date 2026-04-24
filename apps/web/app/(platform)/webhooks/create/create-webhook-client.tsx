@@ -12,21 +12,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { useCreateWebhook } from "@/hooks/use-webhooks";
-import {
-  type WebhookTargetMode,
-} from "@/lib/webhooks-api";
-import type { Service } from "@/lib/schema";
 import type { NotificationChannel } from "@/lib/notifications-api";
-import type { S3ProfilePublic } from "@/lib/s3-api";
 import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 type Props = {
-  initialServices: Service[];
   initialChannels: NotificationChannel[];
-  initialS3Profiles: S3ProfilePublic[];
   initialRemoteServers: RemoteServerRow[];
 };
 
@@ -42,21 +35,12 @@ function renderHighlightedScript(script: string): ReactNode[] {
   });
 }
 
-export function CreateWebhookClient({
-  initialServices,
-  initialChannels,
-  initialS3Profiles,
-  initialRemoteServers,
-}: Props) {
+export function CreateWebhookClient({ initialChannels, initialRemoteServers }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const createMutation = useCreateWebhook();
-  void initialServices;
-  void initialS3Profiles;
-
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [targetMode] = useState<WebhookTargetMode>("service");
   const [remoteServerId, setRemoteServerId] = useState("");
   const [hooksPublicHost, setHooksPublicHost] = useState("");
   const [bashScript, setBashScript] = useState("");
@@ -131,9 +115,7 @@ export function CreateWebhookClient({
       {
         name: name.trim(),
         description: description.trim() || undefined,
-        targetMode,
-        serviceAction: "docker_command",
-        dockerCommand: bashScript.trim(),
+        bashScript: bashScript.trim(),
         remoteServerId: parsedRemoteServerId,
         hooksPublicHost: host,
         ...(hasNotifyChannel && hasNotifyMessage

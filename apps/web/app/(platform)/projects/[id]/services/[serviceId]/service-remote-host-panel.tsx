@@ -163,7 +163,6 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       list.find(
         (w) =>
           w.name === publicName &&
-          w.serviceAction === "docker_command" &&
           Boolean(w.remoteTriggerUrl?.trim()) &&
           (rsId == null || w.remoteServerId === rsId),
       ) ?? null
@@ -402,14 +401,12 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         const parentHost = webhookPublicHost.trim();
         try {
           await syncRemoteDeploymentMirrorApi(String(service.id));
-          const dockerCommand = buildOnHostRedeployScript(service);
+          const bashScriptBody = buildOnHostRedeployScript(service);
           const outer = await createWebhook(accessToken, {
             name: `Redeploy · ${service.name}`,
             description: `On-host redeploy for ${REMOTE_DEPLOYMENTS_DIR}/${toSafePathSegment((service.appName ?? "").trim() || "service")}. Compose is synced to this path when you save here.`,
-            targetMode: "service",
             serviceId: Number(service.id),
-            serviceAction: "docker_command",
-            dockerCommand,
+            bashScript: bashScriptBody,
             remoteServerId: deployServerIdNum,
             hooksPublicHost: parentHost,
             hiddenFromWebhooksList: true,
@@ -501,10 +498,8 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       const outer = await createWebhook(accessToken, {
         name: `Redeploy · ${service.name}`,
         description: `On-host redeploy for ${REMOTE_DEPLOYMENTS_DIR}/${toSafePathSegment((service.appName ?? "").trim() || "service")}. Compose is synced to this path when you refresh the trigger from here.`,
-        targetMode: "service",
         serviceId: Number(service.id),
-        serviceAction: "docker_command",
-        dockerCommand: buildOnHostRedeployScript(service),
+        bashScript: buildOnHostRedeployScript(service),
         remoteServerId: deployServerIdNum,
         hooksPublicHost: parentHost,
         hiddenFromWebhooksList: true,

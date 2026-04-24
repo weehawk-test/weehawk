@@ -1,15 +1,4 @@
 import { API_BASE } from "./api";
-import type { DatabaseBackupConfig } from "./database-backup-preview";
-
-export type { DatabaseBackupConfig };
-
-export type WebhookTargetMode = "service";
-export type WebhookServiceAction =
-  | "redeploy"
-  | "volume_backup"
-  | "database_backup"
-  | "docker_command"
-  | "no_action";
 
 export type WebhookRemoteTriggerUrlScheme = "https";
 
@@ -29,13 +18,8 @@ export type WebhookListItem = {
   publicId?: string;
   name: string;
   description: string;
-  isActive: boolean;
-  triggerType: "webhook";
-  cronExpression: null;
-  targetMode: WebhookTargetMode;
   serviceId: number | null;
   remoteServerId: number | null;
-  serviceAction: WebhookServiceAction | null;
   notifyOnTrigger: boolean;
   notifyMessage?: string | null;
   createdAt: string;
@@ -44,14 +28,12 @@ export type WebhookListItem = {
   remoteTriggerUrl: string | null;
   hooksPublicHost: string | null;
   remoteTriggerUrlScheme: WebhookRemoteTriggerUrlScheme;
+  triggerType: "webhook";
+  cronExpression: null;
 };
 
 export type WebhookDetail = WebhookListItem & {
-  volumeSource: string | null;
-  dockerCommand: string | null;
-  databaseBackupConfig: DatabaseBackupConfig | null;
-  databaseBackupPreview: string | null;
-  backupS3ProfileName: string | null;
+  bashScript: string | null;
   notifyChannelId: number | null;
   notifyMessage: string | null;
   secretToken: string;
@@ -68,14 +50,9 @@ export function webhookRouteId(w: { publicId?: string | null; id: number }): str
 export type CreateWebhookBody = {
   name: string;
   description?: string;
-  targetMode: WebhookTargetMode;
   serviceId?: number;
   remoteServerId?: number;
-  serviceAction?: WebhookServiceAction;
-  volumeSource?: string;
-  dockerCommand?: string;
-  databaseBackupConfig?: DatabaseBackupConfig;
-  backupS3ProfileName?: string;
+  bashScript: string;
   notifyChannelId?: number;
   notifyMessage?: string;
   /** Traefik hostname; API runs docker build on the deploy host unless WEEHAWK_WEBHOOK_AGENT_IMAGE is set. */
@@ -84,27 +61,17 @@ export type CreateWebhookBody = {
   remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
   /** When true, omitted from the main /webhooks list (service auto webhooks). */
   hiddenFromWebhooksList?: boolean;
-  /**
-   * Weehawk API origin only (from NEXT_PUBLIC_API_URL). Primary trigger URL becomes POST {origin}/weehawk-hooks/{token}
-   * (full UI redeploy). Omit to use the deploy-host agent URL.
-   */
-  hooksTriggerOrigin?: string;
 };
 
 export type UpdateWebhookBody = {
   name?: string;
   description?: string;
-  isActive?: boolean;
   remoteServerId?: number | null;
-  dockerCommand?: string | null;
+  bashScript?: string | null;
   notifyChannelId?: number | null;
   notifyMessage?: string | null;
-  backupS3ProfileName?: string | null;
-  databaseBackupConfig?: DatabaseBackupConfig | null;
   hooksPublicHost?: string | null;
   remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
-  /** API origin from the browser ({@link API_BASE}); stored for remote-script callback env, not the displayed trigger URL. */
-  hooksTriggerOrigin?: string | null;
 };
 
 async function errorBody(res: Response): Promise<string> {
@@ -168,8 +135,6 @@ export async function fetchWebhook(accessToken: string, id: string | number): Pr
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
     remoteTriggerUrlScheme: "https",
@@ -199,8 +164,6 @@ export async function createWebhook(
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
     remoteTriggerUrlScheme: "https",
@@ -231,8 +194,6 @@ export async function updateWebhook(
       data.publicId == null || String(data.publicId).trim() === ""
         ? undefined
         : String(data.publicId),
-    databaseBackupConfig: data.databaseBackupConfig ?? null,
-    databaseBackupPreview: data.databaseBackupPreview ?? null,
     remoteTriggerUrl: data.remoteTriggerUrl ?? null,
     hooksPublicHost: data.hooksPublicHost ?? null,
     remoteTriggerUrlScheme: "https",

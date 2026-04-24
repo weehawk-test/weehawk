@@ -1,16 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  IsBoolean,
   IsInt,
   Min,
   IsOptional,
   IsString,
   MaxLength,
   ValidateIf,
-  ValidateNested,
 } from 'class-validator';
-import { DatabaseBackupConfigDto } from './database-backup-config.dto';
 
 export class UpdateWebhookDto {
   @ApiPropertyOptional()
@@ -40,40 +37,20 @@ export class UpdateWebhookDto {
   @Type(() => Number)
   notifyChannelId?: number | null;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
-
   @ApiPropertyOptional({
     nullable: true,
-    description: 'Optional remote server id for docker_command. Null runs on API host.',
+    description: 'Deploy remote server id for bash webhooks.',
   })
   @IsOptional()
   @IsInt()
   @Min(1)
   remoteServerId?: number | null;
 
-  @ApiPropertyOptional({
-    nullable: true,
-    description: 'Saved S3 profile name for backup upload, or null to clear.',
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(191)
-  backupS3ProfileName?: string | null;
-
-  @ApiPropertyOptional({ type: DatabaseBackupConfigDto, nullable: true })
-  @IsOptional()
-  @ValidateNested()
-  @Type(() => DatabaseBackupConfigDto)
-  databaseBackupConfig?: DatabaseBackupConfigDto | null;
-
-  @ApiPropertyOptional({ nullable: true, description: 'Bash script to execute for docker_command action.' })
+  @ApiPropertyOptional({ nullable: true, description: 'Bash script on the deploy host.' })
   @IsOptional()
   @IsString()
   @MaxLength(4000)
-  dockerCommand?: string | null;
+  bashScript?: string | null;
 
   @ApiPropertyOptional({
     nullable: true,
@@ -85,15 +62,4 @@ export class UpdateWebhookDto {
   @IsString()
   @MaxLength(255)
   hooksPublicHost?: string | null;
-
-  @ApiPropertyOptional({
-    nullable: true,
-    description:
-      'API origin for POST /weehawk-hooks/{token} (full UI redeploy). Null clears (use deploy-host agent URL).',
-  })
-  @IsOptional()
-  @ValidateIf((_, v) => v != null && v !== '')
-  @IsString()
-  @MaxLength(512)
-  hooksTriggerOrigin?: string | null;
 }

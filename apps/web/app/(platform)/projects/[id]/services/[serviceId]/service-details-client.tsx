@@ -1074,7 +1074,6 @@ export default function ServiceDetails({
     });
     if (!ok) return;
     router.replace(`/projects/${projectId}`);
-    toast({ title: "Deleting service...", description: "The service is being removed." });
     deleteService.mutate(service.id, {
       onSuccess: () => {
         toast({ title: "Service Deleted" });
