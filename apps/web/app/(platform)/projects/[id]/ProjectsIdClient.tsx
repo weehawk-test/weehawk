@@ -811,7 +811,7 @@ export default function ProjectsIdClient({
   const confirm = useConfirm();
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
-  const serviceKeys = useMemo(() => items.map((s) => s.id), [items]);
+  const serviceKeys = useMemo(() => items.map((s) => serviceQueryKeyId(s)), [items]);
   const servicesBulk = useBulkSelection(serviceKeys);
 
   useEffect(() => {
@@ -819,6 +819,12 @@ export default function ProjectsIdClient({
       setPage(1);
     }
   }, [total, items.length, page, setPage]);
+
+  useEffect(() => {
+    if (!projectLoading && !project) {
+      router.replace("/resource-not-found");
+    }
+  }, [projectLoading, project, router]);
 
   const handleDeleteService = async (serviceId: string, name: string) => {
     const ok = await confirm({
@@ -1073,7 +1079,7 @@ export default function ProjectsIdClient({
                           >
                             {typeConf.label}
                           </span>
-                          <ServiceRuntimeStatus serviceId={service.id} />
+                          <ServiceRuntimeStatus serviceId={serviceQueryKeyId(service)} />
                         </div>
                       </div>
 
@@ -1098,7 +1104,7 @@ export default function ProjectsIdClient({
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => handleDeleteService(service.id, service.name)}
+                            onClick={() => handleDeleteService(serviceQueryKeyId(service), service.name)}
                             disabled={isBulkDeleting || deleteService.isPending}
                             className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive disabled:opacity-40"
                             title="Delete service"
@@ -1107,20 +1113,20 @@ export default function ProjectsIdClient({
                           </button>
                           <div
                             className={`transition-opacity ${
-                              servicesBulk.selected.has(service.id)
+                              servicesBulk.selected.has(serviceQueryKeyId(service))
                                 ? "opacity-100"
                                 : "opacity-0 group-hover:opacity-100"
                             }`}
                           >
                             <DockerBulkCheckbox
-                              checked={servicesBulk.selected.has(service.id)}
-                              onCheckedChange={() => servicesBulk.toggle(service.id)}
+                              checked={servicesBulk.selected.has(serviceQueryKeyId(service))}
+                              onCheckedChange={() => servicesBulk.toggle(serviceQueryKeyId(service))}
                               aria-label={`Select service ${service.name}`}
                             />
                           </div>
 
                           <Link
-                            href={`/projects/${projectRouteId}/services/${service.publicId ?? service.id}`}
+                            href={`/projects/${projectRouteId}/services/${serviceQueryKeyId(service)}`}
                             prefetch
                             className="ml-auto inline-flex items-center gap-0.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
                           >

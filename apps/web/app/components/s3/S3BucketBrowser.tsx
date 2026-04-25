@@ -28,13 +28,14 @@ import {
   type S3BucketListResponse,
   type S3PrefixSummaryResponse,
 } from "@/lib/s3-api";
+import { s3PrefixToPathSegments } from "@/lib/s3-prefix-param";
 
 const BATCH_MAX = 1000;
 
 function s3BucketBrowseHref(profileName: string, prefix: string): string {
-  const q = new URLSearchParams({ name: profileName });
-  if (prefix) q.set("prefix", prefix);
-  return `/s3/bucket?${q.toString()}`;
+  const profileSegment = encodeURIComponent(profileName.trim());
+  const segments = s3PrefixToPathSegments(prefix).map((part) => encodeURIComponent(part));
+  return `/s3/${profileSegment}${segments.length > 0 ? `/${segments.join("/")}` : ""}`;
 }
 
 function formatBytes(n: number): string {

@@ -1,0 +1,43 @@
+import { S3BucketBrowser } from "@/components/s3/S3BucketBrowser";
+import {
+  fetchS3BucketObjectsSSR,
+  fetchS3PrefixSummarySSR,
+} from "@/lib/server-fetch";
+import type { S3PrefixSummaryResponse } from "@/lib/s3-api";
+import { s3PathSegmentsToPrefix } from "@/lib/s3-prefix-param";
+
+export default async function S3BucketPage({
+  params,
+}: {
+  params: Promise<{ id: string; prefix?: string[] }>;
+}) {
+  const p = await params;
+  const profileId = decodeURIComponent((p.id ?? "").trim());
+  const prefixParam = s3PathSegmentsToPrefix(p.prefix);
+
+  const initialList = profileId
+    ? await fetchS3BucketObjectsSSR(profileId, prefixParam)
+    : null;
+  const initialFolderSummaries: Record<string, S3PrefixSummaryResponse> = {};
+  if (initialList?.folders?.length) {
+    const results = await Promise.all(
+      initialList.folders.map(async (f) => {
+        const s = await fetchS3PrefixSummarySSR(profileId, f.prefix);
+        return [f.prefix, s] as const;
+      }),
+    );
+    for (const [pfx, s] of results) {
+      if (s) initialFolderSummaries[pfx] = s;
+    }
+  }
+
+  return (
+    <S3BucketBrowser
+      key={`${profileId}:${prefixParam}`}
+      profileName={profileId}
+      initialPrefix={prefixParam}
+      initialList={initialList}
+      initialFolderSummaries={initialFolderSummaries}
+    />
+  );
+}

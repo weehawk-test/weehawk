@@ -13,7 +13,7 @@ import * as os from 'os';
 import { randomBytes } from 'crypto';
 import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
-import { generatePublicId, isLikelyNumericId } from '../common/public-id';
+import { generatePublicId } from '../common/public-id';
 import Dockerode from 'dockerode';
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 import { RemoteServer } from './entities/remote-server.entity';
@@ -2611,8 +2611,21 @@ done
   }
 
   async resolveServerIdForUser(idOrPublicId: string, userId: number): Promise<number> {
-    const row = await this.findEntityOrFail(idOrPublicId, userId);
+    const row = await this.findEntityByPublicIdOrFail(idOrPublicId, userId);
     return row.id;
+  }
+
+  /** Resolve route identifier for WS-style endpoints that use only publicId. */
+  async resolveServerIdByPublicId(publicId: string): Promise<number> {
+    const raw = String(publicId).trim();
+    const row = await this.remoteServerRepository.findOne({
+      where: { publicId: raw },
+    });
+    if (!row) {
+      throw new NotFoundException('Remote server not found');
+    }
+    const ensured = await this.ensurePublicId(row);
+    return ensured.id;
   }
 
   async assertDeployServerById(
@@ -2745,13 +2758,25 @@ curl -fsS -o /dev/null "$U"
   }
 
   private async findEntityOrFail(id: number | string, userId: number): Promise<RemoteServer> {
-    const raw = String(id).trim();
-    const where = isLikelyNumericId(raw)
-      ? [{ id: Number(raw), userId }, { publicId: raw, userId }]
-      : [{ publicId: raw, userId }];
-    const rs = await this.remoteServerRepository.findOne({ where });
+    const rs = await this.remoteServerRepository.findOne({
+      where: { id: Number(id), userId },
+    });
     if (!rs) {
       throw new NotFoundException(`Remote server #${id} not found`);
+    }
+    return this.ensurePublicId(rs);
+  }
+
+  private async findEntityByPublicIdOrFail(
+    idOrPublicId: string,
+    userId: number,
+  ): Promise<RemoteServer> {
+    const raw = String(idOrPublicId).trim();
+    const rs = await this.remoteServerRepository.findOne({
+      where: { publicId: raw, userId },
+    });
+    if (!rs) {
+      throw new NotFoundException(`Remote server ${idOrPublicId} not found`);
     }
     return this.ensurePublicId(rs);
   }

@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import {
   fetchCronJobSSR,
   fetchNotificationChannelsSSR,
@@ -18,7 +18,7 @@ export default async function EditCronJobPage({ params }: PageProps) {
     fetchNotificationChannelsSSR(),
     fetchRemoteServersSSR(),
   ]);
-  if (!cronJob) notFound();
+  if (!cronJob) redirect("/resource-not-found");
   if (cronJob.publicId && id !== cronJob.publicId) {
     redirect(`/cron-jobs/${cronJob.publicId}/edit`);
   }

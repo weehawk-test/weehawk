@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { DockerServicesClient } from "@/(platform)/docker/services/services-client";
 import { parseConsoleServerSlug } from "@/lib/console-target";
 
@@ -11,7 +11,7 @@ export default async function DockerManagerServicesPage({
 }) {
   const { serverId } = await params;
   const consoleTarget = parseConsoleServerSlug(serverId);
-  if (consoleTarget == null) notFound();
+  if (consoleTarget == null) redirect("/resource-not-found");
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";

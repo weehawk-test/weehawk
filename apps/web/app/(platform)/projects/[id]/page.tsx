@@ -48,7 +48,7 @@ export default async function ProjectDetailsPage({
     initialProject = projectResult;
     initialServicesPage = servicesResult;
     if (!initialProject) {
-      initialProjectError = "Failed to fetch project from API.";
+      redirect("/resource-not-found");
     } else if (initialProject.publicId && safeProjectId !== initialProject.publicId) {
       const params = new URLSearchParams();
       if (page > 1) params.set("page", String(page));

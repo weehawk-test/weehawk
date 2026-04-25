@@ -58,6 +58,25 @@ const COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE =
 /** Keep runtime checks responsive without flapping to false on normal SSH latency. */
 const RUNTIME_STATUS_TIMEOUT_MS = 5_000;
 
+function remoteHostPublicLabel(
+  service: Service,
+  remoteServerId: number | null | undefined,
+): string {
+  if (remoteServerId == null) return 'remote-host';
+  const fromBuild =
+    service.buildRemoteServer &&
+    service.buildRemoteServerId === remoteServerId
+      ? service.buildRemoteServer.publicId
+      : null;
+  const fromDeploy =
+    service.remoteServer &&
+    service.remoteServerId === remoteServerId
+      ? service.remoteServer.publicId
+      : null;
+  const publicId = (fromBuild ?? fromDeploy ?? '').trim();
+  return publicId || 'remote-host';
+}
+
 function pickDockerSshEnv(
   env: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv | undefined {
@@ -306,6 +325,10 @@ export class ExecutorService {
                   'Remote Docker build is enabled but no remote server id was resolved for this service.',
                 );
               }
+              const buildHostLabel = remoteHostPublicLabel(
+                service,
+                buildRemoteServerId,
+              );
               if (isNixpacksBuild) {
                 const gitParams = await this.resolveApplicationRemoteGitCloneParams(
                   service,
@@ -327,7 +350,7 @@ export class ExecutorService {
                     ? remoteSourceRoot
                     : `${remoteSourceRoot}/${remoteBuildPathSeg}`;
                 emitChunk(
-                  `Cloning ${gitProviderLabel ?? 'git'} repository on build host #${buildRemoteServerId} (branch: ${ref}) for Nixpacks…\n`,
+                  `Cloning ${gitProviderLabel ?? 'git'} repository on build host ${buildHostLabel} (branch: ${ref}) for Nixpacks…\n`,
                 );
                 const remoteCloneScript = `set -euo pipefail
 TARGET=${shQ(remoteSourceRoot)}
@@ -356,7 +379,7 @@ fi
                   deployLogEmitter ? emitChunk : undefined,
                 );
                 emitChunk(
-                  `Building image with Nixpacks on remote host #${buildRemoteServerId} (${remoteContext})…\n`,
+                  `Building image with Nixpacks on remote host ${buildHostLabel} (${remoteContext})…\n`,
                 );
                 const nixNodeMajor = resolveNixpacksNodeMajorForRemoteBuild(rawConfig);
                 const nixNodeExport = `export NIXPACKS_NODE_VERSION=${shQ(nixNodeMajor)}\n`;
@@ -396,7 +419,7 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
                   );
                 });
                 const dockerfilePosix = dockerfileRel.split(/[/\\]/).join('/');
-                emitChunk(`Building image on remote host #${buildRemoteServerId}…\n`);
+                emitChunk(`Building image on remote host ${buildHostLabel}…\n`);
                 const buildResult = await this.remoteServersService.buildImageUsingDockerodeSsh(
                   buildRemoteServerId,
                   {
@@ -469,13 +492,14 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
             const remoteBuildPath = buildPath.replace(/\\/g, '/');
             const remoteContext = remoteBuildPath === '.' ? remoteSourceRoot : `${remoteSourceRoot}/${remoteBuildPath}`;
             const dockerfilePosix = dockerfilePath.replace(/\\/g, '/');
+            const deployHostLabel = remoteHostPublicLabel(service, remoteDeployId);
 
             const { isRemoteGit, cloneUrl, ref, gitProviderLabel } =
               await this.resolveApplicationRemoteGitCloneParams(service, rawConfig);
 
             if (isRemoteGit && cloneUrl) {
               emitChunk(
-                `Cloning ${gitProviderLabel ?? 'git'} repository on deploy host #${remoteDeployId} (branch: ${ref})…\n`,
+                `Cloning ${gitProviderLabel ?? 'git'} repository on deploy host ${deployHostLabel} (branch: ${ref})…\n`,
               );
               const remoteCloneScript = `set -euo pipefail
 TARGET=${shQ(remoteSourceRoot)}
@@ -506,7 +530,7 @@ fi
             }
 
             emitChunk(
-              `Local app-source is absent on API host; building on deploy host #${remoteDeployId} from remote tree (${remoteContext})…\n`,
+              `Local app-source is absent on API host; building on deploy host ${deployHostLabel} from remote tree (${remoteContext})…\n`,
             );
             const nixNodeMajorDeploy = isNixpacksBuild
               ? resolveNixpacksNodeMajorForRemoteBuild(rawConfig)
@@ -626,13 +650,14 @@ fi
         }
         const remoteDeployId = sshTargets.remoteServerId;
         if (remoteDeployId != null) {
+          const deployHostLabel = remoteHostPublicLabel(service, remoteDeployId);
           let localDockerConfigDir: string | undefined;
           const dockerCfg = stackDeployEnv.DOCKER_CONFIG;
           if (typeof dockerCfg === 'string' && dockerCfg.trim().length > 0) {
             localDockerConfigDir = dockerCfg.trim();
           }
           try {
-            emitChunk(`Deploying stack "${service.appName}" on remote host #${remoteDeployId}…\n`);
+            emitChunk(`Deploying stack "${service.appName}" on remote host ${deployHostLabel}…\n`);
             const r = await this.remoteServersService.stackDeployViaSsh(
               remoteDeployId,
               projectUserId,

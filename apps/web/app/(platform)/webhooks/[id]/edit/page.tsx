@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import {
   fetchRemoteServersSSR,
   fetchNotificationChannelsSSR,
@@ -18,7 +18,7 @@ export default async function EditWebhookPage({ params }: PageProps) {
     fetchNotificationChannelsSSR(),
     fetchRemoteServersSSR(),
   ]);
-  if (!webhook) notFound();
+  if (!webhook) redirect("/resource-not-found");
   if (webhook.publicId && id !== webhook.publicId) {
     redirect(`/webhooks/${webhook.publicId}/edit`);
   }

@@ -51,7 +51,7 @@ import {
   RemoteServersService,
   WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
 } from '../remote-servers/remote-servers.service';
-import { generatePublicId, isLikelyNumericId } from '../common/public-id';
+import { generatePublicId } from '../common/public-id';
 
 @Injectable()
 export class ServicesService {
@@ -94,10 +94,9 @@ export class ServicesService {
 
   async resolveProjectIdForUser(identifier: string, userId: number): Promise<number> {
     const trimmed = String(identifier).trim();
-    const where = isLikelyNumericId(trimmed)
-      ? [{ id: Number(trimmed), userId }, { publicId: trimmed, userId }]
-      : [{ publicId: trimmed, userId }];
-    const project = await this.projectRepository.findOne({ where });
+    const project = await this.projectRepository.findOne({
+      where: { publicId: trimmed, userId },
+    });
     if (!project) throw new NotFoundException('Project not found');
     const ensured = await this.ensureProjectPublicId(project);
     return ensured.id;
@@ -105,11 +104,8 @@ export class ServicesService {
 
   async resolveServiceIdForUser(identifier: string, userId: number): Promise<number> {
     const trimmed = String(identifier).trim();
-    const where = isLikelyNumericId(trimmed)
-      ? [{ id: Number(trimmed), project: { userId } }, { publicId: trimmed, project: { userId } }]
-      : [{ publicId: trimmed, project: { userId } }];
     const service = await this.serviceRepository.findOne({
-      where,
+      where: { publicId: trimmed, project: { userId } },
       relations: ['project'],
     });
     if (!service) throw new NotFoundException('Service not found');
@@ -3668,6 +3664,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     success: boolean;
     output: string;
   }> {
+    const sanitizeUserMessage = (msg: string): string =>
+      String(msg ?? '').replace(/#[0-9]+\b/g, '');
     const emit = (msg: string) =>
       emitDeployLog(options?.deployLogEmitter, msg);
     const service = await this.serviceRepository.findOne({
@@ -3675,8 +3673,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       relations: ['project', 'remoteServer', 'buildRemoteServer'],
     });
     if (!service) {
-      return { success: false, output: `Service #${serviceId} not found.` };
+      return { success: false, output: 'Service not found.' };
     }
+    const servicePublicLabel = service.publicId?.trim() || service.name?.trim() || 'service';
     if (!service.autoDeployEnabled) {
       return { success: false, output: 'Auto-deploy is not enabled.' };
     }
@@ -3743,7 +3742,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         relations: ['project', 'remoteServer', 'buildRemoteServer'],
       });
       if (!fresh) {
-        return { success: false, output: `Service #${service.id} not found after update.` };
+        return { success: false, output: 'Service not found after update.' };
       }
 
       await this.applyApplicationSourceFromDirectory(fresh, {}, marker);
@@ -3752,8 +3751,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       emit('[auto-deploy] Syncing files to deploy host…\n');
       const mirrorResult = await this.pushApplicationMirrorToDeployHostIfConfigured(service.id, 1);
       if (mirrorResult.status === 'failed') {
-        const warnMsg = `Auto-deploy mirror sync failed for service #${service.id}: ${mirrorResult.message}`;
-        this.log.warn(warnMsg);
+        const warnMsg = `Auto-deploy mirror sync failed for ${servicePublicLabel}: ${sanitizeUserMessage(mirrorResult.message)}`;
+        this.log.warn(
+          `Auto-deploy mirror sync failed for service #${service.id}: ${mirrorResult.message}`,
+        );
         emit(`[auto-deploy] Warning: ${warnMsg}\n`);
       } else if (mirrorResult.status === 'synced') {
         emit('[auto-deploy] Files synced to deploy host.\n');

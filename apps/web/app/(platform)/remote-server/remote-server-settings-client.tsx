@@ -76,6 +76,11 @@ function emptyEditDraft(): EditDraft {
   };
 }
 
+function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): string {
+  const pub = row.publicId?.trim();
+  return pub && pub.length > 0 ? pub : String(row.id);
+}
+
 export function RemoteServerSettingsClient({
   initialRemoteServers,
   initialTraefikSettings,
@@ -229,7 +234,7 @@ export function RemoteServerSettingsClient({
       if (pem) {
         patch.privateKey = pem;
       }
-      return updateRemoteServerApi(accessToken ?? "", row.id, patch);
+      return updateRemoteServerApi(accessToken ?? "", remoteServerRouteId(row), patch);
     },
     onSuccess: (updated) => {
       qc.setQueryData<RemoteServerRow[]>(remoteServersQueryKey, (prev) => {
@@ -245,10 +250,10 @@ export function RemoteServerSettingsClient({
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => deleteRemoteServerApi(accessToken ?? "", id),
+    mutationFn: (id: string) => deleteRemoteServerApi(accessToken ?? "", id),
     onSuccess: (_data, id) => {
       qc.setQueryData<RemoteServerRow[]>(remoteServersQueryKey, (prev) =>
-        (prev ?? []).filter((r) => r.id !== id),
+        (prev ?? []).filter((r) => remoteServerRouteId(r) !== id),
       );
       void qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       toast({ title: "Removed" });
@@ -269,7 +274,7 @@ export function RemoteServerSettingsClient({
   }
 
   const testMut = useMutation({
-    mutationFn: (id: number) => testRemoteServerApi(accessToken ?? "", id),
+    mutationFn: (id: string) => testRemoteServerApi(accessToken ?? "", id),
     onSuccess: (data, id) => {
       toast({
         title: data.success ? "Docker reachable" : "Connection failed",
@@ -283,7 +288,7 @@ export function RemoteServerSettingsClient({
   });
 
   const testSshMut = useMutation({
-    mutationFn: (id: number) => testRemoteServerSshApi(accessToken ?? "", id),
+    mutationFn: (id: string) => testRemoteServerSshApi(accessToken ?? "", id),
     onSuccess: (data) => {
       toast({
         title: data.success ? "Connected via SSH" : "SSH connection failed",
@@ -354,7 +359,7 @@ export function RemoteServerSettingsClient({
       ro = new ResizeObserver(onResize);
       ro.observe(el);
 
-      const urls = remoteTerminalWsUrlCandidates(row.id);
+      const urls = remoteTerminalWsUrlCandidates(remoteServerRouteId(row));
       let activeUrlIndex = 0;
       const connect = (index: number) => {
         if (disposed) return;
@@ -572,7 +577,7 @@ export function RemoteServerSettingsClient({
                     <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
                       {row.hasPrivateKey ? (
                         <Link
-                          href={`/docker-manager/${row.publicId ?? row.id}/images`}
+                          href={`/docker-manager/${remoteServerRouteId(row)}/images`}
                           scroll={false}
                           className="btn-secondary col-span-2 inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs sm:col-span-1 sm:min-h-0 sm:w-auto sm:py-1.5"
                           title="Open Docker console for this host (full Docker UI)"
@@ -634,7 +639,7 @@ export function RemoteServerSettingsClient({
                             variant: "destructive",
                           });
                           if (!ok) return;
-                          deleteMut.mutate(row.id);
+                          deleteMut.mutate(remoteServerRouteId(row));
                         }}
                         className="inline-flex min-h-10 items-center justify-center rounded-lg border border-destructive/45 bg-destructive/10 p-2 text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-40 sm:min-h-0 sm:p-1.5"
                         title="Delete host"
@@ -1002,7 +1007,7 @@ export function RemoteServerSettingsClient({
                   <button
                     type="button"
                     disabled={testSshMut.isPending || testMut.isPending}
-                    onClick={() => testSshMut.mutate(testModalRow.id)}
+                    onClick={() => testSshMut.mutate(remoteServerRouteId(testModalRow))}
                     className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
                     title="SSH only: ssh2 + shell (echo + uname). Does not use Docker."
                   >
@@ -1012,7 +1017,7 @@ export function RemoteServerSettingsClient({
                   <button
                     type="button"
                     disabled={testMut.isPending || testSshMut.isPending}
-                    onClick={() => testMut.mutate(testModalRow.id)}
+                    onClick={() => testMut.mutate(remoteServerRouteId(testModalRow))}
                     className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
                     title="Remote Docker API via Dockerode over SSH (same path as the Docker Manager)"
                   >

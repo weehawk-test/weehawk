@@ -65,28 +65,28 @@ export class ProjectsController {
     );
   }
 
-  @Get(':id')
+  @Get(':publicId')
   @ApiOperation({ summary: 'Get project details and its services' })
   findOne(
-    @Param('id') id: string,
+    @Param('publicId') publicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.findOne(id, this.uid(req));
+    return this.projectsService.findOne(publicId, this.uid(req));
   }
 
-  @Patch(':id')
+  @Patch(':publicId')
   @ApiOperation({ summary: 'update project' })
   update(
-    @Param('id') id: string,
+    @Param('publicId') publicId: string,
     @Body() updateProjectDto: UpdateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.update(id, updateProjectDto, this.uid(req));
+    return this.projectsService.update(publicId, updateProjectDto, this.uid(req));
   }
 
-  @Delete(':id')
+  @Delete(':publicId')
   @ApiOperation({ summary: 'delete project' })
-  remove(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
-    return this.projectsService.remove(id, this.uid(req));
+  remove(@Param('publicId') publicId: string, @Req() req: { user?: { userId: number } }) {
+    return this.projectsService.remove(publicId, this.uid(req));
   }
 }

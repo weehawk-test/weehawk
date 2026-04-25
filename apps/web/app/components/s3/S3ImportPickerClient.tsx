@@ -10,11 +10,11 @@ import { listS3BucketObjectsApi, type S3BucketListResponse } from "@/lib/s3-api"
 export const S3_IMPORT_PICK_MESSAGE_TYPE = "weehawk:s3-import-pick" as const;
 
 export function s3ImportPickerHref(
-  profileName: string,
+  profileId: string,
   prefix: string,
   requireTarGz: boolean,
 ): string {
-  const q = new URLSearchParams({ name: profileName });
+  const q = new URLSearchParams({ profileId });
   if (prefix) q.set("prefix", prefix);
   if (requireTarGz) q.set("requireTarGz", "1");
   return `/s3/import-picker?${q.toString()}`;
@@ -32,12 +32,12 @@ function joinPrefix(parts: string[]): string {
 }
 
 export function S3ImportPickerClient({
-  profileName,
+  profileId,
   initialPrefix,
   initialList,
   requireTarGz,
 }: {
-  profileName: string;
+  profileId: string;
   initialPrefix: string;
   initialList: S3BucketListResponse | null;
   requireTarGz: boolean;
@@ -77,7 +77,7 @@ export function S3ImportPickerClient({
     if (!nextToken) return;
     setRefreshing(true);
     try {
-      const r = await listS3BucketObjectsApi(profileName, {
+      const r = await listS3BucketObjectsApi(profileId, {
         prefix,
         continuationToken: nextToken,
       });
@@ -114,7 +114,7 @@ export function S3ImportPickerClient({
     }
     if (embedded) {
       window.parent.postMessage(
-        { type: S3_IMPORT_PICK_MESSAGE_TYPE, profileName, key },
+        { type: S3_IMPORT_PICK_MESSAGE_TYPE, profileId, key },
         window.location.origin,
       );
       return;
@@ -144,7 +144,7 @@ export function S3ImportPickerClient({
             <span key={`${c.prefix}-${i}`} className="flex items-center gap-1 min-w-0">
               {i > 0 ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : null}
               <Link
-                href={s3ImportPickerHref(profileName, c.prefix, requireTarGz)}
+                href={s3ImportPickerHref(profileId, c.prefix, requireTarGz)}
                 scroll={false}
                 className={`truncate max-w-[180px] rounded px-1 py-0.5 ${
                   c.prefix === prefix ? "bg-primary/15 font-medium" : "text-primary hover:underline"
@@ -173,7 +173,7 @@ export function S3ImportPickerClient({
           {folders.map((f) => (
             <li key={f.prefix}>
               <Link
-                href={s3ImportPickerHref(profileName, f.prefix, requireTarGz)}
+                href={s3ImportPickerHref(profileId, f.prefix, requireTarGz)}
                 scroll={false}
                 className="w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/30"
               >

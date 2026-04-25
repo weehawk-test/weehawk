@@ -146,7 +146,7 @@ function ServerDomainsCard({
 
   const { mutate, isPending } = useMutation({
     mutationFn: async (domainsJson: string | null) =>
-      updateRemoteServerApi(accessToken, server.id, { domainsJson }),
+      updateRemoteServerApi(accessToken, server.publicId?.trim() || String(server.id), { domainsJson }),
     onSuccess: async (row) => {
       await qc.invalidateQueries({ queryKey: REMOTE_SERVERS_QK });
       const nextHosts = domainsJsonToHosts(row.domainsJson);

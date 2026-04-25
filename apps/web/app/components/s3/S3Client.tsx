@@ -13,6 +13,7 @@ import {
   deleteS3ProfileApi,
   listS3ProfilesApi,
   saveS3ProfileApi,
+  s3ProfileRouteId,
   testS3ConnectionApi,
   type S3ProfilePayload,
   type S3ProfilePublic,
@@ -77,8 +78,6 @@ const S3_PROVIDER_PRESETS: S3ProviderPreset[] = [
   { id: "backblaze-b2", label: "Backblaze B2 (S3)", endpoint: "https://s3.us-west-000.backblazeb2.com", region: "us-west-000" },
 ];
 
-type S3ModalState = null | { type: "add" } | { type: "edit"; profile: S3ProfilePublic };
-
 export function S3Client({
   initialProfiles,
   initialError,
@@ -91,7 +90,7 @@ export function S3Client({
   const [profiles, setProfiles] = useState<S3ProfilePublic[]>(initialProfiles);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [modal, setModal] = useState<S3ModalState>(null);
+  const [isAddOpen, setIsAddOpen] = useState(false);
   const [provider, setProvider] = useState("custom");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -120,7 +119,7 @@ export function S3Client({
   }, [initialError, toast]);
 
   useEffect(() => {
-    if (!modal) return;
+    if (!isAddOpen) return;
     let cancelled = false;
     void fetchRemoteServers("")
       .then((rows) => {
@@ -134,9 +133,8 @@ export function S3Client({
     return () => {
       cancelled = true;
     };
-  }, [modal]);
+  }, [isAddOpen]);
 
-  const secretRequired = modal?.type === "add";
   const canSubmit = useMemo(() => {
     const base =
       form.name.trim() &&
@@ -145,9 +143,9 @@ export function S3Client({
       form.bucket.trim() &&
       form.accessKeyId.trim();
     if (!base) return false;
-    if (secretRequired && !(form.secretAccessKey ?? "").trim()) return false;
+    if (!(form.secretAccessKey ?? "").trim()) return false;
     return true;
-  }, [form, secretRequired]);
+  }, [form]);
 
   const filtered = profiles.filter((p) => {
     const q = search.toLowerCase().trim();
@@ -178,7 +176,7 @@ export function S3Client({
   };
 
   const closeModal = () => {
-    setModal(null);
+    setIsAddOpen(false);
     setS3VerifyRemoteId(null);
     setProvider("custom");
     setForm({
@@ -189,20 +187,6 @@ export function S3Client({
       accessKeyId: "",
       secretAccessKey: "",
     });
-  };
-
-  const openEdit = (profile: S3ProfilePublic) => {
-    setS3VerifyRemoteId(null);
-    setProvider("custom");
-    setForm({
-      name: profile.name,
-      endpoint: profile.endpoint,
-      region: profile.region,
-      bucket: profile.bucket,
-      accessKeyId: profile.accessKeyId,
-      secretAccessKey: "",
-    });
-    setModal({ type: "edit", profile });
   };
 
   const applyProviderPreset = (providerId: string) => {
@@ -220,16 +204,6 @@ export function S3Client({
   const payloadForApi = useMemo((): S3ProfilePayload => {
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
     const secret = (form.secretAccessKey ?? "").trim();
-    if (modal?.type === "edit" && !secret) {
-      return {
-        name: form.name.trim(),
-        endpoint: form.endpoint.trim(),
-        region: form.region.trim(),
-        bucket: form.bucket.trim(),
-        accessKeyId: form.accessKeyId.trim(),
-        forcePathStyle,
-      };
-    }
     return {
       name: form.name.trim(),
       endpoint: form.endpoint.trim(),
@@ -239,18 +213,10 @@ export function S3Client({
       secretAccessKey: secret,
       forcePathStyle,
     };
-  }, [form, modal?.type]);
+  }, [form]);
 
   const onTest = async () => {
     if (!canSubmit) return;
-    if (modal?.type === "edit" && !(form.secretAccessKey ?? "").trim()) {
-      toast({
-        title: "Secret required",
-        description: "Enter the secret access key to verify the connection, or save without verifying.",
-        variant: "destructive",
-      });
-      return;
-    }
     if (s3VerifyRemoteId == null) {
       toast({
         title: "Choose a deploy host",
@@ -282,10 +248,9 @@ export function S3Client({
     setSaving(true);
     try {
       const res = await saveS3ProfileApi(payloadForApi);
-      const isEdit = modal?.type === "edit";
       toast({
-        title: isEdit ? "Destination updated" : "Destination saved",
-        description: isEdit ? `Updated "${res.profile.name}".` : `Saved "${res.profile.name}".`,
+        title: "Destination saved",
+        description: `Saved "${res.profile.name}".`,
       });
       closeModal();
       await loadProfiles();
@@ -310,7 +275,9 @@ export function S3Client({
     if (!ok) return;
     setDeletingName(name);
     try {
-      await deleteS3ProfileApi(name);
+      const target = profiles.find((p) => p.name === name);
+      if (!target) throw new Error("S3 destination not found.");
+      await deleteS3ProfileApi(s3ProfileRouteId(target));
       toast({ title: "Deleted", description: name });
       await loadProfiles();
     } catch (e) {
@@ -335,7 +302,13 @@ export function S3Client({
     if (!ok) return;
     setIsBulkDeleting(true);
     try {
-      await Promise.all(names.map((name) => deleteS3ProfileApi(name)));
+      await Promise.all(
+        names.map((name) => {
+          const target = profiles.find((p) => p.name === name);
+          if (!target) throw new Error(`S3 destination "${name}" not found.`);
+          return deleteS3ProfileApi(s3ProfileRouteId(target));
+        }),
+      );
       profilesBulk.clear();
       toast({ title: "Destinations deleted", description: `${names.length} destination(s) removed.` });
       await loadProfiles();
@@ -359,16 +332,9 @@ export function S3Client({
             Link your cloud storage buckets so backups and uploads know where to send data.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            setS3VerifyRemoteId(null);
-            setModal({ type: "add" });
-          }}
-          className="btn-primary flex items-center justify-center gap-2"
-        >
+        <Link href="/s3/create" className="btn-primary flex items-center justify-center gap-2">
           <Plus className="w-5 h-5" /> Add destination
-        </button>
+        </Link>
       </div>
 
       <div className="mb-4">
@@ -424,16 +390,9 @@ export function S3Client({
             {search ? "No destinations match your search." : "Add your first S3 destination profile."}
           </p>
           {!search && (
-            <button
-              type="button"
-              onClick={() => {
-                setS3VerifyRemoteId(null);
-                setModal({ type: "add" });
-              }}
-              className="btn-primary flex items-center gap-2"
-            >
+            <Link href="/s3/create" className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> Add destination
-            </button>
+            </Link>
           )}
         </div>
       ) : (
@@ -499,16 +458,15 @@ export function S3Client({
                   <span title="Created (UTC)">{formatDateUTC(profileCreatedAtIso(item))}</span>
                 </div>
                 <div className="flex items-center gap-3 flex-wrap justify-end">
-                  <button
-                    type="button"
-                    onClick={() => openEdit(item)}
+                  <Link
+                    href={`/s3/${encodeURIComponent(s3ProfileRouteId(item))}/edit`}
                     className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
                   >
                     <Pencil className="w-3 h-3" />
                     Edit
-                  </button>
+                  </Link>
                   <Link
-                    href={`/s3/bucket?name=${encodeURIComponent(item.name)}`}
+                    href={`/s3/${encodeURIComponent(s3ProfileRouteId(item))}`}
                     className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
                   >
                     <FolderOpen className="w-3 h-3" />
@@ -524,9 +482,9 @@ export function S3Client({
       {typeof document !== "undefined" &&
         createPortal(
         <AnimatePresence>
-          {(modal?.type === "add" || modal?.type === "edit") && (
+          {isAddOpen && (
           <motion.div
-            key={modal.type === "edit" ? "s3-edit" : "s3-add"}
+            key="s3-add"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -543,10 +501,10 @@ export function S3Client({
               <div className="mb-6 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <h1 className="text-2xl font-bold text-foreground">
-                    {modal.type === "edit" ? "Edit S3 destination" : "Add S3 destination"}
+                    Add S3 destination
                   </h1>
                   <p className="text-sm text-muted-foreground mt-1">
-                    {modal.type === "edit" ? "Update connection details for this profile." : "Save a reusable S3 destination profile."}
+                    Save a reusable S3 destination profile.
                   </p>
                 </div>
                 <button
@@ -565,7 +523,6 @@ export function S3Client({
                   <select
                     className="input-field"
                     value={provider}
-                    disabled={modal.type === "edit"}
                     onChange={(e) => applyProviderPreset(e.target.value)}
                   >
                     <option value="custom">Custom (S3-compatible)</option>
@@ -583,8 +540,6 @@ export function S3Client({
                     value={form.name}
                     onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
                     placeholder="prod-backups"
-                    disabled={modal.type === "edit"}
-                    readOnly={modal.type === "edit"}
                   />
                 </div>
                 <div>
@@ -610,11 +565,8 @@ export function S3Client({
                     className="input-field"
                     value={form.secretAccessKey}
                     onChange={(e) => setForm((p) => ({ ...p, secretAccessKey: e.target.value }))}
-                    placeholder={modal.type === "edit" ? "Leave blank to keep existing secret" : "Your secret key"}
+                    placeholder="Your secret key"
                   />
-                  {modal.type === "edit" && (
-                    <p className="text-[11px] text-muted-foreground mt-1.5">Current: {modal.profile.secretAccessKeyMasked}</p>
-                  )}
                 </div>
               </div>
 
@@ -682,7 +634,7 @@ export function S3Client({
                   className="btn-primary text-sm flex items-center gap-2 disabled:opacity-50"
                 >
                   {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                  {modal.type === "edit" ? "Update" : "Save"}
+                  Save
                 </button>
               </div>
             </motion.div>

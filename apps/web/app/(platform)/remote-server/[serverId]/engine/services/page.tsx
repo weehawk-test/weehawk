@@ -1,4 +1,5 @@
 import { RemoteEngineUnifiedClient } from "../remote-engine-unified-client";
+import { redirect } from "next/navigation";
 
 export default async function Page({
   params,
@@ -10,7 +11,7 @@ export default async function Page({
   const { serverId } = await params;
   const sp = await searchParams;
   const id = Number(serverId);
-  if (!Number.isFinite(id)) return null;
+  if (!Number.isFinite(id)) redirect("/resource-not-found");
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
   return (

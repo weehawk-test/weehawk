@@ -45,6 +45,7 @@ export type S3ProfilePayload = {
 };
 
 export type S3ProfilePublic = {
+  publicId?: string;
   name: string;
   endpoint: string;
   region: string;
@@ -56,6 +57,12 @@ export type S3ProfilePublic = {
   updatedAt: string;
   secretAccessKeyMasked: string;
 };
+
+export function s3ProfileRouteId(profile: { publicId?: string | null; name: string }): string {
+  const p = profile.publicId?.trim();
+  if (p) return p;
+  return profile.name.trim();
+}
 
 export function listS3ProfilesApi() {
   return request<S3ProfilePublic[]>("/api/s3/profiles");
@@ -83,9 +90,9 @@ export function testS3ConnectionApi(body: S3TestConnectionPayload) {
   });
 }
 
-export function deleteS3ProfileApi(name: string) {
-  return request<{ success: boolean; name: string }>(
-    `/api/s3/profiles/${encodeURIComponent(name)}`,
+export function deleteS3ProfileApi(profileId: string) {
+  return request<{ success: boolean; publicId: string }>(
+    `/api/s3/profiles/${encodeURIComponent(profileId)}`,
     { method: "DELETE" },
   );
 }
@@ -100,7 +107,7 @@ export type S3BucketListResponse = {
 };
 
 export function listS3BucketObjectsApi(
-  profileName: string,
+  profileId: string,
   opts?: { prefix?: string; continuationToken?: string },
 ) {
   const q = new URLSearchParams();
@@ -108,22 +115,22 @@ export function listS3BucketObjectsApi(
   if (opts?.continuationToken) q.set("continuationToken", opts.continuationToken);
   const qs = q.toString();
   return request<S3BucketListResponse>(
-    `/api/s3/profiles/${encodeURIComponent(profileName)}/objects${qs ? `?${qs}` : ""}`,
+    `/api/s3/profiles/${encodeURIComponent(profileId)}/objects${qs ? `?${qs}` : ""}`,
   );
 }
 
-export function deleteS3ObjectApi(profileName: string, key: string) {
+export function deleteS3ObjectApi(profileId: string, key: string) {
   return request<{ success: boolean; key: string }>(
-    `/api/s3/profiles/${encodeURIComponent(profileName)}/objects/delete`,
+    `/api/s3/profiles/${encodeURIComponent(profileId)}/objects/delete`,
     { method: "POST", body: JSON.stringify({ key }) },
   );
 }
 
-export function deleteS3ObjectsBatchApi(profileName: string, keys: string[]) {
+export function deleteS3ObjectsBatchApi(profileId: string, keys: string[]) {
   return request<{
     deleted: string[];
     errors: { key: string; message: string }[];
-  }>(`/api/s3/profiles/${encodeURIComponent(profileName)}/objects/delete-batch`, {
+  }>(`/api/s3/profiles/${encodeURIComponent(profileId)}/objects/delete-batch`, {
     method: "POST",
     body: JSON.stringify({ keys }),
   });
@@ -136,18 +143,18 @@ export type S3PrefixSummaryResponse = {
   isPartialSummary: boolean;
 };
 
-export function getPrefixSummaryApi(profileName: string, prefix: string) {
+export function getPrefixSummaryApi(profileId: string, prefix: string) {
   const q = new URLSearchParams({ prefix });
   return request<S3PrefixSummaryResponse>(
-    `/api/s3/profiles/${encodeURIComponent(profileName)}/prefix-summary?${q.toString()}`,
+    `/api/s3/profiles/${encodeURIComponent(profileId)}/prefix-summary?${q.toString()}`,
   );
 }
 
-export function deleteS3PrefixApi(profileName: string, prefix: string) {
+export function deleteS3PrefixApi(profileId: string, prefix: string) {
   return request<{
     deletedCount: number;
     errors: { key: string; message: string }[];
-  }>(`/api/s3/profiles/${encodeURIComponent(profileName)}/objects/delete-prefix`, {
+  }>(`/api/s3/profiles/${encodeURIComponent(profileId)}/objects/delete-prefix`, {
     method: "POST",
     body: JSON.stringify({ prefix }),
   });
@@ -162,12 +169,12 @@ export type S3PresignPutResponse = {
 };
 
 export async function presignS3PutApi(
-  profileName: string,
+  profileId: string,
   key: string,
   opts?: { contentType?: string; expiresInSeconds?: number },
 ): Promise<S3PresignPutResponse> {
   return request<S3PresignPutResponse>(
-    `/api/s3/profiles/${encodeURIComponent(profileName)}/objects/presign-put`,
+    `/api/s3/profiles/${encodeURIComponent(profileId)}/objects/presign-put`,
     {
       method: "POST",
       body: JSON.stringify({
@@ -180,11 +187,11 @@ export async function presignS3PutApi(
 }
 
 /** Upload bytes directly to the bucket using a presigned URL (API never stores the file). */
-export async function uploadS3ObjectApi(profileName: string, key: string, file: File) {
+export async function uploadS3ObjectApi(profileId: string, key: string, file: File) {
   const contentType =
     file.type ||
     (key.toLowerCase().endsWith(".gz") ? "application/gzip" : "application/octet-stream");
-  const presign = await presignS3PutApi(profileName, key, { contentType });
+  const presign = await presignS3PutApi(profileId, key, { contentType });
   const put = await fetch(presign.url, {
     method: "PUT",
     headers: { "Content-Type": presign.contentType },
@@ -205,16 +212,16 @@ export type S3PresignGetResponse = {
   expiresIn: number;
 };
 
-export async function presignS3GetApi(profileName: string, key: string, expiresInSeconds?: number) {
+export async function presignS3GetApi(profileId: string, key: string, expiresInSeconds?: number) {
   const q = new URLSearchParams({ key });
   if (expiresInSeconds != null) q.set("expiresInSeconds", String(expiresInSeconds));
   return request<S3PresignGetResponse>(
-    `/api/s3/profiles/${encodeURIComponent(profileName)}/presign-get?${q.toString()}`,
+    `/api/s3/profiles/${encodeURIComponent(profileId)}/presign-get?${q.toString()}`,
   );
 }
 
-export async function downloadS3ObjectBlob(profileName: string, key: string): Promise<Blob> {
-  const { url } = await presignS3GetApi(profileName, key);
+export async function downloadS3ObjectBlob(profileId: string, key: string): Promise<Blob> {
+  const { url } = await presignS3GetApi(profileId, key);
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
     const text = await res.text();

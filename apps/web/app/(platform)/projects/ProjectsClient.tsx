@@ -26,6 +26,11 @@ function ServiceCount({ count }: { count: number }) {
   );
 }
 
+function projectRouteId(project: { id: string; publicId?: string }): string {
+  const pub = project.publicId?.trim();
+  return pub && pub.length > 0 ? pub : project.id;
+}
+
 function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const create = useCreateProject();
@@ -150,7 +155,7 @@ export default function ProjectsClient({
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const items = pageData?.data ?? [];
-  const projectKeys = useMemo(() => items.map((p) => p.id), [items]);
+  const projectKeys = useMemo(() => items.map((p) => projectRouteId(p)), [items]);
   const projectsBulk = useBulkSelection(projectKeys);
   const total = pageData?.total ?? 0;
   const limit = pageData?.limit ?? PROJECTS_PAGE_SIZE;
@@ -347,7 +352,7 @@ export default function ProjectsClient({
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                     <button
                       type="button"
-                      onClick={() => handleDelete(project.id, project.name)}
+                      onClick={() => handleDelete(projectRouteId(project), project.name)}
                       disabled={isBulkDeleting || deleteProject.isPending}
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete"
@@ -356,12 +361,14 @@ export default function ProjectsClient({
                     </button>
                     <div
                       className={`transition-opacity ${
-                        projectsBulk.selected.has(project.id) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        projectsBulk.selected.has(projectRouteId(project))
+                          ? "opacity-100"
+                          : "opacity-0 group-hover:opacity-100"
                       }`}
                     >
                       <DockerBulkCheckbox
-                        checked={projectsBulk.selected.has(project.id)}
-                        onCheckedChange={() => projectsBulk.toggle(project.id)}
+                        checked={projectsBulk.selected.has(projectRouteId(project))}
+                        onCheckedChange={() => projectsBulk.toggle(projectRouteId(project))}
                         aria-label={`Select project ${project.name}`}
                       />
                     </div>
@@ -377,7 +384,7 @@ export default function ProjectsClient({
                     <Clock className="w-3 h-3" />
                     {format(new Date(project.createdAt), "MMM d, yyyy")}
                   </div>
-                  <Link href={`/projects/${project.publicId ?? project.id}`}>
+                  <Link href={`/projects/${projectRouteId(project)}`}>
                     <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                       View <ChevronRight className="w-3 h-3" />
                     </span>

@@ -1,6 +1,7 @@
 import { type ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { parseConsoleServerSlug } from "@/lib/console-target";
+import { fetchRemoteServersSSR } from "@/lib/server-fetch";
 
 export default async function DockerManagerServerLayout({
   children,
@@ -11,8 +12,18 @@ export default async function DockerManagerServerLayout({
 }) {
   const { serverId } = await params;
   const target = parseConsoleServerSlug(serverId);
-  /** Outside `(platform)` so the shell (sidebar) is not shown — `notFound()` would keep parent layouts. */
-  if (target == null) redirect("/console-not-found");
+  /** Block invalid / legacy numeric slugs before rendering any console page. */
+  if (target == null || /^[0-9]+$/.test(target)) {
+    redirect("/resource-not-found");
+  }
+  /** Enforce ownership here: only allow console URLs for the user's own remote server publicId. */
+  const remoteServers = await fetchRemoteServersSSR();
+  const canAccess = remoteServers.some(
+    (row) => String(row.publicId ?? "").trim() === target,
+  );
+  if (!canAccess) {
+    redirect("/resource-not-found");
+  }
 
   return (
     <div className="space-y-6">

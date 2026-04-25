@@ -21,6 +21,7 @@ import { normalizeS3PrefixParam } from "@/lib/s3-prefix-param";
 import {
   listS3BucketObjectsApi,
   listS3ProfilesApi,
+  s3ProfileRouteId,
   type S3ProfilePublic,
   type S3BucketListResponse,
 } from "@/lib/s3-api";
@@ -40,12 +41,12 @@ function buildServiceImportPickerUrl(
   pathname: string,
   currentSearch: URLSearchParams,
   mode: "db" | "vol",
-  profile: string,
+  profileId: string,
   prefix: string,
 ): string {
   const q = new URLSearchParams(currentSearch.toString());
   q.set("s3Import", mode);
-  q.set("s3Profile", profile);
+  q.set("s3Profile", profileId);
   if (prefix) q.set("s3Prefix", prefix);
   else q.delete("s3Prefix");
   return `${pathname}?${q.toString()}`;
@@ -54,6 +55,7 @@ function buildServiceImportPickerUrl(
 export type S3ImportPickResult = { profileName: string; key: string };
 
 export type S3ImportObjectPickerSsr = {
+  profileId: string;
   profileName: string;
   prefix: string;
   initialList: S3BucketListResponse | null;
@@ -112,8 +114,12 @@ export function S3ImportObjectPicker({
     ? normalizeS3PrefixParam(searchParams.get("s3Prefix"))
     : internalPrefix;
 
-  const profileNameEffective = urlMode
+  const profileIdEffective = urlMode
     ? (searchParams.get("s3Profile") ?? "").trim()
+    : (s3ProfileRouteId(profiles.find((p) => p.name === profileName) ?? { name: profileName }) ?? "").trim();
+
+  const profileNameEffective = urlMode
+    ? (ssr?.profileName ?? "")
     : profileName;
 
   useEffect(() => {
@@ -177,7 +183,9 @@ export function S3ImportObjectPicker({
     setLoading(true);
     setNextToken(undefined);
     try {
-      const r = await listS3BucketObjectsApi(profileName, { prefix: internalPrefix });
+      const selected = profiles.find((p) => p.name === profileName);
+      if (!selected) return;
+      const r = await listS3BucketObjectsApi(s3ProfileRouteId(selected), { prefix: internalPrefix });
       setFolders(r.folders);
       setObjects(r.objects);
       setNextToken(r.isTruncated ? r.continuationToken : undefined);
@@ -189,7 +197,7 @@ export function S3ImportObjectPicker({
     } finally {
       setLoading(false);
     }
-  }, [profileName, internalPrefix, toast]);
+  }, [profileName, internalPrefix, profiles, toast]);
 
   useEffect(() => {
     if (urlMode || !open || !profileName.trim()) return;
@@ -215,11 +223,11 @@ export function S3ImportObjectPicker({
   };
 
   const loadMore = async () => {
-    const pn = profileNameEffective;
-    if (!nextToken || !pn) return;
+    const profileId = profileIdEffective;
+    if (!nextToken || !profileId) return;
     setLoading(true);
     try {
-      const r = await listS3BucketObjectsApi(pn, {
+      const r = await listS3BucketObjectsApi(profileId, {
         prefix,
         continuationToken: nextToken,
       });
@@ -284,7 +292,7 @@ export function S3ImportObjectPicker({
             <label className="text-xs font-medium text-muted-foreground mb-1.5 block">S3 destination</label>
             <select
               className="input-field w-full"
-              value={urlMode ? profileNameEffective : profileName}
+              value={urlMode ? profileIdEffective : profileName}
               onChange={(e) => {
                 const v = e.target.value;
                 if (urlMode && importPickerMode) {
@@ -293,7 +301,8 @@ export function S3ImportObjectPicker({
                     { scroll: false },
                   );
                 } else {
-                  setProfileName(v);
+                  const next = profiles.find((p) => s3ProfileRouteId(p) === v);
+                  setProfileName(next?.name ?? "");
                 }
               }}
               disabled={listBusy}
@@ -302,7 +311,7 @@ export function S3ImportObjectPicker({
                 <option value="">No profiles</option>
               ) : (
                 profiles.map((p) => (
-                  <option key={p.name} value={p.name}>
+                  <option key={p.publicId ?? p.name} value={s3ProfileRouteId(p)}>
                     {p.name} ({p.bucket})
                   </option>
                 ))
@@ -315,13 +324,13 @@ export function S3ImportObjectPicker({
               {crumbs.map((c, i) => (
                 <span key={`${c.prefix}-${i}`} className="flex items-center gap-1 min-w-0">
                   {i > 0 ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : null}
-                  {urlMode && importPickerMode && profileNameEffective ? (
+                  {urlMode && importPickerMode && profileIdEffective ? (
                     <Link
                       href={buildServiceImportPickerUrl(
                         pathname,
                         searchParams,
                         importPickerMode,
-                        profileNameEffective,
+                        profileIdEffective,
                         c.prefix,
                       )}
                       scroll={false}
@@ -351,7 +360,7 @@ export function S3ImportObjectPicker({
               type="button"
               className="btn-secondary text-xs inline-flex items-center gap-1.5"
               onClick={() => void onRefresh()}
-              disabled={listBusy || !(urlMode ? profileNameEffective : profileName.trim())}
+              disabled={listBusy || !(urlMode ? profileIdEffective : profileName.trim())}
             >
               {listBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               Refresh
@@ -360,7 +369,7 @@ export function S3ImportObjectPicker({
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto border-t border-border/60 px-6 py-3">
-          {urlMode && ssr && ssr.initialList === null && profileNameEffective ? (
+          {urlMode && ssr && ssr.initialList === null && profileIdEffective ? (
             <div className="space-y-3 py-6 text-center">
               <p className="text-sm text-muted-foreground">Could not load this path.</p>
               <button type="button" className="btn-secondary text-xs inline-flex items-center gap-1.5" onClick={() => void onRefresh()}>
@@ -378,13 +387,13 @@ export function S3ImportObjectPicker({
             <ul className="space-y-1">
               {folders.map((f) => (
                 <li key={f.prefix}>
-                  {urlMode && importPickerMode && profileNameEffective ? (
+                  {urlMode && importPickerMode && profileIdEffective ? (
                     <Link
                       href={buildServiceImportPickerUrl(
                         pathname,
                         searchParams,
                         importPickerMode,
-                        profileNameEffective,
+                        profileIdEffective,
                         f.prefix,
                       )}
                       scroll={false}
@@ -429,7 +438,7 @@ export function S3ImportObjectPicker({
               })}
             </ul>
           )}
-          {folders.length === 0 && objects.length === 0 && !listBusy && (urlMode ? profileNameEffective : profileName.trim()) ? (
+          {folders.length === 0 && objects.length === 0 && !listBusy && (urlMode ? profileIdEffective : profileName.trim()) ? (
             <p className="text-sm text-muted-foreground py-6 text-center">Empty at this path.</p>
           ) : null}
           {nextToken ? (

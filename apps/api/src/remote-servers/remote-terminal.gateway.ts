@@ -32,8 +32,8 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
     const host = req?.headers?.host ?? 'localhost';
     const url = new URL(pathAndQuery, `http://${host}`);
     const serverIdRaw = url.searchParams.get('serverId');
-    const serverId = serverIdRaw ? parseInt(serverIdRaw, 10) : NaN;
-    if (!Number.isFinite(serverId)) {
+    const serverPublicId = String(serverIdRaw ?? '').trim();
+    if (!serverPublicId) {
       client.send(JSON.stringify({ type: 'error', message: 'Missing or invalid serverId.' }));
       client.close(4000, 'invalid serverId');
       return;
@@ -41,6 +41,8 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
 
     let ssh: Client | null = null;
     try {
+      const serverId =
+        await this.remoteServersService.resolveServerIdByPublicId(serverPublicId);
       const ctx = await this.remoteServersService.getSshTerminalContext(serverId);
       ssh = new Client();
       ssh

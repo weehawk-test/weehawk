@@ -95,9 +95,10 @@ export class ProjectsService {
   async resolveProjectByIdentifier(identifier: string, userId: number): Promise<Project> {
     const trimmed = String(identifier).trim();
     if (!trimmed) throw new BadRequestException('Project identifier is required');
-    const where = isLikelyNumericId(trimmed)
-      ? [{ id: Number(trimmed), userId }, { publicId: trimmed, userId }]
-      : [{ publicId: trimmed, userId }];
+    if (isLikelyNumericId(trimmed)) {
+      throw new BadRequestException('Numeric project id is not allowed. Use publicId.');
+    }
+    const where = [{ publicId: trimmed, userId }];
     const project = await this.projectRepository.findOne({
       where,
       relations: ['services'],

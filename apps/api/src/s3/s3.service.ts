@@ -30,6 +30,7 @@ import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { inferS3ForcePathStyle } from './s3-force-path-style';
 import { getErrorMessage } from '../utils/error-message';
 import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
+import { generatePublicId } from '../common/public-id';
 
 const MAX_PROFILES = 50;
 
@@ -39,6 +40,7 @@ function legacyProfilesFilePath(): string {
 }
 
 type PublicS3Profile = {
+  publicId?: string;
   name: string;
   endpoint: string;
   region: string;
@@ -148,11 +150,21 @@ export class S3Service implements OnModuleInit {
   }
 
   private async findProfileOrThrow(userId: number, name: string): Promise<S3Profile> {
-    const safe = name?.trim();
-    if (!safe) throw new BadRequestException('S3 profile name is required.');
-    const row = await this.profileRepo.findOne({ where: { userId, name: safe } });
-    if (!row) throw new NotFoundException(`S3 profile "${safe}" not found`);
-    return row;
+    return this.findProfileByPublicIdOrThrow(userId, name);
+  }
+
+  private async ensureProfilePublicId(row: S3Profile): Promise<S3Profile> {
+    if (row.publicId?.trim()) return row;
+    row.publicId = generatePublicId('s3');
+    return this.profileRepo.save(row);
+  }
+
+  private async findProfileByPublicIdOrThrow(userId: number, publicId: string): Promise<S3Profile> {
+    const safe = publicId?.trim();
+    if (!safe) throw new BadRequestException('S3 profile id is required.');
+    const row = await this.profileRepo.findOne({ where: { userId, publicId: safe } });
+    if (!row) throw new NotFoundException('S3 profile not found');
+    return this.ensureProfilePublicId(row);
   }
 
   private async migrateFromLegacyJsonIfNeeded(): Promise<void> {
@@ -269,7 +281,9 @@ export class S3Service implements OnModuleInit {
   }
 
   private toPublicProfile(row: S3Profile): PublicS3Profile {
+    const publicId = row.publicId?.trim();
     return {
+      publicId: publicId ? publicId : undefined,
       name: row.name,
       endpoint: row.endpoint,
       region: row.region,
@@ -288,7 +302,8 @@ export class S3Service implements OnModuleInit {
       order: { updatedAt: 'DESC' },
       take: MAX_PROFILES,
     });
-    return rows.map((p) => this.toPublicProfile(p));
+    const rowsWithPublicId = await Promise.all(rows.map((p) => this.ensureProfilePublicId(p)));
+    return rowsWithPublicId.map((p) => this.toPublicProfile(p));
   }
 
   async saveProfile(userId: number, dto: UpsertS3ProfileDto) {
@@ -326,16 +341,17 @@ export class S3Service implements OnModuleInit {
     if (!saved) {
       throw new InternalServerErrorException('Failed to persist S3 profile');
     }
+    const ensured = await this.ensureProfilePublicId(saved);
     return {
       success: true,
-      profile: this.toPublicProfile(saved),
+      profile: this.toPublicProfile(ensured),
     };
   }
 
-  async deleteProfile(userId: number, name: string) {
-    const safeName = this.assertNonEmpty(name, 'name');
-    await this.profileRepo.delete({ userId, name: safeName });
-    return { success: true, name: safeName };
+  async deleteProfile(userId: number, publicId: string) {
+    const row = await this.findProfileByPublicIdOrThrow(userId, publicId);
+    await this.profileRepo.delete({ id: row.id, userId });
+    return { success: true, publicId: row.publicId };
   }
 
   async testConnection(

@@ -275,14 +275,14 @@ export async function fetchGitSettingsSSR(): Promise<GitSettingsPublic | null> {
 
 /** Server-only: bucket listing at root prefix (no client Network tab on first paint). */
 export async function fetchS3BucketObjectsSSR(
-  profileName: string,
+  profileId: string,
   prefix = "",
 ): Promise<S3BucketListResponse | null> {
   const q = new URLSearchParams();
   if (prefix) q.set("prefix", prefix);
   const qs = q.toString();
   const res = await fetch(
-    `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileName)}/objects${qs ? `?${qs}` : ""}`,
+    `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileId)}/objects${qs ? `?${qs}` : ""}`,
     { headers: await cookieHeaders(), cache: "no-store" },
   );
   if (!res.ok) return null;
@@ -291,12 +291,12 @@ export async function fetchS3BucketObjectsSSR(
 
 /** Server-only: recursive prefix stats for folder rows. */
 export async function fetchS3PrefixSummarySSR(
-  profileName: string,
+  profileId: string,
   folderPrefix: string,
 ): Promise<S3PrefixSummaryResponse | null> {
   const q = new URLSearchParams({ prefix: folderPrefix });
   const res = await fetch(
-    `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileName)}/prefix-summary?${q.toString()}`,
+    `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileId)}/prefix-summary?${q.toString()}`,
     { headers: await cookieHeaders(), cache: "no-store" },
   );
   if (!res.ok) return null;

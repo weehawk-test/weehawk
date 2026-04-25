@@ -67,7 +67,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
   });
 
   const testMut = useMutation({
-    mutationFn: (id: number) => testRemoteServerApi(accessToken, id),
+    mutationFn: (id: string) => testRemoteServerApi(accessToken, id),
     onSuccess: (data) => {
       toast({
         title: data.success ? "Docker reachable" : "Connection failed",
@@ -80,7 +80,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
   });
 
   const testSshMut = useMutation({
-    mutationFn: (id: number) => testRemoteServerSshApi(accessToken, id),
+    mutationFn: (id: string) => testRemoteServerSshApi(accessToken, id),
     onSuccess: (data) => {
       toast({
         title: data.success ? "Connected via SSH" : "SSH connection failed",
@@ -227,7 +227,10 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
         <button
           type="button"
           disabled={!savedRow || testSshMut.isPending}
-          onClick={() => savedRow && testSshMut.mutate(savedRow.id)}
+          onClick={() =>
+            savedRow &&
+            testSshMut.mutate(savedRow.publicId?.trim() || String(savedRow.id))
+          }
           className="inline-flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-white/15 bg-white/[0.04] text-foreground disabled:opacity-50"
         >
           {testSshMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
@@ -236,7 +239,9 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
         <button
           type="button"
           disabled={!savedRow || testMut.isPending}
-          onClick={() => savedRow && testMut.mutate(savedRow.id)}
+          onClick={() =>
+            savedRow && testMut.mutate(savedRow.publicId?.trim() || String(savedRow.id))
+          }
           className="inline-flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-white/15 bg-white/[0.04] text-foreground disabled:opacity-50"
         >
           {testMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <PlugZap className="size-3.5" />}

@@ -1,4 +1,13 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import {
+  BeforeInsert,
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { generatePublicId } from '../../common/public-id';
 
 /**
  * Saved S3-compatible destination profiles; connection tests use @aws-sdk/client-s3.
@@ -9,6 +18,9 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Update
 export class S3Profile {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  @Column({ type: 'varchar', length: 40, unique: true, nullable: true })
+  publicId!: string;
 
   @Column({ name: 'user_id', type: 'int' })
   userId!: number;
@@ -39,4 +51,9 @@ export class S3Profile {
 
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt!: Date;
+
+  @BeforeInsert()
+  ensurePublicId() {
+    if (!this.publicId) this.publicId = generatePublicId('s3');
+  }
 }

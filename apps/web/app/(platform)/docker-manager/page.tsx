@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function CronJobNotFound() {
+export default function DockerManagerRootPage() {
   redirect("/resource-not-found");
 }

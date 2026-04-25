@@ -20,7 +20,7 @@ import { getErrorMessage } from '../utils/error-message';
 import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
-import { generatePublicId, isLikelyNumericId } from '../common/public-id';
+import { generatePublicId } from '../common/public-id';
 
 export type CronJobListRow = {
   id: number;
@@ -71,10 +71,9 @@ export class CronJobsService {
 
   private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<CronJob> {
     const raw = String(idOrPublicId).trim();
-    const where = isLikelyNumericId(raw)
-      ? [{ id: Number(raw), userId }, { publicId: raw, userId }]
-      : [{ publicId: raw, userId }];
-    const row = await this.cronJobRepo.findOne({ where });
+    const row = await this.cronJobRepo.findOne({
+      where: { publicId: raw, userId },
+    });
     if (!row) throw new NotFoundException('Cron job not found');
     return this.ensurePublicId(row);
   }

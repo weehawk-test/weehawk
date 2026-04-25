@@ -35,7 +35,7 @@ import {
   looksLikeGeneratedOnHostRedeployScript,
   onHostWebhookBundleEnvLines,
 } from '../common/on-host-redeploy-script';
-import { generatePublicId, isLikelyNumericId } from '../common/public-id';
+import { generatePublicId } from '../common/public-id';
 
 export type WebhookListRow = {
   id: number;
@@ -97,10 +97,9 @@ export class WebhooksService implements OnApplicationBootstrap {
 
   private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<Webhook> {
     const raw = String(idOrPublicId).trim();
-    const where = isLikelyNumericId(raw)
-      ? [{ id: Number(raw), userId }, { publicId: raw, userId }]
-      : [{ publicId: raw, userId }];
-    const row = await this.webhookRepo.findOne({ where });
+    const row = await this.webhookRepo.findOne({
+      where: { publicId: raw, userId },
+    });
     if (!row) throw new NotFoundException('Webhook not found');
     return this.ensurePublicId(row);
   }

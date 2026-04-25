@@ -104,10 +104,12 @@ export class RemoteServersController {
       'Queue SSH provision on this host (install Docker, Swarm, weehawk overlay). Nixpacks is not part of this script — use POST :id/nixpacks-install separately. Processed by provision-worker.',
   })
   enqueueProvision(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServerProvisionService.enqueueProvision(id, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServerProvisionService.enqueueProvision(resolvedId, this.uid(req)),
+    );
   }
 
   @Post(':id/docker-purge')
@@ -116,10 +118,12 @@ export class RemoteServersController {
       'Queue full Docker removal on this host (apt purge, delete /var/lib/docker). For conflict cleanup; processed by provision-worker.',
   })
   enqueueDockerPurge(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServerProvisionService.enqueueDockerPurge(id, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServerProvisionService.enqueueDockerPurge(resolvedId, this.uid(req)),
+    );
   }
 
   @Post(':id/nixpacks-install')
@@ -128,10 +132,12 @@ export class RemoteServersController {
       'Queue Nixpacks CLI install only over SSH (host already provisioned). Same worker as Install; poll provision-jobs.',
   })
   enqueueNixpacksInstall(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServerProvisionService.enqueueNixpacksInstall(id, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServerProvisionService.enqueueNixpacksInstall(resolvedId, this.uid(req)),
+    );
   }
 
   @Post('generate-keypair')
@@ -368,10 +374,12 @@ export class RemoteServersController {
   @Get(':id')
   @ApiOperation({ summary: 'Get one remote server' })
   getOne(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServersService.findOne(id, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServersService.findOne(resolvedId, this.uid(req)),
+    );
   }
 
   @Post()
@@ -388,20 +396,24 @@ export class RemoteServersController {
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({ summary: 'Update remote server' })
   patch(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Body() dto: UpdateRemoteServerDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServersService.update(id, dto, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServersService.update(resolvedId, dto, this.uid(req)),
+    );
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete remote server (only if no service uses it)' })
   remove(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServersService.remove(id, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServersService.remove(resolvedId, this.uid(req)),
+    );
   }
 
   @Post(':id/test')
@@ -410,10 +422,12 @@ export class RemoteServersController {
       'Test SSH + remote Docker (Dockerode over ssh2, like Dokploy — no local `docker`/`ssh` CLI for this check)',
   })
   test(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServersService.testConnection(id, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServersService.testConnection(resolvedId, this.uid(req)),
+    );
   }
 
   @Post(':id/test-ssh')
@@ -422,20 +436,28 @@ export class RemoteServersController {
       'Test SSH only (ssh2 shell echo + uname — no Dockerode / remote Docker API)',
   })
   testSsh(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServersService.testSshOnly(id, this.uid(req));
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServersService.testSshOnly(resolvedId, this.uid(req)),
+    );
   }
 
   @Post(':id/terminal')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({ summary: 'Run an SSH command on remote server and return output' })
   terminal(
-    @Param('id', ParseIntPipe) id: number,
+    @Param('id') id: string,
     @Body() dto: RunRemoteTerminalDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.remoteServersService.runTerminalCommand(id, this.uid(req), dto.command);
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServersService.runTerminalCommand(
+        resolvedId,
+        this.uid(req),
+        dto.command,
+      ),
+    );
   }
 }

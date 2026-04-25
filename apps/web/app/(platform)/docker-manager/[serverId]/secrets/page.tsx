@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { DockerSecretsClient } from "@/(platform)/secrets/secrets-client";
 import { parseConsoleServerSlug } from "@/lib/console-target";
 import {
@@ -16,7 +16,7 @@ export default async function DockerManagerSecretsPage({
 }) {
   const { serverId } = await params;
   const consoleTarget = parseConsoleServerSlug(serverId);
-  if (consoleTarget == null) notFound();
+  if (consoleTarget == null) redirect("/resource-not-found");
 
   const remoteServerId = consoleTarget;
   const sp = await searchParams;

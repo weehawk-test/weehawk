@@ -46,10 +46,10 @@ export class S3Controller {
     return this.s3Service.saveProfile(this.uid(req), dto);
   }
 
-  @Delete('profiles/:name')
+  @Delete('profiles/:publicId')
   @ApiOperation({ summary: 'Delete a saved S3 destination profile' })
-  async deleteProfile(@Req() req: { user?: { userId: number } }, @Param('name') name: string) {
-    return this.s3Service.deleteProfile(this.uid(req), name);
+  async deleteProfile(@Req() req: { user?: { userId: number } }, @Param('publicId') publicId: string) {
+    return this.s3Service.deleteProfile(this.uid(req), publicId);
   }
 
   @Post('test-connection')
@@ -65,63 +65,63 @@ export class S3Controller {
     return this.s3Service.testConnection(this.uid(req), dto);
   }
 
-  @Get('profiles/:name/objects')
+  @Get('profiles/:publicId/objects')
   @ApiOperation({
     summary: 'List objects and common prefixes under one prefix (virtual folders)',
   })
   listBucketObjects(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Query('prefix') prefix?: string,
     @Query('continuationToken') continuationToken?: string,
   ) {
-    return this.s3Service.listBucketObjects(this.uid(req), name, prefix, continuationToken);
+    return this.s3Service.listBucketObjects(this.uid(req), publicId, prefix, continuationToken);
   }
 
-  @Get('profiles/:name/prefix-summary')
+  @Get('profiles/:publicId/prefix-summary')
   @ApiOperation({
     summary:
       'Aggregate count, total size, and latest LastModified under a prefix (recursive)',
   })
   prefixSummary(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Query('prefix') prefix: string | undefined,
   ) {
     if (!prefix?.trim()) {
       throw new BadRequestException('prefix query parameter is required.');
     }
-    return this.s3Service.summarizePrefix(this.uid(req), name, prefix);
+    return this.s3Service.summarizePrefix(this.uid(req), publicId, prefix);
   }
 
-  @Post('profiles/:name/objects/presign-put')
+  @Post('profiles/:publicId/objects/presign-put')
   @ApiOperation({
     summary:
       'Get a presigned PUT URL so the browser or another host can upload the object without sending bytes through the API',
   })
   presignPutObject(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Body()
     body: { key?: string; contentType?: string; expiresInSeconds?: number },
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
-    return this.s3Service.presignPutObject(this.uid(req), name, body.key.trim(), {
+    return this.s3Service.presignPutObject(this.uid(req), publicId, body.key.trim(), {
       contentType: body.contentType,
       expiresInSeconds: body.expiresInSeconds,
     });
   }
 
-  @Get('profiles/:name/presign-get')
+  @Get('profiles/:publicId/presign-get')
   @ApiOperation({
     summary:
       'Get a presigned GET URL so the browser can download the object without streaming through the API',
   })
   presignGetObject(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Query('key') key: string | undefined,
     @Query('expiresInSeconds') expiresInSecondsRaw?: string,
   ) {
@@ -133,24 +133,24 @@ export class S3Controller {
       expiresInSecondsRaw != null && !Number.isFinite(n) ? undefined : n;
     return this.s3Service.presignGetObject(
       this.uid(req),
-      name,
+      publicId,
       key.trim(),
       expiresInSeconds,
     );
   }
 
-  @Get('profiles/:name/download')
+  @Get('profiles/:publicId/download')
   @ApiOperation({ summary: 'Download object bytes (stream)' })
   async downloadObject(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Query('key') key: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
     }
-    const r = await this.s3Service.getObjectStream(this.uid(req), name, key.trim());
+    const r = await this.s3Service.getObjectStream(this.uid(req), publicId, key.trim());
     const enc = encodeURIComponent(r.filename).replace(/'/g, '%27');
     res.setHeader('Content-Type', r.contentType);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${enc}`);
@@ -160,62 +160,62 @@ export class S3Controller {
     return new StreamableFile(r.stream);
   }
 
-  @Delete('profiles/:name/objects')
+  @Delete('profiles/:publicId/objects')
   @ApiOperation({ summary: 'Delete one object by key' })
   deleteObject(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Body() body: { key?: string },
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
-    return this.s3Service.deleteObject(this.uid(req), name, body.key);
+    return this.s3Service.deleteObject(this.uid(req), publicId, body.key);
   }
 
-  @Post('profiles/:name/objects/delete')
+  @Post('profiles/:publicId/objects/delete')
   @ApiOperation({
     summary:
       'Delete one object (POST with JSON body; prefer this if DELETE-with-body is blocked)',
   })
   deleteObjectPost(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Body() body: { key?: string },
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
-    return this.s3Service.deleteObject(this.uid(req), name, body.key);
+    return this.s3Service.deleteObject(this.uid(req), publicId, body.key);
   }
 
-  @Post('profiles/:name/objects/delete-batch')
+  @Post('profiles/:publicId/objects/delete-batch')
   @ApiOperation({
     summary: 'Delete multiple objects (max 1000 keys per request)',
   })
   deleteObjectsBatch(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Body() body: { keys?: string[] },
   ) {
     if (!body?.keys?.length) {
       throw new BadRequestException('keys array is required.');
     }
-    return this.s3Service.deleteObjectsBatch(this.uid(req), name, body.keys);
+    return this.s3Service.deleteObjectsBatch(this.uid(req), publicId, body.keys);
   }
 
-  @Post('profiles/:name/objects/delete-prefix')
+  @Post('profiles/:publicId/objects/delete-prefix')
   @ApiOperation({
     summary: 'Delete all objects whose keys start with prefix (recursive)',
   })
   deleteObjectsUnderPrefix(
     @Req() req: { user?: { userId: number } },
-    @Param('name') name: string,
+    @Param('publicId') publicId: string,
     @Body() body: { prefix?: string },
   ) {
     if (!body?.prefix?.trim()) {
       throw new BadRequestException('prefix is required in body.');
     }
-    return this.s3Service.deleteObjectsUnderPrefix(this.uid(req), name, body.prefix);
+    return this.s3Service.deleteObjectsUnderPrefix(this.uid(req), publicId, body.prefix);
   }
 }

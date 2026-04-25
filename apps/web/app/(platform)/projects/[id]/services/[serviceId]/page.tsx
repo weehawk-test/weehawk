@@ -55,6 +55,10 @@ export default async function ServiceDetailsPage({
   initialService = serviceResult;
   initialRuntime = runtimeResult;
 
+  if (!initialProject || !initialService) {
+    redirect("/resource-not-found");
+  }
+
   if (
     initialProject?.publicId &&
     initialService?.publicId &&
@@ -74,33 +78,35 @@ export default async function ServiceDetailsPage({
 
   const sp = await searchParams;
   const s3ImportRaw = typeof sp.s3Import === "string" ? sp.s3Import : "";
-  const s3Profile = typeof sp.s3Profile === "string" ? sp.s3Profile.trim() : "";
+  const s3ProfileId = typeof sp.s3Profile === "string" ? sp.s3Profile.trim() : "";
   const s3Prefix = normalizeS3PrefixParam(sp.s3Prefix);
+  const initialS3Profiles = await withSsrTimeout(fetchS3ProfilesSSR(), SSR_S3_TIMEOUT_MS, []);
 
   let s3ImportSsr: {
     mode: "db" | "vol";
+    profileId: string;
     profileName: string;
     prefix: string;
     initialList: S3BucketListResponse | null;
   } | null = null;
 
   if (s3ImportRaw === "db" || s3ImportRaw === "vol") {
-    if (s3Profile) {
+    if (s3ProfileId) {
+      const matchedProfile = initialS3Profiles.find((p) => p.publicId === s3ProfileId);
       const initialList = await withSsrTimeout(
-        fetchS3BucketObjectsSSR(s3Profile, s3Prefix),
+        fetchS3BucketObjectsSSR(s3ProfileId, s3Prefix),
         SSR_S3_TIMEOUT_MS,
         null,
       );
       s3ImportSsr = {
         mode: s3ImportRaw,
-        profileName: s3Profile,
+        profileId: s3ProfileId,
+        profileName: matchedProfile?.name ?? s3ProfileId,
         prefix: s3Prefix,
         initialList,
       };
     }
   }
-
-  const initialS3Profiles = await withSsrTimeout(fetchS3ProfilesSSR(), SSR_S3_TIMEOUT_MS, []);
 
   return (
     <ServiceDetailsClient

@@ -31,6 +31,11 @@ type Props = {
 
 type InstallDialog = "provision" | "nixpacks" | "purge" | null;
 
+function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): string {
+  const pub = row.publicId?.trim();
+  return pub && pub.length > 0 ? pub : String(row.id);
+}
+
 function provisionJobKindLabel(kind: ProvisionJobKind | undefined): string {
   if (kind === "docker_purge") return "purge";
   if (kind === "nixpacks_install") return "nixpacks";
@@ -91,7 +96,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
   };
 
   const enqueueMut = useMutation({
-    mutationFn: () => enqueueRemoteProvisionApi(accessToken, row.id),
+    mutationFn: () => enqueueRemoteProvisionApi(accessToken, remoteServerRouteId(row)),
     onSuccess: (data) => {
       setJobId(data.jobId);
       setInstallDialog(null);
@@ -106,7 +111,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
   });
 
   const nixpacksOnlyMut = useMutation({
-    mutationFn: () => enqueueRemoteNixpacksInstallApi(accessToken, row.id),
+    mutationFn: () => enqueueRemoteNixpacksInstallApi(accessToken, remoteServerRouteId(row)),
     onSuccess: (data) => {
       setJobId(data.jobId);
       setInstallDialog(null);
@@ -125,7 +130,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
   });
 
   const purgeMut = useMutation({
-    mutationFn: () => enqueueRemoteDockerPurgeApi(accessToken, row.id),
+    mutationFn: () => enqueueRemoteDockerPurgeApi(accessToken, remoteServerRouteId(row)),
     onSuccess: (data) => {
       setJobId(data.jobId);
       setInstallDialog(null);

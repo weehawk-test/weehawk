@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import { createSecretKeyMiddleware } from './common/middleware/secret-key.middleware';
 import { resolveCorsOrigin } from './common/cors-origin';
 import { assertProductionSecurityConfig } from './common/production-security';
+import { HttpErrorSanitizerFilter } from './common/http-error-sanitizer.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -47,6 +48,7 @@ async function bootstrap() {
     ],
   });
   app.use(createSecretKeyMiddleware(configService));
+  app.useGlobalFilters(new HttpErrorSanitizerFilter());
 
   const config = new DocumentBuilder()
     .setTitle('weehawk api')

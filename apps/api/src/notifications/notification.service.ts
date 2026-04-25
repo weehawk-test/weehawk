@@ -16,7 +16,7 @@ import { channelConfigRecord } from './providers/channel-config';
 import { ProviderSendResult } from './providers/provider.types';
 import { withRetry } from './utils/with-retry';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
-import { generatePublicId, isLikelyNumericId } from '../common/public-id';
+import { generatePublicId } from '../common/public-id';
 
 export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
 
@@ -62,10 +62,9 @@ export class NotificationService {
     raw: string,
   ): Promise<NotificationChannel | null> {
     const t = String(raw).trim();
-    const where = isLikelyNumericId(t)
-      ? { id: Number(t), userId }
-      : { publicId: t, userId };
-    const ch = await this.channelRepo.findOne({ where });
+    const ch = await this.channelRepo.findOne({
+      where: { publicId: t, userId },
+    });
     if (!ch) return null;
     return this.ensureChannelPublicId(ch);
   }

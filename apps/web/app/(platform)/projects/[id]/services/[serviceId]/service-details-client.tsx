@@ -123,7 +123,12 @@ import {
   type DatabaseBackupFormValues,
 } from "@/lib/database-backup-preview";
 import { buildDatabaseInternalConnectionUrl, DB_URL_PASSWORD_PLACEHOLDER } from "@/lib/database-internal-url";
-import { listS3ProfilesApi, type S3BucketListResponse, type S3ProfilePublic } from "@/lib/s3-api";
+import {
+  listS3ProfilesApi,
+  s3ProfileRouteId,
+  type S3BucketListResponse,
+  type S3ProfilePublic,
+} from "@/lib/s3-api";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { cn } from "@/lib/utils";
@@ -724,6 +729,7 @@ function buildInitialTraefikRoutes(service: Service): TraefikRouteRule[] {
 
 export type ServiceS3ImportSsr = {
   mode: "db" | "vol";
+  profileId: string;
   profileName: string;
   prefix: string;
   initialList: S3BucketListResponse | null;
@@ -769,7 +775,7 @@ export default function ServiceDetails({
   const { data: runtime, isLoading: runtimeLoading } = useServiceRuntime(serviceId, {
     initialData: initialRuntime ?? undefined,
   });
-  const { data: project } = useProject(projectId!, {
+  const { data: project, isLoading: projectLoading } = useProject(projectId!, {
     initialData: initialProject ?? undefined,
     skipClientFetch: Boolean(initialProject),
   });
@@ -785,6 +791,12 @@ export default function ServiceDetails({
       qc.setQueryData(["service", user?.userId ?? "none", serviceId], initialService);
     }
   }, [initialService, serviceId, qc, user?.userId]);
+
+  useEffect(() => {
+    if (!isLoading && !projectLoading && (!service || !project)) {
+      router.replace("/resource-not-found");
+    }
+  }, [isLoading, projectLoading, service, project, router]);
 
   const secretsRemoteId = (service ?? initialService)?.remoteServerId ?? null;
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(secretsRemoteId, 1, "", {
@@ -939,7 +951,7 @@ export default function ServiceDetails({
     if (updateService.isPending) return;
     const exitEdit = opts?.exitEdit === true;
     updateService.mutate(
-      { id: service.id, patch: { config: configDraft } },
+      { id: serviceQueryKeyId(service), patch: { config: configDraft } },
       {
         onSuccess: () => {
           toast({ title: "Saved", description: "Configuration updated." });
@@ -974,7 +986,7 @@ export default function ServiceDetails({
     setDeployStreamText("");
     deploy.mutate(
       {
-        serviceId: service.id,
+        serviceId: serviceQueryKeyId(service),
         serviceName: service.name,
         serviceType: service.type,
         mode,
@@ -1026,7 +1038,7 @@ export default function ServiceDetails({
   const handleStartHost = () => {
     if (!service) return;
     if (service.type === "databases" && !service.config?.includes("services:")) return;
-    startService.mutate(service.id, {
+    startService.mutate(serviceQueryKeyId(service), {
       onSuccess: (data) =>
         toast({
           title: "Started",
@@ -1053,7 +1065,7 @@ export default function ServiceDetails({
       variant: "destructive",
     });
     if (!ok) return;
-    shutdownService.mutate(service.id, {
+    shutdownService.mutate(serviceQueryKeyId(service), {
       onSuccess: (data) =>
         toast({
           title: "Stopped",
@@ -1074,7 +1086,7 @@ export default function ServiceDetails({
     });
     if (!ok) return;
     router.replace(`/projects/${projectId}`);
-    deleteService.mutate(service.id, {
+    deleteService.mutate(serviceQueryKeyId(service), {
       onSuccess: () => {
         toast({ title: "Service Deleted" });
         router.refresh();
@@ -1321,7 +1333,11 @@ export default function ServiceDetails({
               transition={{ duration: 0.2 }}
               className="space-y-4"
             >
-              <DatabaseSetupPanel serviceId={service.id} service={service} engine={dbEngineId} />
+              <DatabaseSetupPanel
+                serviceId={serviceQueryKeyId(service)}
+                service={service}
+                engine={dbEngineId}
+              />
             </motion.div>
           )}
 
@@ -1336,7 +1352,7 @@ export default function ServiceDetails({
               className="space-y-4"
             >
               <ApplicationArchivePanel
-                serviceId={service.id}
+                serviceId={serviceQueryKeyId(service)}
                 projectId={projectId}
                 service={service}
                 onNavigateToRemoteDeployHost={openRemoteDeployHostPanel}
@@ -1685,7 +1701,7 @@ export default function ServiceDetails({
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              <ServiceTerminalPanel serviceId={service.id} />
+              <ServiceTerminalPanel serviceId={serviceQueryKeyId(service)} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1855,9 +1871,19 @@ function ServiceBackupPanel({
       });
       return;
     }
+    const selected = s3Profiles.find((p) => p.name === profile);
+    const profileId = selected ? s3ProfileRouteId(selected) : "";
+    if (!profileId) {
+      toast({
+        title: "S3 destination required",
+        description: "Selected S3 profile is missing a public id.",
+        variant: "destructive",
+      });
+      return;
+    }
     const q = new URLSearchParams(searchParams.toString());
     q.set("s3Import", mode);
-    q.set("s3Profile", profile);
+    q.set("s3Profile", profileId);
     q.delete("s3Prefix");
     router.replace(`${pathname}?${q.toString()}`, { scroll: false });
   };
@@ -2252,6 +2278,7 @@ function ServiceBackupPanel({
               ssr={
                 s3ImportSsr?.mode === "db"
                   ? {
+                      profileId: s3ImportSsr.profileId,
                       profileName: s3ImportSsr.profileName,
                       prefix: s3ImportSsr.prefix,
                       initialList: s3ImportSsr.initialList,
@@ -2470,6 +2497,7 @@ function ServiceBackupPanel({
           ssr={
             s3ImportSsr?.mode === "vol"
               ? {
+                  profileId: s3ImportSsr.profileId,
                   profileName: s3ImportSsr.profileName,
                   prefix: s3ImportSsr.prefix,
                   initialList: s3ImportSsr.initialList,
@@ -2574,7 +2602,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
     }
     setPortSaving(true);
     try {
-      await updateDatabaseStackApi(service.id, engine, {
+      await updateDatabaseStackApi(serviceQueryKeyId(service), engine, {
         publishPort: t === "" ? null : parseInt(t, 10),
       });
       await invalidateServiceScopedQueries(queryClient, serviceQueryKeyId(service), authUser?.userId ?? "none");
@@ -2606,7 +2634,7 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
     }
     setReplicasSaving(true);
     try {
-      await updateDatabaseStackApi(service.id, engine, { replicas: n });
+      await updateDatabaseStackApi(serviceQueryKeyId(service), engine, { replicas: n });
       await invalidateServiceScopedQueries(queryClient, serviceQueryKeyId(service), authUser?.userId ?? "none");
       setEditingReplicas(false);
       toast({
@@ -5397,7 +5425,7 @@ function EnvFilePanel({ service }: { service: Service }) {
 
   const handleSave = () => {
     updateService.mutate(
-      { id: service.id, patch: { env: draft } },
+      { id: serviceQueryKeyId(service), patch: { env: draft } },
       {
         onSuccess: () => {
           toast({ title: "Saved", description: "ENV file is stored on the server and used when you deploy." });
@@ -5592,7 +5620,7 @@ function DomainsPanel({ service }: { service: Service }) {
 
     saveRoutesMutation.mutate(
       {
-        id: service.id,
+        id: serviceQueryKeyId(service),
         patch: {
           traefikRoutes: sanitized,
           domains: [],

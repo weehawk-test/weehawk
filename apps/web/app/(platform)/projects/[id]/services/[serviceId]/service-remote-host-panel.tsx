@@ -112,6 +112,11 @@ function coerceServerId(raw: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function serviceRouteId(service: Pick<Service, "id" | "publicId">): string {
+  const pub = service.publicId?.trim();
+  return pub && pub.length > 0 ? pub : String(service.id);
+}
+
 export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
@@ -393,14 +398,14 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     setSaveFlowPending(true);
     try {
       if (hasServicePatch) {
-        await updateService.mutateAsync({ id: service.id, patch });
+        await updateService.mutateAsync({ id: serviceRouteId(service), patch });
       }
 
       let extra = "";
       if (wantRedeployWebhookChain && accessToken && deployServerIdNum != null) {
         const parentHost = webhookPublicHost.trim();
         try {
-          await syncRemoteDeploymentMirrorApi(String(service.id));
+          await syncRemoteDeploymentMirrorApi(serviceRouteId(service));
           const bashScriptBody = buildOnHostRedeployScript(service);
           const outer = await createWebhook(accessToken, {
             name: `Redeploy · ${service.name}`,
@@ -494,7 +499,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
     const oldId = webhookRouteId(hit);
     setRegenerateWebhookPending(true);
     try {
-      await syncRemoteDeploymentMirrorApi(String(service.id));
+      await syncRemoteDeploymentMirrorApi(serviceRouteId(service));
       const outer = await createWebhook(accessToken, {
         name: `Redeploy · ${service.name}`,
         description: `On-host redeploy for ${REMOTE_DEPLOYMENTS_DIR}/${toSafePathSegment((service.appName ?? "").trim() || "service")}. Compose is synced to this path when you refresh the trigger from here.`,
@@ -515,7 +520,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       // Update auto-deploy hooks on GitHub/GitLab to point to the new URL
       let autoDeployNote = "";
       try {
-        const resync = await resyncAutoDeployHooks(String(service.id));
+        const resync = await resyncAutoDeployHooks(serviceRouteId(service));
         if (resync.updated) {
           autoDeployNote = " Auto-deploy webhook updated on Git provider.";
         }
