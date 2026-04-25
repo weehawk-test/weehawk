@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ChevronRight, Folder, Loader2, RefreshCw } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { listS3BucketObjectsApi, type S3BucketListResponse } from "@/lib/s3-api";
@@ -42,9 +41,8 @@ export function S3ImportPickerClient({
   initialList: S3BucketListResponse | null;
   requireTarGz: boolean;
 }) {
-  const router = useRouter();
   const { toast } = useToast();
-  const prefix = initialPrefix;
+  const [prefix, setPrefix] = useState(initialPrefix);
   const [folders, setFolders] = useState<S3BucketListResponse["folders"]>(() => initialList?.folders ?? []);
   const [objects, setObjects] = useState<S3BucketListResponse["objects"]>(() => initialList?.objects ?? []);
   const [nextToken, setNextToken] = useState<string | undefined>(() =>
@@ -58,19 +56,34 @@ export function S3ImportPickerClient({
   }, []);
 
   useEffect(() => {
+    setPrefix(initialPrefix);
+  }, [initialPrefix]);
+
+  useEffect(() => {
     if (!initialList) return;
     setFolders(initialList.folders);
     setObjects(initialList.objects);
     setNextToken(initialList.isTruncated ? initialList.continuationToken : undefined);
   }, [initialList]);
 
-  const onRefresh = async () => {
+  const loadPrefix = async (targetPrefix: string) => {
     setRefreshing(true);
     try {
-      await router.refresh();
+      const r = await listS3BucketObjectsApi(profileId, { prefix: targetPrefix });
+      setPrefix(targetPrefix);
+      setFolders(r.folders);
+      setObjects(r.objects);
+      setNextToken(r.isTruncated ? r.continuationToken : undefined);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ title: "Load failed", description: msg, variant: "destructive" });
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const onRefresh = async () => {
+    await loadPrefix(prefix);
   };
 
   const loadMore = async () => {
@@ -145,7 +158,10 @@ export function S3ImportPickerClient({
               {i > 0 ? <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : null}
               <Link
                 href={s3ImportPickerHref(profileId, c.prefix, requireTarGz)}
-                scroll={false}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void loadPrefix(c.prefix);
+                }}
                 className={`truncate max-w-[180px] rounded px-1 py-0.5 ${
                   c.prefix === prefix ? "bg-primary/15 font-medium" : "text-primary hover:underline"
                 }`}
@@ -174,7 +190,10 @@ export function S3ImportPickerClient({
             <li key={f.prefix}>
               <Link
                 href={s3ImportPickerHref(profileId, f.prefix, requireTarGz)}
-                scroll={false}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void loadPrefix(f.prefix);
+                }}
                 className="w-full text-left flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/30"
               >
                 <Folder className="w-4 h-4 text-amber-500/90 shrink-0" />

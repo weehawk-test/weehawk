@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   ChevronRight,
   Download,
@@ -143,10 +142,9 @@ export function S3BucketBrowser({
   initialList?: S3BucketListResponse | null;
   initialFolderSummaries?: Record<string, S3PrefixSummaryResponse>;
 }) {
-  const router = useRouter();
-  const prefix = initialPrefix;
   const { toast } = useToast();
   const confirm = useConfirm();
+  const [prefix, setPrefix] = useState<string>(initialPrefix);
   const [bucket, setBucket] = useState<string>(() => initialList?.bucket ?? "");
   const [folders, setFolders] = useState<S3BucketListResponse["folders"]>(() => initialList?.folders ?? []);
   const [objects, setObjects] = useState<S3BucketListResponse["objects"]>(() => initialList?.objects ?? []);
@@ -165,25 +163,41 @@ export function S3BucketBrowser({
   );
 
   useEffect(() => {
+    setPrefix(initialPrefix);
+  }, [initialPrefix]);
+
+  useEffect(() => {
     setSelectedKeys(new Set());
     setSelectedFolderPrefixes(new Set());
   }, [prefix]);
 
   useEffect(() => {
-    if (!initialList) return;
+    if (!initialList || prefix !== initialPrefix) return;
     setBucket(initialList.bucket);
     setFolders(initialList.folders);
     setObjects(initialList.objects);
     setNextToken(initialList.isTruncated ? initialList.continuationToken : undefined);
-  }, [initialList]);
+  }, [initialList, initialPrefix, prefix]);
 
-  const onRefresh = async () => {
+  const loadPrefix = async (targetPrefix: string) => {
     setRefreshing(true);
     try {
-      await router.refresh();
+      const r = await listS3BucketObjectsApi(profileName, { prefix: targetPrefix });
+      setPrefix(targetPrefix);
+      setBucket(r.bucket);
+      setFolders(r.folders);
+      setObjects(r.objects);
+      setNextToken(r.isTruncated ? r.continuationToken : undefined);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ title: "Load failed", description: msg, variant: "destructive" });
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const onRefresh = async () => {
+    await loadPrefix(prefix);
   };
 
   const loadMore = async () => {
@@ -276,7 +290,7 @@ export function S3BucketBrowser({
     try {
       await uploadS3ObjectApi(profileName, key, file);
       toast({ title: "Uploaded", description: key });
-      await router.refresh();
+      await loadPrefix(prefix);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Upload failed", description: msg, variant: "destructive" });
@@ -320,7 +334,7 @@ export function S3BucketBrowser({
         next.delete(key);
         return next;
       });
-      await router.refresh();
+      await loadPrefix(prefix);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Delete failed", description: msg, variant: "destructive" });
@@ -365,7 +379,7 @@ export function S3BucketBrowser({
         }
         return next;
       });
-      await router.refresh();
+      await loadPrefix(prefix);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Delete folder failed", description: msg, variant: "destructive" });
@@ -418,7 +432,7 @@ export function S3BucketBrowser({
       }
       setSelectedKeys(new Set());
       setSelectedFolderPrefixes(new Set());
-      await router.refresh();
+      await loadPrefix(prefix);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast({ title: "Batch delete failed", description: msg, variant: "destructive" });
@@ -526,7 +540,10 @@ export function S3BucketBrowser({
               {i > 0 ? <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" /> : null}
               <Link
                 href={s3BucketBrowseHref(profileName, c.prefix)}
-                scroll={false}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void loadPrefix(c.prefix);
+                }}
                 className={`truncate max-w-[200px] rounded px-1.5 py-0.5 transition-colors ${
                   c.prefix === prefix
                     ? "bg-primary/15 text-foreground font-medium"
@@ -617,7 +634,10 @@ export function S3BucketBrowser({
                     <td className="px-2 py-3 align-middle">
                       <Link
                         href={s3BucketBrowseHref(profileName, f.prefix)}
-                        scroll={false}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          void loadPrefix(f.prefix);
+                        }}
                         className="inline-flex items-center gap-2 text-primary font-medium hover:underline text-left"
                       >
                         <Folder className="w-4 h-4 shrink-0 text-amber-500/90" />
