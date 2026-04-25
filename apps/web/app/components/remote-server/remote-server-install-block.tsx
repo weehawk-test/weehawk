@@ -42,6 +42,16 @@ function provisionJobKindLabel(kind: ProvisionJobKind | undefined): string {
   return "install";
 }
 
+function formatCreatedAtLabel(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "Created: --";
+  return `Created: ${d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+}
+
 /** Script preview: wrap long lines — no horizontal scrollbar */
 const scriptPreviewPreClassName =
   "min-w-0 max-w-full text-[10px] leading-snug font-mono max-h-60 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-slate-300 bg-slate-100 p-3 text-slate-800 shadow-inner dark:border-border dark:bg-zinc-950/90 dark:text-zinc-300";
@@ -150,6 +160,10 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
   return (
     <>
       <div className="min-w-0 border-t border-border bg-slate-100/90 dark:bg-muted/20 px-4 py-2.5 sm:px-5">
+        <div className="flex items-center justify-between gap-3">
+          <p className="min-w-0 truncate text-[11px] text-muted-foreground" title={row.createdAt}>
+            {formatCreatedAtLabel(row.createdAt)}
+          </p>
         <Popover open={installMenuOpen} onOpenChange={setInstallMenuOpen}>
           <PopoverTrigger asChild>
             <button
@@ -162,7 +176,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
           </PopoverTrigger>
           <PopoverContent
             className="w-[min(26rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] overflow-x-hidden p-1.5"
-            align="start"
+            align="end"
             sideOffset={6}
           >
             <p className="px-2 pt-1.5 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -202,6 +216,7 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
             </div>
           </PopoverContent>
         </Popover>
+        </div>
       </div>
 
       <Dialog

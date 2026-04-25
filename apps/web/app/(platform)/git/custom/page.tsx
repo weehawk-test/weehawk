@@ -156,15 +156,17 @@ export default function CustomGitSettingsPage() {
           ) : null}
         </div>
 
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() => void saveCustom()}
-          className="btn-primary inline-flex items-center gap-2"
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Save Custom Git
-        </button>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void saveCustom()}
+            className="btn-primary inline-flex items-center gap-2"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Custom Git
+          </button>
+        </div>
       </div>
     </div>
   );

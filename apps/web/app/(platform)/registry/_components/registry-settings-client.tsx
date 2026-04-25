@@ -269,7 +269,7 @@ export function RegistrySettingsClient({ preset }: Props) {
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
             onClick={() => void verifyConnection()}

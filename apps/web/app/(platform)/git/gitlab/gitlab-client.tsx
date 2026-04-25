@@ -210,20 +210,24 @@ export function GitLabGitSettingsClient({ initialData }: { initialData: GitSetti
           ) : null}
         </div>
 
-        <button
-          type="button"
-          disabled={saving}
-          onClick={() => void saveGitlab()}
-          className="btn-primary inline-flex items-center gap-2"
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Save GitLab
-        </button>
-        {data?.gitlab.groupAccessTokenSet && data.updatedAt ? (
-          <p className="text-[11px] text-muted-foreground pt-1">
-            Last updated {new Date(data.updatedAt).toLocaleString()}
-          </p>
-        ) : null}
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void saveGitlab()}
+            className="btn-primary order-1 inline-flex w-full items-center justify-center gap-2 sm:order-2 sm:w-auto"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save GitLab
+          </button>
+          {data?.gitlab.groupAccessTokenSet && data.updatedAt ? (
+            <p className="order-2 text-[11px] text-muted-foreground sm:order-1">
+              Last updated {new Date(data.updatedAt).toLocaleString()}
+            </p>
+          ) : (
+            <span className="order-2 hidden sm:block sm:order-1" />
+          )}
+        </div>
       </div>
     </div>
   );

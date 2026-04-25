@@ -243,7 +243,7 @@ function ServerDomainsCard({
                   placeholder="app.example.com"
                   disabled={!domainsEnabled}
                   className={cn(
-                    "flex-1 min-w-0 h-9 border-0 bg-transparent shadow-none",
+                    "h-9 flex-1 min-w-0 border-0 bg-transparent shadow-none",
                     "text-sm placeholder:text-muted-foreground/55",
                     "focus-visible:ring-0 focus-visible:ring-offset-0",
                   )}
@@ -270,15 +270,7 @@ function ServerDomainsCard({
             ))}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
-              disabled={!domainsEnabled || isPending || !isDirty}
-              onClick={onSave}
-            >
-              {isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-            </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
               disabled={!domainsEnabled}
@@ -287,6 +279,14 @@ function ServerDomainsCard({
             >
               <Plus className="size-3.5 stroke-[2.5]" />
               Add domain field
+            </button>
+            <button
+              type="button"
+              className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
+              disabled={!domainsEnabled || isPending || !isDirty}
+              onClick={onSave}
+            >
+              {isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
             </button>
           </div>
         </div>
@@ -455,10 +455,13 @@ export function DeployDomainsClient({
                     setAcmeEmailLocal(e.target.value);
                   }}
                   placeholder="you@example.com"
-                  className="w-full max-w-md sm:max-w-lg"
+                  className="w-full"
                 />
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {domainsUnlocked && (
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400/90">Ready</span>
+                )}
                 <button
                   type="button"
                   className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
@@ -476,9 +479,6 @@ export function DeployDomainsClient({
                     "Save email"
                   )}
                 </button>
-                {domainsUnlocked && (
-                  <span className="text-xs text-emerald-600 dark:text-emerald-400/90">Ready</span>
-                )}
               </div>
             </>
           )}
