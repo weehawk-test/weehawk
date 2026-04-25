@@ -14,13 +14,12 @@ function parseErrorMessage(text: string): string {
   return text;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function request<T>(accessToken: string | null, path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const res = await authFetch(accessToken, `${API_BASE}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+    headers,
     cache: "no-store",
   });
 
@@ -43,15 +42,16 @@ export type RegistryLogoutPayload = {
   providerUrl: string;
 };
 
-export function registryLoginApi(body: RegistryLoginPayload) {
-  return request<{ success: boolean; providerUrl: string }>("/api/registry/login", {
+export function registryLoginApi(accessToken: string | null, body: RegistryLoginPayload) {
+  return request<{ success: boolean; providerUrl: string }>(accessToken, "/api/registry/login", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export function registryVerifyApi(body: RegistryLoginPayload) {
+export function registryVerifyApi(accessToken: string | null, body: RegistryLoginPayload) {
   return request<{ success: boolean; message: string }>(
+    accessToken,
     "/api/registry/verify-connection",
     {
       method: "POST",
@@ -60,8 +60,9 @@ export function registryVerifyApi(body: RegistryLoginPayload) {
   );
 }
 
-export function registryLogoutApi(body: RegistryLogoutPayload) {
+export function registryLogoutApi(accessToken: string | null, body: RegistryLogoutPayload) {
   return request<{ success: boolean; providerUrl: string; output?: string }>(
+    accessToken,
     "/api/registry/logout",
     {
       method: "POST",

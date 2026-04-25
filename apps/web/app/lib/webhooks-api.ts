@@ -50,7 +50,7 @@ export function webhookRouteId(w: { publicId?: string | null; id: number }): str
 export type CreateWebhookBody = {
   name: string;
   description?: string;
-  serviceId?: number;
+  serviceId?: number | string;
   remoteServerId?: number;
   bashScript: string;
   notifyChannelId?: number;

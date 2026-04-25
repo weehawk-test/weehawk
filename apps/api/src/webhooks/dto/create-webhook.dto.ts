@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -24,12 +25,13 @@ export class CreateWebhookDto {
 
   @ApiPropertyOptional({
     description:
-      'Optional service id (links webhook to a project service; used for on-host redeploy refresh and executor redeploy path).',
+      'Optional service identifier (publicId preferred; numeric id still accepted for legacy callers). Links webhook to a project service and is used for redeploy refresh/executor paths.',
   })
   @IsOptional()
-  @IsInt()
-  @Min(1)
-  serviceId?: number;
+  @Transform(({ value }) => (value == null ? undefined : String(value)))
+  @IsString()
+  @MaxLength(128)
+  serviceId?: string;
 
   @ApiPropertyOptional({
     description: 'Deploy remote server id (required for bash webhooks).',

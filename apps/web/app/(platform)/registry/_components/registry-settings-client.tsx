@@ -136,7 +136,7 @@ export function RegistrySettingsClient({ preset }: Props) {
     if (!canAuth) return;
     setIsVerifying(true);
     try {
-      const res = await registryVerifyApi({
+      const res = await registryVerifyApi(accessToken ?? null, {
         providerUrl: providerUrl.trim(),
         username: username.trim(),
         password,

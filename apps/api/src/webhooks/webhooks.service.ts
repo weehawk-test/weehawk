@@ -485,9 +485,14 @@ export class WebhooksService implements OnApplicationBootstrap {
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
-    if (dto.serviceId != null) {
+    const serviceIdOrPublicId = dto.serviceId?.trim();
+    let resolvedServiceId: number | null = null;
+    if (serviceIdOrPublicId) {
       try {
-        await this.servicesService.assertServiceOwnedByUser(dto.serviceId, userId);
+        resolvedServiceId = await this.servicesService.resolveServiceIdForUser(
+          serviceIdOrPublicId,
+          userId,
+        );
       } catch {
         throw new BadRequestException('Service not found.');
       }
@@ -503,12 +508,12 @@ export class WebhooksService implements OnApplicationBootstrap {
     );
     let resolvedBashScript = dto.bashScript?.trim() ?? '';
     if (
-      dto.serviceId != null &&
+      resolvedServiceId != null &&
       resolvedBashScript &&
       looksLikeGeneratedOnHostRedeployScript(resolvedBashScript)
     ) {
       try {
-        const svc = await this.servicesService.findOne(dto.serviceId);
+        const svc = await this.servicesService.findOne(resolvedServiceId);
         resolvedBashScript = buildOnHostRedeployScriptBody(svc);
       } catch {
         /* keep client body */
@@ -521,7 +526,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       secretToken,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
-      serviceId: dto.serviceId ?? null,
+      serviceId: resolvedServiceId,
       remoteServerId:
         dto.remoteServerId != null ? dto.remoteServerId : null,
       bashScript: resolvedBashScript ? resolvedBashScript : null,
@@ -549,7 +554,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           notifyOnTriggerCreate,
           dto.notifyChannelId,
           dto.notifyMessage,
-          dto.serviceId ?? null,
+          resolvedServiceId,
         );
         await this.remoteServersService.writeRemoteWebhookScript(
           dto.remoteServerId!,

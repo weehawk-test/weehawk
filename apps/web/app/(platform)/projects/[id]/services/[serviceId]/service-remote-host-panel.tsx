@@ -410,7 +410,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
           const outer = await createWebhook(accessToken, {
             name: `Redeploy · ${service.name}`,
             description: `On-host redeploy for ${REMOTE_DEPLOYMENTS_DIR}/${toSafePathSegment((service.appName ?? "").trim() || "service")}. Compose is synced to this path when you save here.`,
-            serviceId: Number(service.id),
+            serviceId: serviceRouteId(service),
             bashScript: bashScriptBody,
             remoteServerId: deployServerIdNum,
             hooksPublicHost: parentHost,
@@ -503,7 +503,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       const outer = await createWebhook(accessToken, {
         name: `Redeploy · ${service.name}`,
         description: `On-host redeploy for ${REMOTE_DEPLOYMENTS_DIR}/${toSafePathSegment((service.appName ?? "").trim() || "service")}. Compose is synced to this path when you refresh the trigger from here.`,
-        serviceId: Number(service.id),
+        serviceId: serviceRouteId(service),
         bashScript: buildOnHostRedeployScript(service),
         remoteServerId: deployServerIdNum,
         hooksPublicHost: parentHost,

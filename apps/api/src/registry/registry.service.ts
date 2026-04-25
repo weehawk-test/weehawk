@@ -66,29 +66,104 @@ export class RegistryService {
     return `https://${p}`;
   }
 
+  /**
+   * Parse `WWW-Authenticate: Bearer realm="...",service="...",scope="..."` from Docker Registry V2.
+   */
+  private parseDockerRegistryBearerChallenge(
+    wwwAuthenticate: string | null,
+  ): Record<string, string> | null {
+    if (!wwwAuthenticate) return null;
+    const t = wwwAuthenticate.trim();
+    if (!t.toLowerCase().startsWith('bearer')) return null;
+    const out: Record<string, string> = {};
+    const re = /([a-zA-Z0-9_]+)="([^"]*)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) !== null) {
+      out[m[1].toLowerCase()] = m[2];
+    }
+    return out.realm ? out : null;
+  }
+
+  private buildDockerRegistryTokenUrl(
+    challenge: Record<string, string>,
+    username: string,
+  ): string {
+    const realm = challenge.realm;
+    const u = new URL(realm);
+    if (challenge.service) u.searchParams.set('service', challenge.service);
+    if (challenge.scope) u.searchParams.set('scope', challenge.scope);
+    const acc = username.trim();
+    if (acc) u.searchParams.set('account', acc);
+    return u.toString();
+  }
+
   private async assertRegistryCredentialsValid(
     providerUrl: string,
     username: string,
     password: string,
   ): Promise<void> {
     const origin = this.registryV2Origin(providerUrl);
-    const auth = Buffer.from(`${username}:${password}`, 'utf8').toString('base64');
-    const res = await fetch(`${origin}/v2/`, {
-      method: 'GET',
-      headers: { Authorization: `Basic ${auth}` },
-    });
+    const basicAuth = Buffer.from(`${username}:${password}`, 'utf8').toString(
+      'base64',
+    );
+    const basicHeaders = { Authorization: `Basic ${basicAuth}` };
+
+    const readBody = async (res: Response, max = 800): Promise<string> =>
+      (await res.text()).trim().slice(0, max);
+
+    const throwUnauthorized = async (res: Response, fallback: string) => {
+      const t = await readBody(res);
+      throw new UnauthorizedException(
+        t || `${fallback} (${res.status}) for ${origin}`,
+      );
+    };
+
+    // 1) Anonymous ping (Docker/GitLab/GHCR return 401 + Bearer challenge for /v2/)
+    let res = await fetch(`${origin}/v2/`, { method: 'GET' });
+    if (res.ok) {
+      // Registry allows anonymous /v2/ — still verify supplied credentials.
+      res = await fetch(`${origin}/v2/`, { method: 'GET', headers: basicHeaders });
+      if (res.ok) return;
+      await throwUnauthorized(res, 'Registry rejected credentials');
+    }
+
+    if (res.status === 401) {
+      const challenge = this.parseDockerRegistryBearerChallenge(
+        res.headers.get('www-authenticate'),
+      );
+      if (challenge?.realm) {
+        const tokenUrl = this.buildDockerRegistryTokenUrl(challenge, username);
+        const tokenRes = await fetch(tokenUrl, { headers: basicHeaders });
+        if (tokenRes.ok) {
+          const j = (await tokenRes.json()) as {
+            token?: string;
+            access_token?: string;
+          };
+          const bearer = (j.token ?? j.access_token)?.trim();
+          if (bearer) {
+            res = await fetch(`${origin}/v2/`, {
+              method: 'GET',
+              headers: { Authorization: `Bearer ${bearer}` },
+            });
+            if (res.ok) return;
+          }
+        } else if (tokenRes.status === 401 || tokenRes.status === 403) {
+          await throwUnauthorized(
+            tokenRes,
+            'Registry rejected credentials at token endpoint',
+          );
+        }
+      }
+    }
+
+    // 2) Legacy: Basic auth directly on /v2/
+    res = await fetch(`${origin}/v2/`, { method: 'GET', headers: basicHeaders });
+    if (res.ok) return;
+
     if (res.status === 401 || res.status === 403) {
-      const t = (await res.text()).trim().slice(0, 500);
-      throw new UnauthorizedException(
-        t || `Registry rejected credentials (${res.status}) for ${origin}`,
-      );
+      await throwUnauthorized(res, 'Registry rejected credentials');
     }
-    if (!res.ok) {
-      const t = (await res.text()).trim().slice(0, 800);
-      throw new UnauthorizedException(
-        t || `Registry check failed (${res.status}) for ${origin}`,
-      );
-    }
+    await throwUnauthorized(res, 'Registry check failed');
   }
 
   toSafe(row: RegistryAccount): RegistryAccountSafe {
