@@ -470,7 +470,7 @@ export function S3BucketBrowser({
           <button
             type="button"
             className="btn-secondary text-sm inline-flex items-center gap-2"
-            onClick={() => void router.refresh()}
+            onClick={() => void onRefresh()}
           >
             <RefreshCw className="w-4 h-4" />
             Retry

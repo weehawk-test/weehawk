@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Plus } from "lucide-react";
 
 export function NotificationsTabs() {
@@ -11,14 +12,10 @@ export function NotificationsTabs() {
           Manage channels. Delivery and tests run only on deploy servers over SSH.
         </p>
       </div>
-      <button
-        type="button"
-        onClick={() => window.dispatchEvent(new CustomEvent("notifications:add-channel"))}
-        className="btn-primary flex w-full items-center justify-center gap-2 md:w-auto"
-      >
+      <Link href="/notifications/create" className="btn-primary flex w-full items-center justify-center gap-2 md:w-auto">
         <Plus className="w-5 h-5" />
         Add Channel
-      </button>
+      </Link>
     </div>
   );
 }

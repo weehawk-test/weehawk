@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -377,13 +378,19 @@ export function NotificationsChannelsClient({
   initialError,
   urlPage,
   urlQ,
+  initialMode,
+  initialRouteChannel,
 }: {
   initialData: PaginatedNotificationChannelsResponse | null;
   initialError: string | null;
   urlPage: number;
   urlQ: string;
+  initialMode?: "create" | "edit";
+  initialRouteChannel?: NotificationChannel | null;
 }) {
   const pathname = usePathname();
+  const isCreateRoute = pathname === "/notifications/create";
+  const isEditRoute = /^\/notifications\/[^/]+\/edit$/.test(pathname);
   const router = useRouter();
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
@@ -489,6 +496,18 @@ export function NotificationsChannelsClient({
     setAddTestRemoteId(null);
     setShowAdd(true);
   }, []);
+
+  useEffect(() => {
+    if (initialMode === "create") {
+      openAddChannelModal();
+      return;
+    }
+    if (initialMode === "edit" && initialRouteChannel) {
+      openEditChannel(initialRouteChannel);
+      return;
+    }
+    
+  }, [initialMode, initialRouteChannel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const handleOpenAdd = () => openAddChannelModal();
@@ -603,6 +622,7 @@ export function NotificationsChannelsClient({
       setAddTestRemoteId(null);
       setShowAdd(false);
       toast({ title: "Channel added", description: "Notification channel saved." });
+      if (isCreateRoute) router.push("/notifications");
     },
     onError: (e: Error) => toast({ title: "Could not add channel", description: e.message, variant: "destructive" }),
   });
@@ -671,6 +691,7 @@ export function NotificationsChannelsClient({
       setShowEditChannel(false);
       setEditChannel(null);
       toast({ title: "Channel updated" });
+      if (isEditRoute) router.push("/notifications");
     },
     onError: (e: Error) =>
       toast({ title: "Update failed", description: e.message, variant: "destructive" }),
@@ -687,6 +708,7 @@ export function NotificationsChannelsClient({
     if (updateChannelMutation.isPending) return;
     setShowEditChannel(false);
     setEditChannel(null);
+    if (isEditRoute) router.push("/notifications");
   };
 
   const toggleReveal = (id: string) => setRevealedTokens((prev) => {
@@ -783,6 +805,7 @@ export function NotificationsChannelsClient({
     setForm({ name: "", type: "telegram" });
     setAddTestRemoteId(null);
     setTelegramForm({ token: "", target: "" });
+    if (isCreateRoute) router.push("/notifications");
   };
 
   return (
@@ -1369,9 +1392,9 @@ export function NotificationsChannelsClient({
           </div>
           <h3 className="text-xl font-bold mb-2">No channels configured</h3>
           <p className="text-muted-foreground mb-8 max-w-md">Add your first provider to start receiving notifications.</p>
-          <button type="button" onClick={() => openAddChannelModal()} className="btn-primary flex items-center gap-2">
+          <Link href="/notifications/create" className="btn-primary flex items-center gap-2">
             <Plus className="w-5 h-5" /> Add Channel
-          </button>
+          </Link>
         </div>
       ) : (
         <>
@@ -1537,11 +1560,11 @@ export function NotificationsChannelsClient({
                     </span>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap justify-end shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => openEditChannel(ch)}
-                      disabled={updateChannelMutation.isPending || testMutation.isPending}
-                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:opacity-50"
+                    <Link
+                      href={`/notifications/${encodeURIComponent(String(ch.publicId ?? ch.id))}/edit`}
+                      className={`text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 ${
+                        updateChannelMutation.isPending || testMutation.isPending ? "pointer-events-none opacity-50" : ""
+                      }`}
                       title="Edit name and Run test from host"
                     >
                       {updateChannelMutation.isPending && editChannel?.id === ch.id ? (
@@ -1550,7 +1573,7 @@ export function NotificationsChannelsClient({
                         <Pencil className="w-3 h-3" />
                       )}
                       Edit
-                    </button>
+                    </Link>
                     <button
                       type="button"
                       onClick={() => openChannelActions(ch)}
