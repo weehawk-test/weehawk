@@ -38,6 +38,7 @@ import {
   fetchNotificationChannelsPaged,
   testNotificationChannel,
   updateNotificationChannel,
+  notificationChannelRouteId,
   type NotificationChannel,
   type PaginatedNotificationChannelsResponse,
 } from "@/lib/notifications-api";
@@ -454,7 +455,7 @@ export function NotificationsChannelsClient({
 
   const channelsPaged = channelsPagedQuery.data;
   const channels = channelsPaged?.items ?? [];
-  const channelKeys = useMemo(() => channels.map((c) => String(c.id)), [channels]);
+  const channelKeys = useMemo(() => channels.map((c) => notificationChannelRouteId(c)), [channels]);
   const channelsBulk = useBulkSelection(channelKeys);
 
   const [showAdd, setShowAdd] = useState(false);
@@ -627,7 +628,7 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not add channel", description: e.message, variant: "destructive" }),
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => deleteNotificationChannel(accessToken!, id),
+    mutationFn: (id: string) => deleteNotificationChannel(accessToken!, id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
@@ -636,7 +637,7 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
   });
   const bulkDeleteChannelsMutation = useMutation({
-    mutationFn: (ids: number[]) => bulkDeleteNotificationChannels(accessToken!, ids),
+    mutationFn: (ids: string[]) => bulkDeleteNotificationChannels(accessToken!, ids),
     onSuccess: () => {
       channelsBulk.clear();
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -772,10 +773,10 @@ export function NotificationsChannelsClient({
       variant: "destructive",
     });
     if (!ok) return;
-    bulkDeleteChannelsMutation.mutate(ids.map((k) => Number(k)));
+    bulkDeleteChannelsMutation.mutate(ids);
   };
 
-  const handleDeleteChannel = async (id: number, name: string) => {
+  const handleDeleteChannel = async (id: string, name: string) => {
     const ok = await confirm({
       title: "Delete channel?",
       description: `“${name}” will be removed and can no longer receive notifications.`,
@@ -1513,7 +1514,7 @@ export function NotificationsChannelsClient({
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
                     <button
                       type="button"
-                      onClick={() => handleDeleteChannel(ch.id, ch.name)}
+                    onClick={() => handleDeleteChannel(notificationChannelRouteId(ch), ch.name)}
                       disabled={deleteMutation.isPending || bulkDeleteChannelsMutation.isPending}
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete"
@@ -1522,14 +1523,14 @@ export function NotificationsChannelsClient({
                     </button>
                     <div
                       className={`transition-opacity ${
-                        channelsBulk.selected.has(String(ch.id))
+                        channelsBulk.selected.has(notificationChannelRouteId(ch))
                           ? "opacity-100"
                           : "opacity-0 group-hover:opacity-100"
                       }`}
                     >
                       <DockerBulkCheckbox
-                        checked={channelsBulk.selected.has(String(ch.id))}
-                        onCheckedChange={() => channelsBulk.toggle(String(ch.id))}
+                        checked={channelsBulk.selected.has(notificationChannelRouteId(ch))}
+                        onCheckedChange={() => channelsBulk.toggle(notificationChannelRouteId(ch))}
                         aria-label={`Select channel ${ch.name}`}
                       />
                     </div>

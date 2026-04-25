@@ -810,7 +810,8 @@ export class WebhooksService implements OnApplicationBootstrap {
   async removeAllForService(userId: number, serviceId: number): Promise<void> {
     const rows = await this.webhookRepo.find({ where: { serviceId, userId } });
     for (const w of rows) {
-      await this.remove(userId, w.id);
+      const ensured = await this.ensurePublicId(w);
+      await this.remove(userId, ensured.publicId);
     }
   }
 

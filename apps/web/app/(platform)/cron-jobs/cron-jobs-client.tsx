@@ -97,10 +97,10 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
         (j.description || "").toLowerCase().includes(search.toLowerCase()) ||
         j.summary.toLowerCase().includes(search.toLowerCase()),
     );
-  const cronJobKeys = useMemo(() => filtered.map((j) => String(j.id)), [filtered]);
+  const cronJobKeys = useMemo(() => filtered.map((j) => cronJobRouteId(j)), [filtered]);
   const cronJobsBulk = useBulkSelection(cronJobKeys);
 
-  const handleDelete = async (id: number, name: string) => {
+  const handleDelete = async (id: string, name: string) => {
     const ok = await confirm({
       title: "Delete cron job?",
       description: `“${name}” will be removed and will stop running.`,
@@ -109,7 +109,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
     });
     if (!ok) return;
     const previous = jobs;
-    setJobs((prev) => prev.filter((item) => item.id !== id));
+    setJobs((prev) => prev.filter((item) => cronJobRouteId(item) !== id));
     toast({ title: "Cron job deleted", description: `"${name}" has been removed.` });
     deleteCronJob.mutate(id, {
       onSuccess: () => undefined,
@@ -150,12 +150,12 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
 
     setIsBulkDeleting(true);
     const previous = jobs;
-    const removed = new Set(ids.map((id) => Number(id)));
-    setJobs((prev) => prev.filter((item) => !removed.has(item.id)));
+    const removed = new Set(ids);
+    setJobs((prev) => prev.filter((item) => !removed.has(cronJobRouteId(item))));
     cronJobsBulk.clear();
     toast({ title: "Cron jobs deleted", description: `${ids.length} cron job(s) removed.` });
     try {
-      await Promise.all(ids.map((id) => deleteCronJob.mutateAsync(Number(id))));
+      await Promise.all(ids.map((id) => deleteCronJob.mutateAsync(id)));
     } catch (e) {
       setJobs(previous);
       const errorMessage = e instanceof Error ? e.message : "Could not delete selected cron jobs.";
@@ -378,7 +378,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
                       type="button"
-                      onClick={() => handleDelete(j.id, j.name)}
+                      onClick={() => handleDelete(cronJobRouteId(j), j.name)}
                       disabled={isProvisioning || isBulkDeleting || deleteCronJob.isPending}
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete"
@@ -387,14 +387,14 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                     </button>
                     <div
                       className={`transition-opacity ${
-                        cronJobsBulk.selected.has(String(j.id)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        cronJobsBulk.selected.has(cronJobRouteId(j)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                       }`}
                     >
                       <DockerBulkCheckbox
-                        checked={cronJobsBulk.selected.has(String(j.id))}
+                        checked={cronJobsBulk.selected.has(cronJobRouteId(j))}
                         onCheckedChange={() => {
                           if (isProvisioning) return;
-                          cronJobsBulk.toggle(String(j.id));
+                          cronJobsBulk.toggle(cronJobRouteId(j));
                         }}
                         aria-label={`Select cron job ${j.name}`}
                       />

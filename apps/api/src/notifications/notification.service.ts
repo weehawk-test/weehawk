@@ -284,17 +284,19 @@ export class NotificationService {
 
   async bulkDeleteChannels(
     userId: number,
-    ids: number[],
+    ids: string[],
   ): Promise<{ removed: number }> {
     if (ids.length === 0) return { removed: 0 };
-    const res = await this.channelRepo
-      .createQueryBuilder()
-      .delete()
-      .from(NotificationChannel)
-      .where('id IN (:...ids)', { ids })
-      .andWhere('user_id = :userId', { userId })
-      .execute();
-    return { removed: res.affected ?? 0 };
+    let removed = 0;
+    for (const rawId of ids) {
+      const id = String(rawId ?? '').trim();
+      if (!id) continue;
+      const ch = await this.findChannelForUser(userId, id);
+      if (!ch) continue;
+      const res = await this.channelRepo.delete({ id: ch.id, userId });
+      removed += res.affected ?? 0;
+    }
+    return { removed };
   }
 
   /**

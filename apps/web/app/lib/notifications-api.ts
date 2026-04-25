@@ -14,6 +14,11 @@ export type NotificationChannel = {
   createdAt: string;
 };
 
+export function notificationChannelRouteId(ch: { publicId?: string | null; id: number }): string {
+  const p = ch.publicId?.trim();
+  return p ? p : String(ch.id);
+}
+
 export type PaginatedNotificationChannelsResponse = {
   items: NotificationChannel[];
   total: number;
@@ -66,7 +71,7 @@ export async function fetchNotificationChannelsPaged(
   return res.json();
 }
 
-export async function bulkDeleteNotificationChannels(accessToken: string, ids: number[]): Promise<{ removed: number }> {
+export async function bulkDeleteNotificationChannels(accessToken: string, ids: string[]): Promise<{ removed: number }> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/bulk-delete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

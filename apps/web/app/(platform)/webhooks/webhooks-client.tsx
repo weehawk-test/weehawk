@@ -84,10 +84,10 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
         (w.description || "").toLowerCase().includes(search.toLowerCase()) ||
         w.summary.toLowerCase().includes(search.toLowerCase()),
     );
-  const webhookKeys = useMemo(() => filtered.map((w) => String(w.id)), [filtered]);
+  const webhookKeys = useMemo(() => filtered.map((w) => webhookRouteId(w)), [filtered]);
   const webhooksBulk = useBulkSelection(webhookKeys);
 
-  const handleDelete = async (id: number, name: string) => {
+  const handleDelete = async (id: string, name: string) => {
     const ok = await confirm({
       title: "Delete webhook?",
       description: `“${name}” will be removed and will stop running.`,
@@ -96,7 +96,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
     });
     if (!ok) return;
     const previous = webhooks;
-    setWebhooks((prev) => prev.filter((item) => item.id !== id));
+    setWebhooks((prev) => prev.filter((item) => webhookRouteId(item) !== id));
     toast({ title: "Webhook deleted", description: `"${name}" has been removed.` });
     deleteWebhook.mutate(id, {
       onSuccess: () => undefined,
@@ -120,12 +120,12 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
 
     setIsBulkDeleting(true);
     const previous = webhooks;
-    const removed = new Set(ids.map((id) => Number(id)));
-    setWebhooks((prev) => prev.filter((item) => !removed.has(item.id)));
+    const removed = new Set(ids);
+    setWebhooks((prev) => prev.filter((item) => !removed.has(webhookRouteId(item))));
     webhooksBulk.clear();
     toast({ title: "Webhooks deleted", description: `${ids.length} webhook(s) removed.` });
     try {
-      await Promise.all(ids.map((id) => deleteWebhook.mutateAsync(Number(id))));
+      await Promise.all(ids.map((id) => deleteWebhook.mutateAsync(id)));
     } catch (e) {
       setWebhooks(previous);
       const errorMessage = e instanceof Error ? e.message : "Could not delete selected webhooks.";
@@ -372,7 +372,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
                       type="button"
-                      onClick={() => handleDelete(w.id, w.name)}
+                      onClick={() => handleDelete(webhookRouteId(w), w.name)}
                       disabled={isProvisioning || isBulkDeleting || deleteWebhook.isPending}
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
                       title="Delete"
@@ -381,14 +381,14 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                     </button>
                     <div
                       className={`transition-opacity ${
-                        webhooksBulk.selected.has(String(w.id)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                        webhooksBulk.selected.has(webhookRouteId(w)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
                       }`}
                     >
                       <DockerBulkCheckbox
-                        checked={webhooksBulk.selected.has(String(w.id))}
+                        checked={webhooksBulk.selected.has(webhookRouteId(w))}
                         onCheckedChange={() => {
                           if (isProvisioning) return;
-                          webhooksBulk.toggle(String(w.id));
+                          webhooksBulk.toggle(webhookRouteId(w));
                         }}
                         aria-label={`Select webhook ${w.name}`}
                       />
