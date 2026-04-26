@@ -161,6 +161,16 @@ export function deleteS3PrefixApi(profileId: string, prefix: string) {
   });
 }
 
+export function createS3FolderApi(profileId: string, key: string) {
+  return request<{ bucket: string; key: string }>(
+    `/api/s3/profiles/${encodeURIComponent(profileId)}/objects/mkdir`,
+    {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    },
+  );
+}
+
 export type S3PresignPutResponse = {
   url: string;
   bucket: string;
@@ -187,23 +197,30 @@ export async function presignS3PutApi(
   );
 }
 
-/** Upload bytes directly to the bucket using a presigned URL (API never stores the file). */
+/**
+ * Upload via the API (multipart). Avoids browser `fetch(presignedPutUrl)` failures (CORS, internal MinIO host).
+ */
 export async function uploadS3ObjectApi(profileId: string, key: string, file: File) {
   const contentType =
     file.type ||
     (key.toLowerCase().endsWith(".gz") ? "application/gzip" : "application/octet-stream");
-  const presign = await presignS3PutApi(profileId, key, { contentType });
-  const put = await fetch(presign.url, {
-    method: "PUT",
-    headers: { "Content-Type": presign.contentType },
-    body: file,
+  const q = new URLSearchParams({ key, contentType });
+  const url = `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileId)}/objects/upload?${q.toString()}`;
+  const form = new FormData();
+  form.append("file", file, file.name || "upload.bin");
+  const res = await authFetch("cookie-session", url, {
+    method: "POST",
+    body: form,
     cache: "no-store",
   });
-  if (!put.ok) {
-    const text = await put.text().catch(() => "");
-    throw new Error(text || put.statusText || "S3 upload failed");
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseErrorMessage(text || res.statusText || "S3 upload failed"));
   }
-  return { bucket: presign.bucket, key: presign.key };
+  if (!text.trim()) {
+    return { bucket: "", key };
+  }
+  return JSON.parse(text) as { bucket: string; key: string };
 }
 
 export type S3PresignGetResponse = {

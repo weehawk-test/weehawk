@@ -10,16 +10,20 @@ import {
   Query,
   Res,
   StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
   Req,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { S3Service } from './s3.service';
 import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
 import { TestS3ConnectionDto } from './dto/test-s3-connection.dto';
+import { MkdirS3FolderDto } from './dto/mkdir-s3-folder.dto';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 
 @ApiTags('S3')
@@ -112,6 +116,61 @@ export class S3Controller {
       contentType: body.contentType,
       expiresInSeconds: body.expiresInSeconds,
     });
+  }
+
+  @Post('profiles/:publicId/objects/upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: S3Service.S3_UPLOAD_VIA_API_MAX_BYTES },
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Upload object through the API (multipart). Use when browser presigned PUT fails (CORS, unreachable MinIO URL).',
+  })
+  uploadObjectViaApi(
+    @Req() req: { user?: { userId: number } },
+    @Param('publicId') publicId: string,
+    @Query('key') key: string | undefined,
+    @Query('contentType') contentTypeRaw: string | undefined,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!key?.trim()) {
+      throw new BadRequestException('key query parameter is required.');
+    }
+    if (!file) {
+      throw new BadRequestException(
+        'No file was uploaded. Choose a file and try again.',
+      );
+    }
+    const buffer =
+      file.buffer != null ? Buffer.from(file.buffer) : Buffer.alloc(0);
+    const ct =
+      contentTypeRaw?.trim() ||
+      file.mimetype ||
+      (key.trim().toLowerCase().endsWith('.gz')
+        ? 'application/gzip'
+        : 'application/octet-stream');
+    return this.s3Service.putObjectBuffer(
+      this.uid(req),
+      publicId,
+      key.trim(),
+      buffer,
+      ct,
+    );
+  }
+
+  @Post('profiles/:publicId/objects/mkdir')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary: 'Create a folder marker (empty key ending with /) for S3 console-style navigation',
+  })
+  mkdirFolder(
+    @Req() req: { user?: { userId: number } },
+    @Param('publicId') publicId: string,
+    @Body() body: MkdirS3FolderDto,
+  ) {
+    return this.s3Service.putFolderMarker(this.uid(req), publicId, body.key.trim());
   }
 
   @Get('profiles/:publicId/presign-get')

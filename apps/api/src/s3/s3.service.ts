@@ -889,6 +889,92 @@ export class S3Service implements OnModuleInit {
   }
 
   /**
+   * Upload from the browser through the API (avoids presigned PUT + CORS / internal MinIO URLs).
+   * Request body is buffered in API memory; limit {@link S3Service.S3_UPLOAD_VIA_API_MAX_BYTES}.
+   */
+  static readonly S3_UPLOAD_VIA_API_MAX_BYTES = 512 * 1024 * 1024;
+
+  async putObjectBuffer(
+    userId: number,
+    profileName: string,
+    objectKey: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<{ bucket: string; key: string }> {
+    const maxBytes = S3Service.S3_UPLOAD_VIA_API_MAX_BYTES;
+    const buf = body ?? Buffer.alloc(0);
+    if (buf.length > maxBytes) {
+      throw new BadRequestException(
+        `Upload exceeds maximum size (${Math.floor(maxBytes / (1024 * 1024))} MiB).`,
+      );
+    }
+    const row = await this.findProfileOrThrow(userId, profileName);
+    const input = this.rowToCredentials(row);
+    const key = this.assertSafeObjectKey(objectKey);
+    const ct =
+      contentType?.trim() ||
+      (key.endsWith('.gz') ? 'application/gzip' : 'application/octet-stream');
+    const client = createS3Client(input);
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: input.bucket,
+          Key: key,
+          Body: buf,
+          ContentType: ct,
+        }),
+      );
+      return { bucket: input.bucket, key };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 upload failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /**
+   * Create a “folder” in S3 (zero-byte object whose key ends with `/`).
+   */
+  async putFolderMarker(
+    userId: number,
+    profileName: string,
+    objectKey: string,
+  ): Promise<{ bucket: string; key: string }> {
+    let key = this.assertSafeObjectKey(objectKey);
+    if (!key.endsWith('/')) {
+      key = `${key}/`;
+    }
+    const row = await this.findProfileOrThrow(userId, profileName);
+    const input = this.rowToCredentials(row);
+    const client = createS3Client(input);
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: input.bucket,
+          Key: key,
+          Body: new Uint8Array(0),
+          ContentType: 'application/x-directory',
+        }),
+      );
+      return { bucket: input.bucket, key };
+    } catch (e) {
+      if (e instanceof BadRequestException || e instanceof NotFoundException) {
+        throw e;
+      }
+      throw new InternalServerErrorException(
+        `S3 mkdir failed: ${getErrorMessage(e)}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  }
+
+  /**
    * Download an object to a local file path (writes the full object, then returns).
    */
   /** Presigned PUT so clients or deploy hosts upload bytes directly to the bucket (not via API disk). */

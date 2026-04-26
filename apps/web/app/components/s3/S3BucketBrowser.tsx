@@ -7,6 +7,7 @@ import {
   Download,
   Folder,
   FolderKanban,
+  FolderPlus,
   HardDrive,
   Loader2,
   RefreshCw,
@@ -24,10 +25,20 @@ import {
   getPrefixSummaryApi,
   uploadS3ObjectApi,
   downloadS3ObjectBlob,
+  createS3FolderApi,
   type S3BucketListResponse,
   type S3PrefixSummaryResponse,
 } from "@/lib/s3-api";
 import { s3PrefixToPathSegments } from "@/lib/s3-prefix-param";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 const BATCH_MAX = 1000;
 
@@ -54,6 +65,14 @@ function prefixSegments(prefix: string): string[] {
 function joinPrefix(parts: string[]): string {
   if (parts.length === 0) return "";
   return `${parts.join("/")}/`;
+}
+
+/** Single path segment under the current prefix (no slashes, no `..`). */
+function sanitizeNewFolderName(raw: string): string | null {
+  const t = raw.trim();
+  if (!t || t.includes("..") || t.includes("/") || t.includes("\\")) return null;
+  if (t.length > 255) return null;
+  return t;
 }
 
 /** Aggregate size / count / latest modified for everything under this prefix (recursive). */
@@ -157,6 +176,9 @@ export function S3BucketBrowser({
   const [deletingFolderPrefix, setDeletingFolderPrefix] = useState<string | null>(null);
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+  const [mkdirOpen, setMkdirOpen] = useState(false);
+  const [mkdirName, setMkdirName] = useState("");
+  const [mkdirSaving, setMkdirSaving] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [selectedFolderPrefixes, setSelectedFolderPrefixes] = useState<Set<string>>(
     () => new Set(),
@@ -314,6 +336,32 @@ export function S3BucketBrowser({
       toast({ title: "Download failed", description: msg, variant: "destructive" });
     } finally {
       setDownloadingKey(null);
+    }
+  };
+
+  const onCreateDirectory = async () => {
+    const seg = sanitizeNewFolderName(mkdirName);
+    if (!seg) {
+      toast({
+        title: "Invalid name",
+        description: "Use a non-empty name without /, \\, or … segments.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const fullKey = prefix ? `${prefix}${seg}` : seg;
+    setMkdirSaving(true);
+    try {
+      await createS3FolderApi(profileName, fullKey);
+      toast({ title: "Directory created", description: fullKey.endsWith("/") ? fullKey : `${fullKey}/` });
+      setMkdirOpen(false);
+      setMkdirName("");
+      await loadPrefix(prefix);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ title: "Could not create directory", description: msg, variant: "destructive" });
+    } finally {
+      setMkdirSaving(false);
     }
   };
 
@@ -523,6 +571,18 @@ export function S3BucketBrowser({
           <button
             type="button"
             className="btn-secondary text-sm inline-flex items-center gap-2"
+            onClick={() => {
+              setMkdirName("");
+              setMkdirOpen(true);
+            }}
+            disabled={uploading || refreshing || batchDeleting || mkdirSaving}
+          >
+            <FolderPlus className="w-4 h-4" />
+            Add directory
+          </button>
+          <button
+            type="button"
+            className="btn-secondary text-sm inline-flex items-center gap-2"
             onClick={() => void onRefresh()}
             disabled={refreshing || batchDeleting}
           >
@@ -531,6 +591,52 @@ export function S3BucketBrowser({
           </button>
         </div>
       </div>
+
+      <Dialog
+        open={mkdirOpen}
+        onOpenChange={(open) => {
+          setMkdirOpen(open);
+          if (!open) setMkdirName("");
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add directory</DialogTitle>
+            <DialogDescription>
+              Creates a folder under the current path ({prefix ? prefix : "root"}). Name must not contain slashes.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            placeholder="e.g. backups"
+            value={mkdirName}
+            onChange={(e) => setMkdirName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void onCreateDirectory();
+            }}
+            disabled={mkdirSaving}
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              disabled={mkdirSaving}
+              onClick={() => setMkdirOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary text-sm inline-flex items-center gap-2"
+              disabled={mkdirSaving}
+              onClick={() => void onCreateDirectory()}
+            >
+              {mkdirSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Create
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="glass-panel rounded-xl border border-border/60 p-4 mb-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-2">Path</p>
