@@ -554,13 +554,13 @@ export function S3BucketBrowser({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="btn-secondary text-sm inline-flex items-center gap-2 cursor-pointer disabled:opacity-50">
+          <label className="btn-secondary text-sm inline-flex items-center gap-2 cursor-pointer transition-none disabled:opacity-50">
             {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             {uploading ? "Uploading…" : "Upload file"}
             <input
               type="file"
               className="sr-only"
-              disabled={uploading || refreshing || batchDeleting}
+              disabled={uploading || batchDeleting}
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 e.target.value = "";
@@ -570,23 +570,23 @@ export function S3BucketBrowser({
           </label>
           <button
             type="button"
-            className="btn-secondary text-sm inline-flex items-center gap-2"
+            className="btn-secondary text-sm inline-flex items-center gap-2 transition-none active:!scale-100"
             onClick={() => {
               setMkdirName("");
               setMkdirOpen(true);
             }}
-            disabled={uploading || refreshing || batchDeleting || mkdirSaving}
+            disabled={uploading || batchDeleting || mkdirSaving}
           >
             <FolderPlus className="w-4 h-4" />
             Add directory
           </button>
           <button
             type="button"
-            className="btn-secondary text-sm inline-flex items-center gap-2"
+            className="btn-secondary text-sm inline-flex items-center gap-2 transition-none active:!scale-100"
             onClick={() => void onRefresh()}
             disabled={refreshing || batchDeleting}
           >
-            {refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
         </div>
