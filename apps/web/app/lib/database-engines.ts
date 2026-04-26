@@ -32,7 +32,7 @@ export function defaultDatabaseImage(engine: DatabaseEngineId): string {
 }
 
 export function defaultDatabaseVolumePath(engine: DatabaseEngineId): string {
-  if (engine === "postgres") return "/var/lib/postgresql/data";
+  if (engine === "postgres") return "/var/lib/postgresql";
   if (engine === "mysql" || engine === "mariadb") return "/var/lib/mysql";
   if (engine === "mongodb") return "/data/db";
   return "/data";

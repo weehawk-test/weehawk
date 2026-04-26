@@ -3,6 +3,7 @@ import {
   OnGatewayConnection,
   WebSocketServer,
 } from '@nestjs/websockets';
+import { JwtService } from '@nestjs/jwt';
 import { Server } from 'ws';
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
@@ -13,6 +14,7 @@ import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { ExecutorService } from './executor.service';
 import { ServicesService } from '../services/services.service';
 import { resolveCorsOrigin } from '../common/cors-origin';
+import { parseCookieHeader, AUTH_ACCESS_COOKIE } from '../auth/auth-cookies';
 
 /**
  * Interactive shell inside the service's running container on the **deploy** host (SSH + `docker exec`).
@@ -31,6 +33,7 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
   constructor(
     private readonly remoteServersService: RemoteServersService,
     private readonly executorService: ExecutorService,
+    private readonly jwtService: JwtService,
     @Inject(forwardRef(() => ServicesService))
     private readonly servicesService: ServicesService,
   ) {}
@@ -38,14 +41,57 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
   @WebSocketServer()
   server: Server;
 
+  private async userIdFromWsRequest(req: IncomingMessage | undefined): Promise<number | null> {
+    const raw = req?.headers?.cookie;
+    const cookies = parseCookieHeader(typeof raw === 'string' ? raw : undefined);
+    const token = cookies[AUTH_ACCESS_COOKIE]?.trim();
+    if (!token) return null;
+    try {
+      const payload = await this.jwtService.verifyAsync<{
+        userId?: number;
+        sub?: string;
+      }>(token);
+      if (typeof payload.userId === 'number' && Number.isFinite(payload.userId) && payload.userId >= 1) {
+        return payload.userId;
+      }
+      const sub = payload.sub != null ? Number.parseInt(String(payload.sub), 10) : NaN;
+      if (Number.isFinite(sub) && sub >= 1) return sub;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async handleConnection(client: WebSocket, ...args: unknown[]) {
     const req = args[0] as IncomingMessage | undefined;
     const pathAndQuery = req?.url ?? '/';
     const host = req?.headers?.host ?? 'localhost';
     const url = new URL(pathAndQuery, `http://${host}`);
-    const serviceIdRaw = url.searchParams.get('serviceId');
-    const serviceId = serviceIdRaw ? parseInt(serviceIdRaw, 10) : NaN;
-    if (!Number.isFinite(serviceId) || serviceId < 1) {
+    const serviceIdParam = String(url.searchParams.get('serviceId') ?? '').trim();
+    if (!serviceIdParam) {
+      client.send(
+        JSON.stringify({ type: 'error', message: 'Missing or invalid serviceId.' }),
+      );
+      client.close(4000, 'invalid serviceId');
+      return;
+    }
+
+    const userId = await this.userIdFromWsRequest(req);
+    if (userId == null) {
+      client.send(
+        JSON.stringify({
+          type: 'error',
+          message: 'Unauthorized: sign in again, then open the terminal.',
+        }),
+      );
+      client.close(4007, 'unauthorized');
+      return;
+    }
+
+    let serviceId: number;
+    try {
+      serviceId = await this.servicesService.resolveServiceIdForUser(serviceIdParam, userId);
+    } catch {
       client.send(
         JSON.stringify({ type: 'error', message: 'Missing or invalid serviceId.' }),
       );

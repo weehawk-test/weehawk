@@ -51,7 +51,7 @@ import {
   RemoteServersService,
   WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
 } from '../remote-servers/remote-servers.service';
-import { generatePublicId } from '../common/public-id';
+import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 
 @Injectable()
 export class ServicesService {
@@ -94,9 +94,15 @@ export class ServicesService {
 
   async resolveProjectIdForUser(identifier: string, userId: number): Promise<number> {
     const trimmed = String(identifier).trim();
-    const project = await this.projectRepository.findOne({
+    let project = await this.projectRepository.findOne({
       where: { publicId: trimmed, userId },
     });
+    if (!project && isLikelyNumericId(trimmed)) {
+      const id = Number.parseInt(trimmed, 10);
+      if (Number.isSafeInteger(id) && id >= 1) {
+        project = await this.projectRepository.findOneBy({ id, userId });
+      }
+    }
     if (!project) throw new NotFoundException('Project not found');
     const ensured = await this.ensureProjectPublicId(project);
     return ensured.id;
@@ -104,10 +110,19 @@ export class ServicesService {
 
   async resolveServiceIdForUser(identifier: string, userId: number): Promise<number> {
     const trimmed = String(identifier).trim();
-    const service = await this.serviceRepository.findOne({
+    let service = await this.serviceRepository.findOne({
       where: { publicId: trimmed, project: { userId } },
       relations: ['project'],
     });
+    if (!service && isLikelyNumericId(trimmed)) {
+      const id = Number.parseInt(trimmed, 10);
+      if (Number.isSafeInteger(id) && id >= 1) {
+        service = await this.serviceRepository.findOne({
+          where: { id, project: { userId } },
+          relations: ['project'],
+        });
+      }
+    }
     if (!service) throw new NotFoundException('Service not found');
     const ensured = await this.ensureServicePublicId(service);
     return ensured.id;
@@ -2017,7 +2032,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
 
     try {
-      await this.s3Service.assertProfileExists(profileName);
+      await this.s3Service.assertProfileExists(profileName, userId);
 
       if (dto.action === 'volume_backup') {
         const volumeSource = dto.volumeSource?.trim();
@@ -3194,7 +3209,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     const rootUser = this.nonEmpty(dto.rootUser);
     const rootPass = this.nonEmpty(dto.rootPass);
     const password = this.nonEmpty(dto.password);
-    const volumePath = this.nonEmpty(dto.volumePath) ?? undefined;
+    let volumePath = this.nonEmpty(dto.volumePath) ?? undefined;
+    if (engine === 'postgres' && volumePath === '/var/lib/postgresql/data') {
+      volumePath = '/var/lib/postgresql';
+    }
 
     if (engine === 'postgres') {
       if (!dbName || !user || !pass) {

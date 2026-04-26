@@ -73,7 +73,7 @@ export class DatabaseSetupDto {
   image?: string;
 
   @ApiPropertyOptional({
-    example: '/var/lib/postgresql/data',
+    example: '/var/lib/postgresql',
     description:
       'Container data directory path for the named volume mount (must start with /).',
   })

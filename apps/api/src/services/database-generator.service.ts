@@ -106,7 +106,8 @@ export class DatabaseGeneratorService {
   }
 
   defaultDataMount(engine: DatabaseEngine): string {
-    if (engine === 'postgres') return '/var/lib/postgresql/data';
+    /** PG 18+ official images expect the volume on the parent dir (versioned PGDATA inside). */
+    if (engine === 'postgres') return '/var/lib/postgresql';
     if (engine === 'mysql' || engine === 'mariadb') return '/var/lib/mysql';
     if (engine === 'mongodb') return '/data/db';
     return '/data';
@@ -138,10 +139,8 @@ services:
 ${expose}    deploy:
       replicas: ${rep}
       restart_policy:
-        condition: on-failure
-      placement:
-        constraints:
-          - node.role == manager
+        condition: any
+        delay: 5s
 ${commandSection}${env}    volumes:
       - ${safe}-data:${mount}
     networks:

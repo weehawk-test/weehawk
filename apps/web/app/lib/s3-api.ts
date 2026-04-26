@@ -1,4 +1,5 @@
 import { API_BASE } from "./api";
+import { authFetch } from "./auth-fetch";
 
 type ApiErrorShape = { message?: string | string[] };
 
@@ -220,9 +221,19 @@ export async function presignS3GetApi(profileId: string, key: string, expiresInS
   );
 }
 
+/**
+ * Download object bytes via the API (streams from S3 on the server).
+ * Avoids browser `fetch(presignedUrl)` failures: CORS on the bucket, mixed content,
+ * or presigned URLs pointing at hosts only reachable from the API (e.g. internal MinIO).
+ */
 export async function downloadS3ObjectBlob(profileId: string, key: string): Promise<Blob> {
-  const { url } = await presignS3GetApi(profileId, key);
-  const res = await fetch(url, { cache: "no-store" });
+  const q = new URLSearchParams({ key });
+  const url = `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileId)}/download?${q.toString()}`;
+  const res = await authFetch("cookie-session", url, {
+    method: "GET",
+    cache: "no-store",
+    headers: { Accept: "*/*" },
+  });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(parseErrorMessage(text || res.statusText));

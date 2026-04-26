@@ -149,8 +149,18 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  private async findProfileOrThrow(userId: number, name: string): Promise<S3Profile> {
-    return this.findProfileByPublicIdOrThrow(userId, name);
+  /**
+   * Resolve a saved profile by stable `publicId` (e.g. from URLs) or by human-readable `name` (UI / backup DTOs).
+   */
+  private async findProfileOrThrow(userId: number, identifier: string): Promise<S3Profile> {
+    const safe = identifier?.trim();
+    if (!safe) throw new BadRequestException('S3 profile identifier is required.');
+    let row = await this.profileRepo.findOne({ where: { userId, publicId: safe } });
+    if (!row) {
+      row = await this.profileRepo.findOne({ where: { userId, name: safe } });
+    }
+    if (!row) throw new NotFoundException('S3 profile not found');
+    return this.ensureProfilePublicId(row);
   }
 
   private async ensureProfilePublicId(row: S3Profile): Promise<S3Profile> {
@@ -414,12 +424,15 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  async assertProfileExists(name: string, userId?: number): Promise<void> {
-    const safe = name?.trim();
+  async assertProfileExists(identifier: string, userId: number): Promise<void> {
+    const safe = identifier?.trim();
     if (!safe) {
       throw new BadRequestException('S3 profile name is required.');
     }
-    const row = await this.profileRepo.findOne({ where: userId != null ? { userId, name: safe } : { name: safe } });
+    let row = await this.profileRepo.findOne({ where: { userId, publicId: safe } });
+    if (!row) {
+      row = await this.profileRepo.findOne({ where: { userId, name: safe } });
+    }
     if (!row) {
       throw new BadRequestException(`S3 profile "${safe}" not found.`);
     }

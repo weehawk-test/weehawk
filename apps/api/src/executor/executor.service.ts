@@ -210,6 +210,15 @@ export class ExecutorService {
     ]);
   }
 
+  /** `${APP_NAME}` substitution plus DATABASES fixes (Postgres 18+ expects mount at `/var/lib/postgresql`). */
+  private composeYamlForResolvedDeploy(service: Service): string {
+    let c = (service.dockerConfig || '').replace(/\${APP_NAME}/g, service.appName);
+    if (service.composeType === composeType.DATABASES) {
+      c = c.replace(/\/var\/lib\/postgresql\/data/g, '/var/lib/postgresql');
+    }
+    return c;
+  }
+
   /**
    * @param mode `deploy` = build then up (compose) or stack deploy; `reload` = compose up --no-build or stack deploy;
    * `redeploy` = stop compose project then up --build, or stack deploy + forced rolling restart on every service.
@@ -242,10 +251,7 @@ export class ExecutorService {
     }
 
     const deployDir = getServiceDeploymentDir(service.appName, service.id);
-    const finalConfig = service.dockerConfig.replace(
-      /\${APP_NAME}/g,
-      service.appName,
-    );
+    const finalConfig = this.composeYamlForResolvedDeploy(service);
 
     if (sshTargets.remoteServerId != null && !isSwarmStackService(service)) {
       await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
@@ -796,10 +802,7 @@ fi
       );
     }
     const deployDir = getServiceDeploymentDir(service.appName, service.id);
-    const finalConfig = service.dockerConfig.replace(
-      /\${APP_NAME}/g,
-      service.appName,
-    );
+    const finalConfig = this.composeYamlForResolvedDeploy(service);
     if (!finalConfig.trim()) {
       throw new BadRequestException(
         'Compose content is empty after resolving ${APP_NAME}. Fix the service YAML and save.',
@@ -881,10 +884,7 @@ fi
       );
     }
 
-    const finalConfig = service.dockerConfig.replace(
-      /\${APP_NAME}/g,
-      service.appName,
-    );
+    const finalConfig = this.composeYamlForResolvedDeploy(service);
     const projectUserId: number | null = null;
     await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
       sshIds.remoteServerId,
@@ -1015,14 +1015,36 @@ fi
       if (isSwarmStackService(service)) {
         let stdout: string;
         if (sshIds.remoteServerId != null) {
-          const nameFilter = `${service.appName}_${key}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const stackName = service.appName;
+          const swarmSvcLabel = `${stackName}_${key}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const nameFilter = swarmSvcLabel;
           try {
-            const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+            const rLabel = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
               sshIds.remoteServerId,
               projectUserId,
-              `docker ps -q -f "name=${nameFilter}" -f "status=running" 2>/dev/null || true`,
+              `docker ps -q -f "label=com.docker.swarm.service.name=${swarmSvcLabel}" -f "status=running" 2>/dev/null || true`,
             );
-            stdout = r.stdout;
+            stdout = rLabel.stdout;
+            if (!stdout.trim()) {
+              const rName = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                sshIds.remoteServerId,
+                projectUserId,
+                `docker ps -q -f "name=${nameFilter}" -f "status=running" 2>/dev/null || true`,
+              );
+              stdout = rName.stdout;
+            }
+            if (
+              !stdout.trim() &&
+              service.composeType === composeType.DATABASES
+            ) {
+              const nsLabel = stackName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+              const rNs = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                sshIds.remoteServerId,
+                projectUserId,
+                `docker ps -q -f "label=com.docker.stack.namespace=${nsLabel}" -f "status=running" 2>/dev/null || true`,
+              );
+              stdout = rNs.stdout;
+            }
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             return { error: msg || 'Could not resolve container.' };
@@ -1120,10 +1142,7 @@ fi
       return { items: [], error: 'No compose configuration on this service.' };
     }
 
-    const finalConfig = service.dockerConfig.replace(
-      /\${APP_NAME}/g,
-      service.appName,
-    );
+    const finalConfig = this.composeYamlForResolvedDeploy(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     if (sshIds.remoteServerId == null) {

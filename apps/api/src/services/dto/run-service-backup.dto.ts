@@ -32,7 +32,8 @@ export class RunServiceBackupDto {
   databaseBackupConfig?: DatabaseBackupConfigDto;
 
   @ApiProperty({
-    description: 'Saved S3 profile name to upload the backup archive.',
+    description:
+      'Saved S3 profile: display name or `publicId` (same as in Settings → S3).',
   })
   @IsString()
   @IsNotEmpty()
