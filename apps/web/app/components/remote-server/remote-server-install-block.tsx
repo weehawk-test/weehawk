@@ -160,10 +160,13 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
   return (
     <>
       <div className="min-w-0 border-t border-border bg-slate-100/90 dark:bg-muted/20 px-4 py-2.5 sm:px-5">
-        <div className="flex items-center justify-between gap-3">
-          <p className="min-w-0 truncate text-[11px] text-muted-foreground" title={row.createdAt}>
-            <span className="inline-flex items-center gap-1">
-              <Clock className="w-3 h-3" />
+        <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <p
+            className="min-w-0 text-center text-[11px] text-muted-foreground sm:text-left sm:truncate"
+            title={row.createdAt}
+          >
+            <span className="inline-flex items-center justify-center gap-1 sm:justify-start">
+              <Clock className="w-3 h-3 shrink-0" />
               {formatCreatedAtLabel(row.createdAt)}
             </span>
           </p>

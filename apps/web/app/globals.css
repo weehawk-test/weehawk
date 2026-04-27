@@ -118,13 +118,12 @@ html.theme-switching *::after {
     @apply border-border;
   }
   /**
-   * Reserve scrollbar gutter so toggling overflow (e.g. short vs long pages) does not
-   * shift layout horizontally. Platform shell scrolls on `main`; login/public pages
-   * may use the viewport — cover both.
+   * No `scrollbar-gutter` on `html`: the authenticated app scrolls inside `main`
+   * (see AppLayout), and a root gutter stacked with `main`’s gutter inset the bar.
+   * Login/public routes scroll the document if needed; rare horizontal shift is acceptable.
    */
   html {
     background-color: hsl(var(--background));
-    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased selection:bg-primary/25 selection:text-primary-foreground;

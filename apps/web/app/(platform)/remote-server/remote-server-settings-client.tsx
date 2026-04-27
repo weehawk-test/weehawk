@@ -565,7 +565,8 @@ export function RemoteServerSettingsClient({
               >
                 <>
                   <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-3 sm:px-5 sm:py-4">
-                    <div className="min-w-0 flex-1">
+                    {/* `flex-1` only from `sm:` so the column on phones does not grow and pin actions to the bottom */}
+                    <div className="min-w-0 sm:min-h-0 sm:flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="min-w-0 max-w-full break-words font-medium text-sm sm:truncate">{row.name}</p>
                         <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
@@ -997,11 +998,11 @@ export function RemoteServerSettingsClient({
       {typeof document !== "undefined" && testModalRow
         ? createPortal(
             <div
-              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto p-0 modal-scrim sm:items-center sm:p-4"
+              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-center justify-center overflow-y-auto px-4 py-6 modal-scrim sm:p-4"
               onClick={() => setTestModalRow(null)}
             >
               <div
-                className="glass-panel w-full max-w-md space-y-4 rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-2xl sm:p-5 sm:pb-5"
+                className="glass-panel w-full max-w-md space-y-4 rounded-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5 sm:pb-5"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -1051,13 +1052,13 @@ export function RemoteServerSettingsClient({
       {typeof document !== "undefined" && terminalModalRow
         ? createPortal(
             <div
-              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto p-0 modal-scrim sm:items-center sm:p-4"
+              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-center justify-center overflow-y-auto px-3 py-4 modal-scrim sm:p-4"
               onClick={() => {
                 setTerminalModalRow(null);
               }}
             >
               <div
-                className="glass-panel flex max-h-[calc(100dvh-env(safe-area-inset-bottom))] w-full max-w-4xl flex-col space-y-3 rounded-t-2xl p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:max-h-[90vh] sm:rounded-2xl sm:p-5 sm:pb-5"
+                className="glass-panel flex max-h-[min(92dvh,calc(100dvh-2rem))] w-full max-w-4xl flex-col space-y-3 rounded-2xl p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:max-h-[90vh] sm:p-5 sm:pb-5"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="flex items-start justify-between gap-3">
