@@ -1,4 +1,5 @@
 import { getServerApiBase } from "@/lib/server-api";
+import { getServerApiKey } from "@/lib/server-api-key";
 
 type Ctx = { params: Promise<{ path?: string[] }> };
 
@@ -16,7 +17,7 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const headers = new Headers(req.headers);
   headers.delete("host");
   headers.delete("content-length");
-  const apiKey = (process.env.WEEHAWK_API_KEY ?? "").trim();
+  const apiKey = getServerApiKey();
   if (apiKey) headers.set("X-Weehawk-Api-Key", apiKey);
 
   const init: RequestInit = {

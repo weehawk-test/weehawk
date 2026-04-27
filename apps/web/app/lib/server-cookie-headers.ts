@@ -1,4 +1,5 @@
 import { cookies, headers } from "next/headers";
+import { getServerApiKey } from "./server-api-key";
 
 /**
  * Forwards auth to the Weehawk API during SSR. Prefer `cookies()` (Next App Router) so
@@ -10,7 +11,7 @@ export async function buildServerApiCookieHeaders(): Promise<HeadersInit> {
   const out: Record<string, string> = {
     Accept: "application/json",
   };
-  const apiKey = (process.env.WEEHAWK_API_KEY ?? "").trim();
+  const apiKey = getServerApiKey();
   if (apiKey) {
     out["X-Weehawk-Api-Key"] = apiKey;
   }
