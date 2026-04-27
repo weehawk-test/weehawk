@@ -846,11 +846,11 @@ export function NotificationsChannelsClient({
         createPortal(
           showAdd ? (
             <div
-              className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
+              className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex min-h-full items-start justify-center px-4 py-6 md:px-6 md:py-8"
               onClick={closeAddModal}
             >
             <div
-              className="w-full max-w-3xl max-h-[92vh] overflow-y-auto glass-panel rounded-xl border border-primary/25 p-5 sm:p-6"
+              className="w-full max-w-3xl glass-panel rounded-xl border border-primary/25 p-5 sm:p-6"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3 mb-4">

@@ -71,9 +71,14 @@ export class CronJobsService {
 
   private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<CronJob> {
     const raw = String(idOrPublicId).trim();
-    const row = await this.cronJobRepo.findOne({
+    let row = await this.cronJobRepo.findOne({
       where: { publicId: raw, userId },
     });
+    if (!row && /^\d+$/.test(raw)) {
+      row = await this.cronJobRepo.findOne({
+        where: { id: Number(raw), userId },
+      });
+    }
     if (!row) throw new NotFoundException('Cron job not found');
     return this.ensurePublicId(row);
   }

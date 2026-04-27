@@ -97,9 +97,14 @@ export class WebhooksService implements OnApplicationBootstrap {
 
   private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<Webhook> {
     const raw = String(idOrPublicId).trim();
-    const row = await this.webhookRepo.findOne({
+    let row = await this.webhookRepo.findOne({
       where: { publicId: raw, userId },
     });
+    if (!row && /^\d+$/.test(raw)) {
+      row = await this.webhookRepo.findOne({
+        where: { id: Number(raw), userId },
+      });
+    }
     if (!row) throw new NotFoundException('Webhook not found');
     return this.ensurePublicId(row);
   }
