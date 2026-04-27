@@ -3,6 +3,11 @@ import { fetchProjectSSR, fetchServicesPageSSR } from "@/lib/server-fetch";
 import type { Project } from "@/lib/schema";
 import type { ServicesPageResponse } from "@/lib/services-api";
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import {
+  pendingDeletionCookieKey,
+  readPendingDeletionsFromCookie,
+} from "@/lib/pending-deletions";
 
 export const dynamic = "force-dynamic";
 const PROJECT_SERVICES_SSR_TIMEOUT_MS = 900;
@@ -31,6 +36,11 @@ export default async function ProjectDetailsPage({
   const q = typeof sp.q === "string" ? sp.q : "";
 
   const safeProjectId = rawId.trim() ? rawId.trim() : null;
+  const cookieStore = await cookies();
+  const pendingServices = readPendingDeletionsFromCookie(
+    "services",
+    cookieStore.get(pendingDeletionCookieKey("services"))?.value,
+  );
 
   let initialProject: Project | null = null;
   let initialServicesPage: ServicesPageResponse | undefined;
@@ -47,6 +57,21 @@ export default async function ProjectDetailsPage({
     ]);
     initialProject = projectResult;
     initialServicesPage = servicesResult;
+    if (initialServicesPage && pendingServices.size > 0) {
+      const filtered = initialServicesPage.data.filter((s) => {
+        const id = String(s.id);
+        const publicId = String(s.publicId ?? "").trim();
+        return !pendingServices.has(id) && (!publicId || !pendingServices.has(publicId));
+      });
+      const removedCount = initialServicesPage.data.length - filtered.length;
+      if (removedCount > 0) {
+        initialServicesPage = {
+          ...initialServicesPage,
+          data: filtered,
+          total: Math.max(0, initialServicesPage.total - removedCount),
+        };
+      }
+    }
     if (!initialProject) {
       redirect("/resource-not-found");
     } else if (initialProject.publicId && safeProjectId !== initialProject.publicId) {

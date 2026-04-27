@@ -30,6 +30,7 @@ import {
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
+import { markPendingDeletion } from "@/lib/pending-deletions";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -108,6 +109,8 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
       variant: "destructive",
     });
     if (!ok) return;
+    const target = jobs.find((item) => cronJobRouteId(item) === id);
+    markPendingDeletion("cron-jobs", id, target?.id, target?.publicId);
     const previous = jobs;
     setJobs((prev) => prev.filter((item) => cronJobRouteId(item) !== id));
     toast({ title: "Cron job deleted", description: `"${name}" has been removed.` });
@@ -151,6 +154,12 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
     setIsBulkDeleting(true);
     const previous = jobs;
     const removed = new Set(ids);
+    const selectedRows = jobs.filter((item) => removed.has(cronJobRouteId(item)));
+    markPendingDeletion(
+      "cron-jobs",
+      ...ids,
+      ...selectedRows.flatMap((item) => [item.id, item.publicId]),
+    );
     setJobs((prev) => prev.filter((item) => !removed.has(cronJobRouteId(item))));
     cronJobsBulk.clear();
     toast({ title: "Cron jobs deleted", description: `${ids.length} cron job(s) removed.` });

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
-import Script from "next/script";
 import { JetBrains_Mono, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/providers";
@@ -29,9 +28,6 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 const THEME_COOKIE_KEY = "weehawk-theme";
-
-/** If storage is empty, keep SSR `class` from cookie (avoids light→dark flash). */
-const THEME_INIT_SCRIPT = `(function(){try{var k='${THEME_COOKIE_KEY}';var t=(localStorage.getItem(k)||'').trim();if(t==='light'){document.documentElement.classList.remove('dark');document.cookie=k+'=light; Path=/; Max-Age=31536000; SameSite=Lax';}else if(t==='dark'){document.documentElement.classList.add('dark');document.cookie=k+'=dark; Path=/; Max-Age=31536000; SameSite=Lax';}}catch(_e){document.documentElement.classList.add('dark');document.cookie='${THEME_COOKIE_KEY}=dark; Path=/; Max-Age=31536000; SameSite=Lax';}})();`;
 
 export default async function RootLayout({
   children,
@@ -64,11 +60,6 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background">
-        <Script
-          id="weehawk-theme-init"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }}
-        />
         <Providers initialUser={initialUser}>{children}</Providers>
       </body>
     </html>

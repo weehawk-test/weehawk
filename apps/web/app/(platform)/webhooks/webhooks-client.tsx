@@ -17,6 +17,9 @@ import {
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
+import {
+  markPendingDeletion,
+} from "@/lib/pending-deletions";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -95,6 +98,8 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
       variant: "destructive",
     });
     if (!ok) return;
+    const target = webhooks.find((item) => webhookRouteId(item) === id);
+    markPendingDeletion("webhooks", id, target?.id, target?.publicId);
     const previous = webhooks;
     setWebhooks((prev) => prev.filter((item) => webhookRouteId(item) !== id));
     toast({ title: "Webhook deleted", description: `"${name}" has been removed.` });
@@ -121,6 +126,12 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
     setIsBulkDeleting(true);
     const previous = webhooks;
     const removed = new Set(ids);
+    const selectedRows = webhooks.filter((item) => removed.has(webhookRouteId(item)));
+    markPendingDeletion(
+      "webhooks",
+      ...ids,
+      ...selectedRows.flatMap((item) => [item.id, item.publicId]),
+    );
     setWebhooks((prev) => prev.filter((item) => !removed.has(webhookRouteId(item))));
     webhooksBulk.clear();
     toast({ title: "Webhooks deleted", description: `${ids.length} webhook(s) removed.` });

@@ -22,6 +22,11 @@ import {
   scheduleServiceRuntimeRefetchBurst,
 } from "@/lib/invalidate-service-queries";
 import { serviceQueryKeyId } from "@/lib/services-api";
+import {
+  clearPendingDeletion,
+  markPendingDeletion,
+  reconcileAndFilterPendingDeletions,
+} from "@/lib/pending-deletions";
 
 /** All services in project (`all=1`); use when the full list is required. */
 export function useServices(
@@ -35,6 +40,8 @@ export function useServices(
     queryKey: ["services", ownerKey, projectId],
     queryFn: () => fetchServices(projectId),
     enabled: projectId !== undefined && projectId !== "",
+    select: (rows) =>
+      reconcileAndFilterPendingDeletions("services", rows, (item) => [item.id, item.publicId]),
     initialData: options?.initialData,
     staleTime: hasInitial ? Infinity : 10_000,
     refetchOnMount: hasInitial ? false : undefined,
@@ -67,6 +74,13 @@ export function useServicesPage(
     queryFn: () => fetchServicesPage(projectId, page, trimmed),
     /** When SSR supplied this page/search, skip client GET /api/services (no duplicate in Network). */
     enabled: projectId !== undefined && projectId !== "" && !useSsrData,
+    select: (response) => ({
+      ...response,
+      data: reconcileAndFilterPendingDeletions("services", response.data, (item) => [
+        item.id,
+        item.publicId,
+      ]),
+    }),
     initialData: useSsrData ? initialPageData : undefined,
     initialDataUpdatedAt: useSsrData ? Date.now() : undefined,
     staleTime: useSsrData ? Infinity : 10_000,
@@ -199,6 +213,7 @@ export function useDeleteService() {
     mutationFn: (id: string) => deleteServiceApi(id),
     onMutate: async (id) => {
       const matchId = String(id);
+      const pendingIds = new Set<string>([matchId]);
       const previousServicesQueries = qc.getQueriesData<ServicesPageResponse | Service[]>({
         queryKey: ["services"],
       });
@@ -231,14 +246,18 @@ export function useDeleteService() {
       for (const [queryKey, cached] of previousServiceQueries) {
         if (!cached) continue;
         if (String(cached.id) === matchId || String(cached.publicId ?? "") === matchId) {
+          pendingIds.add(String(cached.id));
+          if (cached.publicId) pendingIds.add(String(cached.publicId));
           qc.setQueryData(queryKey, null);
         }
       }
 
-      return { previousServicesQueries, previousServiceQueries };
+      markPendingDeletion("services", ...Array.from(pendingIds));
+      return { previousServicesQueries, previousServiceQueries, pendingIds: Array.from(pendingIds) };
     },
     onError: (_error, _id, context) => {
       if (!context) return;
+      clearPendingDeletion("services", ...(context.pendingIds ?? []));
       for (const [queryKey, data] of context.previousServicesQueries) {
         qc.setQueryData(queryKey, data);
       }

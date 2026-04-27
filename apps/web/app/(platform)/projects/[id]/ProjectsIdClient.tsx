@@ -38,6 +38,7 @@ import {
   defaultDatabaseImage,
   defaultDatabaseVolumePath,
 } from "@/lib/database-engines";
+import { markPendingDeletion } from "@/lib/pending-deletions";
 
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
@@ -834,6 +835,8 @@ export default function ProjectsIdClient({
       variant: "destructive",
     });
     if (!ok) return;
+    const target = items.find((item) => serviceQueryKeyId(item) === serviceId);
+    markPendingDeletion("services", serviceId, target?.id, target?.publicId);
 
     deleteService.mutate(serviceId, {
       onSuccess: () => {
@@ -856,6 +859,12 @@ export default function ProjectsIdClient({
     if (!ok) return;
 
     setIsBulkDeleting(true);
+    const selectedRows = items.filter((item) => ids.includes(serviceQueryKeyId(item)));
+    markPendingDeletion(
+      "services",
+      ...ids,
+      ...selectedRows.flatMap((item) => [item.id, item.publicId]),
+    );
     toast({
       title: "Services deleted",
       description: `${ids.length} service(s) removed.`,
