@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Gamepad2,
@@ -844,21 +844,12 @@ export function NotificationsChannelsClient({
       )}
       {typeof document !== "undefined" &&
         createPortal(
-        <AnimatePresence>
-          {showAdd && (
-            <motion.div
-              key="add-channel"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+          showAdd ? (
+            <div
               className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
               onClick={closeAddModal}
             >
-            <motion.div
-              initial={{ opacity: 0, y: 14, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 14, scale: 0.98 }}
-              transition={{ type: "spring", stiffness: 340, damping: 30 }}
+            <div
               className="w-full max-w-3xl max-h-[92vh] overflow-y-auto glass-panel rounded-xl border border-primary/25 p-5 sm:p-6"
               onClick={(e) => e.stopPropagation()}
             >
@@ -1175,32 +1166,23 @@ export function NotificationsChannelsClient({
                   Add Channel
                 </button>
               </div>
-            </motion.div>
-          </motion.div>
-          )}
-        </AnimatePresence>,
+            </div>
+          </div>
+          ) : null,
         document.body,
         )}
 
       {typeof document !== "undefined" &&
         createPortal(
-        <AnimatePresence>
-          {showChannelAction && actionChannel && (
-            <motion.div
-              key="channel-actions"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+          showChannelAction && actionChannel ? (
+            <div
               className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
               onClick={() => {
                 if (testMutation.isPending) return;
                 setShowChannelAction(false);
               }}
             >
-            <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.98 }}
+            <div
               className="w-full max-w-xl glass-panel rounded-2xl border border-primary/25 p-5"
               onClick={(e) => e.stopPropagation()}
             >
@@ -1277,28 +1259,19 @@ export function NotificationsChannelsClient({
                   Test
                 </button>
               </div>
-            </motion.div>
-          </motion.div>
-          )}
-        </AnimatePresence>,
+            </div>
+          </div>
+          ) : null,
         document.body,
         )}
       {typeof document !== "undefined" &&
         createPortal(
-        <AnimatePresence>
-          {showEditChannel && editChannel && (
-            <motion.div
-              key="edit-channel"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+          showEditChannel && editChannel ? (
+            <div
               className="fixed inset-0 z-[80] overflow-y-auto modal-scrim flex items-center justify-center p-4"
               onClick={closeEditChannel}
             >
-              <motion.div
-                initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 10, scale: 0.98 }}
+              <div
                 className="w-full max-w-lg glass-panel rounded-2xl border border-primary/25 p-5"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -1380,10 +1353,9 @@ export function NotificationsChannelsClient({
                     Save
                   </button>
                 </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>,
+              </div>
+            </div>
+          ) : null,
         document.body,
         )}
       {!loading && !listError && channels.length === 0 ? (

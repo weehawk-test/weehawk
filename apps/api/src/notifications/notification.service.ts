@@ -62,9 +62,14 @@ export class NotificationService {
     raw: string,
   ): Promise<NotificationChannel | null> {
     const t = String(raw).trim();
-    const ch = await this.channelRepo.findOne({
+    let ch = await this.channelRepo.findOne({
       where: { publicId: t, userId },
     });
+    if (!ch && /^\d+$/.test(t)) {
+      ch = await this.channelRepo.findOne({
+        where: { id: Number(t), userId },
+      });
+    }
     if (!ch) return null;
     return this.ensureChannelPublicId(ch);
   }
