@@ -5,12 +5,16 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   useSyncExternalStore,
 } from "react";
 
 const STORAGE_KEY = "weehawk-sidebar-collapsed";
+const COOKIE_KEY = "weehawk-sidebar-collapsed";
+const MOBILE_OPEN_STORAGE_KEY = "weehawk-sidebar-mobile-open";
+const MOBILE_OPEN_COOKIE_KEY = "weehawk-sidebar-mobile-open";
 
 /** Tailwind `md` — overlay nav below this width so main content stays full width. */
 const MOBILE_SIDEBAR_QUERY = "(max-width: 767px)";
@@ -43,9 +47,17 @@ type SidebarLayoutContextValue = {
 
 const SidebarLayoutContext = createContext<SidebarLayoutContextValue | null>(null);
 
-export function SidebarLayoutProvider({ children }: { children: React.ReactNode }) {
-  const [collapsed, setCollapsedState] = useState(false);
-  const [mobileNavOpen, setMobileNavOpenState] = useState(false);
+export function SidebarLayoutProvider({
+  children,
+  initialCollapsed = false,
+  initialMobileNavOpen = false,
+}: {
+  children: React.ReactNode;
+  initialCollapsed?: boolean;
+  initialMobileNavOpen?: boolean;
+}) {
+  const [collapsed, setCollapsedState] = useState(initialCollapsed);
+  const [mobileNavOpen, setMobileNavOpenState] = useState(initialMobileNavOpen);
 
   const isMobileNav = useSyncExternalStore(
     subscribeMobileSidebarMq,
@@ -53,23 +65,28 @@ export function SidebarLayoutProvider({ children }: { children: React.ReactNode 
     getMobileSidebarServerSnapshot,
   );
 
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(STORAGE_KEY) === "1") setCollapsedState(true);
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     const width = isMobileNav ? "0px" : collapsed ? "4rem" : "16rem";
     document.documentElement.style.setProperty("--app-sidebar-width", width);
+  }, [collapsed, isMobileNav]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
+      document.cookie = `${COOKIE_KEY}=${collapsed ? "1" : "0"}; Path=/; Max-Age=31536000; SameSite=Lax`;
     } catch {
       /* ignore */
     }
-  }, [collapsed, isMobileNav]);
+  }, [collapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(MOBILE_OPEN_STORAGE_KEY, mobileNavOpen ? "1" : "0");
+      document.cookie = `${MOBILE_OPEN_COOKIE_KEY}=${mobileNavOpen ? "1" : "0"}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    } catch {
+      /* ignore */
+    }
+  }, [mobileNavOpen]);
 
   const setCollapsed = useCallback((v: boolean) => setCollapsedState(v), []);
   const toggle = useCallback(() => setCollapsedState((c) => !c), []);

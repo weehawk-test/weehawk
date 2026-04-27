@@ -315,14 +315,14 @@ export function Sidebar() {
     <aside
       id="app-sidebar"
       className={cn(
-        "fixed left-0 top-0 z-40 flex min-h-0 min-w-0 flex-col overflow-x-hidden border-r border-border",
+        "fixed left-0 top-0 z-40 flex min-h-0 min-w-0 flex-col overflow-x-hidden border-border",
         /* Opaque panel on phone: translucent + blur composites inconsistently over the scrim (iOS). */
         isMobileNav
           ? cn(
-              "bg-card h-[100dvh] max-h-[100dvh] w-[min(20rem,calc(100vw_-_1rem))] max-w-[calc(100vw_-_1rem)] pt-[env(safe-area-inset-top,0px)] shadow-2xl transition-transform duration-200 ease-out",
-              mobileNavOpen ? "translate-x-0" : "-translate-x-full",
+              "bg-card h-[100dvh] max-h-[100dvh] w-[min(20rem,calc(100vw_-_1rem))] max-w-[calc(100vw_-_1rem)] pt-[env(safe-area-inset-top,0px)] transition-transform duration-200 ease-out border-r-0",
+              mobileNavOpen ? "translate-x-0 shadow-2xl" : "-translate-x-[calc(100%+2px)] shadow-none",
             )
-          : "h-screen w-[var(--app-sidebar-width)] bg-card/30 backdrop-blur-xl transition-[width] duration-200 ease-out",
+          : "h-screen w-[var(--app-sidebar-width)] max-md:hidden bg-card/30 backdrop-blur-xl transition-[width] duration-200 ease-out border-r",
       )}
       aria-hidden={isMobileNav && !mobileNavOpen ? true : undefined}
     >

@@ -37,6 +37,7 @@ export default async function RootLayout({
   const cookieStore = await cookies();
   const themeCookie = (cookieStore.get(THEME_COOKIE_KEY)?.value ?? "").trim();
   const initialTheme: "light" | "dark" = themeCookie === "light" ? "light" : "dark";
+  const initialSidebarCollapsed = cookieStore.get("weehawk-sidebar-collapsed")?.value === "1";
 
   const profile = await fetchUserProfileSSR();
   const initialUser = profile
@@ -57,6 +58,7 @@ export default async function RootLayout({
     <html
       lang="en"
       className={`${fontSans.variable} ${fontMono.variable} h-full ${initialTheme === "dark" ? "dark" : ""}`}
+      style={{ ["--app-sidebar-width" as string]: initialSidebarCollapsed ? "4rem" : "16rem" }}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background">
