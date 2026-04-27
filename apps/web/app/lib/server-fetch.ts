@@ -2,7 +2,10 @@ import { buildServerApiCookieHeaders } from "./server-cookie-headers";
 import type { WebhookDetail, WebhookListItem } from "./webhooks-api";
 import type { CronJobDetail, CronJobListItem } from "./cron-jobs-api";
 import type { Project, Service } from "./schema";
-import type { NotificationChannel } from "./notifications-api";
+import type {
+  NotificationChannel,
+  PaginatedNotificationChannelsResponse,
+} from "./notifications-api";
 import type { S3ProfilePublic, S3BucketListResponse, S3PrefixSummaryResponse } from "./s3-api";
 import type { RemoteServerRow } from "./remote-servers-api";
 import type { TraefikSettingsPayload } from "./traefik-api";
@@ -210,6 +213,28 @@ export async function fetchNotificationChannelsSSR(): Promise<NotificationChanne
   });
   if (!res.ok) return [];
   return res.json() as Promise<NotificationChannel[]>;
+}
+
+export async function fetchNotificationChannelsPagedSSR(
+  page: number,
+  pageSize: number,
+  q: string,
+): Promise<PaginatedNotificationChannelsResponse> {
+  const params = new URLSearchParams({
+    page: String(Math.max(1, page)),
+    pageSize: String(Math.max(1, pageSize)),
+  });
+  const trimmed = q.trim();
+  if (trimmed) params.set("q", trimmed);
+  const res = await fetch(`${apiBase()}/api/notifications/channels/paged?${params.toString()}`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(text.trim() || res.statusText || `HTTP ${res.status}`);
+  }
+  return JSON.parse(text) as PaginatedNotificationChannelsResponse;
 }
 
 export async function fetchS3ProfilesSSR(): Promise<S3ProfilePublic[]> {
