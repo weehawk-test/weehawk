@@ -12,9 +12,10 @@ export function normalizeApiBase(raw: string): string {
   return u || "http://localhost:8080";
 }
 
-export const API_BASE = normalizeApiBase(
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080",
-);
+export const API_BASE =
+  typeof window !== "undefined"
+    ? ""
+    : normalizeApiBase(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080");
 
 /**
  * WebSocket base should preserve any reverse-proxy path prefix from NEXT_PUBLIC_API_URL
@@ -34,7 +35,7 @@ export function wsBase(): string {
       return `ws://localhost:8080${raw}`;
     }
   }
-  return API_BASE.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+  return "ws://localhost:8080";
 }
 
 /** Candidate WS bases: primary + `/api` fallback (or inverse), deduplicated. */

@@ -25,7 +25,11 @@ import { getServerApiBase } from "./server-api";
 const SERVICE_RUNTIME_SSR_TIMEOUT_MS = 1_200;
 
 async function cookieHeaders(): Promise<HeadersInit> {
-  return buildServerApiCookieHeaders();
+  const out = new Headers(await buildServerApiCookieHeaders());
+  const apiKey = (process.env.WEEHAWK_API_KEY ?? "").trim();
+  if (apiKey) out.set("X-Weehawk-Api-Key", apiKey);
+  if (!out.has("Accept")) out.set("Accept", "application/json");
+  return out;
 }
 
 function apiBase(): string {

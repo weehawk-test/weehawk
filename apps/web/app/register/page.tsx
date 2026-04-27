@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRateLimitCountdown } from "@/hooks/use-rate-limit-countdown";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { PasswordInput } from "@/components/inputs/password-input";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, normalizeApiBase } from "@/lib/api";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -88,8 +88,8 @@ export default function RegisterPage() {
   };
 
   const continueWithGoogle = () => {
-    const oauthUrl = new URL("/api/oauth2/authorize/google", API_BASE);
-    window.location.href = oauthUrl.toString();
+    const oauthBase = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080");
+    window.location.href = `${oauthBase}/api/oauth2/authorize/google`;
   };
 
   return (

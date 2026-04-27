@@ -1,16 +1,13 @@
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
-import { AUTH_ACCESS_COOKIE } from '../../auth/auth-cookies';
 
 /**
  * Global internal API-key gate.
  * - Public/auth routes are excluded.
- * - Requests with `Authorization: Bearer <jwt>` are allowed (JWT guards validate later).
- * - Other requests must provide `X-Weehawk-Api-Key`.
+ * - Other routes require `X-Weehawk-Api-Key`.
  */
 export function createSecretKeyMiddleware(config: ConfigService) {
   const HEADER_NAME = 'X-Weehawk-Api-Key';
-  const AUTH_HEADER = 'authorization';
   const FORBIDDEN_JSON =
     '{"status":403,"error":"Forbidden","message":"Invalid or missing API key"}';
 
@@ -45,32 +42,6 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     return raw || '/';
   };
 
-  const hasBearerJwtShape = (req: Request): boolean => {
-    const raw = (req.header(AUTH_HEADER) ?? '').trim();
-    const m = /^Bearer\s+(.+)$/i.exec(raw);
-    if (!m) return false;
-    const token = m[1].trim();
-    return token.split('.').length === 3;
-  };
-
-  const hasAccessCookieJwtShape = (req: Request): boolean => {
-    const cookieHeader = (req.headers?.cookie ?? '').trim();
-    if (!cookieHeader) return false;
-    const prefix = `${AUTH_ACCESS_COOKIE}=`;
-    const part = cookieHeader
-      .split(';')
-      .map((p) => p.trim())
-      .find((p) => p.startsWith(prefix));
-    if (!part) return false;
-    let token = part.slice(prefix.length).trim();
-    try {
-      token = decodeURIComponent(token);
-    } catch {
-      /* keep raw */
-    }
-    return token.split('.').length === 3;
-  };
-
   const extractApiKey = (req: Request): string =>
     (req.header(HEADER_NAME) ?? '').trim();
 
@@ -80,7 +51,6 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     const path = normalizePath(req);
     if (path.includes('/oauth2/')) return next();
     if (EXCLUDED_PREFIXES.some((prefix) => path.startsWith(prefix))) return next();
-    if (hasBearerJwtShape(req) || hasAccessCookieJwtShape(req)) return next();
 
     const expectedApiKey =
       (config.get<string>('WEEHAWK_API_KEY') ??

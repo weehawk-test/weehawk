@@ -10,6 +10,10 @@ export async function buildServerApiCookieHeaders(): Promise<HeadersInit> {
   const out: Record<string, string> = {
     Accept: "application/json",
   };
+  const apiKey = (process.env.WEEHAWK_API_KEY ?? "").trim();
+  if (apiKey) {
+    out["X-Weehawk-Api-Key"] = apiKey;
+  }
 
   try {
     const jar = await cookies();
