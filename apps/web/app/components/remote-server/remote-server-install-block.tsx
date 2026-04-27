@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Loader2, X } from "lucide-react";
+import { ChevronDown, Clock, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Dialog,
@@ -44,12 +44,12 @@ function provisionJobKindLabel(kind: ProvisionJobKind | undefined): string {
 
 function formatCreatedAtLabel(value: string): string {
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "Created: --";
-  return `Created: ${d.toLocaleDateString("en-US", {
+  if (Number.isNaN(d.getTime())) return "--";
+  return d.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
-  })}`;
+  });
 }
 
 /** Script preview: wrap long lines — no horizontal scrollbar */
@@ -162,7 +162,10 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
       <div className="min-w-0 border-t border-border bg-slate-100/90 dark:bg-muted/20 px-4 py-2.5 sm:px-5">
         <div className="flex items-center justify-between gap-3">
           <p className="min-w-0 truncate text-[11px] text-muted-foreground" title={row.createdAt}>
-            {formatCreatedAtLabel(row.createdAt)}
+            <span className="inline-flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {formatCreatedAtLabel(row.createdAt)}
+            </span>
           </p>
         <Popover open={installMenuOpen} onOpenChange={setInstallMenuOpen}>
           <PopoverTrigger asChild>
