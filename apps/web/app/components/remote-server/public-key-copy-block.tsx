@@ -29,7 +29,7 @@ export function PublicKeyCopyBlock({ publicKey }: { publicKey: string }) {
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="text-[11px] leading-relaxed p-3 font-mono whitespace-pre-wrap break-all max-h-28 overflow-auto border-t border-zinc-700/50 bg-zinc-950 text-zinc-200 shadow-inner dark:border-emerald-950/40 dark:text-zinc-300">
+      <pre className="text-[11px] leading-relaxed p-3 font-mono whitespace-pre-wrap break-all max-h-28 overflow-auto border-t border-emerald-200/70 bg-white text-zinc-900 shadow-inner dark:border-emerald-950/40 dark:bg-zinc-950 dark:text-zinc-300">
         {publicKey}
       </pre>
     </div>

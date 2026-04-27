@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Loader2, PlugZap } from "lucide-react";
+import { MaskedPemTextarea } from "@/components/remote-server/masked-pem-textarea";
 import { PublicKeyCopyBlock } from "@/components/remote-server/public-key-copy-block";
 import {
   createRemoteServerApi,
@@ -27,6 +28,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
   const [port, setPort] = useState("22");
   const [sshUser, setSshUser] = useState("");
   const [privateKey, setPrivateKey] = useState("");
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [serverRole, setServerRole] = useState<RemoteServerRole>("deploy");
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [savedRow, setSavedRow] = useState<RemoteServerRow | null>(null);
@@ -36,6 +38,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
     onSuccess: (data) => {
       setGeneratedPublicKey(data.publicKey);
       setPrivateKey(data.privateKey);
+      setShowPrivateKey(false);
       setSavedRow(null);
       toast({
         title: "Key pair generated",
@@ -59,6 +62,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
     onSuccess: (row) => {
       void qc.invalidateQueries({ queryKey: ["remote-servers"] });
       setSavedRow(row);
+      setShowPrivateKey(false);
       onSaved?.(row);
       toast({ title: "Remote host saved", description: "You can test the connection, then continue." });
     },
@@ -197,9 +201,11 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
             placeholder="deploy"
           />
         </label>
-        <label className="space-y-1 block sm:col-span-2">
-          <span className="text-xs text-muted-foreground">Private key (PEM)</span>
-          <textarea
+        <div className="space-y-1 sm:col-span-2">
+          <span className="block text-xs text-muted-foreground">Private key (PEM)</span>
+          <MaskedPemTextarea
+            revealed={showPrivateKey}
+            onRevealedChange={setShowPrivateKey}
             value={privateKey}
             onChange={(e) => {
               setPrivateKey(e.target.value);
@@ -211,7 +217,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
             spellCheck={false}
             autoComplete="off"
           />
-        </label>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2 pt-1">

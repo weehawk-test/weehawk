@@ -15,6 +15,7 @@ import {
   FlaskConical,
   X,
 } from "lucide-react";
+import { MaskedPemTextarea } from "@/components/remote-server/masked-pem-textarea";
 import { PublicKeyCopyBlock } from "@/components/remote-server/public-key-copy-block";
 import { RemoteServerInstallBlock } from "@/components/remote-server/remote-server-install-block";
 import { useAuth } from "@/contexts/auth-context";
@@ -121,6 +122,8 @@ export function RemoteServerSettingsClient({
     traefikSettingsQ.isLoading || traefikSettingsQ.isError || !certEmailReady;
 
   const [creating, setCreating] = useState(false);
+  const [showPrivateKeyCreate, setShowPrivateKeyCreate] = useState(false);
+  const [showPrivateKeyEdit, setShowPrivateKeyEdit] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -168,12 +171,14 @@ export function RemoteServerSettingsClient({
     onSuccess: (data, target) => {
       setGeneratedPublicKey(data.publicKey);
       if (target === "edit") {
+        setShowPrivateKeyEdit(false);
         setEditDraft((d) => ({ ...d, privateKeyReplace: data.privateKey }));
         toast({
           title: "Key pair generated",
           description: "Public key copied below; save to store the new private key encrypted.",
         });
       } else {
+        setShowPrivateKeyCreate(false);
         setForm((f) => ({ ...f, privateKey: data.privateKey }));
         toast({
           title: "Key pair generated",
@@ -213,6 +218,7 @@ export function RemoteServerSettingsClient({
       qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       setForm(emptyForm());
       setGeneratedPublicKey(null);
+      setShowPrivateKeyCreate(false);
       setCreating(false);
       toast({ title: "Remote host saved" });
     },
@@ -266,11 +272,13 @@ export function RemoteServerSettingsClient({
     setCreating(false);
     setForm(emptyForm());
     setGeneratedPublicKey(null);
+    setShowPrivateKeyCreate(false);
   }
 
   function dismissEditHostModal() {
     setEditingId(null);
     setGeneratedPublicKey(null);
+    setShowPrivateKeyEdit(false);
   }
 
   const testMut = useMutation({
@@ -519,7 +527,10 @@ export function RemoteServerSettingsClient({
                   ? "Save your Let's Encrypt email on Domains first"
                   : "Add a remote host"
               }
-              onClick={() => setCreating(true)}
+              onClick={() => {
+                setShowPrivateKeyCreate(false);
+                setCreating(true);
+              }}
               className="btn-primary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
             >
               <Plus className="size-3.5" />
@@ -620,6 +631,7 @@ export function RemoteServerSettingsClient({
                         type="button"
                         onClick={() => {
                           setGeneratedPublicKey(null);
+                          setShowPrivateKeyEdit(false);
                           setEditingId(row.id);
                         }}
                         className="btn-secondary min-h-10 px-2.5 py-2 text-xs sm:min-h-0 sm:py-1.5"
@@ -774,20 +786,22 @@ export function RemoteServerSettingsClient({
                       placeholder="deploy"
                     />
                   </label>
-                  <label className="space-y-1 block sm:col-span-2">
-                    <span className="text-xs text-muted-foreground">Private key (PEM)</span>
-                    <textarea
+                  <div className="space-y-1 sm:col-span-2">
+                    <span className="block text-xs text-muted-foreground">Private key (PEM)</span>
+                    <MaskedPemTextarea
+                      revealed={showPrivateKeyCreate}
+                      onRevealedChange={setShowPrivateKeyCreate}
                       value={form.privateKey}
                       onChange={(e) => {
                         setForm((f) => ({ ...f, privateKey: e.target.value }));
                         setGeneratedPublicKey(null);
                       }}
-                      className="w-full min-h-[140px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-xs font-mono"
+                      className="w-full min-h-[140px] rounded-lg border border-border bg-muted px-3 py-2 text-xs font-mono dark:bg-black/40"
                       placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
                       spellCheck={false}
                       autoComplete="off"
                     />
-                  </label>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                   <button
@@ -936,9 +950,13 @@ export function RemoteServerSettingsClient({
                       className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                     />
                   </label>
-                  <label className="space-y-1 block sm:col-span-2">
-                    <span className="text-xs text-muted-foreground">Replace private key (optional PEM)</span>
-                    <textarea
+                  <div className="space-y-1 sm:col-span-2">
+                    <span className="block text-xs text-muted-foreground">
+                      Replace private key (optional PEM)
+                    </span>
+                    <MaskedPemTextarea
+                      revealed={showPrivateKeyEdit}
+                      onRevealedChange={setShowPrivateKeyEdit}
                       value={editDraft.privateKeyReplace}
                       onChange={(e) => {
                         setEditDraft((d) => ({ ...d, privateKeyReplace: e.target.value }));
@@ -946,12 +964,12 @@ export function RemoteServerSettingsClient({
                           setGeneratedPublicKey(null);
                         }
                       }}
-                      className="w-full min-h-[100px] rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 font-mono text-xs"
+                      className="w-full min-h-[140px] rounded-lg border border-border bg-muted px-3 py-2 text-xs font-mono dark:bg-black/40"
                       placeholder="Leave empty to keep current key, or paste / generate a new one"
                       spellCheck={false}
                       autoComplete="off"
                     />
-                  </label>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                   <button
