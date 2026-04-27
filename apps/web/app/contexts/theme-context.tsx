@@ -35,13 +35,14 @@ function applyThemeWithoutMotion(theme: Theme) {
   }, 120);
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    if (typeof document !== "undefined") {
-      return document.documentElement.classList.contains("dark") ? "dark" : "light";
-    }
-    return "dark";
-  });
+export function ThemeProvider({
+  children,
+  initialTheme = "dark",
+}: {
+  children: ReactNode;
+  initialTheme?: Theme;
+}) {
+  const [theme, setThemeState] = useState<Theme>(initialTheme);
 
   useEffect(() => {
     const stored = (localStorage.getItem(THEME_STORAGE_KEY) ?? "").trim();
@@ -53,10 +54,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
           : document.documentElement.classList.contains("dark")
             ? "dark"
             : "light";
-    setThemeState(nextTheme);
+    if (nextTheme !== theme) setThemeState(nextTheme);
     applyThemeWithoutMotion(nextTheme);
     persistTheme(nextTheme);
-  }, []);
+  }, [theme]);
 
   const setTheme = (nextTheme: Theme) => {
     setThemeState(nextTheme);

@@ -1,7 +1,6 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/contexts/theme-context";
@@ -15,18 +14,6 @@ export function ThemeToggle({
   iconOnly?: boolean;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  if (!mounted) {
-    return (
-      <div
-        className={cn(iconOnly ? "h-8 w-8" : "h-8 w-8", className)}
-        aria-hidden
-      />
-    );
-  }
 
   const isDark = resolvedTheme === "dark";
   const label = isDark ? "Switch to light mode" : "Switch to dark mode";

@@ -62,12 +62,14 @@ function RefreshRscOnAuthChange() {
 export function Providers({
   children,
   initialUser,
+  initialTheme,
 }: {
   children: React.ReactNode;
   initialUser: AuthUser | null;
+  initialTheme: "light" | "dark";
 }) {
   return (
-    <ThemeProvider>
+    <ThemeProvider initialTheme={initialTheme}>
       <AuthProvider initialUser={initialUser}>
         <UserScopedQueryClientProvider>
           <RefreshRscOnAuthChange />

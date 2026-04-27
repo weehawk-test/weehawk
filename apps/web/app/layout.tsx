@@ -62,7 +62,7 @@ export default async function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background">
-        <Providers initialUser={initialUser}>{children}</Providers>
+        <Providers initialUser={initialUser} initialTheme={initialTheme}>{children}</Providers>
       </body>
     </html>
   );
