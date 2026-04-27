@@ -758,6 +758,8 @@ export default function ServiceDetails({
   const qc = useQueryClient();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>("config");
+  const [isDeletingService, setIsDeletingService] = useState(false);
+  const isDeletingServiceRef = useRef(false);
   const [editingConfig, setEditingConfig] = useState(false);
   const [configDraft, setConfigDraft] = useState("");
   const [liveLogText, setLiveLogText] = useState("");
@@ -793,10 +795,10 @@ export default function ServiceDetails({
   }, [initialService, serviceId, qc, user?.userId]);
 
   useEffect(() => {
-    if (!isLoading && !projectLoading && (!service || !project)) {
+    if (!isLoading && !projectLoading && !isDeletingService && !isDeletingServiceRef.current && (!service || !project)) {
       router.replace("/resource-not-found");
     }
-  }, [isLoading, projectLoading, service, project, router]);
+  }, [isLoading, projectLoading, isDeletingService, service, project, router]);
 
   const secretsRemoteId = (service ?? initialService)?.remoteServerId ?? null;
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(secretsRemoteId, 1, "", {
@@ -1085,16 +1087,22 @@ export default function ServiceDetails({
       variant: "destructive",
     });
     if (!ok) return;
+    isDeletingServiceRef.current = true;
+    setIsDeletingService(true);
     router.replace(`/projects/${projectId}`);
     deleteService.mutate(serviceQueryKeyId(service), {
       onSuccess: () => {
         toast({ title: "Service Deleted" });
-        router.refresh();
       },
-      onError: (e: Error) =>
-        toast({ title: "Could not delete service", description: e.message, variant: "destructive" }),
+      onError: (e: Error) => {
+        isDeletingServiceRef.current = false;
+        setIsDeletingService(false);
+        toast({ title: "Could not delete service", description: e.message, variant: "destructive" });
+      },
     });
   };
+
+  if (isDeletingService) return null;
 
   if (isLoading) return (
     <>
@@ -4145,7 +4153,7 @@ function ApplicationArchivePanel({
     <div className="glass-panel rounded-2xl border border-violet-500/20 p-6 md:p-8">
       <h3 className="text-base font-semibold flex items-center gap-2 mb-1">
         <PackageOpen className="w-5 h-5 text-violet-700 dark:text-violet-300" />
-        Application deploy Form
+        Application deployment
       </h3>
       <div className="grid gap-4 sm:grid-cols-2 max-w-3xl">
         {!hasDeployHost && (
