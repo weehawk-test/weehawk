@@ -317,34 +317,37 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
             {items.map((c) => (
               <div
                 key={c.id}
-                className="glass-panel rounded-xl p-4 flex items-center justify-between gap-4 group"
+                className="glass-panel rounded-xl overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] group"
               >
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <DockerBulkCheckbox
-                    checked={bulk.selected.has(c.id)}
-                    onCheckedChange={() => bulk.toggle(c.id)}
-                    className="flex-shrink-0"
-                    aria-label={`Select ${c.name}`}
-                  />
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center border flex-shrink-0 ${STATUS_STYLE[c.status]}`}>
-                    <Box className="w-5 h-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap min-w-0">
-                      <span className="font-semibold text-sm truncate" title={c.name}>
-                        {c.name}
-                      </span>
-                      <span className={`text-[11px] border rounded-full px-2 py-0.5 font-medium capitalize shrink-0 ${STATUS_STYLE[c.status]}`}>
-                        {c.status}
-                      </span>
+                <div className="flex items-center justify-between gap-4 p-4 min-w-max">
+                  <div className="flex items-center gap-3">
+                    <DockerBulkCheckbox
+                      checked={bulk.selected.has(c.id)}
+                      onCheckedChange={() => bulk.toggle(c.id)}
+                      className="flex-shrink-0"
+                      aria-label={`Select ${c.name}`}
+                    />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center border flex-shrink-0 ${STATUS_STYLE[c.status]}`}>
+                      <Box className="w-5 h-5" />
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5 font-mono truncate" title={c.image}>
-                      {c.image}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Replicas: {c.replicas} • Mode: {c.mode}</p>
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 flex-nowrap">
+                        <span className="font-semibold text-sm whitespace-nowrap" title={c.name}>
+                          {c.name}
+                        </span>
+                        <span className={`text-[11px] border rounded-full px-2 py-0.5 font-medium capitalize shrink-0 ${STATUS_STYLE[c.status]}`}>
+                          {c.status}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground font-mono whitespace-nowrap" title={c.image}>
+                        {c.image}
+                      </p>
+                      <p className="text-xs text-muted-foreground whitespace-nowrap">
+                        Replicas: {c.replicas} • Mode: {c.mode}
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0 ps-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -380,6 +383,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+                  </div>
                 </div>
               </div>
             ))}

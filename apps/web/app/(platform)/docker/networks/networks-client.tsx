@@ -246,7 +246,8 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
         </div>
       ) : currentData ? (
         <div className="glass-panel rounded-2xl overflow-hidden">
-          <table className="w-full">
+          <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+            <table className="w-full min-w-[52rem] text-left">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="w-12 py-3 px-3" />
@@ -280,24 +281,24 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
                       <span className="font-mono text-sm font-medium">{n.name}</span>
                     </div>
                   </td>
-                  <td className="py-3.5 px-5">
+                  <td className="py-3.5 px-5 whitespace-nowrap">
                     <span className="font-mono text-xs text-muted-foreground">{n.networkIdShort}</span>
                   </td>
-                  <td className="py-3.5 px-5 text-sm text-muted-foreground">{n.driver}</td>
-                  <td className="py-3.5 px-5 text-sm text-muted-foreground">{n.scope}</td>
-                  <td className="py-3.5 px-5">
-                    <span className="text-xs text-muted-foreground">
+                  <td className="py-3.5 px-5 text-sm text-muted-foreground whitespace-nowrap">{n.driver}</td>
+                  <td className="py-3.5 px-5 text-sm text-muted-foreground whitespace-nowrap">{n.scope}</td>
+                  <td className="py-3.5 px-5 whitespace-nowrap">
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
                       {[n.internal && "internal", n.ipv6 && "IPv6"].filter(Boolean).join(", ") || "—"}
                     </span>
                   </td>
-                  <td className="py-3.5 px-5">
-                    <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <td className="py-3.5 px-5 whitespace-nowrap align-middle">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
                       <Clock className="w-3 h-3 shrink-0" />
                       {formatCreatedAt(n.createdAt)}
                     </span>
                   </td>
                   <td className="py-3.5 px-5">
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                    <div className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
                       <button
                         type="button"
                         onClick={() => setForceDialog(n.name)}
@@ -325,7 +326,8 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
           <ListPagination
             page={currentData.page}
             totalPages={totalPages}

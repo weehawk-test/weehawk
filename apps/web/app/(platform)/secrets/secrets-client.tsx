@@ -376,7 +376,7 @@ function SecretRow({
         <span className="text-xs text-muted-foreground">{formatSecretDate(secret.createdAt)}</span>
       </td>
       <td className="py-4 px-5">
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+        <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity justify-end">
           <button
             type="button"
             onClick={() => onEdit(secret)}
@@ -597,7 +597,8 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
         </div>
       ) : currentData ? (
         <div className="glass-panel rounded-2xl overflow-hidden">
-          <table className="w-full">
+          <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+            <table className="w-full min-w-[40rem] text-left">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="w-12 py-3 px-3" />
@@ -620,7 +621,8 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
                 />
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
           <ListPagination
             page={currentData.page}
             totalPages={totalPages}

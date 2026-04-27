@@ -256,7 +256,8 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         </div>
       ) : currentData ? (
         <div className="glass-panel rounded-2xl overflow-hidden">
-          <table className="w-full min-w-0">
+          <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+            <table className="w-full min-w-[44rem] text-left">
             <thead>
               <tr className="border-b border-white/5">
                 <th className="w-12 py-3 px-3" />
@@ -310,28 +311,28 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
                       <span className="truncate min-w-0">{img.tag}</span>
                     </span>
                   </td>
-                  <td className="py-3.5 px-5 min-w-0 align-middle">
+                  <td className="py-3.5 px-5 align-middle whitespace-nowrap">
                     <span
-                      className="font-mono text-xs text-muted-foreground truncate block"
+                      className="font-mono text-xs text-muted-foreground"
                       title={img.imageIdFull || img.imageId}
                     >
                       {img.imageId}
                     </span>
                   </td>
-                  <td className="py-3.5 px-5">
-                    <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                      <HardDrive className="w-3.5 h-3.5" />
+                  <td className="py-3.5 px-5 whitespace-nowrap align-middle">
+                    <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground whitespace-nowrap">
+                      <HardDrive className="w-3.5 h-3.5 shrink-0" />
                       {img.size}
                     </span>
                   </td>
-                  <td className="py-3.5 px-5">
-                    <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                      <Clock className="w-3 h-3" />
+                  <td className="py-3.5 px-5 whitespace-nowrap align-middle">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+                      <Clock className="w-3 h-3 shrink-0" />
                       {formatCreated(img.createdAt)}
                     </span>
                   </td>
                   <td className="py-3.5 px-5 w-[5.5rem] shrink-0 align-middle">
-                    <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                    <div className="flex items-center justify-end gap-0.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity whitespace-nowrap">
                       <button
                         type="button"
                         onClick={() => setForceDialog(img)}
@@ -355,7 +356,8 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
           <ListPagination
             page={currentData.page}
             totalPages={totalPages}
