@@ -60,7 +60,7 @@ export class AuthService {
     await this.emailConfirmationService.sendConfirmationEmail(saved).catch(() => {});
     const accessToken = this.generateAccessToken(saved);
     const refreshToken = await this.refreshTokenService.createRefreshToken(saved);
-    return this.buildAuthResponse(saved, accessToken, refreshToken.token);
+    return this.buildAuthResponse(saved, accessToken, refreshToken);
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
@@ -82,7 +82,7 @@ export class AuthService {
 
     const accessToken = this.generateAccessToken(user);
     const refreshToken = await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, refreshToken.token);
+    return this.buildAuthResponse(user, accessToken, refreshToken);
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
@@ -90,7 +90,7 @@ export class AuthService {
     const user = rt.user;
     const accessToken = this.generateAccessToken(user);
     const newRt = await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, newRt.token);
+    return this.buildAuthResponse(user, accessToken, newRt);
   }
 
   async logout(email: string, refreshToken: string): Promise<void> {
@@ -204,7 +204,7 @@ export class AuthService {
 
     const accessToken = this.generateAccessToken(merged);
     const refreshToken = await this.refreshTokenService.createRefreshToken(merged);
-    return this.buildAuthResponse(merged, accessToken, refreshToken.token);
+    return this.buildAuthResponse(merged, accessToken, refreshToken);
   }
 
   async loginWithGoogle(profile: Profile): Promise<AuthResponseDto> {
@@ -278,7 +278,7 @@ export class AuthService {
 
     const accessToken = this.generateAccessToken(user);
     const refreshToken = await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, refreshToken.token);
+    return this.buildAuthResponse(user, accessToken, refreshToken);
   }
 
   private async mergeGoogleProfileIntoUser(

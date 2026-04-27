@@ -13,8 +13,8 @@ export class RefreshToken {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ length: 100, unique: true })
-  token!: string;
+  @Column({ name: 'token_hash', length: 64, unique: true })
+  tokenHash!: string;
 
   @Column({ name: 'user_id' })
   userId!: number;
