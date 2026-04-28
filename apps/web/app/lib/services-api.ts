@@ -535,6 +535,36 @@ export async function patchApplicationNetworksApi(
   return mapApiServiceToService(JSON.parse(text));
 }
 
+export async function patchApplicationVolumesApi(
+  id: string,
+  body: { volumes: Array<{ source: string; target: string; readOnly?: boolean }> },
+): Promise<Service> {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/volumes`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
+export async function patchApplicationEnvApi(
+  id: string,
+  body: { variables: Array<{ key: string; value: string }> },
+): Promise<Service> {
+  const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/env`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapApiServiceToService(JSON.parse(text));
+}
+
 export async function deleteServiceApi(id: string): Promise<void> {
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}`, { method: "DELETE" });
   const text = await res.text();

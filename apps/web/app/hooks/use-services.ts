@@ -12,7 +12,9 @@ import {
   shutdownServiceApi,
   startServiceApi,
   updateServiceApi,
+  patchApplicationEnvApi,
   patchApplicationNetworksApi,
+  patchApplicationVolumesApi,
   type ServicesPageResponse,
 } from "@/lib/services-api";
 import {
@@ -198,6 +200,44 @@ export function usePatchApplicationNetworks() {
       external: string[];
       stack: string[];
     }) => patchApplicationNetworksApi(id, { external, stack }),
+    onSuccess: (data) => {
+      void invalidateProjectServicesQueries(qc, data.projectId);
+      qc.invalidateQueries({ queryKey: ["services"] });
+      void invalidateServiceScopedQueries(qc, serviceQueryKeyId(data), user?.userId ?? "none");
+    },
+  });
+}
+
+export function usePatchApplicationVolumes() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: ({
+      id,
+      volumes,
+    }: {
+      id: string;
+      volumes: Array<{ source: string; target: string; readOnly?: boolean }>;
+    }) => patchApplicationVolumesApi(id, { volumes }),
+    onSuccess: (data) => {
+      void invalidateProjectServicesQueries(qc, data.projectId);
+      qc.invalidateQueries({ queryKey: ["services"] });
+      void invalidateServiceScopedQueries(qc, serviceQueryKeyId(data), user?.userId ?? "none");
+    },
+  });
+}
+
+export function usePatchApplicationEnv() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: ({
+      id,
+      variables,
+    }: {
+      id: string;
+      variables: Array<{ key: string; value: string }>;
+    }) => patchApplicationEnvApi(id, { variables }),
     onSuccess: (data) => {
       void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });

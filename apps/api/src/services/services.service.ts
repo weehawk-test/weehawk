@@ -1112,13 +1112,19 @@ export class ServicesService {
 
   private async composeApplicationDockerConfigForService(
     service: Service,
-    networkOverride?: { external: string[]; stack: string[] },
+    overrides?: {
+      network?: { external: string[]; stack: string[] };
+      volumes?: Array<{ source: string; target: string; readOnly: boolean }>;
+      envKeys?: string[];
+    },
   ): Promise<string> {
     const args = this.extractApplicationComposeRegenerationArgs(service);
     let network =
-      networkOverride ??
+      overrides?.network ??
       this.parseApplicationNetworksFromConfig(service.dockerConfig || '');
     network = this.ensureTraefikExternalNetwork(network, service);
+    const volumes = overrides?.volumes ?? args.volumes;
+    const envKeys = overrides?.envKeys ?? args.envKeys;
     const registryPush = this.parseConfigHeaderValue(
       service.dockerConfig || '',
       'registry.pushImage',
@@ -1145,8 +1151,8 @@ export class ServicesService {
       containerPort: args.containerPort,
       publishPort: args.publishPort,
       replicas: args.replicas,
-      envKeys: args.envKeys,
-      volumes: args.volumes,
+      envKeys,
+      volumes,
       network,
       traefik,
     });
@@ -1304,8 +1310,71 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       env: service.env ?? '',
     };
     service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
-      external: ext,
-      stack: stk,
+      network: {
+        external: ext,
+        stack: stk,
+      },
+    });
+    const saved = await this.serviceRepository.save(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    return saved;
+  }
+
+  async patchApplicationVolumes(
+    id: number,
+    dto: {
+      volumes?: Array<{ source: string; target: string; readOnly?: boolean }>;
+    },
+    userId: number,
+  ) {
+    const service = await this.assertServiceOwnedByUser(id, userId);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException(
+        'This service is not an application-type service.',
+      );
+    }
+    const volumes = this.normalizeApplicationVolumePayload(dto.volumes ?? []);
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: service.env ?? '',
+    };
+    service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
+      volumes,
+    });
+    const saved = await this.serviceRepository.save(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    return saved;
+  }
+
+  async patchApplicationEnv(
+    id: number,
+    dto: {
+      variables?: Array<{ key: string; value: string }>;
+    },
+    userId: number,
+  ) {
+    const service = await this.assertServiceOwnedByUser(id, userId);
+    if (service.composeType !== composeType.APPLICATION) {
+      throw new BadRequestException(
+        'This service is not an application-type service.',
+      );
+    }
+    const previousConfig = service.dockerConfig || '';
+    const previousEnv = service.env || '';
+    const parsedVars = this.parseApplicationVariables(
+      JSON.stringify(dto.variables ?? []),
+    );
+    const valuesMap = this.resolveApplicationValuesMap(parsedVars);
+    await this.removeObsoleteManagedSecrets(service, previousConfig, {});
+    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
+    const envWithoutManaged = this.removeEnvKeys(previousEnv, managedKeys);
+    service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
+    const yamlEnvBefore = {
+      dockerConfig: service.dockerConfig ?? '',
+      env: previousEnv,
+    };
+    service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
+      envKeys: Object.keys(valuesMap),
     });
     const saved = await this.serviceRepository.save(service);
     this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
@@ -1353,11 +1422,16 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     let containerPort = options?.containerPort ?? 3000;
     const publishPort = options?.publishPort;
     const replicas = Math.min(10, Math.max(1, Math.floor(options?.replicas ?? 1)));
-    const parsedVars = this.parseApplicationVariables(options?.variablesJson);
-    const valuesMap = this.resolveApplicationValuesMap(parsedVars);
+    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
+    const hasVarsPayload = options?.variablesJson !== undefined;
+    const valuesMap = hasVarsPayload
+      ? this.resolveApplicationValuesMap(
+          this.parseApplicationVariables(options?.variablesJson),
+        )
+      : this.pickEnvValuesMapByKeys(service.env || '', managedKeys);
+    const composeEnvKeys = hasVarsPayload ? Object.keys(valuesMap) : managedKeys;
 
     await this.removeObsoleteManagedSecrets(service, previousConfig, {});
-    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
@@ -1386,7 +1460,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       containerPort,
       publishPort,
       replicas,
-      envKeys: Object.keys(valuesMap),
+      envKeys: composeEnvKeys,
       volumes,
       network: networkMerged,
       traefik,
@@ -1536,12 +1610,17 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     let containerPort = options.containerPort ?? 3000;
     const publishPort = options.publishPort;
     const replicas = Math.min(10, Math.max(1, Math.floor(options.replicas ?? 1)));
-    const parsedVars = this.parseApplicationVariables(options?.variablesJson);
-    const valuesMap = this.resolveApplicationValuesMap(parsedVars);
-
     const previousConfig = service.dockerConfig || '';
-    await this.removeObsoleteManagedSecrets(service, previousConfig, {});
     const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
+    const hasVarsPayload = options?.variablesJson !== undefined;
+    const valuesMap = hasVarsPayload
+      ? this.resolveApplicationValuesMap(
+          this.parseApplicationVariables(options?.variablesJson),
+        )
+      : this.pickEnvValuesMapByKeys(service.env || '', managedKeys);
+    const composeEnvKeys = hasVarsPayload ? Object.keys(valuesMap) : managedKeys;
+
+    await this.removeObsoleteManagedSecrets(service, previousConfig, {});
     const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
@@ -1561,7 +1640,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       containerPort,
       publishPort,
       replicas,
-      envKeys: Object.keys(valuesMap),
+      envKeys: composeEnvKeys,
       volumes,
       network: networkMerged,
       traefik,
@@ -1611,6 +1690,35 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
   ): Record<string, string> {
     const out: Record<string, string> = {};
     for (const v of vars) out[v.key] = v.value;
+    return out;
+  }
+
+  private parseEnvTextToMap(envText: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const line of (envText || '').split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || t.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      const value = line.slice(eq + 1);
+      if (!key) continue;
+      out[key] = value;
+    }
+    return out;
+  }
+
+  private pickEnvValuesMapByKeys(
+    envText: string,
+    keys: string[],
+  ): Record<string, string> {
+    const src = this.parseEnvTextToMap(envText);
+    const out: Record<string, string> = {};
+    for (const k of keys) {
+      if (Object.prototype.hasOwnProperty.call(src, k)) {
+        out[k] = src[k];
+      }
+    }
     return out;
   }
 

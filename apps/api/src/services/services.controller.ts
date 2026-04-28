@@ -29,6 +29,8 @@ import { PostgresStackUpdateDto } from './dto/postgres-stack-update.dto';
 import { ApplicationGitCloneStageDto } from './dto/application-git-clone-stage.dto';
 import { ApplicationGenerateFromSourceDto } from './dto/application-generate-from-source.dto';
 import { PatchApplicationNetworksDto } from './dto/patch-application-networks.dto';
+import { PatchApplicationVolumesDto } from './dto/patch-application-volumes.dto';
+import { PatchApplicationEnvDto } from './dto/patch-application-env.dto';
 import { PatchApplicationImageDeployDto } from './dto/patch-application-image.dto';
 import { RunServiceBackupDto } from './dto/run-service-backup.dto';
 import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s3.dto';
@@ -375,6 +377,42 @@ export class ServicesController {
   ) {
     const resolvedId = await this.sid(id, req);
     return this.servicesService.patchApplicationNetworks(
+      resolvedId,
+      dto,
+      this.uid(req),
+    );
+  }
+
+  @Patch(':id/application/volumes')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary: 'Update application volumes and regenerate compose YAML',
+  })
+  async patchApplicationVolumes(
+    @Param('id') id: string,
+    @Body() dto: PatchApplicationVolumesDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.patchApplicationVolumes(
+      resolvedId,
+      dto,
+      this.uid(req),
+    );
+  }
+
+  @Patch(':id/application/env')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  @ApiOperation({
+    summary: 'Update application environment values and regenerate compose YAML',
+  })
+  async patchApplicationEnv(
+    @Param('id') id: string,
+    @Body() dto: PatchApplicationEnvDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    const resolvedId = await this.sid(id, req);
+    return this.servicesService.patchApplicationEnv(
       resolvedId,
       dto,
       this.uid(req),

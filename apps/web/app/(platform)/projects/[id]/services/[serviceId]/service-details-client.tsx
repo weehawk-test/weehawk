@@ -35,6 +35,9 @@ import {
   useServiceVolumes,
   useServices,
   useUpdateService,
+  usePatchApplicationNetworks,
+  usePatchApplicationVolumes,
+  usePatchApplicationEnv,
 } from "@/hooks/use-services";
 import { useProject } from "@/hooks/use-projects";
 import { useDockerSecretsPagedWithInitialData } from "@/hooks/use-docker-secrets";
@@ -3352,6 +3355,20 @@ function ApplicationArchivePanel({
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
   type AppVolumeRow = { source: string; target: string; readOnly: boolean };
   const [volumeRows, setVolumeRows] = useState<AppVolumeRow[]>([]);
+  const [connectionsDirty, setConnectionsDirty] = useState(false);
+  const [volumesDirty, setVolumesDirty] = useState(false);
+  const [envDirty, setEnvDirty] = useState(false);
+  const patchAppNetworks = usePatchApplicationNetworks();
+  const patchAppVolumes = usePatchApplicationVolumes();
+  const patchAppEnv = usePatchApplicationEnv();
+  const setConnectionExternalAndDirty = useCallback((next: string[]) => {
+    setConnectionExternal(next);
+    setConnectionsDirty(true);
+  }, []);
+  const setConnectionStackKeysAndDirty = useCallback((next: string[]) => {
+    setConnectionStackKeys(next);
+    setConnectionsDirty(true);
+  }, []);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "volumes" | "env" | null>(null);
   const [deployTarget, setDeployTarget] = useState<"source" | "image">("source");
   /** Only one of GitHub / GitLab deploy panels open at a time (accordion). */
@@ -3580,12 +3597,14 @@ function ApplicationArchivePanel({
     const p = parseApplicationNetworkHeaders(cfg);
     setConnectionExternal(p.external);
     setConnectionStackKeys(p.stack.length ? p.stack : []);
+    setConnectionsDirty(false);
   }, [serviceRow?.id, serviceRow?.config]);
 
   useEffect(() => {
     const cfg = serviceRow?.config ?? "";
     const parsed = parseApplicationVolumeHeaders(cfg);
     setVolumeRows(parsed);
+    setVolumesDirty(false);
   }, [serviceRow?.id, serviceRow?.config]);
 
   useEffect(() => {
@@ -3604,7 +3623,71 @@ function ApplicationArchivePanel({
       })),
     );
     setValueVisibleByRow({});
+    setEnvDirty(false);
   }, [serviceRow?.id, serviceRow?.config, serviceRow?.env]);
+
+  useEffect(() => {
+    if (!serviceRow?.id || !connectionsDirty) return;
+    const timer = window.setTimeout(() => {
+      void patchAppNetworks
+        .mutateAsync({
+          id: serviceId,
+          external: connectionExternal,
+          stack: connectionStackKeys,
+        })
+        .then(() => setConnectionsDirty(false))
+        .catch(() => {
+          /* keep dirty for retry on next change */
+        });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [
+    connectionExternal,
+    connectionStackKeys,
+    connectionsDirty,
+    patchAppNetworks,
+    serviceId,
+    serviceRow?.id,
+  ]);
+
+  useEffect(() => {
+    if (!serviceRow?.id || !volumesDirty) return;
+    const timer = window.setTimeout(() => {
+      void patchAppVolumes
+        .mutateAsync({
+          id: serviceId,
+          volumes: volumeRows.map((v) => ({
+            source: v.source,
+            target: v.target,
+            readOnly: v.readOnly,
+          })),
+        })
+        .then(() => setVolumesDirty(false))
+        .catch(() => {
+          /* keep dirty for retry on next change */
+        });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [patchAppVolumes, serviceId, serviceRow?.id, volumeRows, volumesDirty]);
+
+  useEffect(() => {
+    if (!serviceRow?.id || !envDirty) return;
+    const timer = window.setTimeout(() => {
+      const cleanVars = variables
+        .map((v) => ({ key: v.key.trim(), value: v.value }))
+        .filter((v) => v.key.length > 0);
+      void patchAppEnv
+        .mutateAsync({
+          id: serviceId,
+          variables: cleanVars,
+        })
+        .then(() => setEnvDirty(false))
+        .catch(() => {
+          /* keep dirty for retry on next change */
+        });
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [envDirty, patchAppEnv, serviceId, serviceRow?.id, variables]);
 
   useEffect(() => {
     const cfg = serviceRow?.config ?? "";
@@ -3653,6 +3736,7 @@ function ApplicationArchivePanel({
   }, [serviceRow?.id, serviceRow?.config]);
 
   const updateVariable = (idx: number, patch: Partial<AppEnvVarRow>) => {
+    setEnvDirty(true);
     setVariables((prev) =>
       prev.map((v, i) => {
         if (i !== idx) return v;
@@ -3664,8 +3748,12 @@ function ApplicationArchivePanel({
       }),
     );
   };
-  const addVariable = () => setVariables((prev) => [...prev, { key: "", value: "" }]);
+  const addVariable = () => {
+    setEnvDirty(true);
+    setVariables((prev) => [...prev, { key: "", value: "" }]);
+  };
   const removeVariable = (idx: number) => {
+    setEnvDirty(true);
     setVariables((prev) => prev.filter((_, i) => i !== idx));
     setValueVisibleByRow((prev) => {
       const next: Record<number, boolean> = {};
@@ -3690,6 +3778,7 @@ function ApplicationArchivePanel({
       parsed.push({ key, value });
     }
     setVariables(parsed);
+    setEnvDirty(true);
     setValueVisibleByRow({});
     toast({
       title: "Variables loaded",
@@ -5098,8 +5187,8 @@ function ApplicationArchivePanel({
             variant="embedded"
             external={connectionExternal}
             stackKeys={connectionStackKeys}
-            onExternalChange={setConnectionExternal}
-            onStackKeysChange={setConnectionStackKeys}
+            onExternalChange={setConnectionExternalAndDirty}
+            onStackKeysChange={setConnectionStackKeysAndDirty}
             open={openAppSection === "connections"}
             onOpenChange={(next) => setOpenAppSection(next ? "connections" : null)}
           />
@@ -5147,39 +5236,45 @@ function ApplicationArchivePanel({
                     <input
                       className="input-field font-mono text-sm col-span-4"
                       value={row.source}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setVolumesDirty(true);
                         setVolumeRows((prev) =>
                           prev.map((v, i) => (i === idx ? { ...v, source: e.target.value } : v)),
-                        )
-                      }
+                        );
+                      }}
                       placeholder="source (e.g. app-data)"
                     />
                     <input
                       className="input-field font-mono text-sm col-span-5"
                       value={row.target}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setVolumesDirty(true);
                         setVolumeRows((prev) =>
                           prev.map((v, i) => (i === idx ? { ...v, target: e.target.value } : v)),
-                        )
-                      }
+                        );
+                      }}
                       placeholder="/container/path"
                     />
                     <label className="col-span-2 flex items-center justify-center gap-1 rounded-lg border border-border text-xs text-muted-foreground">
                       <input
                         type="checkbox"
                         checked={row.readOnly}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          setVolumesDirty(true);
                           setVolumeRows((prev) =>
                             prev.map((v, i) => (i === idx ? { ...v, readOnly: e.target.checked } : v)),
-                          )
-                        }
+                          );
+                        }}
                       />
                       RO
                     </label>
                     <button
                       type="button"
                       className="btn-secondary text-xs col-span-1"
-                      onClick={() => setVolumeRows((prev) => prev.filter((_, i) => i !== idx))}
+                      onClick={() => {
+                        setVolumesDirty(true);
+                        setVolumeRows((prev) => prev.filter((_, i) => i !== idx));
+                      }}
                       title="Remove row"
                     >
                       <Trash2 className="w-3.5 h-3.5 mx-auto" />
@@ -5188,9 +5283,10 @@ function ApplicationArchivePanel({
                 ))}
                 <button
                   type="button"
-                  onClick={() =>
-                    setVolumeRows((prev) => [...prev, { source: "", target: "", readOnly: false }])
-                  }
+                  onClick={() => {
+                    setVolumesDirty(true);
+                    setVolumeRows((prev) => [...prev, { source: "", target: "", readOnly: false }]);
+                  }}
                   className="btn-secondary text-xs inline-flex items-center gap-1.5"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add volume
