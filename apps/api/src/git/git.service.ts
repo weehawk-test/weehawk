@@ -638,6 +638,7 @@ export class GitService implements OnModuleInit {
       default_permissions: {
         contents: 'read',
         metadata: 'read',
+        repository_hooks: 'write',
       },
       default_events: [],
     };
@@ -671,7 +672,7 @@ export class GitService implements OnModuleInit {
       appJwt,
     );
     const res = await fetch(
-      `https://api.github.com/repos/${encodeURIComponent(params.repoFullName)}/hooks`,
+      `https://api.github.com/repos/${GitService.githubRepoApiPath(params.repoFullName)}/hooks`,
       {
         method: 'POST',
         headers: {
@@ -695,6 +696,11 @@ export class GitService implements OnModuleInit {
     );
     const text = await res.text();
     if (!res.ok) {
+      if (res.status === 403 && /Resource not accessible by integration/i.test(text)) {
+        throw new BadRequestException(
+          'GitHub App cannot create repository webhooks for this repo. Grant repository permission "Webhooks: Read and write" to the app, ensure the app is installed on this repository, then re-install/refresh the app installation.',
+        );
+      }
       throw new BadRequestException(
         text.trim().slice(0, 800) || `GitHub create hook failed (${res.status})`,
       );
@@ -732,7 +738,7 @@ export class GitService implements OnModuleInit {
         appJwt,
       );
       const res = await fetch(
-        `https://api.github.com/repos/${encodeURIComponent(repoFullName)}/hooks/${encodeURIComponent(String(hookId))}`,
+        `https://api.github.com/repos/${GitService.githubRepoApiPath(repoFullName)}/hooks/${encodeURIComponent(String(hookId))}`,
         {
           method: 'DELETE',
           headers: {
@@ -988,6 +994,17 @@ export class GitService implements OnModuleInit {
     return null;
   }
 
+  private static githubRepoApiPath(fullName: string): string {
+    const fn = fullName.trim();
+    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(fn)) {
+      throw new BadRequestException(
+        'Repository must look like owner/repo (letters, numbers, ._-).',
+      );
+    }
+    const [owner, repo] = fn.split('/');
+    return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  }
+
   private async githubFetchJson(
     url: string,
     bearer: string,
@@ -1081,7 +1098,7 @@ export class GitService implements OnModuleInit {
         'githubRepoFullName must look like owner/repo (letters, numbers, ._-).',
       );
     }
-    const apiUrl = `https://api.github.com/repos/${encodeURIComponent(fn)}`;
+    const apiUrl = `https://api.github.com/repos/${GitService.githubRepoApiPath(fn)}`;
     const { status, text } = await this.githubFetchJson(apiUrl, instTok);
     if (!status.toString().startsWith('2')) {
       throw new BadRequestException(
@@ -1266,7 +1283,7 @@ export class GitService implements OnModuleInit {
     let page = 1;
     const maxPages = 30;
     for (; page <= maxPages; page += 1) {
-      const apiUrl = `https://api.github.com/repos/${encodeURIComponent(fn)}/branches?per_page=100&page=${page}`;
+      const apiUrl = `https://api.github.com/repos/${GitService.githubRepoApiPath(fn)}/branches?per_page=100&page=${page}`;
       const { status, text } = await this.githubFetchJson(apiUrl, instTok);
       if (!status.toString().startsWith('2')) {
         throw new BadRequestException(
@@ -1495,7 +1512,7 @@ export class GitService implements OnModuleInit {
       );
       let ref = requestedBranch;
       if (!ref) {
-        const apiUrl = `https://api.github.com/repos/${encodeURIComponent(fn)}`;
+        const apiUrl = `https://api.github.com/repos/${GitService.githubRepoApiPath(fn)}`;
         const { status, text } = await this.githubFetchJson(apiUrl, instTok);
         if (!status.toString().startsWith('2')) {
           throw new BadRequestException(

@@ -3580,16 +3580,22 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     ) {
       const parsed = ServicesService.parseGithubRepoId(service.autoDeployRepoId);
       if (parsed && service.autoDeployGithubHookId == null) {
-        const hookId = await this.gitService.createGithubRepoWebhook({
-          installationId: parsed.installationId,
-          repoFullName: parsed.fullName,
-          url: triggerUrl,
-        });
-        service.autoDeployGithubHookId = hookId;
-        await this.serviceRepository.save(service);
-        this.log.log(
-          `Auto-deploy: registered GitHub webhook #${hookId} for ${parsed.fullName} → ${triggerUrl}`,
-        );
+        try {
+          const hookId = await this.gitService.createGithubRepoWebhook({
+            installationId: parsed.installationId,
+            repoFullName: parsed.fullName,
+            url: triggerUrl,
+          });
+          service.autoDeployGithubHookId = hookId;
+          await this.serviceRepository.save(service);
+          this.log.log(
+            `Auto-deploy: registered GitHub webhook #${hookId} for ${parsed.fullName} → ${triggerUrl}`,
+          );
+        } catch (e) {
+          this.log.warn(
+            `Auto-deploy: failed to register GitHub webhook for ${parsed.fullName}; keeping auto-deploy settings saved. ${getErrorMessage(e)}`,
+          );
+        }
       }
     }
 
@@ -3603,18 +3609,24 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         service.autoDeployGitlabHookId == null ||
         service.autoDeployGitlabHookProjectId !== projectId
       ) {
-        const hookId = await this.gitService.createGitlabPushWebhook({
-          projectId,
-          url: triggerUrl,
-          token: randomBytes(24).toString('hex'),
-          userId: service.project.userId,
-        });
-        service.autoDeployGitlabHookId = hookId;
-        service.autoDeployGitlabHookProjectId = projectId;
-        await this.serviceRepository.save(service);
-        this.log.log(
-          `Auto-deploy: registered GitLab hook #${hookId} for project ${projectId} → ${triggerUrl}`,
-        );
+        try {
+          const hookId = await this.gitService.createGitlabPushWebhook({
+            projectId,
+            url: triggerUrl,
+            token: randomBytes(24).toString('hex'),
+            userId: service.project.userId,
+          });
+          service.autoDeployGitlabHookId = hookId;
+          service.autoDeployGitlabHookProjectId = projectId;
+          await this.serviceRepository.save(service);
+          this.log.log(
+            `Auto-deploy: registered GitLab hook #${hookId} for project ${projectId} → ${triggerUrl}`,
+          );
+        } catch (e) {
+          this.log.warn(
+            `Auto-deploy: failed to register GitLab webhook for project ${projectId}; keeping auto-deploy settings saved. ${getErrorMessage(e)}`,
+          );
+        }
       }
     }
   }
@@ -3638,6 +3650,25 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    */
   async resolveGitlabAuthenticatedUrl(httpUrl: string, userId = 1): Promise<string> {
     return this.gitService.resolveGitlabHttpCloneUrl(httpUrl, userId);
+  }
+
+  /**
+   * Resolve an authenticated HTTPS clone URL for a GitHub App installation repo.
+   * Embeds a short-lived installation token for private repository clone.
+   */
+  async resolveGithubInstallationCloneUrl(
+    installationId: number,
+    fullName: string,
+  ): Promise<string | null> {
+    try {
+      const info = await this.gitService.githubCloneInfoForInstallationRepo(
+        installationId,
+        fullName,
+      );
+      return info.cloneUrl || null;
+    } catch {
+      return null;
+    }
   }
 
   /**

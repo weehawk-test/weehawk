@@ -105,8 +105,9 @@ if [ -n "\$AD_URL" ]; then
       AD_URL=\$(printf '%s' "\$AD_URL" | sed "s|https://|https://x-access-token:\${_GH_TOK}@|")
       echo "=== Auto-deploy: GitHub token OK ==="
     else
-      echo "WARN: Could not get GitHub token. Clone may fail for private repos." >&2
+      echo "ERROR: Could not get GitHub installation token." >&2
       echo "Response: \$_TR" >&2
+      exit 1
     fi
   fi
   echo "=== Auto-deploy: fetching source (branch: \$AD_BRANCH) ==="
@@ -120,23 +121,23 @@ if [ -n "\$AD_URL" ]; then
   fi
   if [ -d "\$AD_TARGET/.git" ]; then
     echo "=== Auto-deploy: git fetch/pull ==="
-    git -C "\$AD_TARGET" remote set-url origin "\$AD_URL" 2>&1 || true
-    git -C "\$AD_TARGET" fetch --depth 1 origin "\$AD_BRANCH" 2>&1 || {
+    git -C "\$AD_TARGET" remote set-url origin "\$AD_URL" || true
+    git -C "\$AD_TARGET" fetch --depth 1 origin "\$AD_BRANCH" || {
       echo "Auto-deploy git fetch failed." >&2
       exit 1
     }
-    git -C "\$AD_TARGET" checkout -B "\$AD_BRANCH" "origin/\$AD_BRANCH" 2>&1 || {
+    git -C "\$AD_TARGET" checkout -B "\$AD_BRANCH" "origin/\$AD_BRANCH" || {
       echo "Auto-deploy git checkout failed." >&2
       exit 1
     }
-    git -C "\$AD_TARGET" reset --hard "origin/\$AD_BRANCH" 2>&1 || {
+    git -C "\$AD_TARGET" reset --hard "origin/\$AD_BRANCH" || {
       echo "Auto-deploy git reset failed." >&2
       exit 1
     }
-    git -C "\$AD_TARGET" clean -fdx 2>&1 || true
+    git -C "\$AD_TARGET" clean -fdx || true
   else
     rm -rf "\$AD_TARGET"
-    git clone --depth 1 --branch "\$AD_BRANCH" "\$AD_URL" "\$AD_TARGET" 2>&1 || {
+    git clone --depth 1 --branch "\$AD_BRANCH" "\$AD_URL" "\$AD_TARGET" || {
       echo "Auto-deploy git clone failed." >&2
       exit 1
     }

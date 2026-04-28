@@ -41,6 +41,13 @@ async function errorBody(res: Response): Promise<string> {
   return text || res.statusText;
 }
 
+function createApiUrl(path: string): URL {
+  const base =
+    API_BASE ||
+    (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
+  return new URL(path, base);
+}
+
 export async function fetchGitSettings(accessToken: string): Promise<GitSettingsPublic> {
   const res = await authFetch(accessToken, `${API_BASE}/api/git/settings`, { method: "GET" });
   if (!res.ok) throw new Error(await errorBody(res));
@@ -65,7 +72,7 @@ export async function fetchGitlabProjects(
   accessToken: string,
   params?: { page?: number; perPage?: number; search?: string },
 ): Promise<GitlabProjectsListResponse> {
-  const u = new URL(`${API_BASE}/api/git/gitlab/projects`);
+  const u = createApiUrl("/api/git/gitlab/projects");
   if (params?.page != null) u.searchParams.set("page", String(params.page));
   if (params?.perPage != null) u.searchParams.set("perPage", String(params.perPage));
   if (params?.search?.trim()) u.searchParams.set("search", params.search.trim());
@@ -107,7 +114,7 @@ export async function fetchGithubRepositories(
   accessToken: string,
   params?: { page?: number; perPage?: number; search?: string },
 ): Promise<GithubRepositoriesListResponse> {
-  const u = new URL(`${API_BASE}/api/git/github/repositories`);
+  const u = createApiUrl("/api/git/github/repositories");
   if (params?.page != null) u.searchParams.set("page", String(params.page));
   if (params?.perPage != null) u.searchParams.set("perPage", String(params.perPage));
   if (params?.search?.trim()) u.searchParams.set("search", params.search.trim());
@@ -120,7 +127,7 @@ export async function fetchGithubBranches(
   accessToken: string,
   params: { installationId: number; repo: string },
 ): Promise<{ branches: string[] }> {
-  const u = new URL(`${API_BASE}/api/git/github/branches`);
+  const u = createApiUrl("/api/git/github/branches");
   u.searchParams.set("installationId", String(params.installationId));
   u.searchParams.set("repo", params.repo.trim());
   const res = await authFetch(accessToken, u.toString(), { method: "GET" });

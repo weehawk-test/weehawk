@@ -160,11 +160,23 @@ export class ExecutorService {
           }
         }
       } else if (gitProviderLabel === 'github') {
+        const ghInstallationId = parseInt(
+          parseConfigHeaderValue(rawConfig, 'app.git.githubInstallationId') || '',
+          10,
+        );
         const ghFullName = parseConfigHeaderValue(
           rawConfig,
           'app.git.githubRepoFullName',
         )?.trim();
-        if (ghFullName) {
+        if (ghFullName && Number.isFinite(ghInstallationId) && ghInstallationId > 0) {
+          cloneUrl = await this.servicesService.resolveGithubInstallationCloneUrl(
+            ghInstallationId,
+            ghFullName,
+          );
+          if (!cloneUrl) {
+            cloneUrl = `https://github.com/${ghFullName}.git`;
+          }
+        } else if (ghFullName) {
           cloneUrl = `https://github.com/${ghFullName}.git`;
         } else {
           const httpUrl = parseConfigHeaderValue(
@@ -368,14 +380,14 @@ if ! command -v git >/dev/null 2>&1; then
   exit 24
 fi
 if [ -d "$TARGET/.git" ]; then
-  git -C "$TARGET" remote set-url origin "$URL" 2>&1 || true
-  git -C "$TARGET" fetch --depth 1 origin "$BR" 2>&1
-  git -C "$TARGET" checkout -B "$BR" "origin/$BR" 2>&1
-  git -C "$TARGET" reset --hard "origin/$BR" 2>&1
-  git -C "$TARGET" clean -fdx 2>&1 || true
+  git -C "$TARGET" remote set-url origin "$URL" || true
+  git -C "$TARGET" fetch --depth 1 origin "$BR"
+  git -C "$TARGET" checkout -B "$BR" "origin/$BR"
+  git -C "$TARGET" reset --hard "origin/$BR"
+  git -C "$TARGET" clean -fdx || true
 else
   rm -rf "$TARGET"
-  git clone --depth 1 --branch "$BR" "$URL" "$TARGET" 2>&1
+  git clone --depth 1 --branch "$BR" "$URL" "$TARGET"
 fi
 `;
                 await this.remoteServersService.execDockerCliOnRemoteViaSsh(
@@ -517,14 +529,14 @@ if ! command -v git >/dev/null 2>&1; then
   exit 24
 fi
 if [ -d "$TARGET/.git" ]; then
-  git -C "$TARGET" remote set-url origin "$URL" 2>&1 || true
-  git -C "$TARGET" fetch --depth 1 origin "$BR" 2>&1
-  git -C "$TARGET" checkout -B "$BR" "origin/$BR" 2>&1
-  git -C "$TARGET" reset --hard "origin/$BR" 2>&1
-  git -C "$TARGET" clean -fdx 2>&1 || true
+  git -C "$TARGET" remote set-url origin "$URL" || true
+  git -C "$TARGET" fetch --depth 1 origin "$BR"
+  git -C "$TARGET" checkout -B "$BR" "origin/$BR"
+  git -C "$TARGET" reset --hard "origin/$BR"
+  git -C "$TARGET" clean -fdx || true
 else
   rm -rf "$TARGET"
-  git clone --depth 1 --branch "$BR" "$URL" "$TARGET" 2>&1
+  git clone --depth 1 --branch "$BR" "$URL" "$TARGET"
 fi
 `;
               await this.remoteServersService.execDockerCliOnRemoteViaSsh(
