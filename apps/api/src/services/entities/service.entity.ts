@@ -14,6 +14,7 @@ import { Project } from 'src/projects/entities/project.entity';
 import { RemoteServer } from 'src/remote-servers/entities/remote-server.entity';
 import type { ServiceTraefikRoute } from './service-traefik-route.types';
 import { generatePublicId } from '../../common/public-id';
+import { serviceEnvTransformer } from '../service-env.transformer';
 
 @Entity('services')
 export class Service {
@@ -38,7 +39,7 @@ export class Service {
   @Column({ type: 'text', nullable: true })
   dockerConfig!: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'text', nullable: true, transformer: serviceEnvTransformer })
   env?: string;
 
   @Column({ type: 'simple-json', nullable: true })
