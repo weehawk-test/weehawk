@@ -45,6 +45,7 @@ import {
   WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
 } from '../remote-servers/remote-servers.service';
 import { RegistryService } from '../registry/registry.service';
+import { bashGithubInstallationTokenMutateUrl } from '../common/github-install-token-bash';
 
 export type { ExecuteDeployOptions } from './executor-types';
 
@@ -120,6 +121,51 @@ export class ExecutorService {
     private readonly registryService: RegistryService,
   ) {}
 
+  /**
+   * SSH `git clone` on the remote host: optional GitHub App JWT exchange (same as on-host redeploy)
+   * so private repos never rely on an unauthenticated `https://github.com/...` URL.
+   */
+  private remoteGitCloneScriptBody(
+    shQ: (s: string) => string,
+    remoteSourceRoot: string,
+    ref: string,
+    cloneUrl: string,
+    githubBashAuth?: {
+      appId: string;
+      installationId: number;
+      pemBase64: string;
+    },
+  ): string {
+    const ghBlock =
+      githubBashAuth != null
+        ? `_GH_APP=${shQ(githubBashAuth.appId)}
+_GH_INST=${shQ(String(githubBashAuth.installationId))}
+_GH_PEM=${shQ(githubBashAuth.pemBase64)}
+${bashGithubInstallationTokenMutateUrl('URL', 'Weehawk deploy')}
+`
+        : '';
+    return `set -euo pipefail
+TARGET=${shQ(remoteSourceRoot)}
+BR=${shQ(ref)}
+URL=${shQ(cloneUrl)}
+${ghBlock}mkdir -p "$(dirname "$TARGET")"
+if ! command -v git >/dev/null 2>&1; then
+  echo "git is not installed on deploy host."
+  exit 24
+fi
+if [ -d "$TARGET/.git" ]; then
+  git -C "$TARGET" remote set-url origin "$URL" || true
+  git -C "$TARGET" fetch --depth 1 origin "$BR"
+  git -C "$TARGET" checkout -B "$BR" "origin/$BR"
+  git -C "$TARGET" reset --hard "origin/$BR"
+  git -C "$TARGET" clean -fdx || true
+else
+  rm -rf "$TARGET"
+  git clone --depth 1 --branch "$BR" "$URL" "$TARGET"
+fi
+`;
+  }
+
   /** Resolve Git clone URL for application services with `app.git.remoteOnly`. */
   private async resolveApplicationRemoteGitCloneParams(
     service: Service,
@@ -129,14 +175,28 @@ export class ExecutorService {
     cloneUrl: string | null;
     ref: string;
     gitProviderLabel: string | undefined;
+    githubBashAuth?: {
+      appId: string;
+      installationId: number;
+      pemBase64: string;
+    };
   }> {
     const isRemoteGit = parseConfigHeaderValue(rawConfig, 'app.git.remoteOnly') === 'true';
     const ref = parseConfigHeaderValue(rawConfig, 'app.git.ref')?.trim() || 'main';
     let cloneUrl: string | null = null;
     let gitProviderLabel: string | undefined;
+    let githubBashAuth:
+      | { appId: string; installationId: number; pemBase64: string }
+      | undefined;
     if (isRemoteGit) {
       gitProviderLabel = parseConfigHeaderValue(rawConfig, 'app.git.provider')?.trim();
-      const ownerUserId = service.project?.userId ?? 1;
+      const ownerUserIdRaw = service.project?.userId;
+      if (!ownerUserIdRaw || ownerUserIdRaw < 1) {
+        throw new InternalServerErrorException(
+          'Remote Git application source requires a service linked to a project with a valid owner user id.',
+        );
+      }
+      const ownerUserId = ownerUserIdRaw;
       if (gitProviderLabel === 'gitlab') {
         const glProjectId = parseInt(
           parseConfigHeaderValue(rawConfig, 'app.git.gitlabProjectId') || '',
@@ -169,15 +229,24 @@ export class ExecutorService {
           'app.git.githubRepoFullName',
         )?.trim();
         if (ghFullName && Number.isFinite(ghInstallationId) && ghInstallationId > 0) {
-          cloneUrl = await this.servicesService.resolveGithubInstallationCloneUrl(
-            ghInstallationId,
-            ghFullName,
-          );
-          if (!cloneUrl) {
-            cloneUrl = `https://github.com/${ghFullName}.git`;
+          const ghCreds =
+            await this.servicesService.getGithubAppCredentials(ownerUserId);
+          if (!ghCreds?.appId?.trim() || !ghCreds?.privateKeyPem?.trim()) {
+            throw new InternalServerErrorException(
+              'GitHub App is not configured for this project owner in Weehawk (Git → GitHub: App ID and private key, while signed in as the same user who owns the project). Required to clone GitHub repositories on the deploy host.',
+            );
           }
+          const slug = ghFullName.replace(/\.git$/i, '').replace(/^\/+/, '');
+          cloneUrl = `https://github.com/${slug}.git`;
+          githubBashAuth = {
+            appId: ghCreds.appId.trim(),
+            installationId: ghInstallationId,
+            pemBase64: Buffer.from(ghCreds.privateKeyPem.trim()).toString(
+              'base64',
+            ),
+          };
         } else if (ghFullName) {
-          cloneUrl = `https://github.com/${ghFullName}.git`;
+          cloneUrl = `https://github.com/${ghFullName.replace(/\.git$/i, '').replace(/^\/+/, '')}.git`;
         } else {
           const httpUrl = parseConfigHeaderValue(
             rawConfig,
@@ -187,7 +256,7 @@ export class ExecutorService {
         }
       }
     }
-    return { isRemoteGit, cloneUrl, ref, gitProviderLabel };
+    return { isRemoteGit, cloneUrl, ref, gitProviderLabel, githubBashAuth };
   }
 
   private async getBaseProcessEnvForService(
@@ -359,7 +428,8 @@ export class ExecutorService {
                       'Nixpacks builds on the remote host require a linked Git repository (source is cloned on the build machine only). The Weehawk API does not upload application source. Link GitHub or GitLab under Application source, or use Dockerfile build mode if you need another workflow.',
                   };
                 }
-                const { cloneUrl, ref, gitProviderLabel } = gitParams;
+                const { cloneUrl, ref, gitProviderLabel, githubBashAuth } =
+                  gitParams;
                 const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
                 const remoteSourceRoot = `${persist}/${sourceDir.replace(/\\/g, '/')}`;
                 const remoteBuildPathSeg = buildPath.replace(/\\/g, '/');
@@ -370,26 +440,13 @@ export class ExecutorService {
                 emitChunk(
                   `Cloning ${gitProviderLabel ?? 'git'} repository on build host ${buildHostLabel} (branch: ${ref}) for Nixpacks…\n`,
                 );
-                const remoteCloneScript = `set -euo pipefail
-TARGET=${shQ(remoteSourceRoot)}
-BR=${shQ(ref)}
-URL=${shQ(cloneUrl)}
-mkdir -p "$(dirname "$TARGET")"
-if ! command -v git >/dev/null 2>&1; then
-  echo "git is not installed on deploy host."
-  exit 24
-fi
-if [ -d "$TARGET/.git" ]; then
-  git -C "$TARGET" remote set-url origin "$URL" || true
-  git -C "$TARGET" fetch --depth 1 origin "$BR"
-  git -C "$TARGET" checkout -B "$BR" "origin/$BR"
-  git -C "$TARGET" reset --hard "origin/$BR"
-  git -C "$TARGET" clean -fdx || true
-else
-  rm -rf "$TARGET"
-  git clone --depth 1 --branch "$BR" "$URL" "$TARGET"
-fi
-`;
+                const remoteCloneScript = this.remoteGitCloneScriptBody(
+                  shQ,
+                  remoteSourceRoot,
+                  ref,
+                  cloneUrl,
+                  githubBashAuth,
+                );
                 await this.remoteServersService.execDockerCliOnRemoteViaSsh(
                   buildRemoteServerId,
                   projectUserId,
@@ -512,33 +569,20 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
             const dockerfilePosix = dockerfilePath.replace(/\\/g, '/');
             const deployHostLabel = remoteHostPublicLabel(service, remoteDeployId);
 
-            const { isRemoteGit, cloneUrl, ref, gitProviderLabel } =
+            const { isRemoteGit, cloneUrl, ref, gitProviderLabel, githubBashAuth } =
               await this.resolveApplicationRemoteGitCloneParams(service, rawConfig);
 
             if (isRemoteGit && cloneUrl) {
               emitChunk(
                 `Cloning ${gitProviderLabel ?? 'git'} repository on deploy host ${deployHostLabel} (branch: ${ref})…\n`,
               );
-              const remoteCloneScript = `set -euo pipefail
-TARGET=${shQ(remoteSourceRoot)}
-BR=${shQ(ref)}
-URL=${shQ(cloneUrl)}
-mkdir -p "$(dirname "$TARGET")"
-if ! command -v git >/dev/null 2>&1; then
-  echo "git is not installed on deploy host."
-  exit 24
-fi
-if [ -d "$TARGET/.git" ]; then
-  git -C "$TARGET" remote set-url origin "$URL" || true
-  git -C "$TARGET" fetch --depth 1 origin "$BR"
-  git -C "$TARGET" checkout -B "$BR" "origin/$BR"
-  git -C "$TARGET" reset --hard "origin/$BR"
-  git -C "$TARGET" clean -fdx || true
-else
-  rm -rf "$TARGET"
-  git clone --depth 1 --branch "$BR" "$URL" "$TARGET"
-fi
-`;
+              const remoteCloneScript = this.remoteGitCloneScriptBody(
+                shQ,
+                remoteSourceRoot,
+                ref,
+                cloneUrl,
+                githubBashAuth,
+              );
               await this.remoteServersService.execDockerCliOnRemoteViaSsh(
                 remoteDeployId,
                 null,

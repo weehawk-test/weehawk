@@ -8,6 +8,7 @@ import {
   parseContainerPortFromComposeYaml,
   resolveNixpacksNodeMajorForRemoteBuild,
 } from '../executor/executor-compose-parse';
+import { bashGithubInstallationTokenMutateUrl } from './github-install-token-bash';
 /** Must match {@link WEEHAWK_REMOTE_DEPLOYMENTS_BASE} in `remote-servers.service.ts`. */
 export const ON_HOST_DEPLOY_BUNDLE_ROOT = '/opt/weehawk-deployments';
 
@@ -86,30 +87,7 @@ if [ -n "\$AD_URL" ]; then
   _GH_APP="\${WEEHAWK_GH_APP_ID:-}"
   _GH_INST="\${WEEHAWK_GH_INSTALL_ID:-}"
   _GH_PEM="\${WEEHAWK_GH_PEM_B64:-}"
-  if [ -n "\$_GH_APP" ] && [ -n "\$_GH_INST" ] && [ -n "\$_GH_PEM" ]; then
-    echo "=== Auto-deploy: generating GitHub installation token ==="
-    _KF=\$(mktemp)
-    printf '%s' "\$_GH_PEM" | base64 -d > "\$_KF" 2>/dev/null
-    _NOW=\$(date +%s)
-    _HDR=\$(printf '{"alg":"RS256","typ":"JWT"}' | openssl base64 -e | tr -d '=\\n' | tr '/+' '_-')
-    _PLD=\$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' \$((_NOW-60)) \$((_NOW+300)) "\$_GH_APP" | openssl base64 -e | tr -d '=\\n' | tr '/+' '_-')
-    _SIG=\$(printf '%s' "\$_HDR.\$_PLD" | openssl dgst -sha256 -sign "\$_KF" | openssl base64 -e | tr -d '=\\n' | tr '/+' '_-')
-    _JWT="\$_HDR.\$_PLD.\$_SIG"
-    rm -f "\$_KF"
-    _TR=\$(curl -sS -X POST \\
-      -H "Authorization: Bearer \$_JWT" \\
-      -H "Accept: application/vnd.github+json" \\
-      "https://api.github.com/app/installations/\$_GH_INST/access_tokens" 2>&1)
-    _GH_TOK=\$(printf '%s' "\$_TR" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -1)
-    if [ -n "\$_GH_TOK" ]; then
-      AD_URL=\$(printf '%s' "\$AD_URL" | sed "s|https://|https://x-access-token:\${_GH_TOK}@|")
-      echo "=== Auto-deploy: GitHub token OK ==="
-    else
-      echo "ERROR: Could not get GitHub installation token." >&2
-      echo "Response: \$_TR" >&2
-      exit 1
-    fi
-  fi
+${bashGithubInstallationTokenMutateUrl('AD_URL', 'Auto-deploy')}
   echo "=== Auto-deploy: fetching source (branch: \$AD_BRANCH) ==="
   AD_SRC_REL="\${WEEHAWK_SOURCE_DIR_REL:-}"
   if [ -z "\$AD_SRC_REL" ]; then AD_SRC_REL="\${WEEHAWK_BUILD_CONTEXT_REL:-app-source}"; fi

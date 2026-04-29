@@ -1370,7 +1370,10 @@ rm -rf ${inDirQ}
     const mountDockerSock =
       'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock';
 
-    const traefikSettings = rule ? await this.traefikService.getSettings() : null;
+    const traefikSettings =
+      rule && projectUserId != null && projectUserId >= 1
+        ? await this.traefikService.getSettings(projectUserId)
+        : null;
     const certResolverName = (traefikSettings?.certResolverName || 'letsencrypt').trim();
 
     const labelsPart = rule

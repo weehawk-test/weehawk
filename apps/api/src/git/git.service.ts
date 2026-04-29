@@ -88,6 +88,20 @@ export class GitService implements OnModuleInit {
     return;
   }
 
+  /**
+   * Git integration rows are keyed by account. Callers must pass the signed-in user id or
+   * project owner id — never assume `1`.
+   */
+  private requireIntegrationUserId(userId: unknown): number {
+    const n = typeof userId === 'number' ? userId : Number(userId);
+    if (!Number.isFinite(n) || n < 1) {
+      throw new InternalServerErrorException(
+        'Git integration requires a valid user id (signed-in account or project owner).',
+      );
+    }
+    return Math.trunc(n);
+  }
+
   private getEncryptionSecret(): string {
     const s = this.config.get<string>('WEEHAWK_ENCRYPTION_KEY');
     if (!s || !String(s).trim()) {
@@ -193,8 +207,9 @@ export class GitService implements OnModuleInit {
     };
   }
 
-  async getSettings(userId = 1): Promise<GitSettingsPublic> {
-    const row = await this.settingsRowForUser(userId);
+  async getSettings(userId: number): Promise<GitSettingsPublic> {
+    const uid = this.requireIntegrationUserId(userId);
+    const row = await this.settingsRowForUser(uid);
     await this.refreshGithubAppSlugIfNeeded(row);
     return this.toPublic(row);
   }
@@ -243,8 +258,9 @@ export class GitService implements OnModuleInit {
     return this.encryptSecret(t);
   }
 
-  async updateSettings(userId = 1, dto: UpdateGitSettingsDto): Promise<GitSettingsPublic> {
-    const row = await this.settingsRowForUser(userId);
+  async updateSettings(userId: number, dto: UpdateGitSettingsDto): Promise<GitSettingsPublic> {
+    const uid = this.requireIntegrationUserId(userId);
+    const row = await this.settingsRowForUser(uid);
 
     if (dto.githubAppId !== undefined) {
       const v = dto.githubAppId.trim();
@@ -291,8 +307,9 @@ export class GitService implements OnModuleInit {
     return this.toPublic(row);
   }
 
-  private async gitlabSettingsRow(userId = 1): Promise<GitIntegrationSettings> {
-    return this.settingsRowForUser(userId);
+  private async gitlabSettingsRow(userId: number): Promise<GitIntegrationSettings> {
+    const uid = this.requireIntegrationUserId(userId);
+    return this.settingsRowForUser(uid);
   }
 
   /**
@@ -310,8 +327,11 @@ export class GitService implements OnModuleInit {
   }
 
   /** HTTPS clone URL with embedded credentials (for server-side `git clone`). */
-  async gitlabAuthenticatedCloneUrl(httpUrlToRepo: string): Promise<string> {
-    const row = await this.gitlabSettingsRow();
+  async gitlabAuthenticatedCloneUrl(
+    httpUrlToRepo: string,
+    userId: number,
+  ): Promise<string> {
+    const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!token) {
       throw new BadRequestException(
@@ -328,7 +348,7 @@ export class GitService implements OnModuleInit {
   /**
    * URL passed to `git clone`: embed token when set (private repos), otherwise plain HTTPS (public repos).
    */
-  async resolveGitlabHttpCloneUrl(httpUrlToRepo: string, userId = 1): Promise<string> {
+  async resolveGitlabHttpCloneUrl(httpUrlToRepo: string, userId: number): Promise<string> {
     const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     const trimmed = httpUrlToRepo.trim();
@@ -346,7 +366,7 @@ export class GitService implements OnModuleInit {
    * Without this, GitLab returns a broad “visible” list including many public projects unrelated to the user.
    * Requires a personal or group access token.
    */
-  async listGitlabProjects(userId = 1, params: {
+  async listGitlabProjects(userId: number, params: {
     page?: number;
     perPage?: number;
     search?: string;
@@ -475,7 +495,7 @@ export class GitService implements OnModuleInit {
   }
 
   /** Resolve clone URL and default branch for a GitLab project id (API). */
-  async gitlabCloneInfoForProject(projectId: number, userId = 1): Promise<{
+  async gitlabCloneInfoForProject(projectId: number, userId: number): Promise<{
     cloneUrl: string;
     defaultBranch: string | null;
   }> {
@@ -522,7 +542,7 @@ export class GitService implements OnModuleInit {
    * GitLab.com often returns 403 for browser-style `/-/archive/...` URLs with `oauth2:token@`;
    * the REST archive endpoint with `PRIVATE-TOKEN` works reliably.
    */
-  async getGitlabArchiveApiCredentials(userId = 1): Promise<{
+  async getGitlabArchiveApiCredentials(userId: number): Promise<{
     apiBase: string;
     privateToken: string;
   } | null> {
@@ -535,7 +555,8 @@ export class GitService implements OnModuleInit {
         '',
       );
       return { apiBase: base, privateToken: token };
-    } catch {
+    } catch (e) {
+      if (e instanceof InternalServerErrorException) throw e;
       return null;
     }
   }
@@ -654,8 +675,9 @@ export class GitService implements OnModuleInit {
     repoFullName: string;
     url: string;
     secret?: string;
+    userId: number;
   }): Promise<number> {
-    const row = await this.githubAppCredentialsRow();
+    const row = await this.githubAppCredentialsRow(params.userId);
     const appId = row.githubAppId?.trim();
     const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
     if (!appId || !privateKey) {
@@ -723,9 +745,10 @@ export class GitService implements OnModuleInit {
     installationId: number,
     repoFullName: string,
     hookId: number,
+    userId: number,
   ): Promise<void> {
     try {
-      const row = await this.githubAppCredentialsRow();
+      const row = await this.githubAppCredentialsRow(userId);
       const appId = row.githubAppId?.trim();
       const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
       if (!appId || !privateKey) return;
@@ -768,9 +791,9 @@ export class GitService implements OnModuleInit {
     projectId: number;
     url: string;
     token: string;
-    userId?: number;
+    userId: number;
   }): Promise<number> {
-    const row = await this.gitlabSettingsRow(params.userId ?? 1);
+    const row = await this.gitlabSettingsRow(params.userId);
     const privateToken = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!privateToken) {
       throw new BadRequestException(
@@ -831,8 +854,9 @@ export class GitService implements OnModuleInit {
   async deleteGitlabProjectWebhook(
     projectId: number,
     hookId: number,
+    userId: number,
   ): Promise<void> {
-    const row = await this.gitlabSettingsRow();
+    const row = await this.gitlabSettingsRow(userId);
     const privateToken = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!privateToken) {
       return;
@@ -860,7 +884,11 @@ export class GitService implements OnModuleInit {
    * Exchanges the temporary code from GitHub after manifest registration and persists credentials.
    * @see https://docs.github.com/en/rest/apps/apps?apiVersion=2022-11-28#create-a-github-app-from-a-manifest
    */
-  async exchangeGithubManifestCode(userId = 1, code: string): Promise<GitSettingsPublic> {
+  async exchangeGithubManifestCode(
+    userId: number,
+    code: string,
+  ): Promise<GitSettingsPublic> {
+    const uid = this.requireIntegrationUserId(userId);
     const trimmed = code?.trim();
     if (!trimmed) {
       throw new BadRequestException('Missing manifest code');
@@ -897,7 +925,7 @@ export class GitService implements OnModuleInit {
     const pem = data['pem'];
     const webhookSecret = data['webhook_secret'];
 
-    const row = await this.settingsRowForUser(userId);
+    const row = await this.settingsRowForUser(uid);
 
     if (typeof id === 'number' || typeof id === 'string') {
       row.githubAppId = String(id);
@@ -926,7 +954,7 @@ export class GitService implements OnModuleInit {
 
   // ─── GitHub App (installation token + repo list + clone) ─────────────────
 
-  private async githubAppCredentialsRow(userId = 1): Promise<GitIntegrationSettings> {
+  private async githubAppCredentialsRow(userId: number): Promise<GitIntegrationSettings> {
     const row = await this.gitlabSettingsRow(userId);
     const appId = row.githubAppId?.trim();
     const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
@@ -940,16 +968,22 @@ export class GitService implements OnModuleInit {
 
   /**
    * Return the GitHub App credentials needed for remote self-service token generation.
-   * Returns null when the App is not configured (public repos only).
+   * Returns null when the App is not configured for this user (public repos only).
+   *
+   * Git integration rows are per {@link GitIntegrationSettings.userId}; callers must pass the
+   * project owner's id (same as Git → GitHub in the UI for that account), not a hard-coded `1`.
    */
-  async getGithubAppPublicCredentials(): Promise<{ appId: string; privateKeyPem: string } | null> {
+  async getGithubAppPublicCredentials(
+    userId: number,
+  ): Promise<{ appId: string; privateKeyPem: string } | null> {
     try {
-      const row = await this.githubAppCredentialsRow();
+      const row = await this.gitlabSettingsRow(userId);
       const appId = row.githubAppId?.trim();
       const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
       if (!appId || !pem) return null;
       return { appId, privateKeyPem: pem };
-    } catch {
+    } catch (e) {
+      if (e instanceof InternalServerErrorException) throw e;
       return null;
     }
   }
@@ -1075,8 +1109,9 @@ export class GitService implements OnModuleInit {
   async githubCloneInfoForInstallationRepo(
     installationId: number,
     fullName: string,
+    userId: number,
   ): Promise<{ cloneUrl: string; defaultBranch: string | null }> {
-    const row = await this.githubAppCredentialsRow();
+    const row = await this.githubAppCredentialsRow(userId);
     const appId = row.githubAppId?.trim();
     const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
     if (!appId || !privateKey) {
@@ -1127,7 +1162,7 @@ export class GitService implements OnModuleInit {
   /**
    * Repositories across all installations of this GitHub App (paginated after merge + optional search).
    */
-  async listGithubRepositories(userId = 1, params: {
+  async listGithubRepositories(userId: number, params: {
     page?: number;
     perPage?: number;
     search?: string;
@@ -1434,10 +1469,13 @@ export class GitService implements OnModuleInit {
       githubRepoFullName?: string;
       branch?: string;
     },
-    userId = 1,
+    userId: number,
   ): Promise<{ refUsed: string; marker: WeehawkRemoteGitMarkerV1 }> {
     this.assertSingleGitApplicationSource(options);
-    const marker = await this.resolveRemoteGitMarker(options, userId);
+    const marker = await this.resolveRemoteGitMarker(
+      options,
+      this.requireIntegrationUserId(userId),
+    );
     return { refUsed: marker.ref, marker };
   }
 

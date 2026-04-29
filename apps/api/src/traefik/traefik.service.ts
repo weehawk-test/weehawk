@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TraefikSettings } from './entities/traefik-settings.entity';
@@ -16,12 +16,23 @@ export class TraefikService {
     private readonly repo: Repository<TraefikSettings>,
   ) {}
 
-  async getSettings(userId = 1): Promise<TraefikSettings> {
-    let row = await this.repo.findOne({ where: { userId } });
+  private requireTraefikUserId(userId: unknown): number {
+    const n = typeof userId === 'number' ? userId : Number(userId);
+    if (!Number.isFinite(n) || n < 1) {
+      throw new InternalServerErrorException(
+        'Traefik settings require a valid user id (signed-in account).',
+      );
+    }
+    return Math.trunc(n);
+  }
+
+  async getSettings(userId: number): Promise<TraefikSettings> {
+    const uid = this.requireTraefikUserId(userId);
+    let row = await this.repo.findOne({ where: { userId: uid } });
     if (!row) {
       row = this.repo.create({
-        id: userId,
-        userId,
+        id: uid,
+        userId: uid,
         acmeEmail: 'admin@example.com',
         platformDomain: null,
         acmeStorageHostPath: '/var/www/weehawk/traefik/data/acme.json',
@@ -43,7 +54,7 @@ export class TraefikService {
     return row;
   }
 
-  async updateSettings(userId = 1, dto: UpdateTraefikSettingsDto): Promise<TraefikSettings> {
+  async updateSettings(userId: number, dto: UpdateTraefikSettingsDto): Promise<TraefikSettings> {
     const current = await this.getSettings(userId);
     if (dto.acmeEmail !== undefined) current.acmeEmail = dto.acmeEmail.trim();
     if (dto.platformDomain !== undefined) {
@@ -228,7 +239,7 @@ providers:
 `;
   }
 
-  async getResponsePayload(userId = 1) {
+  async getResponsePayload(userId: number) {
     const s = await this.getSettings(userId);
     return {
       ...this.toPlain(s),

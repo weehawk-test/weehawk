@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   HttpException,
+  InternalServerErrorException,
   forwardRef,
   Inject,
   Logger,
@@ -141,6 +142,17 @@ export class ServicesService {
       throw new NotFoundException(`Service #${serviceId} not found`);
     }
     return this.ensureServicePublicId(service);
+  }
+
+  /** Git / GitLab / GitHub integration rows are per user; never default to user `1`. */
+  private integrationOwnerUserId(service: Service): number {
+    const id = service.project?.userId;
+    if (!id || !Number.isFinite(id) || id < 1) {
+      throw new InternalServerErrorException(
+        'Service is missing project owner user id (required for Git integration).',
+      );
+    }
+    return Math.trunc(id);
   }
 
   private async assertProjectOwnedByUser(
@@ -861,7 +873,7 @@ export class ServicesService {
       }
       s.magicTraefikMeIpv4 = fromBody;
     }
-    const settings = await this.traefikService.getSettings();
+    const settings = await this.traefikService.getSettings(userId);
     const platformHost = this.sanitizePlatformHostForComparison(
       settings.platformDomain,
     );
@@ -918,7 +930,9 @@ export class ServicesService {
 
   async computeMagicTraefikMeQuickAccessUrl(service: Service): Promise<string | null> {
     const svc = await this.ensureServiceForMagicDomains(service);
-    const settings = await this.traefikService.getSettings();
+    const settings = await this.traefikService.getSettings(
+      this.integrationOwnerUserId(svc),
+    );
     const platformHost = this.sanitizePlatformHostForComparison(
       settings.platformDomain,
     );
@@ -1032,7 +1046,9 @@ export class ServicesService {
       return undefined;
     }
     const svc = await this.ensureServiceForMagicDomains(service);
-    const settings = await this.traefikService.getSettings();
+    const settings = await this.traefikService.getSettings(
+      this.integrationOwnerUserId(svc),
+    );
     const platformHost = this.sanitizePlatformHostForComparison(
       settings.platformDomain,
     );
@@ -2644,6 +2660,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             parsed.installationId,
             parsed.fullName,
             service.autoDeployGithubHookId,
+            this.integrationOwnerUserId(service),
           );
           this.log.log(
             `Service delete: removed GitHub webhook #${service.autoDeployGithubHookId} for ${parsed.fullName}`,
@@ -2664,6 +2681,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         await this.gitService.deleteGitlabProjectWebhook(
           service.autoDeployGitlabHookProjectId,
           service.autoDeployGitlabHookId,
+          this.integrationOwnerUserId(service),
         );
         this.log.log(
           `Service delete: removed GitLab hook #${service.autoDeployGitlabHookId} for project ${service.autoDeployGitlabHookProjectId}`,
@@ -3486,6 +3504,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             parsed.installationId,
             parsed.fullName,
             previous.autoDeployGithubHookId,
+            this.integrationOwnerUserId(service),
           );
         } catch (e) {
           this.log.warn(`resync: failed to delete old GitHub hook: ${getErrorMessage(e)}`);
@@ -3504,6 +3523,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         await this.gitService.deleteGitlabProjectWebhook(
           previous.autoDeployGitlabHookProjectId,
           previous.autoDeployGitlabHookId,
+          this.integrationOwnerUserId(service),
         );
       } catch (e) {
         this.log.warn(`resync: failed to delete old GitLab hook: ${getErrorMessage(e)}`);
@@ -3529,6 +3549,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           installationId: parsed.installationId,
           repoFullName: parsed.fullName,
           url: triggerUrl,
+          userId: this.integrationOwnerUserId(service),
         });
         service.autoDeployGithubHookId = hookId;
         await this.serviceRepository.save(service);
@@ -3547,7 +3568,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         projectId,
         url: triggerUrl,
         token: randomBytes(24).toString('hex'),
-        userId: service.project.userId,
+        userId: this.integrationOwnerUserId(service),
       });
       service.autoDeployGitlabHookId = hookId;
       service.autoDeployGitlabHookProjectId = projectId;
@@ -3638,6 +3659,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             parsed.installationId,
             parsed.fullName,
             previous.autoDeployGithubHookId,
+            this.integrationOwnerUserId(service),
           );
         } catch (e) {
           this.log.warn(`Failed to delete GitHub repo hook: ${getErrorMessage(e)}`);
@@ -3658,6 +3680,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         await this.gitService.deleteGitlabProjectWebhook(
           previous.autoDeployGitlabHookProjectId,
           previous.autoDeployGitlabHookId,
+          this.integrationOwnerUserId(service),
         );
       } catch (e) {
         this.log.warn(`Failed to delete GitLab project hook: ${getErrorMessage(e)}`);
@@ -3693,6 +3716,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             installationId: parsed.installationId,
             repoFullName: parsed.fullName,
             url: triggerUrl,
+            userId: this.integrationOwnerUserId(service),
           });
           service.autoDeployGithubHookId = hookId;
           await this.serviceRepository.save(service);
@@ -3722,7 +3746,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             projectId,
             url: triggerUrl,
             token: randomBytes(24).toString('hex'),
-            userId: service.project.userId,
+            userId: this.integrationOwnerUserId(service),
           });
           service.autoDeployGitlabHookId = hookId;
           service.autoDeployGitlabHookProjectId = projectId;
@@ -3743,11 +3767,15 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    * Resolve the authenticated HTTPS clone URL for a GitLab project (token embedded).
    * Used by the webhook env writer so the remote host can `git clone` private repos.
    */
-  async resolveGitlabProjectCloneUrl(projectId: number, userId = 1): Promise<string | null> {
+  async resolveGitlabProjectCloneUrl(
+    projectId: number,
+    userId: number,
+  ): Promise<string | null> {
     try {
       const info = await this.gitService.gitlabCloneInfoForProject(projectId, userId);
       return info.cloneUrl || null;
-    } catch {
+    } catch (e) {
+      if (e instanceof InternalServerErrorException) throw e;
       return null;
     }
   }
@@ -3756,7 +3784,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    * Resolve an authenticated HTTPS clone URL for a manual GitLab URL.
    * Injects the stored GitLab token when available (for private repos).
    */
-  async resolveGitlabAuthenticatedUrl(httpUrl: string, userId = 1): Promise<string> {
+  async resolveGitlabAuthenticatedUrl(httpUrl: string, userId: number): Promise<string> {
     return this.gitService.resolveGitlabHttpCloneUrl(httpUrl, userId);
   }
 
@@ -3767,14 +3795,17 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   async resolveGithubInstallationCloneUrl(
     installationId: number,
     fullName: string,
+    userId: number,
   ): Promise<string | null> {
     try {
       const info = await this.gitService.githubCloneInfoForInstallationRepo(
         installationId,
         fullName,
+        userId,
       );
       return info.cloneUrl || null;
-    } catch {
+    } catch (e) {
+      if (e instanceof InternalServerErrorException) throw e;
       return null;
     }
   }
@@ -3783,16 +3814,19 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    * Return the GitHub App credentials (appId + PEM private key) so callers
    * can write them to a remote env for self-service token generation.
    */
-  async getGithubAppCredentials(): Promise<{ appId: string; privateKeyPem: string } | null> {
+  async getGithubAppCredentials(
+    userId: number,
+  ): Promise<{ appId: string; privateKeyPem: string } | null> {
     try {
-      return await this.gitService.getGithubAppPublicCredentials();
-    } catch {
+      return await this.gitService.getGithubAppPublicCredentials(userId);
+    } catch (e) {
+      if (e instanceof InternalServerErrorException) throw e;
       return null;
     }
   }
 
   /** For on-host tarball fallback when `git` is missing (GitLab API archive). */
-  async getGitlabArchiveApiCredentials(userId = 1): Promise<{
+  async getGitlabArchiveApiCredentials(userId: number): Promise<{
     apiBase: string;
     privateToken: string;
   } | null> {
@@ -3884,12 +3918,22 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
 
     try {
-      const userId = service.project?.userId ?? 1;
+      const ownerId = service.project?.userId;
+      if (!ownerId || ownerId < 1) {
+        return {
+          success: false,
+          output:
+            'Auto-deploy cannot resolve Git metadata: the service has no valid project owner user id.',
+        };
+      }
       emit(
         `[auto-deploy] Resolving ${provider} git ref on API (no repo download on control plane)…\n`,
       );
       const { refUsed, marker } =
-        await this.gitService.resolveRemoteGitApplicationBinding(cloneOptions, userId);
+        await this.gitService.resolveRemoteGitApplicationBinding(
+          cloneOptions,
+          ownerId,
+        );
       emit(
         `[auto-deploy] Ref resolved (${refUsed}). Generating stack configuration…\n`,
       );
