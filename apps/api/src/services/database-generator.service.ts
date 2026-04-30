@@ -17,14 +17,16 @@ export class DatabaseGeneratorService {
   static readonly REDIS_DOCKER_IMAGE = 'redis:7.4';
 
   /** Conservative Docker image ref (name[:tag] or registry/path). */
-  static readonly IMAGE_REF_PATTERN =
-    /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,127}$/;
+  static readonly IMAGE_REF_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,127}$/;
 
   private defaultImage(engine: DatabaseEngine): string {
-    if (engine === 'postgres') return DatabaseGeneratorService.POSTGRES_DOCKER_IMAGE;
+    if (engine === 'postgres')
+      return DatabaseGeneratorService.POSTGRES_DOCKER_IMAGE;
     if (engine === 'mysql') return DatabaseGeneratorService.MYSQL_DOCKER_IMAGE;
-    if (engine === 'mariadb') return DatabaseGeneratorService.MARIADB_DOCKER_IMAGE;
-    if (engine === 'mongodb') return DatabaseGeneratorService.MONGODB_DOCKER_IMAGE;
+    if (engine === 'mariadb')
+      return DatabaseGeneratorService.MARIADB_DOCKER_IMAGE;
+    if (engine === 'mongodb')
+      return DatabaseGeneratorService.MONGODB_DOCKER_IMAGE;
     return DatabaseGeneratorService.REDIS_DOCKER_IMAGE;
   }
 
@@ -125,7 +127,10 @@ export class DatabaseGeneratorService {
     const safe = this.sanitizeDbName(dbName);
     const rep = Math.min(10, Math.max(1, Math.floor(replicas)));
     const image = imageRefNormalized ?? this.defaultImage(engine);
-    const expose = this.buildPortExpose(publishPort, this.containerPort(engine));
+    const expose = this.buildPortExpose(
+      publishPort,
+      this.containerPort(engine),
+    );
     const envKeys = plainEnvKeys ?? [];
     const env = this.buildEnvSection(engine, envKeys);
     const mount = (volumePath ?? '').trim() || this.defaultDataMount(engine);

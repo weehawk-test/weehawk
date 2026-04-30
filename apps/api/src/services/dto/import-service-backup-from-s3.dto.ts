@@ -25,9 +25,12 @@ export class ImportServiceBackupFromS3Dto {
   s3Key!: string;
 
   @ApiPropertyOptional({
-    description: 'JSON string of DatabaseBackupConfig (required for import_database)',
+    description:
+      'JSON string of DatabaseBackupConfig (required for import_database)',
   })
-  @ValidateIf((o: ImportServiceBackupFromS3Dto) => o.action === 'import_database')
+  @ValidateIf(
+    (o: ImportServiceBackupFromS3Dto) => o.action === 'import_database',
+  )
   @IsString()
   @IsNotEmpty()
   databaseBackupConfig?: string;

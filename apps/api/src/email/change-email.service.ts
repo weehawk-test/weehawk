@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -26,22 +30,42 @@ export class ChangeEmailService {
   }
 
   getFrontendBaseUrl(): string {
-    return (this.config.get<string>('WEBFRONTEND_BASE_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+    return (
+      this.config.get<string>('WEBFRONTEND_BASE_URL') ?? 'http://localhost:3000'
+    ).replace(/\/$/, '');
   }
 
-  async requestEmailChange(currentEmail: string, newEmail: string): Promise<void> {
-    const user = await this.userRepo.findOne({ where: { email: currentEmail } });
+  async requestEmailChange(
+    currentEmail: string,
+    newEmail: string,
+  ): Promise<void> {
+    const user = await this.userRepo.findOne({
+      where: { email: currentEmail },
+    });
     if (!user) throw new NotFoundException('User not found');
-    if (await this.userRepo.exists({ where: { email: newEmail.toLowerCase() } })) {
+    if (
+      await this.userRepo.exists({ where: { email: newEmail.toLowerCase() } })
+    ) {
       throw new ConflictException('Email already in use');
     }
     await this.tokenStore.delete(PREFIX + user.id);
     const token = crypto.randomUUID();
-    await this.tokenStore.set(PREFIX + token, currentEmail + SEPARATOR + newEmail.toLowerCase(), TTL_MS);
+    await this.tokenStore.set(
+      PREFIX + token,
+      currentEmail + SEPARATOR + newEmail.toLowerCase(),
+      TTL_MS,
+    );
     const link = `${this.getFrontendBaseUrl()}/confirm-email-change?token=${token}`;
-    await this.emailService.sendEmailChangeConfirmation(newEmail, user.firstName, link);
+    await this.emailService.sendEmailChangeConfirmation(
+      newEmail,
+      user.firstName,
+      link,
+    );
     if (user.emailVerified) {
-      await this.emailService.sendEmailChangeNotification(currentEmail, user.firstName);
+      await this.emailService.sendEmailChangeNotification(
+        currentEmail,
+        user.firstName,
+      );
     }
   }
 
@@ -49,7 +73,9 @@ export class ChangeEmailService {
     const value = await this.tokenStore.get(PREFIX + token);
     if (!value) throw new NotFoundException('Invalid or expired token');
     const [currentEmail, newEmail] = value.split(SEPARATOR);
-    const user = await this.userRepo.findOne({ where: { email: currentEmail } });
+    const user = await this.userRepo.findOne({
+      where: { email: currentEmail },
+    });
     if (!user) throw new NotFoundException('User not found');
     const wasVerified = user.emailVerified;
     user.email = newEmail;
@@ -57,7 +83,10 @@ export class ChangeEmailService {
     await this.userRepo.save(user);
     await this.refreshTokenService.deleteByUserId(user.id);
     if (wasVerified) {
-      await this.emailService.sendEmailChangedConfirmation(currentEmail, user.firstName);
+      await this.emailService.sendEmailChangedConfirmation(
+        currentEmail,
+        user.firstName,
+      );
     }
     await this.tokenStore.delete(PREFIX + token);
   }

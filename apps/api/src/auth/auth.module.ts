@@ -23,7 +23,8 @@ import { EmailModule } from '../email/email.module';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
         const exp = config.get<string>('auth.jwtExpiresIn', '7d');
-        const seconds = exp === '7d' ? 7 * 24 * 60 * 60 : parseInt(exp, 10) || 604800;
+        const seconds =
+          exp === '7d' ? 7 * 24 * 60 * 60 : parseInt(exp, 10) || 604800;
         const jwtSecret =
           config.get<string>('auth.jwtSecret')?.trim() ||
           config.get<string>('JWT_SECRET')?.trim();

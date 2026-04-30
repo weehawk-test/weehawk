@@ -14,7 +14,10 @@ export class ApplicationGenerateFromSourceDto {
   @IsString()
   dockerfilePath?: string;
 
-  @ApiPropertyOptional({ example: 'dockerfile', enum: ['dockerfile', 'nixpacks'] })
+  @ApiPropertyOptional({
+    example: 'dockerfile',
+    enum: ['dockerfile', 'nixpacks'],
+  })
   @IsOptional()
   @IsIn(['dockerfile', 'nixpacks'])
   buildMode?: 'dockerfile' | 'nixpacks';

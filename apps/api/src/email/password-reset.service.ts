@@ -24,7 +24,9 @@ export class PasswordResetService {
   }
 
   getFrontendBaseUrl(): string {
-    return (this.config.get<string>('WEBFRONTEND_BASE_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+    return (
+      this.config.get<string>('WEBFRONTEND_BASE_URL') ?? 'http://localhost:3000'
+    ).replace(/\/$/, '');
   }
 
   async sendResetPasswordEmail(email: string): Promise<void> {
@@ -40,7 +42,9 @@ export class PasswordResetService {
   async resetPassword(token: string, newPassword: string): Promise<void> {
     const userId = await this.tokenStore.get(PREFIX + token);
     if (!userId) throw new NotFoundException('Invalid or expired reset token');
-    const user = await this.userRepo.findOne({ where: { id: parseInt(userId, 10) } });
+    const user = await this.userRepo.findOne({
+      where: { id: parseInt(userId, 10) },
+    });
     if (!user) throw new NotFoundException('User not found');
     user.passwordHash = await bcrypt.hash(newPassword, 10);
     await this.userRepo.save(user);

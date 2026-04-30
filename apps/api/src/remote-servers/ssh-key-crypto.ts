@@ -1,4 +1,9 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  scryptSync,
+} from 'crypto';
 
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12;
@@ -19,7 +24,10 @@ export function encryptPrivateKey(plaintext: string, secret: string): string {
   return Buffer.concat([iv, enc, tag]).toString('base64');
 }
 
-export function decryptPrivateKey(ciphertextB64: string, secret: string): string {
+export function decryptPrivateKey(
+  ciphertextB64: string,
+  secret: string,
+): string {
   const buf = Buffer.from(ciphertextB64, 'base64');
   if (buf.length < IV_LEN + TAG_LEN + 1) {
     throw new Error('Invalid encrypted key payload');
@@ -30,5 +38,7 @@ export function decryptPrivateKey(ciphertextB64: string, secret: string): string
   const key = deriveKey(secret);
   const decipher = createDecipheriv(ALGO, key, iv);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
+  return Buffer.concat([decipher.update(enc), decipher.final()]).toString(
+    'utf8',
+  );
 }

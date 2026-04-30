@@ -34,10 +34,16 @@ export function formatExecError(error: unknown): string {
   }
   const errText = e.stderr != null ? String(e.stderr).trimEnd() : '';
   const outText = e.stdout != null ? String(e.stdout).trimEnd() : '';
-  if (errText && !head.includes(errText.slice(0, Math.min(80, errText.length)))) {
+  if (
+    errText &&
+    !head.includes(errText.slice(0, Math.min(80, errText.length)))
+  ) {
     lines.push('');
     lines.push(errText);
-  } else if (outText && !head.includes(outText.slice(0, Math.min(80, outText.length)))) {
+  } else if (
+    outText &&
+    !head.includes(outText.slice(0, Math.min(80, outText.length)))
+  ) {
     lines.push('');
     lines.push(outText);
   }
@@ -52,7 +58,10 @@ export function formatExecError(error: unknown): string {
 }
 
 /** Emits one chunk for {@link ServicesService.executeDeployment} SSE (`deploy/stream`). */
-export function emitDeployLog(emitter: EventEmitter | undefined, chunk: string): void {
+export function emitDeployLog(
+  emitter: EventEmitter | undefined,
+  chunk: string,
+): void {
   if (!emitter || !chunk) return;
   emitter.emit('data', chunk);
 }

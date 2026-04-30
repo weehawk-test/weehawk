@@ -7,7 +7,10 @@ const SWARM_SECRET_FILES: { name: string; envKey: string }[] = [
   { name: 'weehawk_db_password', envKey: 'DB_PASSWORD' },
   { name: 'weehawk_jwt_secret', envKey: 'auth.jwtSecret' },
   { name: 'weehawk_encryption_key', envKey: 'WEEHAWK_ENCRYPTION_KEY' },
-  { name: 'weehawk_refresh_token_hash_secret', envKey: 'REFRESH_TOKEN_HASH_SECRET' },
+  {
+    name: 'weehawk_refresh_token_hash_secret',
+    envKey: 'REFRESH_TOKEN_HASH_SECRET',
+  },
   { name: 'weehawk_google_client_secret', envKey: 'google.clientSecret' },
   // Support both legacy and current secret names for SMTP password.
   { name: 'weehawk_mail_pass', envKey: 'MAIL_PASS' },

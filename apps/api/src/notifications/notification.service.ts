@@ -17,6 +17,7 @@ import { ProviderSendResult } from './providers/provider.types';
 import { withRetry } from './utils/with-retry';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { generatePublicId } from '../common/public-id';
+import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
 
@@ -43,18 +44,26 @@ export type NotificationChannelRuntimeConfig = {
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
+  private readonly scopedChannels: UserIdTenantScopedRepository<NotificationChannel>;
 
   constructor(
     @InjectRepository(NotificationChannel)
     private readonly channelRepo: Repository<NotificationChannel>,
     private readonly providerRegistry: ProviderRegistryService,
     private readonly remoteServersService: RemoteServersService,
-  ) {}
+  ) {
+    this.scopedChannels = new UserIdTenantScopedRepository<NotificationChannel>(
+      this.channelRepo,
+      'Channel',
+    );
+  }
 
-  private async ensureChannelPublicId(row: NotificationChannel): Promise<NotificationChannel> {
+  private async ensureChannelPublicId(
+    row: NotificationChannel,
+  ): Promise<NotificationChannel> {
     if (row.publicId?.trim()) return row;
     row.publicId = generatePublicId('nch');
-    return this.channelRepo.save(row);
+    return this.scopedChannels.saveScoped(row, row.userId);
   }
 
   private async findChannelForUser(
@@ -62,16 +71,16 @@ export class NotificationService {
     raw: string,
   ): Promise<NotificationChannel | null> {
     const t = String(raw).trim();
-    let ch = await this.channelRepo.findOne({
-      where: { publicId: t, userId },
-    });
-    if (!ch && /^\d+$/.test(t)) {
-      ch = await this.channelRepo.findOne({
-        where: { id: Number(t), userId },
-      });
+    try {
+      if (/^\d+$/.test(t)) {
+        const ch = await this.scopedChannels.findScoped(Number(t), userId);
+        return this.ensureChannelPublicId(ch);
+      }
+      const ch = await this.scopedChannels.findScopedBy('publicId', t, userId);
+      return this.ensureChannelPublicId(ch);
+    } catch {
+      return null;
     }
-    if (!ch) return null;
-    return this.ensureChannelPublicId(ch);
   }
 
   private toChannelRow(
@@ -123,9 +132,8 @@ export class NotificationService {
             );
           if (result.ok) return result;
           const desc = result.description ?? '';
-          const transient = /429|rate|timeout|ECONNRESET|ETIMEDOUT|socket|network/i.test(
-            desc,
-          );
+          const transient =
+            /429|rate|timeout|ECONNRESET|ETIMEDOUT|socket|network/i.test(desc);
           if (transient) throw new Error(desc);
           return result;
         },
@@ -234,8 +242,7 @@ export class NotificationService {
       dto.type as NotificationChannelType,
     );
     const config = provider.normalizeConfig(dto.config ?? {});
-    const remoteId =
-      dto.remoteServerId != null ? dto.remoteServerId : null;
+    const remoteId = dto.remoteServerId != null ? dto.remoteServerId : null;
     if (remoteId != null) {
       await this.remoteServersService.findOne(remoteId, userId);
     }
@@ -246,7 +253,7 @@ export class NotificationService {
       config,
       remoteServerId: remoteId,
     });
-    const saved = await this.channelRepo.save(ch);
+    const saved = await this.scopedChannels.saveScoped(ch, userId);
     const preview = await provider.preview(saved);
     return this.toChannelRow(saved, preview);
   }
@@ -275,7 +282,7 @@ export class NotificationService {
       await this.remoteServersService.findOne(dto.remoteServerId, userId);
       ch.remoteServerId = dto.remoteServerId;
     }
-    const saved = await this.channelRepo.save(ch);
+    const saved = await this.scopedChannels.saveScoped(ch, userId);
     const preview = await this.providerRegistry.get(saved.type).preview(saved);
     return this.toChannelRow(saved, preview);
   }
@@ -283,8 +290,7 @@ export class NotificationService {
   async deleteChannel(userId: number, id: string): Promise<void> {
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
-    const res = await this.channelRepo.delete({ id: ch.id, userId });
-    if (!res.affected) throw new NotFoundException('Channel not found');
+    await this.scopedChannels.deleteScoped(ch.id, userId);
   }
 
   async bulkDeleteChannels(
@@ -298,8 +304,8 @@ export class NotificationService {
       if (!id) continue;
       const ch = await this.findChannelForUser(userId, id);
       if (!ch) continue;
-      const res = await this.channelRepo.delete({ id: ch.id, userId });
-      removed += res.affected ?? 0;
+      await this.scopedChannels.deleteScoped(ch.id, userId);
+      removed += 1;
     }
     return { removed };
   }

@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, type RedisClientType } from 'redis';
 
@@ -16,7 +21,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     const portRaw = (this.config.get<string>('REDIS_PORT') ?? '').trim();
     const password = (this.config.get<string>('REDIS_PASSWORD') ?? '').trim();
 
-    const endpoint = url || (host ? `redis://${host}:${portRaw || '6379'}` : '');
+    const endpoint =
+      url || (host ? `redis://${host}:${portRaw || '6379'}` : '');
     if (!endpoint) {
       this.logger.warn('Redis is not configured; using in-memory fallback.');
       return;
@@ -29,7 +35,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
     this.client.on('error', (err) => {
       this.ready = false;
-      this.logger.error(`Redis error: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.error(
+        `Redis error: ${err instanceof Error ? err.message : String(err)}`,
+      );
     });
 
     this.client.on('ready', () => {
@@ -42,7 +50,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       this.ready = this.client.isReady;
     } catch (err) {
       this.ready = false;
-      this.logger.error(`Redis connect failed, using in-memory fallback: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.error(
+        `Redis connect failed, using in-memory fallback: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

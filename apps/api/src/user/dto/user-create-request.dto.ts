@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength, Matches } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+  Matches,
+} from 'class-validator';
 import { Role } from '../../auth/entities/role.enum';
 
 export class UserCreateRequestDto {
@@ -25,17 +34,18 @@ export class UserCreateRequestDto {
   @MinLength(8)
   @MaxLength(72)
   @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).*$/, {
-    message: 'Password must contain at least one uppercase, one lowercase, and one digit',
+    message:
+      'Password must contain at least one uppercase, one lowercase, and one digit',
   })
   password!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsEnum(Role , {message: 'Role must be a valid role'})
+  @IsEnum(Role, { message: 'Role must be a valid role' })
   role: Role = Role.USER;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
-  @IsBoolean( {message: 'Enabled must be a boolean'})
+  @IsBoolean({ message: 'Enabled must be a boolean' })
   enabled = true;
 }

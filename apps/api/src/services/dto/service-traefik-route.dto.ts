@@ -26,7 +26,10 @@ export class ServiceTraefikRouteDto {
   })
   router!: string;
 
-  @ApiProperty({ example: ['api.example.com', 'www.example.com'], type: [String] })
+  @ApiProperty({
+    example: ['api.example.com', 'www.example.com'],
+    type: [String],
+  })
   @IsArray()
   @ArrayMinSize(1)
   @IsString({ each: true })
@@ -35,7 +38,8 @@ export class ServiceTraefikRouteDto {
 
   @ApiPropertyOptional({
     example: '/api',
-    description: 'Optional PathPrefix (must start with /, e.g. /api). Empty omits PathPrefix.',
+    description:
+      'Optional PathPrefix (must start with /, e.g. /api). Empty omits PathPrefix.',
   })
   @IsOptional()
   @IsString()
@@ -44,7 +48,8 @@ export class ServiceTraefikRouteDto {
 
   @ApiPropertyOptional({
     example: 8080,
-    description: 'Override container port for this route; omit to use the app stack port.',
+    description:
+      'Override container port for this route; omit to use the app stack port.',
   })
   @IsOptional()
   @IsInt()

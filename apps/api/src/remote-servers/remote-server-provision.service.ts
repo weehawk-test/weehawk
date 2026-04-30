@@ -16,6 +16,7 @@ import {
   buildWeehawkProvisionScript,
 } from './remote-server-provision.script';
 import { TraefikService } from '../traefik/traefik.service';
+import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 const MAX_LOG_CHARS = 512_000;
 
@@ -23,13 +24,19 @@ const MAX_LOG_CHARS = 512_000;
 export class RemoteServerProvisionService {
   private readonly logger = new Logger(RemoteServerProvisionService.name);
   private isProcessing = false;
+  private readonly scopedJobs: UserIdTenantScopedRepository<RemoteServerProvisionJob>;
 
   constructor(
     @InjectRepository(RemoteServerProvisionJob)
     private readonly jobRepo: Repository<RemoteServerProvisionJob>,
     private readonly remoteServersService: RemoteServersService,
     private readonly traefikService: TraefikService,
-  ) {}
+  ) {
+    this.scopedJobs = new UserIdTenantScopedRepository<RemoteServerProvisionJob>(
+      this.jobRepo,
+      'Provision job',
+    );
+  }
 
   /** Same bash the worker runs over SSH — for UI preview. */
   async getProvisionScriptPreview(
@@ -118,13 +125,7 @@ export class RemoteServerProvisionService {
     createdAt: Date;
     updatedAt: Date;
   }> {
-    const job = await this.jobRepo.findOne({ where: { id: jobId } });
-    if (!job) {
-      throw new NotFoundException('Provision job not found');
-    }
-    if (job.userId !== userId) {
-      throw new NotFoundException('Provision job not found');
-    }
+    const job = await this.scopedJobs.findScoped(jobId, userId);
     return {
       id: job.id,
       remoteServerId: job.remoteServerId,
@@ -171,7 +172,7 @@ export class RemoteServerProvisionService {
     const ownerId = job.userId;
 
     await this.jobRepo.update(
-      { id: job.id },
+      { id: job.id, userId: ownerId },
       { status: 'running', log: '', errorMessage: null },
     );
 
@@ -181,13 +182,19 @@ export class RemoteServerProvisionService {
     const appendLog = async (chunk: string) => {
       if (!chunk) return;
       logBuf = (logBuf + chunk).slice(-MAX_LOG_CHARS);
-      await this.jobRepo.update({ id: job.id }, { log: logBuf });
+      await this.jobRepo.update(
+        { id: job.id, userId: ownerId },
+        { log: logBuf },
+      );
     };
 
     try {
       const kind = await this.resolveJobKindFromDb(job.id);
 
-      const ctx = await this.remoteServersService.getSshProvisionContext(serverId, ownerId);
+      const ctx = await this.remoteServersService.getSshProvisionContext(
+        serverId,
+        ownerId,
+      );
       let script: string;
       if (kind === 'docker_purge') {
         script = buildDockerPurgeScript();
@@ -213,14 +220,23 @@ export class RemoteServerProvisionService {
         `[Weehawk] job_kind=${kind}\n` +
           `\n--- SSH ${ctx.server.host}:${ctx.server.port} (${ctx.server.sshUser}) [${kind}] ---\n`,
       );
-      await this.execSshBashScript(ctx.server, ctx.privateKeyPem, script, (s) =>
-        void appendLog(s),
+      await this.execSshBashScript(
+        ctx.server,
+        ctx.privateKeyPem,
+        script,
+        (s) => void appendLog(s),
       );
-      await this.jobRepo.update({ id: job.id }, { status: 'done', errorMessage: null });
+      await this.jobRepo.update(
+        { id: job.id, userId: ownerId },
+        { status: 'done', errorMessage: null },
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`Remote server job ${jobId} failed: ${msg}`);
-      await this.jobRepo.update({ id: job.id }, { status: 'error', errorMessage: msg });
+      await this.jobRepo.update(
+        { id: job.id, userId: ownerId },
+        { status: 'error', errorMessage: msg },
+      );
     }
   }
 
@@ -257,37 +273,39 @@ export class RemoteServerProvisionService {
     return new Promise((resolve, reject) => {
       client
         .once('ready', () => {
-          void this.remoteServersService.flushPendingSshHostKeyFingerprint(server.id).then(() => {
-            client.exec('bash -s', (err, stream) => {
-              if (err) {
-                reject(err);
-                return;
-              }
-              let stderr = '';
-              stream.on('close', (code: number) => {
-                client.end();
-                if (code === 0) {
-                  resolve();
-                } else {
-                  reject(
-                    new BadRequestException(
-                      stderr.trim()
-                        ? `Remote script failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
-                        : `Remote script exited with code ${code}`,
-                    ),
-                  );
+          void this.remoteServersService
+            .flushPendingSshHostKeyFingerprint(server.id)
+            .then(() => {
+              client.exec('bash -s', (err, stream) => {
+                if (err) {
+                  reject(err);
+                  return;
                 }
+                let stderr = '';
+                stream.on('close', (code: number) => {
+                  client.end();
+                  if (code === 0) {
+                    resolve();
+                  } else {
+                    reject(
+                      new BadRequestException(
+                        stderr.trim()
+                          ? `Remote script failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
+                          : `Remote script exited with code ${code}`,
+                      ),
+                    );
+                  }
+                });
+                stream.on('data', (d: Buffer) => onData?.(d.toString()));
+                stream.stderr.on('data', (d: Buffer) => {
+                  const s = d.toString();
+                  stderr += s;
+                  onData?.(s);
+                });
+                stream.write(script);
+                stream.end();
               });
-              stream.on('data', (d: Buffer) => onData?.(d.toString()));
-              stream.stderr.on('data', (d: Buffer) => {
-                const s = d.toString();
-                stderr += s;
-                onData?.(s);
-              });
-              stream.write(script);
-              stream.end();
             });
-          });
         })
         .on('error', (err: Error & { level?: string }) => {
           this.remoteServersService.clearPendingSshHostKeyForServer(server.id);

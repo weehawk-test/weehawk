@@ -15,7 +15,12 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { RemoteServersService } from './remote-servers.service';
 import { RemoteServerProvisionService } from './remote-server-provision.service';
@@ -77,7 +82,10 @@ export class RemoteServersController {
     @Req() req?: { user?: { userId: number } },
   ) {
     const r = role === 'build' ? 'build' : 'deploy';
-    return this.remoteServerProvisionService.getProvisionScriptPreview(r, this.uid(req));
+    return this.remoteServerProvisionService.getProvisionScriptPreview(
+      r,
+      this.uid(req),
+    );
   }
 
   @Get('docker-purge-script')
@@ -108,7 +116,10 @@ export class RemoteServersController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.rid(id, req).then((resolvedId) =>
-      this.remoteServerProvisionService.enqueueProvision(resolvedId, this.uid(req)),
+      this.remoteServerProvisionService.enqueueProvision(
+        resolvedId,
+        this.uid(req),
+      ),
     );
   }
 
@@ -122,7 +133,10 @@ export class RemoteServersController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.rid(id, req).then((resolvedId) =>
-      this.remoteServerProvisionService.enqueueDockerPurge(resolvedId, this.uid(req)),
+      this.remoteServerProvisionService.enqueueDockerPurge(
+        resolvedId,
+        this.uid(req),
+      ),
     );
   }
 
@@ -136,20 +150,26 @@ export class RemoteServersController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.rid(id, req).then((resolvedId) =>
-      this.remoteServerProvisionService.enqueueNixpacksInstall(resolvedId, this.uid(req)),
+      this.remoteServerProvisionService.enqueueNixpacksInstall(
+        resolvedId,
+        this.uid(req),
+      ),
     );
   }
 
   @Post('generate-keypair')
   @ApiOperation({
-    summary: 'Generate Ed25519 SSH key pair (OpenSSH format); add public key to remote authorized_keys',
+    summary:
+      'Generate Ed25519 SSH key pair (OpenSSH format); add public key to remote authorized_keys',
   })
   generateKeypair() {
     return this.remoteServersService.generateSshKeyPair();
   }
 
   @Get(':id/console/containers/paged')
-  @ApiOperation({ summary: 'Remote WeeDocker: paginated containers (Dockerode/SSH)' })
+  @ApiOperation({
+    summary: 'Remote WeeDocker: paginated containers (Dockerode/SSH)',
+  })
   async consoleContainersPaged(
     @Req() req: { user?: { userId: number } },
     @Param('id') id: string,
@@ -373,10 +393,7 @@ export class RemoteServersController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get one remote server' })
-  getOne(
-    @Param('id') id: string,
-    @Req() req: { user?: { userId: number } },
-  ) {
+  getOne(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
     return this.rid(id, req).then((resolvedId) =>
       this.remoteServersService.findOne(resolvedId, this.uid(req)),
     );
@@ -384,7 +401,9 @@ export class RemoteServersController {
 
   @Post()
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @ApiOperation({ summary: 'Create remote server (privateKey PEM stored encrypted in DB)' })
+  @ApiOperation({
+    summary: 'Create remote server (privateKey PEM stored encrypted in DB)',
+  })
   create(
     @Body() dto: CreateRemoteServerDto,
     @Req() req: { user?: { userId: number } },
@@ -406,11 +425,10 @@ export class RemoteServersController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete remote server (only if no service uses it)' })
-  remove(
-    @Param('id') id: string,
-    @Req() req: { user?: { userId: number } },
-  ) {
+  @ApiOperation({
+    summary: 'Delete remote server (only if no service uses it)',
+  })
+  remove(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
     return this.rid(id, req).then((resolvedId) =>
       this.remoteServersService.remove(resolvedId, this.uid(req)),
     );
@@ -421,10 +439,7 @@ export class RemoteServersController {
     summary:
       'Test SSH + remote Docker (Dockerode over ssh2, like Dokploy — no local `docker`/`ssh` CLI for this check)',
   })
-  test(
-    @Param('id') id: string,
-    @Req() req: { user?: { userId: number } },
-  ) {
+  test(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
     return this.rid(id, req).then((resolvedId) =>
       this.remoteServersService.testConnection(resolvedId, this.uid(req)),
     );
@@ -435,10 +450,7 @@ export class RemoteServersController {
     summary:
       'Test SSH only (ssh2 shell echo + uname — no Dockerode / remote Docker API)',
   })
-  testSsh(
-    @Param('id') id: string,
-    @Req() req: { user?: { userId: number } },
-  ) {
+  testSsh(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
     return this.rid(id, req).then((resolvedId) =>
       this.remoteServersService.testSshOnly(resolvedId, this.uid(req)),
     );
@@ -446,7 +458,9 @@ export class RemoteServersController {
 
   @Post(':id/terminal')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  @ApiOperation({ summary: 'Run an SSH command on remote server and return output' })
+  @ApiOperation({
+    summary: 'Run an SSH command on remote server and return output',
+  })
   terminal(
     @Param('id') id: string,
     @Body() dto: RunRemoteTerminalDto,

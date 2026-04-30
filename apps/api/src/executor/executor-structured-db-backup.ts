@@ -88,11 +88,17 @@ export async function runStructuredDatabaseBackup(
         const stderr = r.stderr ?? '';
 
         if (stderrIndicatesDockerFailure(stderr)) {
-          return { success: false, output: [stderr].filter(Boolean).join('\n') };
+          return {
+            success: false,
+            output: [stderr].filter(Boolean).join('\n'),
+          };
         }
 
         if (!stdout || stdout.length === 0) {
-          return { success: false, output: formatEmptyStdout('pg_dump', stderr) };
+          return {
+            success: false,
+            output: formatEmptyStdout('pg_dump', stderr),
+          };
         }
 
         const ext =
@@ -113,7 +119,9 @@ export async function runStructuredDatabaseBackup(
 
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${fullPath}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${fullPath}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }
@@ -124,10 +132,13 @@ export async function runStructuredDatabaseBackup(
         const fmt = resolveBackupFormat(config.engine, config.backupFormat);
         const db = assertSafeDbIdentifier(config.databaseName ?? '');
         const user = safeSqlUser(config.dbUser ?? '', 'root');
-        const passEnv = isMaria ? 'MARIADB_ROOT_PASSWORD' : 'MYSQL_ROOT_PASSWORD';
+        const passEnv = isMaria
+          ? 'MARIADB_ROOT_PASSWORD'
+          : 'MYSQL_ROOT_PASSWORD';
 
         const extra =
-          fmt === 'mysql_sql_extended_gzip' || fmt === 'mariadb_sql_extended_gzip'
+          fmt === 'mysql_sql_extended_gzip' ||
+          fmt === 'mariadb_sql_extended_gzip'
             ? ' --single-transaction --routines --triggers --events'
             : '';
 
@@ -139,7 +150,10 @@ export async function runStructuredDatabaseBackup(
         const stderr = r.stderr ?? '';
 
         if (stderrIndicatesDockerFailure(stderr)) {
-          return { success: false, output: stderr || `(${config.engine} failed)` };
+          return {
+            success: false,
+            output: stderr || `(${config.engine} failed)`,
+          };
         }
         if (!stdout.length) {
           return { success: false, output: 'mysqldump produced no output.' };
@@ -151,7 +165,9 @@ export async function runStructuredDatabaseBackup(
 
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${fullPath}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${fullPath}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }
@@ -176,14 +192,17 @@ export async function runStructuredDatabaseBackup(
           return { success: false, output: 'mongodump produced no output.' };
         }
 
-        const ext = fmt === 'mongodb_archive_plain' ? 'mongodump' : 'mongodump.gz';
+        const ext =
+          fmt === 'mongodb_archive_plain' ? 'mongodump' : 'mongodump.gz';
         const archiveBasename = `db-${appNameForFile}-${ts}.${ext}`;
         const fullPath = path.join(outDir, archiveBasename);
         await fs.writeFile(fullPath, stdout);
 
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${fullPath}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${fullPath}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }
@@ -207,7 +226,9 @@ export async function runStructuredDatabaseBackup(
 
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${fullPath}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${fullPath}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }
@@ -279,7 +300,9 @@ test -s "$OUT"
         }
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${outFile}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${outFile}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }
@@ -290,9 +313,12 @@ test -s "$OUT"
         const fmt = resolveBackupFormat(config.engine, config.backupFormat);
         const db = assertSafeDbIdentifier(config.databaseName ?? '');
         const user = safeSqlUser(config.dbUser ?? '', 'root');
-        const passEnv = isMaria ? 'MARIADB_ROOT_PASSWORD' : 'MYSQL_ROOT_PASSWORD';
+        const passEnv = isMaria
+          ? 'MARIADB_ROOT_PASSWORD'
+          : 'MYSQL_ROOT_PASSWORD';
         const extra =
-          fmt === 'mysql_sql_extended_gzip' || fmt === 'mariadb_sql_extended_gzip'
+          fmt === 'mysql_sql_extended_gzip' ||
+          fmt === 'mariadb_sql_extended_gzip'
             ? ' --single-transaction --routines --triggers --events'
             : '';
         const inner = `mysqldump -u ${user} -p"$\{${passEnv}\}"${extra} ${db}`;
@@ -310,11 +336,16 @@ test -s "$OUT"
         const r = await execRemote(body);
         const stderr = r.stderr ?? '';
         if (stderrIndicatesDockerFailure(stderr)) {
-          return { success: false, output: stderr || `(${config.engine} failed)` };
+          return {
+            success: false,
+            output: stderr || `(${config.engine} failed)`,
+          };
         }
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${outFile}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${outFile}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }
@@ -327,7 +358,8 @@ test -s "$OUT"
             ? ['mongodump', `--db=${db}`, '--archive']
             : ['mongodump', `--db=${db}`, '--archive', '--gzip'];
         const argvTail = dumpArgs.map((a) => JSON.stringify(a)).join(' ');
-        const ext = fmt === 'mongodb_archive_plain' ? 'mongodump' : 'mongodump.gz';
+        const ext =
+          fmt === 'mongodb_archive_plain' ? 'mongodump' : 'mongodump.gz';
         const archiveBasename = `db-${appNameForFile}-${ts}.${ext}`;
         const outFile = `${work}/${archiveBasename}`;
         const outQ = shQuoteSingle(outFile);
@@ -343,7 +375,9 @@ test -s "$OUT"
         }
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${outFile}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${outFile}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }
@@ -364,7 +398,9 @@ test -s "$OUT"
         }
         return {
           success: true,
-          output: [stderr.trim(), `Archive: ${outFile}`].filter(Boolean).join('\n'),
+          output: [stderr.trim(), `Archive: ${outFile}`]
+            .filter(Boolean)
+            .join('\n'),
           archiveBasename,
         };
       }

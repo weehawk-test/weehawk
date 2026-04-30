@@ -3,7 +3,8 @@ import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
 export class MkdirS3FolderDto {
   @ApiProperty({
-    description: 'Full object key for the folder marker (usually ends with `/`).',
+    description:
+      'Full object key for the folder marker (usually ends with `/`).',
     example: 'backups/2025/',
   })
   @IsString()

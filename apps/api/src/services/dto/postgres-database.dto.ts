@@ -42,7 +42,10 @@ export class PostgresDatabaseDto {
   replicas?: number;
 
   /** Host port published to the container’s 5432. Omit or leave unset so the stack has no `ports` mapping. */
-  @ApiPropertyOptional({ example: 5432, description: '1–65535; omit to keep Postgres internal-only.' })
+  @ApiPropertyOptional({
+    example: 5432,
+    description: '1–65535; omit to keep Postgres internal-only.',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)

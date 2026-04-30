@@ -40,7 +40,10 @@ export class CreateCronJobDto {
   @MaxLength(400_000)
   bashScript!: string;
 
-  @ApiPropertyOptional({ example: 1, description: 'Numeric notification channel id.' })
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Numeric notification channel id.',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)

@@ -57,14 +57,15 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     if (req.method === 'OPTIONS') return next();
 
     const path = normalizePath(req);
-    if (EXCLUDED_PREFIXES.some((prefix) => path.startsWith(prefix))) return next();
+    if (EXCLUDED_PREFIXES.some((prefix) => path.startsWith(prefix)))
+      return next();
 
-    const expectedApiKey =
-      (config.get<string>('WEEHAWK_API_KEY') ??
-        config.get<string>('GROOT_API_KEY') ??
-        config.get<string>('groot.apiKey') ??
-        '')
-        .trim();
+    const expectedApiKey = (
+      config.get<string>('WEEHAWK_API_KEY') ??
+      config.get<string>('GROOT_API_KEY') ??
+      config.get<string>('groot.apiKey') ??
+      ''
+    ).trim();
     const apiKey = extractApiKey(req);
 
     if (!expectedApiKey || !apiKey || !apiKeyMatches(apiKey, expectedApiKey)) {
@@ -77,4 +78,3 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     next();
   };
 }
-

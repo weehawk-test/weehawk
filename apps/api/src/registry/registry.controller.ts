@@ -1,4 +1,11 @@
-import { Body, Controller, Post, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { RegistryService } from './registry.service';
@@ -21,14 +28,24 @@ export class RegistryController {
 
   @Post('login')
   @ApiOperation({ summary: 'Login to a Docker registry' })
-  async login(@Body() dto: LoginRegistryDto, @Req() req: { user?: { userId: number } }) {
+  async login(
+    @Body() dto: LoginRegistryDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
     this.uid(req);
-    return this.registryService.login(dto.providerUrl, dto.username, dto.password);
+    return this.registryService.login(
+      dto.providerUrl,
+      dto.username,
+      dto.password,
+    );
   }
 
   @Post('logout')
   @ApiOperation({ summary: 'Logout from a Docker registry' })
-  async logout(@Body() dto: LogoutRegistryDto, @Req() req: { user?: { userId: number } }) {
+  async logout(
+    @Body() dto: LogoutRegistryDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
     this.uid(req);
     return this.registryService.logout(dto.providerUrl);
   }

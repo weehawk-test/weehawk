@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -23,7 +27,12 @@ export class AdminUserService {
     page: number,
     size: number,
     email?: string,
-  ): Promise<{ items: UserProfileResponseDto[]; total: number; page: number; size: number }> {
+  ): Promise<{
+    items: UserProfileResponseDto[];
+    total: number;
+    page: number;
+    size: number;
+  }> {
     const take = Math.min(MAX_PAGE_SIZE, Math.max(1, size));
     const skip = Math.max(0, page) * take;
 
@@ -51,7 +60,8 @@ export class AdminUserService {
   async create(dto: UserCreateRequestDto): Promise<UserProfileResponseDto> {
     const email = dto.email.toLowerCase();
     const exists = await this.userRepo.exists({ where: { email } });
-    if (exists) throw new ConflictException('Email already in use: ' + dto.email);
+    if (exists)
+      throw new ConflictException('Email already in use: ' + dto.email);
 
     const hash = await bcrypt.hash(dto.password, 10);
     const user = this.userRepo.create({
@@ -69,12 +79,17 @@ export class AdminUserService {
     return this.userService.toProfileResponse(saved);
   }
 
-  async update(id: number, dto: UserUpdateRequestDto): Promise<UserProfileResponseDto> {
+  async update(
+    id: number,
+    dto: UserUpdateRequestDto,
+  ): Promise<UserProfileResponseDto> {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found with id: ' + id);
 
-    if (dto.firstName != null && dto.firstName.trim() !== '') user.firstName = dto.firstName;
-    if (dto.lastName != null && dto.lastName.trim() !== '') user.lastName = dto.lastName;
+    if (dto.firstName != null && dto.firstName.trim() !== '')
+      user.firstName = dto.firstName;
+    if (dto.lastName != null && dto.lastName.trim() !== '')
+      user.lastName = dto.lastName;
     if (dto.role != null) user.role = dto.role;
     if (dto.enabled != null) user.enabled = dto.enabled;
     if (dto.locked != null) user.locked = dto.locked;

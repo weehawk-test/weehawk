@@ -27,7 +27,12 @@ export class GitIntegrationSettings {
   githubClientId!: string | null;
 
   /** URL slug from GitHub (e.g. `my-app` → install at /apps/my-app/installations/new). */
-  @Column({ name: 'github_app_slug', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'github_app_slug',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   githubAppSlug!: string | null;
 
   @Column({ type: 'text', nullable: true })

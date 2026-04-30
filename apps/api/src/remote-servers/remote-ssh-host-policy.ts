@@ -55,7 +55,9 @@ function assertHostnameNotReserved(hostname: string): void {
   try {
     ascii = domainToASCII(hostname.trim());
   } catch {
-    throw new BadRequestException(`Invalid SSH host name. ${REMOTE_SSH_HOST_POLICY_HINT}`);
+    throw new BadRequestException(
+      `Invalid SSH host name. ${REMOTE_SSH_HOST_POLICY_HINT}`,
+    );
   }
   const lower = ascii.toLowerCase();
   if (lower === 'localhost' || lower.endsWith('.localhost')) {
@@ -68,7 +70,10 @@ function assertHostnameNotReserved(hostname: string): void {
       `SSH host "${hostname}" is not allowed (.local). ${REMOTE_SSH_HOST_POLICY_HINT}`,
     );
   }
-  if (lower === 'metadata.google.internal' || lower.endsWith('.metadata.google.internal')) {
+  if (
+    lower === 'metadata.google.internal' ||
+    lower.endsWith('.metadata.google.internal')
+  ) {
     throw new BadRequestException(
       `SSH host "${hostname}" is not allowed. ${REMOTE_SSH_HOST_POLICY_HINT}`,
     );
@@ -81,7 +86,9 @@ function assertHostnameNotReserved(hostname: string): void {
 export async function assertPublicRemoteSshHost(host: string): Promise<void> {
   const raw = stripIpv6Brackets(host);
   if (!raw) {
-    throw new BadRequestException(`SSH host is required. ${REMOTE_SSH_HOST_POLICY_HINT}`);
+    throw new BadRequestException(
+      `SSH host is required. ${REMOTE_SSH_HOST_POLICY_HINT}`,
+    );
   }
 
   const asIp = net.isIP(raw);

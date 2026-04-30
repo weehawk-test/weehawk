@@ -1,10 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class PatchApplicationImageDeployDto {
   @ApiProperty({
-    description: 'Docker image reference (e.g. nginx:1.27, registry.io/org/app:v1)',
+    description:
+      'Docker image reference (e.g. nginx:1.27, registry.io/org/app:v1)',
     example: 'nginx:1.27-alpine',
   })
   @IsString()

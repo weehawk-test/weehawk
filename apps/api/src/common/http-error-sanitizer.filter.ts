@@ -45,7 +45,8 @@ export class HttpErrorSanitizerFilter implements ExceptionFilter {
           : (sanitizePayload(original) as Record<string, unknown>);
       if (sanitized.statusCode == null) sanitized.statusCode = status;
       if (sanitized.path == null) sanitized.path = request?.url ?? '';
-      if (sanitized.timestamp == null) sanitized.timestamp = new Date().toISOString();
+      if (sanitized.timestamp == null)
+        sanitized.timestamp = new Date().toISOString();
       response.status(status).json(sanitized);
       return;
     }
@@ -58,4 +59,3 @@ export class HttpErrorSanitizerFilter implements ExceptionFilter {
     });
   }
 }
-

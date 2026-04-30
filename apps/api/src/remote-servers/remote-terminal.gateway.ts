@@ -9,7 +9,10 @@ import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import { URL } from 'url';
 import { Client } from 'ssh2';
-import { isRequestOriginAllowed, resolveCorsOrigin } from '../common/cors-origin';
+import {
+  isRequestOriginAllowed,
+  resolveCorsOrigin,
+} from '../common/cors-origin';
 import { RemoteServersService } from './remote-servers.service';
 import { AUTH_ACCESS_COOKIE, parseCookieHeader } from '../auth/auth-cookies';
 
@@ -31,9 +34,13 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
   @WebSocketServer()
   server: Server;
 
-  private async userIdFromWsRequest(req: IncomingMessage | undefined): Promise<number | null> {
+  private async userIdFromWsRequest(
+    req: IncomingMessage | undefined,
+  ): Promise<number | null> {
     const raw = req?.headers?.cookie;
-    const cookies = parseCookieHeader(typeof raw === 'string' ? raw : undefined);
+    const cookies = parseCookieHeader(
+      typeof raw === 'string' ? raw : undefined,
+    );
     const token = cookies[AUTH_ACCESS_COOKIE]?.trim();
     if (!token) return null;
     try {
@@ -41,10 +48,15 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
         userId?: number;
         sub?: string;
       }>(token);
-      if (typeof payload.userId === 'number' && Number.isFinite(payload.userId) && payload.userId >= 1) {
+      if (
+        typeof payload.userId === 'number' &&
+        Number.isFinite(payload.userId) &&
+        payload.userId >= 1
+      ) {
         return payload.userId;
       }
-      const sub = payload.sub != null ? Number.parseInt(String(payload.sub), 10) : NaN;
+      const sub =
+        payload.sub != null ? Number.parseInt(String(payload.sub), 10) : NaN;
       if (Number.isFinite(sub) && sub >= 1) return sub;
       return null;
     } catch {
@@ -56,7 +68,13 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
     const req = args[0] as IncomingMessage | undefined;
     const rawOrigin = req?.headers?.origin;
     const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (!isRequestOriginAllowed(origin, process.env.CORS_ORIGIN, process.env.NODE_ENV)) {
+    if (
+      !isRequestOriginAllowed(
+        origin,
+        process.env.CORS_ORIGIN,
+        process.env.NODE_ENV,
+      )
+    ) {
       client.send(
         JSON.stringify({
           type: 'error',
@@ -72,7 +90,12 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
     const serverIdRaw = url.searchParams.get('serverId');
     const serverPublicId = String(serverIdRaw ?? '').trim();
     if (!serverPublicId) {
-      client.send(JSON.stringify({ type: 'error', message: 'Missing or invalid serverId.' }));
+      client.send(
+        JSON.stringify({
+          type: 'error',
+          message: 'Missing or invalid serverId.',
+        }),
+      );
       client.close(4000, 'invalid serverId');
       return;
     }
@@ -90,9 +113,12 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
 
     let ssh: Client | null = null;
     try {
-      const serverId =
-        await this.remoteServersService.resolveServerIdForUser(serverPublicId, userId);
-      const ctx = await this.remoteServersService.getSshTerminalContext(serverId);
+      const serverId = await this.remoteServersService.resolveServerIdForUser(
+        serverPublicId,
+        userId,
+      );
+      const ctx =
+        await this.remoteServersService.getSshTerminalContext(serverId);
       ssh = new Client();
       ssh
         .once('ready', () => {
@@ -103,7 +129,9 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
                 { term: 'xterm-256color', cols: 80, rows: 24 },
                 (err, stream) => {
                   if (err) {
-                    client.send(JSON.stringify({ type: 'error', message: err.message }));
+                    client.send(
+                      JSON.stringify({ type: 'error', message: err.message }),
+                    );
                     client.close(4002, 'ssh shell failed');
                     return;
                   }
@@ -124,56 +152,62 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
                     } catch {
                       /* ignore */
                     }
-                    if (client.readyState === 1) client.close(1000, 'terminal closed');
+                    if (client.readyState === 1)
+                      client.close(1000, 'terminal closed');
                   });
 
-                  client.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
-                    const buf = Array.isArray(data)
-                      ? Buffer.concat(data)
-                      : Buffer.isBuffer(data)
-                        ? data
-                        : Buffer.from(data);
-                    const s = buf.toString('utf8');
-                    const trimmed = s.trim();
-                    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                      try {
-                        const j = JSON.parse(trimmed) as {
-                          type?: string;
-                          cols?: number;
-                          rows?: number;
-                        };
-                        if (j.type === 'resize') {
-                          const cols = Math.min(
-                            512,
-                            Math.max(2, Math.floor(Number(j.cols)) || 80),
-                          );
-                          const rows = Math.min(
-                            512,
-                            Math.max(2, Math.floor(Number(j.rows)) || 24),
-                          );
-                          try {
-                            stream.setWindow(rows, cols, 0, 0);
-                          } catch {
-                            /* ignore */
+                  client.on(
+                    'message',
+                    (data: Buffer | ArrayBuffer | Buffer[]) => {
+                      const buf = Array.isArray(data)
+                        ? Buffer.concat(data)
+                        : Buffer.isBuffer(data)
+                          ? data
+                          : Buffer.from(data);
+                      const s = buf.toString('utf8');
+                      const trimmed = s.trim();
+                      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                        try {
+                          const j = JSON.parse(trimmed) as {
+                            type?: string;
+                            cols?: number;
+                            rows?: number;
+                          };
+                          if (j.type === 'resize') {
+                            const cols = Math.min(
+                              512,
+                              Math.max(2, Math.floor(Number(j.cols)) || 80),
+                            );
+                            const rows = Math.min(
+                              512,
+                              Math.max(2, Math.floor(Number(j.rows)) || 24),
+                            );
+                            try {
+                              stream.setWindow(rows, cols, 0, 0);
+                            } catch {
+                              /* ignore */
+                            }
+                            return;
                           }
-                          return;
+                        } catch {
+                          /* not JSON control packet */
                         }
-                      } catch {
-                        /* not JSON control packet */
                       }
-                    }
-                    try {
-                      stream.write(s);
-                    } catch {
-                      /* ignore */
-                    }
-                  });
+                      try {
+                        stream.write(s);
+                      } catch {
+                        /* ignore */
+                      }
+                    },
+                  );
                 },
               );
             });
         })
         .on('error', (e: Error) => {
-          this.remoteServersService.clearPendingSshHostKeyForServer(ctx.remoteServerId);
+          this.remoteServersService.clearPendingSshHostKeyForServer(
+            ctx.remoteServerId,
+          );
           if (client.readyState === 1) {
             client.send(JSON.stringify({ type: 'error', message: e.message }));
             client.close(4001, 'ssh connection failed');

@@ -23,7 +23,10 @@ import type { Profile } from 'passport-google-oauth20';
 
 function isPostgresUniqueViolation(err: unknown): boolean {
   if (!(err instanceof QueryFailedError)) return false;
-  const q = err as QueryFailedError & { code?: string; driverError?: { code?: string } };
+  const q = err as QueryFailedError & {
+    code?: string;
+    driverError?: { code?: string };
+  };
   return q.code === '23505' || q.driverError?.code === '23505';
 }
 
@@ -38,7 +41,9 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResponseDto> {
-    if (await this.userRepo.exists({ where: { email: dto.email.toLowerCase() } })) {
+    if (
+      await this.userRepo.exists({ where: { email: dto.email.toLowerCase() } })
+    ) {
       throw new ConflictException('Email already in use: ' + dto.email);
     }
     const hash = await bcrypt.hash(dto.password, 10);
@@ -57,14 +62,19 @@ export class AuthService {
       updatedAt: now,
     });
     const saved = await this.userRepo.save(user);
-    await this.emailConfirmationService.sendConfirmationEmail(saved).catch(() => {});
+    await this.emailConfirmationService
+      .sendConfirmationEmail(saved)
+      .catch(() => {});
     const accessToken = this.generateAccessToken(saved);
-    const refreshToken = await this.refreshTokenService.createRefreshToken(saved);
+    const refreshToken =
+      await this.refreshTokenService.createRefreshToken(saved);
     return this.buildAuthResponse(saved, accessToken, refreshToken);
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
-    const user = await this.userRepo.findOne({ where: { email: dto.email.toLowerCase() } });
+    const user = await this.userRepo.findOne({
+      where: { email: dto.email.toLowerCase() },
+    });
     if (!user) throw new UnauthorizedException('Invalid email or password');
 
     if (!user.passwordHash) {
@@ -72,7 +82,10 @@ export class AuthService {
         `Account is linked to ${user.provider}. Please sign in with that provider.`,
       );
     }
-    if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+    if (user.locked)
+      throw new ForbiddenException(
+        'Account is locked. Please contact support.',
+      );
 
     const match = await bcrypt.compare(dto.password, user.passwordHash);
     if (!match) throw new UnauthorizedException('Invalid email or password');
@@ -81,12 +94,14 @@ export class AuthService {
     await this.userRepo.save(user);
 
     const accessToken = this.generateAccessToken(user);
-    const refreshToken = await this.refreshTokenService.createRefreshToken(user);
+    const refreshToken =
+      await this.refreshTokenService.createRefreshToken(user);
     return this.buildAuthResponse(user, accessToken, refreshToken);
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
-    const rt = await this.refreshTokenService.validateRefreshToken(refreshToken);
+    const rt =
+      await this.refreshTokenService.validateRefreshToken(refreshToken);
     const user = rt.user;
     await this.refreshTokenService.deleteByToken(refreshToken);
     const accessToken = this.generateAccessToken(user);
@@ -108,7 +123,9 @@ export class AuthService {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     if (!user.passwordHash) {
-      throw new UnauthorizedException('No password set. Please use reset password instead.');
+      throw new UnauthorizedException(
+        'No password set. Please use reset password instead.',
+      );
     }
     const match = await bcrypt.compare(dto.currentPassword, user.passwordHash);
     if (!match) throw new UnauthorizedException('Invalid email or password');
@@ -119,7 +136,8 @@ export class AuthService {
   async resendConfirmation(email: string): Promise<void> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new NotFoundException('User not found');
-    if (user.emailVerified) throw new ConflictException('Email already verified');
+    if (user.emailVerified)
+      throw new ConflictException('Email already verified');
     await this.emailConfirmationService.sendConfirmationEmail(user);
   }
 
@@ -132,12 +150,16 @@ export class AuthService {
 
   verifyGoogleLinkIntentToken(token: string): number {
     try {
-      const payload = this.jwtService.verify<{ purpose?: string; sub?: string }>(token);
+      const payload = this.jwtService.verify<{
+        purpose?: string;
+        sub?: string;
+      }>(token);
       if (payload.purpose !== 'google_oauth_link' || !payload.sub) {
         throw new UnauthorizedException('Invalid link session');
       }
       const id = Number(payload.sub);
-      if (!Number.isFinite(id) || id <= 0) throw new UnauthorizedException('Invalid link session');
+      if (!Number.isFinite(id) || id <= 0)
+        throw new UnauthorizedException('Invalid link session');
       return id;
     } catch (e) {
       if (e instanceof UnauthorizedException) throw e;
@@ -148,22 +170,33 @@ export class AuthService {
   async assertCanStartGoogleLink(userId: number): Promise<void> {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
-    if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+    if (user.locked)
+      throw new ForbiddenException(
+        'Account is locked. Please contact support.',
+      );
     if (user.providerId) {
       throw new ConflictException('Google is already linked to this account.');
     }
   }
 
-  async linkGoogleAccount(userId: number, profile: Profile): Promise<AuthResponseDto> {
+  async linkGoogleAccount(
+    userId: number,
+    profile: Profile,
+  ): Promise<AuthResponseDto> {
     const email = profile.emails?.[0]?.value?.toLowerCase()?.trim();
-    if (!email) throw new UnauthorizedException('Google account email not available');
+    if (!email)
+      throw new UnauthorizedException('Google account email not available');
 
     const providerId = profile.id ? String(profile.id) : null;
-    if (!providerId) throw new UnauthorizedException('Google account id not available');
+    if (!providerId)
+      throw new UnauthorizedException('Google account id not available');
 
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
-    if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+    if (user.locked)
+      throw new ForbiddenException(
+        'Account is locked. Please contact support.',
+      );
     if (user.providerId) {
       throw new ConflictException('Google is already linked to this account.');
     }
@@ -173,12 +206,18 @@ export class AuthService {
       );
     }
 
-    const ownerOfProviderId = await this.userRepo.findOne({ where: { providerId } });
+    const ownerOfProviderId = await this.userRepo.findOne({
+      where: { providerId },
+    });
     if (ownerOfProviderId && ownerOfProviderId.id !== userId) {
-      throw new ConflictException('This Google account is already linked to another user.');
+      throw new ConflictException(
+        'This Google account is already linked to another user.',
+      );
     }
 
-    const ownerOfGoogleEmail = await this.userRepo.findOne({ where: { email } });
+    const ownerOfGoogleEmail = await this.userRepo.findOne({
+      where: { email },
+    });
     if (ownerOfGoogleEmail && ownerOfGoogleEmail.id !== userId) {
       throw new ConflictException(
         'An account with this Google email already exists. Sign in with Google or use a different Google account.',
@@ -200,17 +239,21 @@ export class AuthService {
       });
     } catch (e) {
       if (!isPostgresUniqueViolation(e)) throw e;
-      throw new ConflictException('This Google account is already linked to another user.');
+      throw new ConflictException(
+        'This Google account is already linked to another user.',
+      );
     }
 
     const accessToken = this.generateAccessToken(merged);
-    const refreshToken = await this.refreshTokenService.createRefreshToken(merged);
+    const refreshToken =
+      await this.refreshTokenService.createRefreshToken(merged);
     return this.buildAuthResponse(merged, accessToken, refreshToken);
   }
 
   async loginWithGoogle(profile: Profile): Promise<AuthResponseDto> {
     const email = profile.emails?.[0]?.value?.toLowerCase()?.trim();
-    if (!email) throw new UnauthorizedException('Google account email not available');
+    if (!email)
+      throw new UnauthorizedException('Google account email not available');
 
     const providerId = profile.id ? String(profile.id) : null;
     const givenName = profile.name?.givenName ?? '';
@@ -219,7 +262,9 @@ export class AuthService {
 
     let user =
       (await this.userRepo.findOne({ where: { email } })) ??
-      (providerId ? await this.userRepo.findOne({ where: { providerId } }) : null);
+      (providerId
+        ? await this.userRepo.findOne({ where: { providerId } })
+        : null);
 
     if (user) {
       if (!this.canSignInWithGoogle(user)) {
@@ -227,7 +272,10 @@ export class AuthService {
           `Account is linked to ${user.provider}. Please sign in with that provider.`,
         );
       }
-      if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+      if (user.locked)
+        throw new ForbiddenException(
+          'Account is locked. Please contact support.',
+        );
       user = await this.mergeGoogleProfileIntoUser(user, {
         email,
         providerId,
@@ -259,14 +307,19 @@ export class AuthService {
         if (!isPostgresUniqueViolation(e)) throw e;
         user =
           (await this.userRepo.findOne({ where: { email } })) ??
-          (providerId ? await this.userRepo.findOne({ where: { providerId } }) : null);
+          (providerId
+            ? await this.userRepo.findOne({ where: { providerId } })
+            : null);
         if (!user) throw e;
         if (!this.canSignInWithGoogle(user)) {
           throw new ConflictException(
             `Account is linked to ${user.provider}. Please sign in with that provider.`,
           );
         }
-        if (user.locked) throw new ForbiddenException('Account is locked. Please contact support.');
+        if (user.locked)
+          throw new ForbiddenException(
+            'Account is locked. Please contact support.',
+          );
         user = await this.mergeGoogleProfileIntoUser(user, {
           email,
           providerId,
@@ -278,7 +331,8 @@ export class AuthService {
     }
 
     const accessToken = this.generateAccessToken(user);
-    const refreshToken = await this.refreshTokenService.createRefreshToken(user);
+    const refreshToken =
+      await this.refreshTokenService.createRefreshToken(user);
     return this.buildAuthResponse(user, accessToken, refreshToken);
   }
 
@@ -307,17 +361,29 @@ export class AuthService {
   }
 
   private canSignInWithGoogle(user: User): boolean {
-    return user.provider === AuthProvider.GOOGLE || user.provider === AuthProvider.LOCAL;
+    return (
+      user.provider === AuthProvider.GOOGLE ||
+      user.provider === AuthProvider.LOCAL
+    );
   }
 
   private generateAccessToken(user: User): string {
     return this.jwtService.sign(
-      { sub: String(user.id), userId: user.id, email: user.email, role: user.role },
+      {
+        sub: String(user.id),
+        userId: user.id,
+        email: user.email,
+        role: user.role,
+      },
       { expiresIn: this.config.get('JWT_EXP', '7d') },
     );
   }
 
-  private buildAuthResponse(user: User, accessToken: string, refreshToken: string): AuthResponseDto {
+  private buildAuthResponse(
+    user: User,
+    accessToken: string,
+    refreshToken: string,
+  ): AuthResponseDto {
     return {
       accessToken,
       refreshToken,

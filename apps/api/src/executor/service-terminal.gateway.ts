@@ -13,7 +13,10 @@ import { Inject, forwardRef } from '@nestjs/common';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { ExecutorService } from './executor.service';
 import { ServicesService } from '../services/services.service';
-import { isRequestOriginAllowed, resolveCorsOrigin } from '../common/cors-origin';
+import {
+  isRequestOriginAllowed,
+  resolveCorsOrigin,
+} from '../common/cors-origin';
 import { parseCookieHeader, AUTH_ACCESS_COOKIE } from '../auth/auth-cookies';
 
 /**
@@ -41,9 +44,13 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
   @WebSocketServer()
   server: Server;
 
-  private async userIdFromWsRequest(req: IncomingMessage | undefined): Promise<number | null> {
+  private async userIdFromWsRequest(
+    req: IncomingMessage | undefined,
+  ): Promise<number | null> {
     const raw = req?.headers?.cookie;
-    const cookies = parseCookieHeader(typeof raw === 'string' ? raw : undefined);
+    const cookies = parseCookieHeader(
+      typeof raw === 'string' ? raw : undefined,
+    );
     const token = cookies[AUTH_ACCESS_COOKIE]?.trim();
     if (!token) return null;
     try {
@@ -51,10 +58,15 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
         userId?: number;
         sub?: string;
       }>(token);
-      if (typeof payload.userId === 'number' && Number.isFinite(payload.userId) && payload.userId >= 1) {
+      if (
+        typeof payload.userId === 'number' &&
+        Number.isFinite(payload.userId) &&
+        payload.userId >= 1
+      ) {
         return payload.userId;
       }
-      const sub = payload.sub != null ? Number.parseInt(String(payload.sub), 10) : NaN;
+      const sub =
+        payload.sub != null ? Number.parseInt(String(payload.sub), 10) : NaN;
       if (Number.isFinite(sub) && sub >= 1) return sub;
       return null;
     } catch {
@@ -66,7 +78,13 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
     const req = args[0] as IncomingMessage | undefined;
     const rawOrigin = req?.headers?.origin;
     const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (!isRequestOriginAllowed(origin, process.env.CORS_ORIGIN, process.env.NODE_ENV)) {
+    if (
+      !isRequestOriginAllowed(
+        origin,
+        process.env.CORS_ORIGIN,
+        process.env.NODE_ENV,
+      )
+    ) {
       client.send(
         JSON.stringify({
           type: 'error',
@@ -79,10 +97,15 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
     const pathAndQuery = req?.url ?? '/';
     const host = req?.headers?.host ?? 'localhost';
     const url = new URL(pathAndQuery, `http://${host}`);
-    const serviceIdParam = String(url.searchParams.get('serviceId') ?? '').trim();
+    const serviceIdParam = String(
+      url.searchParams.get('serviceId') ?? '',
+    ).trim();
     if (!serviceIdParam) {
       client.send(
-        JSON.stringify({ type: 'error', message: 'Missing or invalid serviceId.' }),
+        JSON.stringify({
+          type: 'error',
+          message: 'Missing or invalid serviceId.',
+        }),
       );
       client.close(4000, 'invalid serviceId');
       return;
@@ -102,10 +125,16 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
 
     let serviceId: number;
     try {
-      serviceId = await this.servicesService.resolveServiceIdForUser(serviceIdParam, userId);
+      serviceId = await this.servicesService.resolveServiceIdForUser(
+        serviceIdParam,
+        userId,
+      );
     } catch {
       client.send(
-        JSON.stringify({ type: 'error', message: 'Missing or invalid serviceId.' }),
+        JSON.stringify({
+          type: 'error',
+          message: 'Missing or invalid serviceId.',
+        }),
       );
       client.close(4000, 'invalid serviceId');
       return;
@@ -121,7 +150,10 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
     const cid = resolved.id.trim();
     if (!/^[a-f0-9]{12,64}$/i.test(cid)) {
       client.send(
-        JSON.stringify({ type: 'error', message: 'Invalid container id from host.' }),
+        JSON.stringify({
+          type: 'error',
+          message: 'Invalid container id from host.',
+        }),
       );
       client.close(4005, 'bad container id');
       return;
@@ -155,10 +187,15 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
             .then(() => {
               ssh?.exec(
                 remoteCmd,
-                { pty: true, env: { TERM: 'xterm-256color' } as NodeJS.ProcessEnv },
+                {
+                  pty: true,
+                  env: { TERM: 'xterm-256color' } as NodeJS.ProcessEnv,
+                },
                 (err, stream) => {
                   if (err) {
-                    client.send(JSON.stringify({ type: 'error', message: err.message }));
+                    client.send(
+                      JSON.stringify({ type: 'error', message: err.message }),
+                    );
                     client.close(4002, 'docker exec failed');
                     return;
                   }
@@ -179,56 +216,62 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
                     } catch {
                       /* ignore */
                     }
-                    if (client.readyState === 1) client.close(1000, 'terminal closed');
+                    if (client.readyState === 1)
+                      client.close(1000, 'terminal closed');
                   });
 
-                  client.on('message', (data: Buffer | ArrayBuffer | Buffer[]) => {
-                    const buf = Array.isArray(data)
-                      ? Buffer.concat(data)
-                      : Buffer.isBuffer(data)
-                        ? data
-                        : Buffer.from(data);
-                    const s = buf.toString('utf8');
-                    const trimmed = s.trim();
-                    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-                      try {
-                        const j = JSON.parse(trimmed) as {
-                          type?: string;
-                          cols?: number;
-                          rows?: number;
-                        };
-                        if (j.type === 'resize') {
-                          const cols = Math.min(
-                            512,
-                            Math.max(2, Math.floor(Number(j.cols)) || 80),
-                          );
-                          const rows = Math.min(
-                            512,
-                            Math.max(2, Math.floor(Number(j.rows)) || 24),
-                          );
-                          try {
-                            stream.setWindow(rows, cols, 0, 0);
-                          } catch {
-                            /* ignore */
+                  client.on(
+                    'message',
+                    (data: Buffer | ArrayBuffer | Buffer[]) => {
+                      const buf = Array.isArray(data)
+                        ? Buffer.concat(data)
+                        : Buffer.isBuffer(data)
+                          ? data
+                          : Buffer.from(data);
+                      const s = buf.toString('utf8');
+                      const trimmed = s.trim();
+                      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                        try {
+                          const j = JSON.parse(trimmed) as {
+                            type?: string;
+                            cols?: number;
+                            rows?: number;
+                          };
+                          if (j.type === 'resize') {
+                            const cols = Math.min(
+                              512,
+                              Math.max(2, Math.floor(Number(j.cols)) || 80),
+                            );
+                            const rows = Math.min(
+                              512,
+                              Math.max(2, Math.floor(Number(j.rows)) || 24),
+                            );
+                            try {
+                              stream.setWindow(rows, cols, 0, 0);
+                            } catch {
+                              /* ignore */
+                            }
+                            return;
                           }
-                          return;
+                        } catch {
+                          /* not JSON control packet */
                         }
-                      } catch {
-                        /* not JSON control packet */
                       }
-                    }
-                    try {
-                      stream.write(s);
-                    } catch {
-                      /* ignore */
-                    }
-                  });
+                      try {
+                        stream.write(s);
+                      } catch {
+                        /* ignore */
+                      }
+                    },
+                  );
                 },
               );
             });
         })
         .on('error', (e: Error) => {
-          this.remoteServersService.clearPendingSshHostKeyForServer(ctx.remoteServerId);
+          this.remoteServersService.clearPendingSshHostKeyForServer(
+            ctx.remoteServerId,
+          );
           if (client.readyState === 1) {
             client.send(JSON.stringify({ type: 'error', message: e.message }));
             client.close(4001, 'ssh connection failed');

@@ -54,7 +54,10 @@ export class TraefikService {
     return row;
   }
 
-  async updateSettings(userId: number, dto: UpdateTraefikSettingsDto): Promise<TraefikSettings> {
+  async updateSettings(
+    userId: number,
+    dto: UpdateTraefikSettingsDto,
+  ): Promise<TraefikSettings> {
     const current = await this.getSettings(userId);
     if (dto.acmeEmail !== undefined) current.acmeEmail = dto.acmeEmail.trim();
     if (dto.platformDomain !== undefined) {
@@ -64,7 +67,8 @@ export class TraefikService {
     if (dto.acmeStorageHostPath !== undefined) {
       current.acmeStorageHostPath = dto.acmeStorageHostPath.trim();
     }
-    if (dto.traefikImage !== undefined) current.traefikImage = dto.traefikImage.trim();
+    if (dto.traefikImage !== undefined)
+      current.traefikImage = dto.traefikImage.trim();
     if (dto.certResolverName !== undefined) {
       current.certResolverName = dto.certResolverName.trim();
     }
@@ -89,7 +93,9 @@ export class TraefikService {
   }
 
   /** Normalized hostname for Traefik Host() or null if unset/invalid. */
-  private sanitizePlatformDomain(raw: string | null | undefined): string | null {
+  private sanitizePlatformDomain(
+    raw: string | null | undefined,
+  ): string | null {
     if (raw == null || typeof raw !== 'string') return null;
     const host =
       raw

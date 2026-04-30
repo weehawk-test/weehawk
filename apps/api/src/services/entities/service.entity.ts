@@ -30,7 +30,11 @@ export class Service {
   @Column({ type: 'varchar', length: 100 })
   appName!: string;
 
-  @Column({ type: 'simple-enum', enum: composeType, default: composeType.COMPOSE })
+  @Column({
+    type: 'simple-enum',
+    enum: composeType,
+    default: composeType.COMPOSE,
+  })
   composeType!: composeType;
 
   @Column({ type: 'text', nullable: true })

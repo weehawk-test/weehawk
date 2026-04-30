@@ -1,5 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsOptional, IsString, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 class ApplicationVolumeRowDto {
@@ -19,7 +25,8 @@ class ApplicationVolumeRowDto {
 
 export class PatchApplicationVolumesDto {
   @ApiPropertyOptional({
-    description: 'Volume mappings to persist in the generated application compose.',
+    description:
+      'Volume mappings to persist in the generated application compose.',
     type: [ApplicationVolumeRowDto],
   })
   @IsOptional()

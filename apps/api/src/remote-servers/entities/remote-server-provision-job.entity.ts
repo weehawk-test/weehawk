@@ -30,7 +30,12 @@ export class RemoteServerProvisionJob {
    * `provision` = full install; `docker_purge` = remove Docker;
    * `nixpacks_install` = install Nixpacks CLI only (host already provisioned).
    */
-  @Column({ name: 'job_kind', type: 'varchar', length: 24, default: 'provision' })
+  @Column({
+    name: 'job_kind',
+    type: 'varchar',
+    length: 24,
+    default: 'provision',
+  })
   jobKind!: 'provision' | 'docker_purge' | 'nixpacks_install';
 
   @CreateDateColumn()

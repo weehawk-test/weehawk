@@ -1,5 +1,8 @@
 import { ValueTransformer } from 'typeorm';
-import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
+import {
+  decryptPrivateKey,
+  encryptPrivateKey,
+} from '../remote-servers/ssh-key-crypto';
 
 const IV_LEN = 12;
 const TAG_LEN = 16;

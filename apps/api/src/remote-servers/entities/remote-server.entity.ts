@@ -48,7 +48,12 @@ export class RemoteServer {
    * OpenSSH SHA256 host key fingerprint from the first successful connection (`SHA256:…`, same as `ssh-keygen -lf -E sha256`).
    * Cleared when host or port changes. Used to prevent MITM on subsequent connects.
    */
-  @Column({ name: 'ssh_host_key_sha256', type: 'varchar', length: 128, nullable: true })
+  @Column({
+    name: 'ssh_host_key_sha256',
+    type: 'varchar',
+    length: 128,
+    nullable: true,
+  })
   sshHostKeySha256?: string | null;
 
   /**

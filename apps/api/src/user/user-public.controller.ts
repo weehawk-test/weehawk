@@ -9,7 +9,9 @@ export class UserPublicController {
 
   @Get('/confirm-email-change')
   @Public()
-  async confirmEmailChange(@Query('token') token: string): Promise<{ message: string }> {
+  async confirmEmailChange(
+    @Query('token') token: string,
+  ): Promise<{ message: string }> {
     await this.changeEmailService.confirmEmailChange(token);
     return { message: 'Email changed successfully' };
   }

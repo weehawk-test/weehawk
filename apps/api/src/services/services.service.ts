@@ -53,10 +53,12 @@ import {
   WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
 } from '../remote-servers/remote-servers.service';
 import { generatePublicId, isLikelyNumericId } from '../common/public-id';
+import { ProjectTenantScopedRepository } from '../common/tenant-scoped.service';
 
 @Injectable()
 export class ServicesService {
   private readonly log = new Logger(ServicesService.name);
+  private readonly scopedServices: ProjectTenantScopedRepository<Service>;
 
   constructor(
     @InjectRepository(Service)
@@ -75,12 +77,36 @@ export class ServicesService {
     private readonly gitService: GitService,
     private readonly traefikService: TraefikService,
     private readonly remoteServersService: RemoteServersService,
-  ) {}
+  ) {
+    this.scopedServices = new ProjectTenantScopedRepository<Service>(
+      this.serviceRepository,
+      'Service',
+    );
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for legacy lookups that must preserve current relation-loading behavior.
+  private async _internal_systemFindOneService(
+    options: Parameters<Repository<Service>['findOne']>[0],
+  ): Promise<Service | null> {
+    return this.serviceRepository.manager.getRepository(Service).findOne(options);
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for entity persistence paths shared by user and background/system flows.
+  private async _internal_systemSaveService(service: Service): Promise<Service> {
+    return this.serviceRepository.manager.getRepository(Service).save(service);
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for remote-server validation without direct raw repository calls in user flows.
+  private async _internal_systemFindOneRemoteServerBy(
+    where: Parameters<Repository<RemoteServer>['findOneBy']>[0],
+  ): Promise<RemoteServer | null> {
+    return this.remoteServerRepository.manager.getRepository(RemoteServer).findOneBy(where);
+  }
 
   private async ensureServicePublicId(service: Service): Promise<Service> {
     if (service.publicId) return service;
     service.publicId = generatePublicId('svc');
-    return this.serviceRepository.save(service);
+    return this._internal_systemSaveService(service);
   }
 
   private async ensureServicePublicIds(rows: Service[]): Promise<Service[]> {
@@ -93,7 +119,10 @@ export class ServicesService {
     return this.projectRepository.save(project);
   }
 
-  async resolveProjectIdForUser(identifier: string, userId: number): Promise<number> {
+  async resolveProjectIdForUser(
+    identifier: string,
+    userId: number,
+  ): Promise<number> {
     const trimmed = String(identifier).trim();
     let project = await this.projectRepository.findOne({
       where: { publicId: trimmed, userId },
@@ -109,17 +138,19 @@ export class ServicesService {
     return ensured.id;
   }
 
-  async resolveServiceIdForUser(identifier: string, userId: number): Promise<number> {
+  async resolveServiceIdForUser(
+    identifier: string,
+    userId: number,
+  ): Promise<number> {
     const trimmed = String(identifier).trim();
-    let service = await this.serviceRepository.findOne({
+    let service = await this._internal_systemFindOneService({
       where: { publicId: trimmed, project: { userId } },
       relations: ['project'],
     });
     if (!service && isLikelyNumericId(trimmed)) {
       const id = Number.parseInt(trimmed, 10);
       if (Number.isSafeInteger(id) && id >= 1) {
-        service = await this.serviceRepository.findOne({
-          where: { id, project: { userId } },
+        service = await this.scopedServices.findScoped(id, userId, {
           relations: ['project'],
         });
       }
@@ -130,17 +161,13 @@ export class ServicesService {
   }
 
   /** Ensures the service exists. */
-  async assertServiceOwnedByUser(
+  async getScopedServiceForUser(
     serviceId: number,
     userId: number,
   ): Promise<Service> {
-    const service = await this.serviceRepository.findOne({
-      where: { id: serviceId, project: { userId } },
+    const service = await this.scopedServices.findScoped(serviceId, userId, {
       relations: ['project', 'remoteServer', 'buildRemoteServer'],
     });
-    if (!service) {
-      throw new NotFoundException(`Service #${serviceId} not found`);
-    }
     return this.ensureServicePublicId(service);
   }
 
@@ -155,11 +182,14 @@ export class ServicesService {
     return Math.trunc(id);
   }
 
-  private async assertProjectOwnedByUser(
+  private async getScopedProjectForUser(
     projectId: number,
     userId: number,
   ): Promise<Project> {
-    const project = await this.projectRepository.findOneBy({ id: projectId, userId });
+    const project = await this.projectRepository.findOneBy({
+      id: projectId,
+      userId,
+    });
     if (!project) {
       throw new NotFoundException('Project not found');
     }
@@ -175,9 +205,12 @@ export class ServicesService {
       registryPushImage: registryPushInCreate,
       ...serviceData
     } = createServiceDto;
-    const project = await this.assertProjectOwnedByUser(projectId, userId);
+    const project = await this.getScopedProjectForUser(projectId, userId);
 
-    if (buildRemoteServerId != null && serviceData.buildOnLocalDockerHost === true) {
+    if (
+      buildRemoteServerId != null &&
+      serviceData.buildOnLocalDockerHost === true
+    ) {
       throw new BadRequestException(
         'Cannot set a dedicated build host when building on this server (API). Clear build host or turn off “build on this server”.',
       );
@@ -204,9 +237,10 @@ export class ServicesService {
       });
     }
     if (buildRemoteServerId != null) {
-      service.buildRemoteServer = await this.remoteServerRepository.findOneByOrFail({
-        id: buildRemoteServerId,
-      });
+      service.buildRemoteServer =
+        await this.remoteServerRepository.findOneByOrFail({
+          id: buildRemoteServerId,
+        });
     }
 
     if (registryPushInCreate !== undefined && registryPushInCreate !== null) {
@@ -229,20 +263,24 @@ export class ServicesService {
       registryPushInCreate,
     );
 
-    let saved = await this.serviceRepository.save(service);
+    let saved = await this._internal_systemSaveService(service);
 
     if (
       registryPushInCreate !== undefined &&
       saved.composeType === composeType.APPLICATION &&
       (saved.dockerConfig || '').trim().length > 0
     ) {
-      saved.dockerConfig = this.mergeRegistryPushHeader(saved.dockerConfig, registryPushInCreate);
-      saved.dockerConfig = await this.composeApplicationDockerConfigForService(saved);
-      saved = await this.serviceRepository.save(saved);
+      saved.dockerConfig = this.mergeRegistryPushHeader(
+        saved.dockerConfig,
+        registryPushInCreate,
+      );
+      saved.dockerConfig =
+        await this.composeApplicationDockerConfigForService(saved);
+      saved = await this._internal_systemSaveService(saved);
     }
 
     const hydrated =
-      (await this.serviceRepository.findOne({
+      (await this._internal_systemFindOneService({
         where: { id: saved.id },
         relations: ['project', 'remoteServer'],
       })) ?? saved;
@@ -261,7 +299,10 @@ export class ServicesService {
   ): void {
     if (serviceComposeType !== composeType.APPLICATION) return;
     if (!buildOnLocalDockerHost || remoteServerId == null) return;
-    const fromHeader = this.parseConfigHeaderValue(dockerConfig, 'registry.pushImage')?.trim();
+    const fromHeader = this.parseConfigHeaderValue(
+      dockerConfig,
+      'registry.pushImage',
+    )?.trim();
     const fromArg =
       registryPushImage != null && String(registryPushImage).trim() !== ''
         ? String(registryPushImage).trim()
@@ -287,7 +328,9 @@ export class ServicesService {
     ref: string | null | undefined,
   ): string {
     const lines = (config || '').split(/\r?\n/);
-    const without = lines.filter((l) => !/^\s*#\s*registry\.pushImage:/i.test(l));
+    const without = lines.filter(
+      (l) => !/^\s*#\s*registry\.pushImage:/i.test(l),
+    );
     if (ref == null || String(ref).trim() === '') {
       return without.join('\n');
     }
@@ -303,7 +346,10 @@ export class ServicesService {
   }
 
   private normalizeArchivePath(raw: string, fallback: string): string {
-    const t = (raw || fallback).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const t = (raw || fallback)
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/^\/+|\/+$/g, '');
     return t || fallback;
   }
 
@@ -327,7 +373,9 @@ export class ServicesService {
       lines.push(`# app.git.httpUrlToRepo: ${marker.httpUrlToRepo}`);
     }
     if (marker.githubInstallationId != null) {
-      lines.push(`# app.git.githubInstallationId: ${marker.githubInstallationId}`);
+      lines.push(
+        `# app.git.githubInstallationId: ${marker.githubInstallationId}`,
+      );
     }
     if (marker.githubRepoFullName) {
       lines.push(`# app.git.githubRepoFullName: ${marker.githubRepoFullName}`);
@@ -351,18 +399,21 @@ export class ServicesService {
     return `${block}${stripped}`;
   }
 
-  private parseStoredRemoteGitMarker(config: string): WeehawkRemoteGitMarkerV1 | null {
+  private parseStoredRemoteGitMarker(
+    config: string,
+  ): WeehawkRemoteGitMarkerV1 | null {
     if (this.parseConfigHeaderValue(config, 'app.git.remoteOnly') !== 'true') {
       return null;
     }
     const provider = this.parseConfigHeaderValue(config, 'app.git.provider');
-    const ref = this.parseConfigHeaderValue(config, 'app.git.ref')?.trim() || '';
+    const ref =
+      this.parseConfigHeaderValue(config, 'app.git.ref')?.trim() || '';
     if ((provider !== 'gitlab' && provider !== 'github') || !ref) {
       return null;
     }
     const marker: WeehawkRemoteGitMarkerV1 = {
       v: 1,
-      provider: provider as 'gitlab' | 'github',
+      provider: provider,
       ref,
     };
     const gid = this.parseConfigHeaderValue(config, 'app.git.gitlabProjectId');
@@ -372,12 +423,18 @@ export class ServicesService {
     }
     const url = this.parseConfigHeaderValue(config, 'app.git.httpUrlToRepo');
     if (url?.trim()) marker.httpUrlToRepo = url.trim();
-    const iid = this.parseConfigHeaderValue(config, 'app.git.githubInstallationId');
+    const iid = this.parseConfigHeaderValue(
+      config,
+      'app.git.githubInstallationId',
+    );
     if (iid) {
       const n = parseInt(iid, 10);
       if (Number.isFinite(n)) marker.githubInstallationId = n;
     }
-    const fn = this.parseConfigHeaderValue(config, 'app.git.githubRepoFullName');
+    const fn = this.parseConfigHeaderValue(
+      config,
+      'app.git.githubRepoFullName',
+    );
     if (fn?.trim()) marker.githubRepoFullName = fn.trim();
     return marker;
   }
@@ -392,7 +449,9 @@ export class ServicesService {
       throw new BadRequestException('Image reference is too long.');
     }
     if (/\s/.test(t)) {
-      throw new BadRequestException('Image reference cannot contain whitespace.');
+      throw new BadRequestException(
+        'Image reference cannot contain whitespace.',
+      );
     }
     if (t.includes('..')) {
       throw new BadRequestException('Invalid image reference.');
@@ -421,9 +480,7 @@ export class ServicesService {
           .filter(Boolean) ?? [];
       return { external, stack };
     }
-    const mode = (
-      this.parseConfigHeaderValue(raw, 'network.mode') || 'none'
-    )
+    const mode = (this.parseConfigHeaderValue(raw, 'network.mode') || 'none')
       .toLowerCase()
       .trim();
     if (mode === 'external') {
@@ -432,7 +489,8 @@ export class ServicesService {
     }
     if (mode === 'stack') {
       const key =
-        this.parseConfigHeaderValue(raw, 'network.key')?.trim() || 'app-network';
+        this.parseConfigHeaderValue(raw, 'network.key')?.trim() ||
+        'app-network';
       return { external: [], stack: [key] };
     }
     return { external: [], stack: [] };
@@ -442,7 +500,9 @@ export class ServicesService {
     external?: string[];
     stack?: string[];
   }): { external: string[]; stack: string[] } {
-    const ext = (dto.external ?? []).map((s) => String(s).trim()).filter(Boolean);
+    const ext = (dto.external ?? [])
+      .map((s) => String(s).trim())
+      .filter(Boolean);
     const stk = (dto.stack ?? []).map((k) => String(k).trim()).filter(Boolean);
     const seen = new Set<string>();
     for (const k of stk) {
@@ -464,7 +524,8 @@ export class ServicesService {
     const raw = config || '';
     const line = raw.match(/^\s*#\s*app\.volumes:\s*(.+)$/m)?.[1]?.trim();
     if (!line || line.toLowerCase() === 'none') return [];
-    const out: Array<{ source: string; target: string; readOnly: boolean }> = [];
+    const out: Array<{ source: string; target: string; readOnly: boolean }> =
+      [];
     for (const token of line.split('|')) {
       const t = token.trim();
       if (!t) continue;
@@ -485,7 +546,8 @@ export class ServicesService {
     readOnly: boolean;
   }> {
     if (!Array.isArray(rows)) return [];
-    const out: Array<{ source: string; target: string; readOnly: boolean }> = [];
+    const out: Array<{ source: string; target: string; readOnly: boolean }> =
+      [];
     const seenTarget = new Set<string>();
     for (const item of rows) {
       if (!item || typeof item !== 'object') continue;
@@ -495,15 +557,27 @@ export class ServicesService {
       const readOnly = row.readOnly === true;
       if (!source && !target) continue;
       if (!source || !target) {
-        throw new BadRequestException('Each volume row must include source and target.');
+        throw new BadRequestException(
+          'Each volume row must include source and target.',
+        );
       }
-      if (source.includes('|') || source.includes('\n') || source.includes('\r')) {
+      if (
+        source.includes('|') ||
+        source.includes('\n') ||
+        source.includes('\r')
+      ) {
         throw new BadRequestException(`Invalid volume source: ${source}`);
       }
       if (!target.startsWith('/')) {
-        throw new BadRequestException(`Volume target must be an absolute container path: ${target}`);
+        throw new BadRequestException(
+          `Volume target must be an absolute container path: ${target}`,
+        );
       }
-      if (target.includes('|') || target.includes('\n') || target.includes('\r')) {
+      if (
+        target.includes('|') ||
+        target.includes('\n') ||
+        target.includes('\r')
+      ) {
         throw new BadRequestException(`Invalid volume target: ${target}`);
       }
       const key = target.toLowerCase();
@@ -582,7 +656,10 @@ export class ServicesService {
     return this.parseApplicationNetworksFromConfig(previousConfig);
   }
 
-  private parseNetworksJson(raw: string): { external: string[]; stack: string[] } {
+  private parseNetworksJson(raw: string): {
+    external: string[];
+    stack: string[];
+  } {
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -643,10 +720,13 @@ export class ServicesService {
     volumes: Array<{ source: string; target: string; readOnly: boolean }>;
   } {
     const raw = service.dockerConfig || '';
-    const sourceDir = this.parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
+    const sourceDir =
+      this.parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
     const buildPath = this.parseConfigHeaderValue(raw, 'buildPath') || '.';
-    const dockerfilePath = this.parseConfigHeaderValue(raw, 'dockerfilePath') || 'Dockerfile';
-    const buildModeRaw = this.parseConfigHeaderValue(raw, 'buildMode') || 'dockerfile';
+    const dockerfilePath =
+      this.parseConfigHeaderValue(raw, 'dockerfilePath') || 'Dockerfile';
+    const buildModeRaw =
+      this.parseConfigHeaderValue(raw, 'buildMode') || 'dockerfile';
     const bm = (buildModeRaw || 'dockerfile').toLowerCase();
     const buildMode: 'dockerfile' | 'nixpacks' =
       bm === 'nixpacks' || bm === 'buildpacks' ? 'nixpacks' : 'dockerfile';
@@ -686,8 +766,14 @@ export class ServicesService {
     }
 
     const builtTag = `${service.appName}:latest`;
-    const registryPushHeader = this.parseConfigHeaderValue(raw, 'registry.pushImage')?.trim();
-    const deployModeHeader = this.parseConfigHeaderValue(raw, 'deployMode')?.toLowerCase();
+    const registryPushHeader = this.parseConfigHeaderValue(
+      raw,
+      'registry.pushImage',
+    )?.trim();
+    const deployModeHeader = this.parseConfigHeaderValue(
+      raw,
+      'deployMode',
+    )?.toLowerCase();
     const imageRefHeader = this.parseConfigHeaderValue(raw, 'imageRef')?.trim();
     const imageLineMatch = raw.match(/^\s*image:\s*(.+)$/m);
     let normalizedImage = imageLineMatch?.[1]?.trim() ?? '';
@@ -773,19 +859,23 @@ export class ServicesService {
   }
 
   /** Loads `project` and `remoteServer` when missing — required for Magic Traefik.me hostnames. */
-  private async ensureServiceForMagicDomains(service: Service): Promise<Service> {
+  private async ensureServiceForMagicDomains(
+    service: Service,
+  ): Promise<Service> {
     const needProject = !service.project?.id;
     const needRemote =
       service.remoteServerId != null && service.remoteServer === undefined;
     if (!needProject && !needRemote) return service;
-    const row = await this.serviceRepository.findOne({
+    const row = await this._internal_systemFindOneService({
       where: { id: service.id },
       relations: ['project', 'remoteServer'],
     });
     return row ?? service;
   }
 
-  private sanitizePlatformHostForComparison(raw: string | null | undefined): string {
+  private sanitizePlatformHostForComparison(
+    raw: string | null | undefined,
+  ): string {
     if (raw == null || typeof raw !== 'string') return '';
     const host =
       raw
@@ -798,9 +888,13 @@ export class ServicesService {
   }
 
   private isMagicTraefikMeEnabled(): boolean {
-    const v = this.configService.get<string>('WEEHAWK_MAGIC_TRAEFIK_ME_ENABLED');
+    const v = this.configService.get<string>(
+      'WEEHAWK_MAGIC_TRAEFIK_ME_ENABLED',
+    );
     if (v === undefined || v === null || String(v).trim() === '') return true;
-    return !['0', 'false', 'no', 'off'].includes(String(v).trim().toLowerCase());
+    return !['0', 'false', 'no', 'off'].includes(
+      String(v).trim().toLowerCase(),
+    );
   }
 
   /** Priority: selected deploy remote host → service-saved override → API env (fallback only). */
@@ -856,7 +950,7 @@ export class ServicesService {
     userId: number,
     dto?: { publicIpv4?: string },
   ) {
-    let s = await this.assertServiceOwnedByUser(id, userId);
+    let s = await this.getScopedServiceForUser(id, userId);
     if (s.composeType !== composeType.APPLICATION) {
       throw new BadRequestException(
         'Magic traefik.me applies only to application (Swarm) services.',
@@ -869,7 +963,9 @@ export class ServicesService {
     const fromBody = dto?.publicIpv4?.trim();
     if (fromBody) {
       if (!parseIpv4Octets(fromBody)) {
-        throw new BadRequestException('publicIpv4 must be a valid dotted IPv4 address.');
+        throw new BadRequestException(
+          'publicIpv4 must be a valid dotted IPv4 address.',
+        );
       }
       s.magicTraefikMeIpv4 = fromBody;
     }
@@ -899,36 +995,38 @@ export class ServicesService {
       );
     }
     s.magicTraefikMeNonce = nonce;
-    await this.serviceRepository.save(s);
-    s = await this.assertServiceOwnedByUser(id, userId);
+    await this._internal_systemSaveService(s);
+    s = await this.getScopedServiceForUser(id, userId);
     if ((s.dockerConfig || '').includes('# weehawk application service')) {
       s.dockerConfig = await this.composeApplicationDockerConfigForService(s);
-      await this.serviceRepository.save(s);
+      await this._internal_systemSaveService(s);
     }
-    const fresh = await this.assertServiceOwnedByUser(id, userId);
+    const fresh = await this.getScopedServiceForUser(id, userId);
     return this.withMagicTraefikMeUrl(fresh);
   }
 
   /** Remove Magic traefik.me host from Traefik labels (no auto-publish). */
   async clearMagicTraefikMeDomain(id: number, userId: number) {
-    let s = await this.assertServiceOwnedByUser(id, userId);
+    let s = await this.getScopedServiceForUser(id, userId);
     if (s.composeType !== composeType.APPLICATION) {
       throw new BadRequestException(
         'Magic traefik.me applies only to application (Swarm) services.',
       );
     }
     s.magicTraefikMeNonce = null;
-    await this.serviceRepository.save(s);
-    s = await this.assertServiceOwnedByUser(id, userId);
+    await this._internal_systemSaveService(s);
+    s = await this.getScopedServiceForUser(id, userId);
     if ((s.dockerConfig || '').includes('# weehawk application service')) {
       s.dockerConfig = await this.composeApplicationDockerConfigForService(s);
-      await this.serviceRepository.save(s);
+      await this._internal_systemSaveService(s);
     }
-    const fresh = await this.assertServiceOwnedByUser(id, userId);
+    const fresh = await this.getScopedServiceForUser(id, userId);
     return this.withMagicTraefikMeUrl(fresh);
   }
 
-  async computeMagicTraefikMeQuickAccessUrl(service: Service): Promise<string | null> {
+  async computeMagicTraefikMeQuickAccessUrl(
+    service: Service,
+  ): Promise<string | null> {
     const svc = await this.ensureServiceForMagicDomains(service);
     const settings = await this.traefikService.getSettings(
       this.integrationOwnerUserId(svc),
@@ -944,7 +1042,8 @@ export class ServicesService {
   async withMagicTraefikMeUrl<T extends Service>(
     service: T,
   ): Promise<T & { magicTraefikMeUrl: string | null }> {
-    const magicTraefikMeUrl = await this.computeMagicTraefikMeQuickAccessUrl(service);
+    const magicTraefikMeUrl =
+      await this.computeMagicTraefikMeQuickAccessUrl(service);
     return { ...service, magicTraefikMeUrl };
   }
 
@@ -965,7 +1064,9 @@ export class ServicesService {
     return { external: ext, stack: [...network.stack] };
   }
 
-  private sanitizePathPrefixForRule(raw: string | null | undefined): string | null {
+  private sanitizePathPrefixForRule(
+    raw: string | null | undefined,
+  ): string | null {
     if (raw == null) return null;
     const t = raw.trim();
     if (!t) return null;
@@ -995,16 +1096,22 @@ export class ServicesService {
     return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 
-  private buildTraefikLabelSection(
-    traefik?: {
-      certResolver: string;
-      httpEntrypoint: string;
-      httpsEntrypoint: string;
-      routes: Array<{ router: string; rule: string; port: number; https: boolean }>;
-    },
-  ): string {
+  private buildTraefikLabelSection(traefik?: {
+    certResolver: string;
+    httpEntrypoint: string;
+    httpsEntrypoint: string;
+    routes: Array<{
+      router: string;
+      rule: string;
+      port: number;
+      https: boolean;
+    }>;
+  }): string {
     if (!traefik?.routes?.length) return '';
-    const lines: string[] = ['      labels:', '        - "traefik.enable=true"'];
+    const lines: string[] = [
+      '      labels:',
+      '        - "traefik.enable=true"',
+    ];
     /** One Traefik loadbalancer service per port; all routers reference it (Docker/Swarm multi-router pattern). */
     const lbPortsSeen = new Set<number>();
     for (const r of traefik.routes) {
@@ -1012,9 +1119,15 @@ export class ServicesService {
       const useTls = r.https !== false;
       const ep = useTls ? traefik.httpsEntrypoint : traefik.httpEntrypoint;
       const lbSvc = `whlb_${r.port}`;
-      lines.push(`        - "traefik.http.routers.${r.router}.rule=${ruleEsc}"`);
-      lines.push(`        - "traefik.http.routers.${r.router}.entrypoints=${ep}"`);
-      lines.push(`        - "traefik.http.routers.${r.router}.service=${lbSvc}"`);
+      lines.push(
+        `        - "traefik.http.routers.${r.router}.rule=${ruleEsc}"`,
+      );
+      lines.push(
+        `        - "traefik.http.routers.${r.router}.entrypoints=${ep}"`,
+      );
+      lines.push(
+        `        - "traefik.http.routers.${r.router}.service=${lbSvc}"`,
+      );
       if (useTls) {
         lines.push(
           `        - "traefik.http.routers.${r.router}.tls.certresolver=${traefik.certResolver}"`,
@@ -1038,7 +1151,12 @@ export class ServicesService {
         certResolver: string;
         httpEntrypoint: string;
         httpsEntrypoint: string;
-        routes: Array<{ router: string; rule: string; port: number; https: boolean }>;
+        routes: Array<{
+          router: string;
+          rule: string;
+          port: number;
+          https: boolean;
+        }>;
       }
     | undefined
   > {
@@ -1052,7 +1170,10 @@ export class ServicesService {
     const platformHost = this.sanitizePlatformHostForComparison(
       settings.platformDomain,
     );
-    const magicHost = await this.resolveMagicTraefikMeHostname(svc, platformHost);
+    const magicHost = await this.resolveMagicTraefikMeHostname(
+      svc,
+      platformHost,
+    );
     const certResolver = (settings.certResolverName || 'letsencrypt').trim();
     const httpEntrypoint = (settings.httpEntrypoint || 'web').trim();
     const httpsEntrypoint = (settings.httpsEntrypoint || 'websecure').trim();
@@ -1145,12 +1266,11 @@ export class ServicesService {
       service.dockerConfig || '',
       'registry.pushImage',
     )?.trim();
-    const imageName =
-      registryPush?.length
-        ? registryPush
-        : args.deployMode === 'image' && args.imageRef?.trim()
-          ? args.imageRef.trim()
-          : `${service.appName}:latest`;
+    const imageName = registryPush?.length
+      ? registryPush
+      : args.deployMode === 'image' && args.imageRef?.trim()
+        ? args.imageRef.trim()
+        : `${service.appName}:latest`;
     const traefik = await this.buildTraefikIngressForCompose(
       service,
       args.containerPort,
@@ -1198,7 +1318,12 @@ export class ServicesService {
       certResolver: string;
       httpEntrypoint: string;
       httpsEntrypoint: string;
-      routes: Array<{ router: string; rule: string; port: number; https: boolean }>;
+      routes: Array<{
+        router: string;
+        rule: string;
+        port: number;
+        https: boolean;
+      }>;
     };
   }): string {
     const ports =
@@ -1206,7 +1331,9 @@ export class ServicesService {
         ? `    ports:\n      - "${args.publishPort}:${args.containerPort}"\n`
         : '';
     const envLines = args.envKeys.map((k) => `      ${k}: \${${k}}`);
-    const envSection = envLines.length ? `    environment:\n${envLines.join('\n')}\n` : '';
+    const envSection = envLines.length
+      ? `    environment:\n${envLines.join('\n')}\n`
+      : '';
     const volumeRows = this.normalizeApplicationVolumePayload(args.volumes);
     const volumeHeader =
       volumeRows.length > 0
@@ -1216,7 +1343,9 @@ export class ServicesService {
         : '# app.volumes: none\n';
     const svcVolumesSection = volumeRows.length
       ? `    volumes:\n${volumeRows
-          .map((v) => `      - ${v.source}:${v.target}${v.readOnly ? ':ro' : ''}`)
+          .map(
+            (v) => `      - ${v.source}:${v.target}${v.readOnly ? ':ro' : ''}`,
+          )
           .join('\n')}\n`
       : '';
     const namedVolumeSources = Array.from(
@@ -1235,13 +1364,18 @@ export class ServicesService {
       ? `volumes:\n${namedVolumeSources.map((name) => `  ${name}:\n    driver: local`).join('\n')}\n`
       : '';
 
-    const ext = (args.network.external ?? []).map((n) => n.trim()).filter(Boolean);
+    const ext = (args.network.external ?? [])
+      .map((n) => n.trim())
+      .filter(Boolean);
     const stk = (args.network.stack ?? []).map((k) => k.trim()).filter(Boolean);
 
     const networkHeaderLines: string[] = [];
-    if (ext.length) networkHeaderLines.push(`# app.networks.external: ${ext.join('|')}`);
-    if (stk.length) networkHeaderLines.push(`# app.networks.stack: ${stk.join('|')}`);
-    if (!ext.length && !stk.length) networkHeaderLines.push(`# app.networks: none`);
+    if (ext.length)
+      networkHeaderLines.push(`# app.networks.external: ${ext.join('|')}`);
+    if (stk.length)
+      networkHeaderLines.push(`# app.networks.stack: ${stk.join('|')}`);
+    if (!ext.length && !stk.length)
+      networkHeaderLines.push(`# app.networks: none`);
     const networkHeader = networkHeaderLines.map((l) => `${l}\n`).join('');
 
     const svcNetLines: string[] = [];
@@ -1258,7 +1392,9 @@ export class ServicesService {
     stk.forEach((userKey, i) => {
       const alias = this.composeStackNetworkAlias(userKey, i, usedAliases);
       svcNetLines.push(`      - ${alias}`);
-      rootNetBlocks.push(`  ${alias}:\n    driver: overlay\n    attachable: true`);
+      rootNetBlocks.push(
+        `  ${alias}:\n    driver: overlay\n    attachable: true`,
+      );
     });
 
     const svcNetworkSection = svcNetLines.length
@@ -1269,7 +1405,9 @@ export class ServicesService {
       ? `networks:\n${rootNetBlocks.join('\n')}\n`
       : '';
 
-    const storageHeader = args.envKeys.map((k) => `# app.store.${k}: env`).join('\n');
+    const storageHeader = args.envKeys
+      .map((k) => `# app.store.${k}: env`)
+      .join('\n');
     const imageRefLine =
       args.deployMode === 'image' && args.imageRef
         ? `# imageRef: ${args.imageRef}\n`
@@ -1278,10 +1416,9 @@ export class ServicesService {
       args.traefik?.routes?.length && args.traefik
         ? `# traefik.routers: ${args.traefik.routes.map((r) => r.router).join('|')}\n`
         : '';
-    const registryPushLine =
-      args.registryPushImage?.trim()
-        ? `# registry.pushImage: ${args.registryPushImage.trim()}\n`
-        : '';
+    const registryPushLine = args.registryPushImage?.trim()
+      ? `# registry.pushImage: ${args.registryPushImage.trim()}\n`
+      : '';
     const traefikLabelsSection = this.buildTraefikLabelSection(args.traefik);
     return `# weehawk application service
 ${registryPushLine}# sourceDir: ${args.sourceDir}
@@ -1313,26 +1450,34 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     dto: { external?: string[]; stack?: string[] },
     userId: number,
   ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException(
         'This service is not an application-type service.',
       );
     }
-    const { external: ext, stack: stk } = this.normalizeApplicationNetworkPayload(dto);
+    const { external: ext, stack: stk } =
+      this.normalizeApplicationNetworkPayload(dto);
 
     const yamlEnvBefore = {
       dockerConfig: service.dockerConfig ?? '',
       env: service.env ?? '',
     };
-    service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
-      network: {
-        external: ext,
-        stack: stk,
+    service.dockerConfig = await this.composeApplicationDockerConfigForService(
+      service,
+      {
+        network: {
+          external: ext,
+          stack: stk,
+        },
       },
-    });
-    const saved = await this.serviceRepository.save(service);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    );
+    const saved = await this._internal_systemSaveService(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
     return saved;
   }
 
@@ -1343,7 +1488,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     },
     userId: number,
   ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException(
         'This service is not an application-type service.',
@@ -1354,11 +1499,18 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       dockerConfig: service.dockerConfig ?? '',
       env: service.env ?? '',
     };
-    service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
-      volumes,
-    });
-    const saved = await this.serviceRepository.save(service);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    service.dockerConfig = await this.composeApplicationDockerConfigForService(
+      service,
+      {
+        volumes,
+      },
+    );
+    const saved = await this._internal_systemSaveService(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
     return saved;
   }
 
@@ -1369,7 +1521,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     },
     userId: number,
   ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException(
         'This service is not an application-type service.',
@@ -1382,18 +1534,26 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     );
     const valuesMap = this.resolveApplicationValuesMap(parsedVars);
     await this.removeObsoleteManagedSecrets(service, previousConfig, {});
-    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
+    const managedKeys =
+      this.parseManagedApplicationKeysFromHeader(previousConfig);
     const envWithoutManaged = this.removeEnvKeys(previousEnv, managedKeys);
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
     const yamlEnvBefore = {
       dockerConfig: service.dockerConfig ?? '',
       env: previousEnv,
     };
-    service.dockerConfig = await this.composeApplicationDockerConfigForService(service, {
-      envKeys: Object.keys(valuesMap),
-    });
-    const saved = await this.serviceRepository.save(service);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    service.dockerConfig = await this.composeApplicationDockerConfigForService(
+      service,
+      {
+        envKeys: Object.keys(valuesMap),
+      },
+    );
+    const saved = await this._internal_systemSaveService(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
     return saved;
   }
 
@@ -1425,43 +1585,62 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       );
     }
 
-    let buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
+    const buildPath = this.normalizeArchivePath(options?.buildPath || '.', '.');
     const dockerfilePath = this.normalizeArchivePath(
       options?.dockerfilePath || 'Dockerfile',
       'Dockerfile',
     );
-    const prevBuildRaw = this.parseConfigHeaderValue(previousConfig, 'buildMode')?.toLowerCase();
+    const prevBuildRaw = this.parseConfigHeaderValue(
+      previousConfig,
+      'buildMode',
+    )?.toLowerCase();
     const optBm = options?.buildMode?.toLowerCase();
     const mergedBm = optBm ?? prevBuildRaw ?? 'dockerfile';
     const buildMode: 'dockerfile' | 'nixpacks' =
-      mergedBm === 'nixpacks' || mergedBm === 'buildpacks' ? 'nixpacks' : 'dockerfile';
-    let containerPort = options?.containerPort ?? 3000;
+      mergedBm === 'nixpacks' || mergedBm === 'buildpacks'
+        ? 'nixpacks'
+        : 'dockerfile';
+    const containerPort = options?.containerPort ?? 3000;
     const publishPort = options?.publishPort;
-    const replicas = Math.min(10, Math.max(1, Math.floor(options?.replicas ?? 1)));
-    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
+    const replicas = Math.min(
+      10,
+      Math.max(1, Math.floor(options?.replicas ?? 1)),
+    );
+    const managedKeys =
+      this.parseManagedApplicationKeysFromHeader(previousConfig);
     const hasVarsPayload = options?.variablesJson !== undefined;
     const valuesMap = hasVarsPayload
       ? this.resolveApplicationValuesMap(
           this.parseApplicationVariables(options?.variablesJson),
         )
       : this.pickEnvValuesMapByKeys(service.env || '', managedKeys);
-    const composeEnvKeys = hasVarsPayload ? Object.keys(valuesMap) : managedKeys;
+    const composeEnvKeys = hasVarsPayload
+      ? Object.keys(valuesMap)
+      : managedKeys;
 
     await this.removeObsoleteManagedSecrets(service, previousConfig, {});
-    const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
+    const envWithoutManaged = this.removeEnvKeys(
+      service.env || '',
+      managedKeys,
+    );
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
     const networkMerged = this.ensureTraefikExternalNetwork(network, service);
     const volumes = this.resolveUploadVolumes(options, previousConfig);
-    const traefik = await this.buildTraefikIngressForCompose(service, containerPort);
+    const traefik = await this.buildTraefikIngressForCompose(
+      service,
+      containerPort,
+    );
 
     const preservedRegistry = this.parseConfigHeaderValue(
       previousConfig,
       'registry.pushImage',
     )?.trim();
     const registryRef =
-      preservedRegistry && preservedRegistry.length > 0 ? preservedRegistry : undefined;
+      preservedRegistry && preservedRegistry.length > 0
+        ? preservedRegistry
+        : undefined;
     const imageNameForStack = registryRef ?? `${service.appName}:latest`;
 
     let nextConfig = this.composeApplicationDockerConfig({
@@ -1483,9 +1662,9 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     });
     nextConfig = this.injectRemoteGitHeaders(nextConfig, effectiveRemoteMarker);
     service.dockerConfig = nextConfig;
-    const saved = await this.serviceRepository.save(service);
+    const saved = await this._internal_systemSaveService(service);
     const hydrated =
-      (await this.serviceRepository.findOne({
+      (await this._internal_systemFindOneService({
         where: { id: saved.id },
         relations: ['project', 'remoteServer'],
       })) ?? saved;
@@ -1507,9 +1686,11 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     },
     userId: number,
   ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
-      throw new BadRequestException('This service is not an application-type service.');
+      throw new BadRequestException(
+        'This service is not an application-type service.',
+      );
     }
 
     const { marker } = await this.gitService.resolveRemoteGitApplicationBinding(
@@ -1541,10 +1722,14 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       });
     }
     service.dockerConfig = this.injectRemoteGitHeaders(dc, marker);
-    const saved = await this.serviceRepository.save(service);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    const saved = await this._internal_systemSaveService(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
 
-    const fresh = await this.assertServiceOwnedByUser(id, userId);
+    const fresh = await this.getScopedServiceForUser(id, userId);
     return {
       success: true,
       message:
@@ -1574,20 +1759,28 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     },
     userId: number,
   ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
-      throw new BadRequestException('This service is not an application-type service.');
+      throw new BadRequestException(
+        'This service is not an application-type service.',
+      );
     }
 
-    const storedRemote = this.parseStoredRemoteGitMarker(service.dockerConfig || '');
+    const storedRemote = this.parseStoredRemoteGitMarker(
+      service.dockerConfig || '',
+    );
     if (!storedRemote) {
       throw new BadRequestException(
         'No Git repository linked. Use Fetch to link a repository before generating the stack.',
       );
     }
 
-    const saved = await this.applyApplicationSourceFromDirectory(service, options);
-    const remoteMirror = await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
+    const saved = await this.applyApplicationSourceFromDirectory(
+      service,
+      options,
+    );
+    const remoteMirror =
+      await this.pushApplicationMirrorToDeployHostIfConfigured(id, userId);
     return {
       success: true,
       message: 'Application stack generated from source.',
@@ -1614,36 +1807,50 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     },
     userId: number,
   ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.APPLICATION) {
-      throw new BadRequestException('This service is not an application-type service.');
+      throw new BadRequestException(
+        'This service is not an application-type service.',
+      );
     }
     const yamlEnvBefore = {
       dockerConfig: service.dockerConfig ?? '',
       env: service.env ?? '',
     };
     const imageRef = this.validateDockerImageRef(options.imageRef);
-    let containerPort = options.containerPort ?? 3000;
+    const containerPort = options.containerPort ?? 3000;
     const publishPort = options.publishPort;
-    const replicas = Math.min(10, Math.max(1, Math.floor(options.replicas ?? 1)));
+    const replicas = Math.min(
+      10,
+      Math.max(1, Math.floor(options.replicas ?? 1)),
+    );
     const previousConfig = service.dockerConfig || '';
-    const managedKeys = this.parseManagedApplicationKeysFromHeader(previousConfig);
+    const managedKeys =
+      this.parseManagedApplicationKeysFromHeader(previousConfig);
     const hasVarsPayload = options?.variablesJson !== undefined;
     const valuesMap = hasVarsPayload
       ? this.resolveApplicationValuesMap(
           this.parseApplicationVariables(options?.variablesJson),
         )
       : this.pickEnvValuesMapByKeys(service.env || '', managedKeys);
-    const composeEnvKeys = hasVarsPayload ? Object.keys(valuesMap) : managedKeys;
+    const composeEnvKeys = hasVarsPayload
+      ? Object.keys(valuesMap)
+      : managedKeys;
 
     await this.removeObsoleteManagedSecrets(service, previousConfig, {});
-    const envWithoutManaged = this.removeEnvKeys(service.env || '', managedKeys);
+    const envWithoutManaged = this.removeEnvKeys(
+      service.env || '',
+      managedKeys,
+    );
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
     const networkMerged = this.ensureTraefikExternalNetwork(network, service);
     const volumes = this.resolveUploadVolumes(options, previousConfig);
-    const traefik = await this.buildTraefikIngressForCompose(service, containerPort);
+    const traefik = await this.buildTraefikIngressForCompose(
+      service,
+      containerPort,
+    );
 
     service.dockerConfig = this.composeApplicationDockerConfig({
       sourceDir: 'app-source',
@@ -1661,10 +1868,14 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       network: networkMerged,
       traefik,
     });
-    const saved = await this.serviceRepository.save(service);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    const saved = await this._internal_systemSaveService(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
     const hydrated =
-      (await this.serviceRepository.findOne({
+      (await this._internal_systemFindOneService({
         where: { id: saved.id },
         relations: ['project', 'remoteServer'],
       })) ?? saved;
@@ -1675,7 +1886,9 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     };
   }
 
-  private parseApplicationVariables(raw?: string): Array<{ key: string; value: string }> {
+  private parseApplicationVariables(
+    raw?: string,
+  ): Array<{ key: string; value: string }> {
     if (!raw?.trim()) return [];
     let parsed: unknown;
     try {
@@ -1741,7 +1954,9 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
   private parseManagedApplicationKeysFromHeader(raw: string): string[] {
     const keys = new Set<string>();
     for (const line of raw.split(/\r?\n/)) {
-      const m = line.match(/^\s*#\s*app\.store\.([A-Z0-9_]+):\s*(env|secret)\s*$/i);
+      const m = line.match(
+        /^\s*#\s*app\.store\.([A-Z0-9_]+):\s*(env|secret)\s*$/i,
+      );
       if (m?.[1]) keys.add(m[1]);
     }
     return Array.from(keys);
@@ -1767,7 +1982,6 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     }
     return out.join('\n');
   }
-
 
   /** First `services:` key in compose YAML (matches deploy / exec targets). */
   private firstComposeServiceName(config: string): string {
@@ -1797,7 +2011,10 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
    * - Swarm-backed services (stack/databases/application): `docker service` commands.
    * - Compose services: `docker compose logs -f`.
    */
-  getServiceLogsStream(id: number, userId: number): Observable<{ data: string }> {
+  getServiceLogsStream(
+    id: number,
+    userId: number,
+  ): Observable<{ data: string }> {
     return new Observable((observer) => {
       let remoteCancel: (() => void) | null = null;
       let cancelled = false;
@@ -1806,7 +2023,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
 
       void (async () => {
         try {
-          const service = await this.assertServiceOwnedByUser(id, userId);
+          const service = await this.getScopedServiceForUser(id, userId);
           if (cancelled) return;
 
           const sshTargets = await this.getDockerSshTargetIds(service.id);
@@ -1859,8 +2076,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
           }
 
           observer.next({
-            data:
-              '[logs] No deploy host is set for this service. Choose a remote Deploy server under Remote Docker host, save, then open logs again.\n',
+            data: '[logs] No deploy host is set for this service. Choose a remote Deploy server under Remote Docker host, save, then open logs again.\n',
           });
           observer.complete();
         } catch (err) {
@@ -1875,19 +2091,28 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     });
   }
 
-  async executeDeployment(
+  private async executeDeploymentCore(
     id: number,
     mode: 'deploy' | 'reload' | 'redeploy' = 'deploy',
-    options?: { deployLogEmitter?: EventEmitter; actingUserId?: number },
+    options?: {
+      deployLogEmitter?: EventEmitter;
+      actingUserId?: number;
+      enforceOwnership?: boolean;
+    },
   ) {
-    if (options?.actingUserId !== undefined) {
-      await this.assertServiceOwnedByUser(id, options.actingUserId);
+    if (options?.enforceOwnership !== false) {
+      if (options?.actingUserId == null || options.actingUserId < 1) {
+        throw new BadRequestException(
+          'actingUserId is required for deployment.',
+        );
+      }
+      await this.getScopedServiceForUser(id, options.actingUserId);
     } else {
       await this.findOne(id);
     }
 
     if (mode === 'redeploy' || mode === 'deploy') {
-      const svc = await this.serviceRepository.findOne({ where: { id } });
+      const svc = await this._internal_systemFindOneService({ where: { id } });
       if (
         svc?.autoDeployEnabled &&
         svc.autoDeployGitProvider &&
@@ -1906,20 +2131,64 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     const result = await this.executorService.execute(id, mode, options);
     let finalResult = result;
     if (result.success) {
-      finalResult = await this.validateApplicationRolloutAfterDeploy(id, result);
+      finalResult = await this.validateApplicationRolloutAfterDeploy(
+        id,
+        result,
+      );
     }
     if (finalResult.success) {
-      await this.serviceRepository.update(id, { lastDeployedAt: new Date() });
+      const ownerId =
+        options?.enforceOwnership === false
+          ? (
+              await this._internal_systemFindOneService({
+                where: { id },
+                relations: ['project'],
+              })
+            )?.project?.userId
+          : options?.actingUserId;
+      if (!ownerId || ownerId < 1) {
+        throw new NotFoundException(`Service #${id} not found`);
+      }
+      await this.scopedServices.updateScoped(id, ownerId, {
+        lastDeployedAt: new Date(),
+      });
       try {
         const sshTargets = await this.getDockerSshTargetIds(id);
         if (sshTargets.remoteServerId != null) {
-          await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(id);
+          await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(
+            id,
+          );
         }
       } catch {
         /* best effort — deploy already succeeded */
       }
     }
     return finalResult;
+  }
+
+  async executeDeployment(
+    id: number,
+    mode: 'deploy' | 'reload' | 'redeploy' = 'deploy',
+    options: { deployLogEmitter?: EventEmitter; actingUserId: number },
+  ) {
+    return this.executeDeploymentCore(id, mode, {
+      ...options,
+      enforceOwnership: true,
+    });
+  }
+
+  /**
+   * Internal-only deploy path for trusted system triggers (not exposed via API routes).
+   */
+  async executeInternalSystemDeployment(
+    id: number,
+    mode: 'deploy' | 'reload' | 'redeploy' = 'deploy',
+    options?: { deployLogEmitter?: EventEmitter },
+  ) {
+    return this.executeDeploymentCore(id, mode, {
+      ...options,
+      enforceOwnership: false,
+    });
   }
 
   /**
@@ -1931,8 +2200,9 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     result: { success: boolean; output: string },
   ): Promise<{ success: boolean; output: string }> {
     if (!result.success) return result;
-    const service = await this.serviceRepository.findOne({ where: { id } });
-    if (!service || service.composeType !== composeType.APPLICATION) return result;
+    const service = await this._internal_systemFindOneService({ where: { id } });
+    if (!service || service.composeType !== composeType.APPLICATION)
+      return result;
     const sshTargets = await this.getDockerSshTargetIds(id);
     if (sshTargets.remoteServerId == null) return result;
 
@@ -1959,13 +2229,16 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 `;
 
     try {
-      const { stdout, stderr } = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
-        sshTargets.remoteServerId,
-        null,
-        script,
-      );
+      const { stdout, stderr } =
+        await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+          sshTargets.remoteServerId,
+          null,
+          script,
+        );
       const out = [stdout, stderr].filter((s) => s?.trim()).join('\n');
-      const inspectLine = (stdout.split(/\r?\n/).find((l) => l.includes('|')) ?? '').trim();
+      const inspectLine = (
+        stdout.split(/\r?\n/).find((l) => l.includes('|')) ?? ''
+      ).trim();
       const [updateStateRaw] = inspectLine.split('|');
       const updateState = (updateStateRaw ?? '').trim().toLowerCase();
       const updateFailed =
@@ -1973,25 +2246,23 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         updateState.startsWith('rollback') ||
         updateState === 'failed';
 
-      const taskFailed = stdout
-        .split(/\r?\n/)
-        .some((line) => {
-          const t = line.trim();
-          if (!t || !t.includes('|')) return false;
-          const parts = t.split('|');
-          if (parts.length < 4) return false;
-          const desired = (parts[1] ?? '').trim().toLowerCase();
-          const current = (parts[2] ?? '').toLowerCase();
-          const err = (parts[3] ?? '').trim();
-          if (desired !== 'running') return false;
-          return (
-            current.includes(' rejected ') ||
-            current.includes(' failed ') ||
-            current.startsWith('rejected') ||
-            current.startsWith('failed') ||
-            err.length > 0
-          );
-        });
+      const taskFailed = stdout.split(/\r?\n/).some((line) => {
+        const t = line.trim();
+        if (!t || !t.includes('|')) return false;
+        const parts = t.split('|');
+        if (parts.length < 4) return false;
+        const desired = (parts[1] ?? '').trim().toLowerCase();
+        const current = (parts[2] ?? '').toLowerCase();
+        const err = (parts[3] ?? '').trim();
+        if (desired !== 'running') return false;
+        return (
+          current.includes(' rejected ') ||
+          current.includes(' failed ') ||
+          current.startsWith('rejected') ||
+          current.startsWith('failed') ||
+          err.length > 0
+        );
+      });
 
       if (!updateFailed && !taskFailed) return result;
 
@@ -2005,7 +2276,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       const reason = getErrorMessage(e);
       return {
         success: false,
-        output: `${result.output}\n[deploy verification] Could not verify Swarm service state: ${reason}`.trim(),
+        output:
+          `${result.output}\n[deploy verification] Could not verify Swarm service state: ${reason}`.trim(),
       };
     }
   }
@@ -2013,11 +2285,16 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   /**
    * SFTP the current saved compose to the deploy host mirror (`/opt/weehawk-deployments/...`) without deploying.
    */
-  async syncRemoteDeploymentMirror(id: number, userId: number): Promise<{ ok: boolean }> {
-    await this.assertServiceOwnedByUser(id, userId);
+  async syncRemoteDeploymentMirror(
+    id: number,
+    userId: number,
+  ): Promise<{ ok: boolean }> {
+    await this.getScopedServiceForUser(id, userId);
     const r = await this.executorService.syncRemoteDeploymentMirror(id, userId);
     try {
-      await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(id);
+      await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(
+        id,
+      );
     } catch {
       /* best effort */
     }
@@ -2057,11 +2334,15 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     after: Pick<Service, 'id' | 'dockerConfig' | 'env'>,
     userId: number,
   ): void {
-    const ymlChanged = (before.dockerConfig ?? '') !== (after.dockerConfig ?? '');
+    const ymlChanged =
+      (before.dockerConfig ?? '') !== (after.dockerConfig ?? '');
     const envChanged = (before.env ?? '') !== (after.env ?? '');
     if (!ymlChanged && !envChanged) return;
     if (!(after.dockerConfig || '').trim()) return;
-    void this.pushApplicationMirrorToDeployHostIfConfigured(after.id, userId).then((r) => {
+    void this.pushApplicationMirrorToDeployHostIfConfigured(
+      after.id,
+      userId,
+    ).then((r) => {
       if (r.status === 'failed') {
         this.log.warn(
           `Deploy host mirror after service #${after.id} save failed: ${r.message}`,
@@ -2147,8 +2428,12 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     userId: number,
     serviceId: number,
     dto: RunServiceBackupDto,
-  ): Promise<{ ok: boolean; action: RunServiceBackupDto['action']; output: string }> {
-    await this.assertServiceOwnedByUser(serviceId, userId);
+  ): Promise<{
+    ok: boolean;
+    action: RunServiceBackupDto['action'];
+    output: string;
+  }> {
+    await this.getScopedServiceForUser(serviceId, userId);
     const contextId = `manual-service-${serviceId}-${Date.now()}`;
     const profileName = dto.backupS3ProfileName?.trim();
     if (!profileName) {
@@ -2161,7 +2446,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (dto.action === 'volume_backup') {
         const volumeSource = dto.volumeSource?.trim();
         if (!volumeSource) {
-          throw new BadRequestException('volumeSource is required for volume backup.');
+          throw new BadRequestException(
+            'volumeSource is required for volume backup.',
+          );
         }
         const ssh = await this.getDockerSshTargetIds(serviceId);
         if (ssh.remoteServerId == null) {
@@ -2181,22 +2468,35 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           profileName,
           r,
         );
-        return { ok: final.success, action: dto.action, output: final.output.slice(0, 8000) };
+        return {
+          ok: final.success,
+          action: dto.action,
+          output: final.output.slice(0, 8000),
+        };
       }
 
       if (dto.action === 'database_backup') {
         if (!dto.databaseBackupConfig) {
-          throw new BadRequestException('databaseBackupConfig is required for database backup.');
+          throw new BadRequestException(
+            'databaseBackupConfig is required for database backup.',
+          );
         }
         const cfg = dto.databaseBackupConfig as unknown as DatabaseBackupConfig;
-        const r = await this.executorService.backupDatabaseStructured(serviceId, cfg);
+        const r = await this.executorService.backupDatabaseStructured(
+          serviceId,
+          cfg,
+        );
         const final = await this.finalizeBackupWithS3(
           userId,
           contextId,
           profileName,
           r,
         );
-        return { ok: final.success, action: dto.action, output: final.output.slice(0, 8000) };
+        return {
+          ok: final.success,
+          action: dto.action,
+          output: final.output.slice(0, 8000),
+        };
       }
 
       // Should be unreachable due to DTO validation, but keeps TS safe.
@@ -2220,7 +2520,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     remotePath: string;
     remoteServerId: number;
   }> {
-    const serviceId = await this.resolveServiceIdForUser(serviceIdRouteParam, userId);
+    const serviceId = await this.resolveServiceIdForUser(
+      serviceIdRouteParam,
+      userId,
+    );
     const ssh = await this.getDockerSshTargetIds(serviceId);
     if (ssh.remoteServerId == null) {
       throw new BadRequestException(
@@ -2228,8 +2531,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       );
     }
     const safeName =
-      path.basename(originalFilename || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_') ||
-      'upload.bin';
+      path
+        .basename(originalFilename || 'upload')
+        .replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload.bin';
     if (!safeName) {
       throw new BadRequestException('Invalid file name.');
     }
@@ -2270,7 +2574,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     databaseBackupConfigJson?: string,
     volumeSource?: string,
   ): Promise<{ ok: boolean; output: string }> {
-    await this.assertServiceOwnedByUser(serviceId, userId);
+    await this.getScopedServiceForUser(serviceId, userId);
     if (!file) {
       throw new BadRequestException('file is required.');
     }
@@ -2325,7 +2629,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (action === 'import_database') {
         const raw = databaseBackupConfigJson?.trim();
         if (!raw) {
-          throw new BadRequestException('databaseBackupConfig JSON is required.');
+          throw new BadRequestException(
+            'databaseBackupConfig JSON is required.',
+          );
         }
         let cfg: DatabaseBackupConfig;
         try {
@@ -2366,11 +2672,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     dto: ImportServiceBackupFromS3Dto,
     userId: number,
   ): Promise<{ ok: boolean; output: string }> {
-    await this.assertServiceOwnedByUser(serviceId, userId);
+    await this.getScopedServiceForUser(serviceId, userId);
     const profile = dto.backupS3ProfileName.trim();
     const key = dto.s3Key.trim();
     if (!profile || !key) {
-      throw new BadRequestException('backupS3ProfileName and s3Key are required.');
+      throw new BadRequestException(
+        'backupS3ProfileName and s3Key are required.',
+      );
     }
     if (dto.action === 'import_volume') {
       if (!key.toLowerCase().endsWith('.tar.gz')) {
@@ -2380,8 +2688,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       }
     }
     const rawBase = path.basename(key.replace(/\\/g, '/')) || 'import.bin';
-    const safeName =
-      rawBase.replace(/[^a-zA-Z0-9._-]/g, '_') || 'import.bin';
+    const safeName = rawBase.replace(/[^a-zA-Z0-9._-]/g, '_') || 'import.bin';
     const ssh = await this.getDockerSshTargetIds(serviceId);
     if (ssh.remoteServerId == null) {
       throw new BadRequestException(
@@ -2389,14 +2696,19 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       );
     }
     const projectUserId: number | null = null;
-    const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
-      ssh.remoteServerId,
-      projectUserId,
-      'wh-import-s3',
-    );
+    const stagingDir =
+      await this.remoteServersService.allocRemoteWeehawkTempDir(
+        ssh.remoteServerId,
+        projectUserId,
+        'wh-import-s3',
+      );
     const remotePath = `${stagingDir}/${safeName}`;
     try {
-      const { url } = await this.s3Service.presignGetObject(userId, profile, key);
+      const { url } = await this.s3Service.presignGetObject(
+        userId,
+        profile,
+        key,
+      );
       await this.remoteServersService.curlPresignedDownloadToRemotePath(
         ssh.remoteServerId,
         projectUserId,
@@ -2412,12 +2724,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(vol)) {
           throw new BadRequestException('Invalid volume name.');
         }
-        const ir = await this.remoteServersService.dockerNamedVolumeImportArchiveFromRemotePath(
-          ssh.remoteServerId,
-          projectUserId,
-          vol,
-          remotePath,
-        );
+        const ir =
+          await this.remoteServersService.dockerNamedVolumeImportArchiveFromRemotePath(
+            ssh.remoteServerId,
+            projectUserId,
+            vol,
+            remotePath,
+          );
         const out = [ir.stdout, ir.stderr].filter((s) => s?.trim()).join('\n');
         return {
           ok: true,
@@ -2428,7 +2741,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (dto.action === 'import_database') {
         const raw = dto.databaseBackupConfig?.trim();
         if (!raw) {
-          throw new BadRequestException('databaseBackupConfig JSON is required.');
+          throw new BadRequestException(
+            'databaseBackupConfig JSON is required.',
+          );
         }
         let cfg: DatabaseBackupConfig;
         try {
@@ -2462,17 +2777,17 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   async startService(id: number, userId: number) {
-    await this.assertServiceOwnedByUser(id, userId);
+    await this.getScopedServiceForUser(id, userId);
     return await this.executorService.startContainers(id);
   }
 
   async getRuntimeStatus(id: number, userId: number) {
-    await this.assertServiceOwnedByUser(id, userId);
+    await this.getScopedServiceForUser(id, userId);
     return await this.executorService.getRuntimeStatus(id);
   }
 
   async getServiceVolumes(id: number, userId: number) {
-    await this.assertServiceOwnedByUser(id, userId);
+    await this.getScopedServiceForUser(id, userId);
     return await this.executorService.getServiceVolumeMounts(id);
   }
 
@@ -2487,7 +2802,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   async findByProjectId(projectId: number, userId: number) {
-    await this.assertProjectOwnedByUser(projectId, userId);
+    await this.getScopedProjectForUser(projectId, userId);
     const rows = await this.serviceRepository.find({
       where: { project: { id: projectId } },
       relations: ['project', 'remoteServer'],
@@ -2504,7 +2819,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     q: string | undefined,
     userId: number,
   ) {
-    await this.assertProjectOwnedByUser(projectId, userId);
+    await this.getScopedProjectForUser(projectId, userId);
     const safePage = Math.max(1, Math.floor(page) || 1);
     const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 8));
     const trimmed = (q ?? '').trim().toLowerCase();
@@ -2516,7 +2831,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
     if (trimmed) {
       countQb.andWhere(
-        '(LOWER(service.name) LIKE :q OR LOWER(COALESCE(service.description, \'\')) LIKE :q)',
+        "(LOWER(service.name) LIKE :q OR LOWER(COALESCE(service.description, '')) LIKE :q)",
         { q: `%${trimmed}%` },
       );
     }
@@ -2530,7 +2845,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
     if (trimmed) {
       dataQb.andWhere(
-        '(LOWER(service.name) LIKE :q OR LOWER(COALESCE(service.description, \'\')) LIKE :q)',
+        "(LOWER(service.name) LIKE :q OR LOWER(COALESCE(service.description, '')) LIKE :q)",
         { q: `%${trimmed}%` },
       );
     }
@@ -2558,7 +2873,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     remoteId: number,
     projectUserId: number | null,
   ): Promise<void> {
-    const rs = await this.remoteServerRepository.findOneBy({ id: remoteId });
+    const rs = await this._internal_systemFindOneRemoteServerBy({ id: remoteId });
     if (!rs) {
       throw new BadRequestException('Remote server not found');
     }
@@ -2579,7 +2894,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     remoteId: number,
     projectUserId: number | null,
   ): Promise<void> {
-    const rs = await this.remoteServerRepository.findOneBy({ id: remoteId });
+    const rs = await this._internal_systemFindOneRemoteServerBy({ id: remoteId });
     if (!rs) {
       throw new BadRequestException('Remote server not found');
     }
@@ -2597,7 +2912,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     projectUserId: number | null,
   ): void {
     if (projectUserId == null || projectUserId < 1) {
-      throw new BadRequestException('Project owner is missing; cannot validate remote server ownership.');
+      throw new BadRequestException(
+        'Project owner is missing; cannot validate remote server ownership.',
+      );
     }
     if (rs.userId !== projectUserId) {
       throw new BadRequestException(
@@ -2607,9 +2924,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   async findOne(id: number) {
-    const service = await this.serviceRepository.findOne({ 
+    const service = await this._internal_systemFindOneService({
       where: { id },
-      relations: ['project', 'remoteServer', 'buildRemoteServer'] 
+      relations: ['project', 'remoteServer', 'buildRemoteServer'],
     });
     if (!service) throw new NotFoundException(`Service #${id} not found`);
     return this.ensureServicePublicId(service);
@@ -2624,13 +2941,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     buildRemoteServerId: number | null;
     buildOnLocalDockerHost: boolean;
   }> {
-    const raw = (await this.serviceRepository
+    const raw = await this.serviceRepository
       .createQueryBuilder('s')
       .select('s.remoteServerId', 'wh_rid')
       .addSelect('s.buildRemoteServerId', 'wh_bid')
       .addSelect('s.buildOnLocalDockerHost', 'wh_local')
       .where('s.id = :id', { id: serviceId })
-      .getRawOne()) as Record<string, unknown> | undefined;
+      .getRawOne();
     const n = (v: unknown): number | null => {
       if (v === null || v === undefined) return null;
       const x = typeof v === 'number' ? v : Number(v);
@@ -2639,7 +2956,11 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     const asBool = (v: unknown): boolean =>
       v === true || v === 't' || v === 1 || v === '1';
     if (!raw) {
-      return { remoteServerId: null, buildRemoteServerId: null, buildOnLocalDockerHost: false };
+      return {
+        remoteServerId: null,
+        buildRemoteServerId: null,
+        buildOnLocalDockerHost: false,
+      };
     }
     const byLower = Object.fromEntries(
       Object.entries(raw).map(([k, v]) => [k.toLowerCase(), v]),
@@ -2654,13 +2975,17 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   /**
    * Removes GitHub/GitLab repo hooks registered for auto-deploy (best effort).
    */
-  private async deleteAutoDeployExternalHooksIfAny(service: Service): Promise<void> {
+  private async deleteAutoDeployExternalHooksIfAny(
+    service: Service,
+  ): Promise<void> {
     if (
       service.autoDeployGithubHookId != null &&
       service.autoDeployGitProvider === 'github' &&
       service.autoDeployRepoId
     ) {
-      const parsed = ServicesService.parseGithubRepoId(service.autoDeployRepoId);
+      const parsed = ServicesService.parseGithubRepoId(
+        service.autoDeployRepoId,
+      );
       if (parsed) {
         try {
           await this.gitService.deleteGithubRepoWebhook(
@@ -2702,7 +3027,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   async remove(id: number, userId: number) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     await this.deleteAutoDeployExternalHooksIfAny(service);
     await this.webhooksService.removeAllForService(userId, id);
     await this.executorService.stopAndRemove(id);
@@ -2712,7 +3037,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   async update(id: number, updateServiceDto: UpdateServiceDto, userId: number) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     const yamlEnvBefore = {
       dockerConfig: service.dockerConfig ?? '',
       env: service.env ?? '',
@@ -2769,13 +3094,17 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       updated.remoteServer =
         remotePatch === null
           ? null
-          : await this.remoteServerRepository.findOneByOrFail({ id: remotePatch });
+          : await this.remoteServerRepository.findOneByOrFail({
+              id: remotePatch,
+            });
     }
     if (buildPatch !== undefined) {
       updated.buildRemoteServer =
         buildPatch === null
           ? null
-          : await this.remoteServerRepository.findOneByOrFail({ id: buildPatch });
+          : await this.remoteServerRepository.findOneByOrFail({
+              id: buildPatch,
+            });
       if (buildPatch !== null) {
         updated.buildOnLocalDockerHost = false;
       }
@@ -2784,14 +3113,20 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       updated.buildRemoteServer = null;
     }
 
-    if (registryPushPatch !== undefined && updated.composeType === composeType.APPLICATION) {
+    if (
+      registryPushPatch !== undefined &&
+      updated.composeType === composeType.APPLICATION
+    ) {
       updated.dockerConfig = this.mergeRegistryPushHeader(
         updated.dockerConfig || '',
         registryPushPatch,
       );
     }
 
-    if (updateServiceDto.traefikRoutes !== undefined && Array.isArray(updateServiceDto.traefikRoutes)) {
+    if (
+      updateServiceDto.traefikRoutes !== undefined &&
+      Array.isArray(updateServiceDto.traefikRoutes)
+    ) {
       const seen = new Set<string>();
       for (const r of updateServiceDto.traefikRoutes) {
         const name = (r?.router ?? '').trim().toLowerCase();
@@ -2838,7 +3173,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         updateServiceDto.buildOnLocalDockerHost !== undefined) &&
       (updated.dockerConfig || '').trim().length > 0;
     if (shouldRefreshAppCompose) {
-      updated.dockerConfig = await this.composeApplicationDockerConfigForService(updated);
+      updated.dockerConfig =
+        await this.composeApplicationDockerConfigForService(updated);
     }
 
     this.assertRegistryForLocalBuildOnApiRemoteDeploy(
@@ -2849,19 +3185,22 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       registryPushPatch,
     );
 
-    const saved = await this.serviceRepository.save(updated);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    const saved = await this._internal_systemSaveService(updated);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
     const hydrated =
-      (await this.serviceRepository.findOne({
+      (await this._internal_systemFindOneService({
         where: { id: saved.id },
         relations: ['project', 'remoteServer', 'buildRemoteServer'],
       })) ?? saved;
     return this.withMagicTraefikMeUrl(hydrated);
   }
 
-
   async shutdownService(id: number, userId: number) {
-    await this.assertServiceOwnedByUser(id, userId);
+    await this.getScopedServiceForUser(id, userId);
     return await this.executorService.shutdown(id);
   }
 
@@ -2875,7 +3214,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     dto: DatabaseSetupDto,
     userId: number,
   ) {
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.DATABASES) {
       throw new BadRequestException(
         'This service is not a database-type service.',
@@ -2894,7 +3233,11 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     };
     const normalized = this.normalizeDatabaseSetupInput(engine, dto);
     const safeDb = this.databaseGenerator.sanitizeDbName(normalized.dbName);
-    const allCredentials = this.credentialsForEngine(engine, safeDb, normalized);
+    const allCredentials = this.credentialsForEngine(
+      engine,
+      safeDb,
+      normalized,
+    );
     const plainEnvKeys = Object.keys(allCredentials).filter(
       (k) => String(allCredentials[k] ?? '').trim().length > 0,
     );
@@ -2923,12 +3266,20 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       this.removeManagedDbEnvKeys(service.env || ''),
       plainEnv,
     );
-    const saved = await this.serviceRepository.save(service);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    const saved = await this._internal_systemSaveService(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
     return saved;
   }
 
-  async applyPostgresDatabase(id: number, dto: DatabaseSetupDto, userId: number) {
+  async applyPostgresDatabase(
+    id: number,
+    dto: DatabaseSetupDto,
+    userId: number,
+  ) {
     return this.applyDatabase(id, 'postgres', dto, userId);
   }
 
@@ -2943,9 +3294,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     userId: number,
   ) {
     if (dto.publishPort === undefined && dto.replicas === undefined) {
-      return this.assertServiceOwnedByUser(id, userId);
+      return this.getScopedServiceForUser(id, userId);
     }
-    const service = await this.assertServiceOwnedByUser(id, userId);
+    const service = await this.getScopedServiceForUser(id, userId);
     if (service.composeType !== composeType.DATABASES) {
       throw new BadRequestException(
         'This service is not a database-type service.',
@@ -3014,8 +3365,12 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       currentVolumePath,
       this.credentialKeysForEngine(engine),
     );
-    const saved = await this.serviceRepository.save(service);
-    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(yamlEnvBefore, saved, userId);
+    const saved = await this._internal_systemSaveService(service);
+    this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
+      yamlEnvBefore,
+      saved,
+      userId,
+    );
     return saved;
   }
 
@@ -3031,7 +3386,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     config: string,
     containerPort: number,
   ): number | null {
-    const m = config.match(new RegExp(`ports:\\s*\\n\\s*-\\s*"(\\d+):${containerPort}"`));
+    const m = config.match(
+      new RegExp(`ports:\\s*\\n\\s*-\\s*"(\\d+):${containerPort}"`),
+    );
     if (!m) return null;
     const n = parseInt(m[1], 10);
     return Number.isNaN(n) ? null : n;
@@ -3126,14 +3483,14 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       const key = line.slice(0, eq).trim();
       if (patchKeys.has(key)) {
         seen.add(key);
-        out.push(`${key}=${credentials[key as keyof typeof credentials]}`);
+        out.push(`${key}=${credentials[key]}`);
       } else {
         out.push(line);
       }
     }
     for (const key of patchKeys) {
       if (!seen.has(key)) {
-        out.push(`${key}=${credentials[key as keyof typeof credentials]}`);
+        out.push(`${key}=${credentials[key]}`);
       }
     }
     return out.join('\n');
@@ -3226,8 +3583,12 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    * Managed app secrets: `# secret.KEY: name` plus `KEY_FILE: /run/secrets/name` in the service env
    * (needed when headers are missing or reformatted).
    */
-  private parseApplicationSecretRefsFromDockerConfig(raw: string): Record<string, string> {
-    const out: Record<string, string> = { ...this.parseSecretRefsFromHeader(raw) };
+  private parseApplicationSecretRefsFromDockerConfig(
+    raw: string,
+  ): Record<string, string> {
+    const out: Record<string, string> = {
+      ...this.parseSecretRefsFromHeader(raw),
+    };
     for (const line of raw.split(/\r?\n/)) {
       const m = line.match(
         /^\s*([A-Za-z_][A-Za-z0-9_]*)_FILE:\s*\/run\/secrets\/(\S+)\s*$/,
@@ -3238,7 +3599,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   /** External Swarm secret names declared in the root `secrets:` block (before `networks:`). */
-  private parseRootExternalSecretNamesFromApplicationCompose(raw: string): string[] {
+  private parseRootExternalSecretNamesFromApplicationCompose(
+    raw: string,
+  ): string[] {
     const lines = raw.split(/\r?\n/);
     const names: string[] = [];
     let i = 0;
@@ -3249,7 +3612,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       const line = lines[i];
       if (/^networks:\s*$/.test(line)) break;
       if (/^[a-zA-Z].*:\s*$/.test(line)) break;
-      const m = line.match(/^  ([a-zA-Z0-9_.-]+):\s*$/);
+      const m = line.match(/^ {2}([a-zA-Z0-9_.-]+):\s*$/);
       if (m) {
         const next = lines[i + 1] ?? '';
         if (/^\s+external:\s*true\s*$/.test(next)) {
@@ -3283,7 +3646,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (newRefs[key] === oldName) continue;
       toRemove.add(oldName);
     }
-    for (const name of this.parseRootExternalSecretNamesFromApplicationCompose(prev)) {
+    for (const name of this.parseRootExternalSecretNamesFromApplicationCompose(
+      prev,
+    )) {
       if (!newNames.has(name)) toRemove.add(name);
     }
 
@@ -3318,8 +3683,14 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
   }
 
-  private async removeManagedSecretsForService(service: Service): Promise<void> {
-    await this.removeObsoleteManagedSecrets(service, service.dockerConfig || '', {});
+  private async removeManagedSecretsForService(
+    service: Service,
+  ): Promise<void> {
+    await this.removeObsoleteManagedSecrets(
+      service,
+      service.dockerConfig || '',
+      {},
+    );
   }
 
   private nonEmpty(v: string | undefined): string | null {
@@ -3327,7 +3698,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     return t ? t : null;
   }
 
-  private normalizeDatabaseSetupInput(engine: DatabaseEngine, dto: DatabaseSetupDto): {
+  private normalizeDatabaseSetupInput(
+    engine: DatabaseEngine,
+    dto: DatabaseSetupDto,
+  ): {
     dbName: string;
     user?: string;
     pass?: string;
@@ -3378,10 +3752,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   private defaultImageForEngine(engine: DatabaseEngine): string {
-    if (engine === 'postgres') return DatabaseGeneratorService.POSTGRES_DOCKER_IMAGE;
+    if (engine === 'postgres')
+      return DatabaseGeneratorService.POSTGRES_DOCKER_IMAGE;
     if (engine === 'mysql') return DatabaseGeneratorService.MYSQL_DOCKER_IMAGE;
-    if (engine === 'mariadb') return DatabaseGeneratorService.MARIADB_DOCKER_IMAGE;
-    if (engine === 'mongodb') return DatabaseGeneratorService.MONGODB_DOCKER_IMAGE;
+    if (engine === 'mariadb')
+      return DatabaseGeneratorService.MARIADB_DOCKER_IMAGE;
+    if (engine === 'mongodb')
+      return DatabaseGeneratorService.MONGODB_DOCKER_IMAGE;
     return DatabaseGeneratorService.REDIS_DOCKER_IMAGE;
   }
 
@@ -3410,7 +3787,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     autoDeployGitProvider: string | null;
     autoDeployRepoId: string | null;
   }> {
-    const service = await this.assertServiceOwnedByUser(serviceId, userId);
+    const service = await this.getScopedServiceForUser(serviceId, userId);
     if (service.composeType !== composeType.APPLICATION) {
       throw new BadRequestException(
         'Auto-deploy is only available for application-type services.',
@@ -3424,7 +3801,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       autoDeployRepoId: service.autoDeployRepoId ?? null,
       autoDeployGithubHookId: service.autoDeployGithubHookId ?? null,
       autoDeployGitlabHookId: service.autoDeployGitlabHookId ?? null,
-      autoDeployGitlabHookProjectId: service.autoDeployGitlabHookProjectId ?? null,
+      autoDeployGitlabHookProjectId:
+        service.autoDeployGitlabHookProjectId ?? null,
     };
 
     service.autoDeployEnabled = opts.enabled;
@@ -3438,7 +3816,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       service.autoDeployRepoId = opts.repoId;
     }
 
-    await this.serviceRepository.save(service);
+    await this._internal_systemSaveService(service);
 
     try {
       await this.syncAutoDeployExternalHooks(service, previous);
@@ -3449,8 +3827,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       service.autoDeployRepoId = previous.autoDeployRepoId;
       service.autoDeployGithubHookId = previous.autoDeployGithubHookId;
       service.autoDeployGitlabHookId = previous.autoDeployGitlabHookId;
-      service.autoDeployGitlabHookProjectId = previous.autoDeployGitlabHookProjectId;
-      await this.serviceRepository.save(service);
+      service.autoDeployGitlabHookProjectId =
+        previous.autoDeployGitlabHookProjectId;
+      await this._internal_systemSaveService(service);
       if (e instanceof HttpException) {
         throw e;
       }
@@ -3483,7 +3862,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     serviceId: number,
     userId: number,
   ): Promise<{ updated: boolean }> {
-    const service = await this.assertServiceOwnedByUser(serviceId, userId);
+    const service = await this.getScopedServiceForUser(serviceId, userId);
 
     if (!service.autoDeployEnabled || !service.autoDeployGitProvider) {
       return { updated: false };
@@ -3495,7 +3874,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       autoDeployRepoId: service.autoDeployRepoId ?? null,
       autoDeployGithubHookId: service.autoDeployGithubHookId ?? null,
       autoDeployGitlabHookId: service.autoDeployGitlabHookId ?? null,
-      autoDeployGitlabHookProjectId: service.autoDeployGitlabHookProjectId ?? null,
+      autoDeployGitlabHookProjectId:
+        service.autoDeployGitlabHookProjectId ?? null,
     };
 
     // Delete existing external hooks (force clean)
@@ -3504,7 +3884,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       previous.autoDeployGitProvider === 'github' &&
       previous.autoDeployRepoId
     ) {
-      const parsed = ServicesService.parseGithubRepoId(previous.autoDeployRepoId);
+      const parsed = ServicesService.parseGithubRepoId(
+        previous.autoDeployRepoId,
+      );
       if (parsed) {
         try {
           await this.gitService.deleteGithubRepoWebhook(
@@ -3514,11 +3896,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             this.integrationOwnerUserId(service),
           );
         } catch (e) {
-          this.log.warn(`resync: failed to delete old GitHub hook: ${getErrorMessage(e)}`);
+          this.log.warn(
+            `resync: failed to delete old GitHub hook: ${getErrorMessage(e)}`,
+          );
         }
       }
       service.autoDeployGithubHookId = null;
-      await this.serviceRepository.save(service);
+      await this._internal_systemSaveService(service);
     }
 
     if (
@@ -3533,15 +3917,18 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           this.integrationOwnerUserId(service),
         );
       } catch (e) {
-        this.log.warn(`resync: failed to delete old GitLab hook: ${getErrorMessage(e)}`);
+        this.log.warn(
+          `resync: failed to delete old GitLab hook: ${getErrorMessage(e)}`,
+        );
       }
       service.autoDeployGitlabHookId = null;
       service.autoDeployGitlabHookProjectId = null;
-      await this.serviceRepository.save(service);
+      await this._internal_systemSaveService(service);
     }
 
     // Re-register with the new trigger URL
-    const triggerUrl = await this.resolveRemoteRedeployWebhookTriggerUrl(service);
+    const triggerUrl =
+      await this.resolveRemoteRedeployWebhookTriggerUrl(service);
     if (!triggerUrl) {
       this.log.warn(
         `resync: service #${service.id} has no remote redeploy webhook with a trigger URL.`,
@@ -3549,8 +3936,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       return { updated: false };
     }
 
-    if (service.autoDeployGitProvider === 'github' && service.autoDeployRepoId) {
-      const parsed = ServicesService.parseGithubRepoId(service.autoDeployRepoId);
+    if (
+      service.autoDeployGitProvider === 'github' &&
+      service.autoDeployRepoId
+    ) {
+      const parsed = ServicesService.parseGithubRepoId(
+        service.autoDeployRepoId,
+      );
       if (parsed) {
         const hookId = await this.gitService.createGithubRepoWebhook({
           installationId: parsed.installationId,
@@ -3559,7 +3951,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           userId: this.integrationOwnerUserId(service),
         });
         service.autoDeployGithubHookId = hookId;
-        await this.serviceRepository.save(service);
+        await this._internal_systemSaveService(service);
         this.log.log(
           `resync: registered GitHub webhook #${hookId} for ${parsed.fullName} → ${triggerUrl}`,
         );
@@ -3579,7 +3971,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       });
       service.autoDeployGitlabHookId = hookId;
       service.autoDeployGitlabHookProjectId = projectId;
-      await this.serviceRepository.save(service);
+      await this._internal_systemSaveService(service);
       this.log.log(
         `resync: registered GitLab hook #${hookId} for project ${projectId} → ${triggerUrl}`,
       );
@@ -3588,7 +3980,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     return { updated: true };
   }
 
-  private static isNumericGitlabProjectRepoId(repoId: string | null | undefined): boolean {
+  private static isNumericGitlabProjectRepoId(
+    repoId: string | null | undefined,
+  ): boolean {
     if (repoId == null || repoId === '') return false;
     const n = parseInt(repoId.trim(), 10);
     return Number.isFinite(n) && n > 0 && String(n) === repoId.trim();
@@ -3659,7 +4053,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       previous.autoDeployGitProvider === 'github' &&
       previous.autoDeployRepoId
     ) {
-      const parsed = ServicesService.parseGithubRepoId(previous.autoDeployRepoId);
+      const parsed = ServicesService.parseGithubRepoId(
+        previous.autoDeployRepoId,
+      );
       if (parsed) {
         try {
           await this.gitService.deleteGithubRepoWebhook(
@@ -3669,11 +4065,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             this.integrationOwnerUserId(service),
           );
         } catch (e) {
-          this.log.warn(`Failed to delete GitHub repo hook: ${getErrorMessage(e)}`);
+          this.log.warn(
+            `Failed to delete GitHub repo hook: ${getErrorMessage(e)}`,
+          );
         }
       }
       service.autoDeployGithubHookId = null;
-      await this.serviceRepository.save(service);
+      await this._internal_systemSaveService(service);
     }
 
     // ── Remove old GitLab hook ──
@@ -3690,11 +4088,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           this.integrationOwnerUserId(service),
         );
       } catch (e) {
-        this.log.warn(`Failed to delete GitLab project hook: ${getErrorMessage(e)}`);
+        this.log.warn(
+          `Failed to delete GitLab project hook: ${getErrorMessage(e)}`,
+        );
       }
       service.autoDeployGitlabHookId = null;
       service.autoDeployGitlabHookProjectId = null;
-      await this.serviceRepository.save(service);
+      await this._internal_systemSaveService(service);
     }
 
     if (!service.autoDeployEnabled) {
@@ -3702,7 +4102,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
 
     // Resolve the remote webhook trigger URL (the URL on the remote deploy server)
-    const triggerUrl = await this.resolveRemoteRedeployWebhookTriggerUrl(service);
+    const triggerUrl =
+      await this.resolveRemoteRedeployWebhookTriggerUrl(service);
     if (!triggerUrl) {
       this.log.warn(
         `Auto-deploy: service #${service.id} has no remote redeploy webhook with a public trigger URL. ` +
@@ -3716,7 +4117,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       service.autoDeployGitProvider === 'github' &&
       service.autoDeployRepoId
     ) {
-      const parsed = ServicesService.parseGithubRepoId(service.autoDeployRepoId);
+      const parsed = ServicesService.parseGithubRepoId(
+        service.autoDeployRepoId,
+      );
       if (parsed && service.autoDeployGithubHookId == null) {
         try {
           const hookId = await this.gitService.createGithubRepoWebhook({
@@ -3726,7 +4129,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
             userId: this.integrationOwnerUserId(service),
           });
           service.autoDeployGithubHookId = hookId;
-          await this.serviceRepository.save(service);
+          await this._internal_systemSaveService(service);
           this.log.log(
             `Auto-deploy: registered GitHub webhook #${hookId} for ${parsed.fullName} → ${triggerUrl}`,
           );
@@ -3757,7 +4160,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           });
           service.autoDeployGitlabHookId = hookId;
           service.autoDeployGitlabHookProjectId = projectId;
-          await this.serviceRepository.save(service);
+          await this._internal_systemSaveService(service);
           this.log.log(
             `Auto-deploy: registered GitLab hook #${hookId} for project ${projectId} → ${triggerUrl}`,
           );
@@ -3779,7 +4182,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     userId: number,
   ): Promise<string | null> {
     try {
-      const info = await this.gitService.gitlabCloneInfoForProject(projectId, userId);
+      const info = await this.gitService.gitlabCloneInfoForProject(
+        projectId,
+        userId,
+      );
       return info.cloneUrl || null;
     } catch (e) {
       if (e instanceof InternalServerErrorException) throw e;
@@ -3791,7 +4197,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    * Resolve an authenticated HTTPS clone URL for a manual GitLab URL.
    * Injects the stored GitLab token when available (for private repos).
    */
-  async resolveGitlabAuthenticatedUrl(httpUrl: string, userId: number): Promise<string> {
+  async resolveGitlabAuthenticatedUrl(
+    httpUrl: string,
+    userId: number,
+  ): Promise<string> {
     return this.gitService.resolveGitlabHttpCloneUrl(httpUrl, userId);
   }
 
@@ -3842,7 +4251,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
   /** Read auto-deploy settings (authenticated). */
   async getAutoDeploySettings(serviceId: number, userId: number) {
-    const service = await this.assertServiceOwnedByUser(serviceId, userId);
+    const service = await this.getScopedServiceForUser(serviceId, userId);
     return {
       autoDeployEnabled: service.autoDeployEnabled ?? false,
       autoDeployBranch: service.autoDeployBranch ?? 'main',
@@ -3864,16 +4273,16 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }> {
     const sanitizeUserMessage = (msg: string): string =>
       String(msg ?? '').replace(/#[0-9]+\b/g, '');
-    const emit = (msg: string) =>
-      emitDeployLog(options?.deployLogEmitter, msg);
-    const service = await this.serviceRepository.findOne({
+    const emit = (msg: string) => emitDeployLog(options?.deployLogEmitter, msg);
+    const service = await this._internal_systemFindOneService({
       where: { id: serviceId },
       relations: ['project', 'remoteServer', 'buildRemoteServer'],
     });
     if (!service) {
       return { success: false, output: 'Service not found.' };
     }
-    const servicePublicLabel = service.publicId?.trim() || service.name?.trim() || 'service';
+    const servicePublicLabel =
+      service.publicId?.trim() || service.name?.trim() || 'service';
     if (!service.autoDeployEnabled) {
       return { success: false, output: 'Auto-deploy is not enabled.' };
     }
@@ -3945,7 +4354,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         `[auto-deploy] Ref resolved (${refUsed}). Generating stack configuration…\n`,
       );
 
-      const fresh = await this.serviceRepository.findOne({
+      const fresh = await this._internal_systemFindOneService({
         where: { id: service.id },
         relations: ['project', 'remoteServer', 'buildRemoteServer'],
       });
@@ -3957,10 +4366,11 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       emit('[auto-deploy] Stack configuration generated.\n');
 
       emit('[auto-deploy] Syncing files to deploy host…\n');
-      const mirrorResult = await this.pushApplicationMirrorToDeployHostIfConfigured(
-        service.id,
-        ownerId,
-      );
+      const mirrorResult =
+        await this.pushApplicationMirrorToDeployHostIfConfigured(
+          service.id,
+          ownerId,
+        );
       if (mirrorResult.status === 'failed') {
         const warnMsg = `Auto-deploy mirror sync failed for ${servicePublicLabel}: ${sanitizeUserMessage(mirrorResult.message)}`;
         this.log.warn(
@@ -3974,9 +4384,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       }
 
       emit('[auto-deploy] Starting build & deploy…\n');
-      const result = await this.executorService.execute(service.id, 'redeploy', {
-        deployLogEmitter: options?.deployLogEmitter,
-      });
+      const result = await this.executorService.execute(
+        service.id,
+        'redeploy',
+        {
+          deployLogEmitter: options?.deployLogEmitter,
+        },
+      );
       if (!result.success) {
         return {
           success: false,
@@ -3984,7 +4398,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         };
       }
 
-      await this.serviceRepository.update(service.id, {
+      await this.scopedServices.updateScoped(service.id, ownerId, {
         lastDeployedAt: new Date(),
       });
       emit('[auto-deploy] Deploy completed successfully.\n');
@@ -3994,9 +4408,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       return { success: true, output: 'Auto-deploy completed successfully.' };
     } catch (e) {
       const msg = getErrorMessage(e);
-      this.log.error(
-        `Auto-deploy failed for service #${service.id}: ${msg}`,
-      );
+      this.log.error(`Auto-deploy failed for service #${service.id}: ${msg}`);
       return { success: false, output: `Auto-deploy failed: ${msg}` };
     }
   }
@@ -4007,3 +4419,4 @@ export {
   resolveEffectiveDockerfileRel,
   WEEHAWK_GENERATED_DOCKERFILE_REL,
 } from './weehawk-build-paths';
+

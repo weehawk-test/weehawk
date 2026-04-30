@@ -16,7 +16,12 @@ export function inferS3ForcePathStyle(endpoint: string): boolean {
   const host = url.hostname.toLowerCase();
   const port = url.port;
 
-  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.local')) {
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '[::1]' ||
+    host.endsWith('.local')
+  ) {
     return true;
   }
   if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) {

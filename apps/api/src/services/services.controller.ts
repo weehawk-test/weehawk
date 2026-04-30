@@ -35,7 +35,12 @@ import { PatchApplicationImageDeployDto } from './dto/patch-application-image.dt
 import { RunServiceBackupDto } from './dto/run-service-backup.dto';
 import { ImportServiceBackupFromS3Dto } from './dto/import-service-backup-from-s3.dto';
 import type { DatabaseEngine } from './database-generator.service';
-import { ApiBearerAuth, ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiTags,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { EventEmitter } from 'events';
 import { Observable, map } from 'rxjs';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
@@ -53,7 +58,10 @@ export class ServicesController {
     return id;
   }
 
-  private async sid(id: string, req: { user?: { userId: number } }): Promise<number> {
+  private async sid(
+    id: string,
+    req: { user?: { userId: number } },
+  ): Promise<number> {
     return this.servicesService.resolveServiceIdForUser(id, this.uid(req));
   }
 
@@ -92,7 +100,11 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.sid(id, req).then((resolvedId) =>
-      this.servicesService.applyPostgresDatabase(resolvedId, dto, this.uid(req)),
+      this.servicesService.applyPostgresDatabase(
+        resolvedId,
+        dto,
+        this.uid(req),
+      ),
     );
   }
 
@@ -171,7 +183,7 @@ export class ServicesController {
       m === 'reload' ? 'reload' : m === 'redeploy' ? 'redeploy' : 'deploy';
     return this.sid(id, req!).then((resolvedId) =>
       this.servicesService.executeDeployment(resolvedId, mode, {
-        actingUserId: this.uid(req!),
+        actingUserId: this.uid(req),
       }),
     );
   }
@@ -186,7 +198,10 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.sid(id, req).then((resolvedId) =>
-      this.servicesService.syncRemoteDeploymentMirror(resolvedId, this.uid(req)),
+      this.servicesService.syncRemoteDeploymentMirror(
+        resolvedId,
+        this.uid(req),
+      ),
     );
   }
 
@@ -206,11 +221,17 @@ export class ServicesController {
   ): Promise<Observable<MessageEvent>> {
     const resolvedId = await this.sid(id, req);
     const mode =
-      modeRaw === 'reload' ? 'reload' : modeRaw === 'redeploy' ? 'redeploy' : 'deploy';
+      modeRaw === 'reload'
+        ? 'reload'
+        : modeRaw === 'redeploy'
+          ? 'redeploy'
+          : 'deploy';
     return new Observable((observer) => {
       const emitter = new EventEmitter();
       emitter.on('data', (chunk: string) => {
-        observer.next({ data: JSON.stringify({ data: chunk }) } as MessageEvent);
+        observer.next({
+          data: JSON.stringify({ data: chunk }),
+        } as MessageEvent);
       });
       void this.servicesService
         .executeDeployment(resolvedId, mode, {
@@ -404,7 +425,8 @@ export class ServicesController {
   @Patch(':id/application/env')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
-    summary: 'Update application environment values and regenerate compose YAML',
+    summary:
+      'Update application environment values and regenerate compose YAML',
   })
   async patchApplicationEnv(
     @Param('id') id: string,
@@ -477,9 +499,10 @@ export class ServicesController {
     @Query('all') allStr?: string,
     @Req() req?: { user?: { userId: number } },
   ) {
-    const uid = this.uid(req!);
+    const uid = this.uid(req);
     if (projectId !== undefined && projectId !== '') {
-      const resolvedProjectId = await this.servicesService.resolveProjectIdForUser(projectId, uid);
+      const resolvedProjectId =
+        await this.servicesService.resolveProjectIdForUser(projectId, uid);
       const all =
         allStr === '1' ||
         allStr === 'true' ||
@@ -509,7 +532,10 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return await this.servicesService.getRuntimeStatus(resolvedId, this.uid(req));
+    return await this.servicesService.getRuntimeStatus(
+      resolvedId,
+      this.uid(req),
+    );
   }
 
   @Get(':id/volumes')
@@ -522,7 +548,10 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return await this.servicesService.getServiceVolumes(resolvedId, this.uid(req));
+    return await this.servicesService.getServiceVolumes(
+      resolvedId,
+      this.uid(req),
+    );
   }
 
   @Post(':id/magic-traefik-me/roll')
@@ -546,14 +575,18 @@ export class ServicesController {
 
   @Delete(':id/magic-traefik-me')
   @ApiOperation({
-    summary: 'Remove Magic traefik.me hostname from this service (updates stack YAML when present)',
+    summary:
+      'Remove Magic traefik.me hostname from this service (updates stack YAML when present)',
   })
   async clearMagicTraefikMe(
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return this.servicesService.clearMagicTraefikMeDomain(resolvedId, this.uid(req));
+    return this.servicesService.clearMagicTraefikMeDomain(
+      resolvedId,
+      this.uid(req),
+    );
   }
 
   @Get(':id')
@@ -578,7 +611,11 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return this.servicesService.update(resolvedId, updateServiceDto, this.uid(req));
+    return this.servicesService.update(
+      resolvedId,
+      updateServiceDto,
+      this.uid(req),
+    );
   }
 
   @Delete(':id')
@@ -601,13 +638,13 @@ export class ServicesController {
     return this.servicesService
       .getServiceLogsStream(resolvedId, this.uid(req))
       .pipe(
-      map(
-        (log) =>
-          ({
-            data: log.data,
-          }) as MessageEvent,
-      ),
-    );
+        map(
+          (log) =>
+            ({
+              data: log.data,
+            }) as MessageEvent,
+        ),
+      );
   }
 
   @Post(':id/shutdown')
@@ -617,7 +654,10 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return await this.servicesService.shutdownService(resolvedId, this.uid(req));
+    return await this.servicesService.shutdownService(
+      resolvedId,
+      this.uid(req),
+    );
   }
 
   @Get(':id/auto-deploy')
@@ -627,11 +667,16 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return this.servicesService.getAutoDeploySettings(resolvedId, this.uid(req));
+    return this.servicesService.getAutoDeploySettings(
+      resolvedId,
+      this.uid(req),
+    );
   }
 
   @Post(':id/auto-deploy')
-  @ApiOperation({ summary: 'Configure auto-deploy (enable/disable) for a service' })
+  @ApiOperation({
+    summary: 'Configure auto-deploy (enable/disable) for a service',
+  })
   async configureAutoDeploy(
     @Param('id') id: string,
     @Body()
@@ -644,16 +689,26 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return this.servicesService.configureAutoDeploy(resolvedId, this.uid(req), body);
+    return this.servicesService.configureAutoDeploy(
+      resolvedId,
+      this.uid(req),
+      body,
+    );
   }
 
   @Post(':id/auto-deploy/resync')
-  @ApiOperation({ summary: 'Re-register auto-deploy hooks on GitHub/GitLab after webhook URL changes' })
+  @ApiOperation({
+    summary:
+      'Re-register auto-deploy hooks on GitHub/GitLab after webhook URL changes',
+  })
   async resyncAutoDeployHooks(
     @Param('id') id: string,
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    return this.servicesService.resyncAutoDeployHooks(resolvedId, this.uid(req));
+    return this.servicesService.resyncAutoDeployHooks(
+      resolvedId,
+      this.uid(req),
+    );
   }
 }

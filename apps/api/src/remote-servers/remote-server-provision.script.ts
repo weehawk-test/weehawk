@@ -151,7 +151,10 @@ function traefikYamlEmailScalar(email: string): string {
  * Static Traefik config on the deploy host: `/opt/weehawk/traefik/data/traefik.yml`.
  * Keep entrypoint names `web` / `websecure` in sync with RemoteServersService Swarm labels.
  */
-export function buildTraefikStaticYaml(opts: { acmeEmail: string; dockerNetwork: string }): string {
+export function buildTraefikStaticYaml(opts: {
+  acmeEmail: string;
+  dockerNetwork: string;
+}): string {
   const email = traefikYamlEmailScalar(opts.acmeEmail);
   const { dockerNetwork } = opts;
   return [
@@ -408,7 +411,9 @@ export function buildWeehawkProvisionScript(opts: {
   /** Email for ACME (Let's Encrypt) certificates on the deploy Traefik instance. */
   acmeEmail?: string;
 }): string {
-  const net = (opts.overlayNetworkName ?? WEEHAWK_TRAEFIK_EXTERNAL_NETWORK).trim() || 'weehawk';
+  const net =
+    (opts.overlayNetworkName ?? WEEHAWK_TRAEFIK_EXTERNAL_NETWORK).trim() ||
+    'weehawk';
   const isBuild = opts.role === 'build';
 
   if (isBuild) {
@@ -493,8 +498,12 @@ echo "Weehawk build host provision: done."
     dockerNetwork: net,
   });
   const traefikStackYaml = buildTraefikStackYaml({ dockerNetwork: net });
-  const traefikStaticB64 = Buffer.from(traefikStaticYaml, 'utf8').toString('base64');
-  const traefikStackB64 = Buffer.from(traefikStackYaml, 'utf8').toString('base64');
+  const traefikStaticB64 = Buffer.from(traefikStaticYaml, 'utf8').toString(
+    'base64',
+  );
+  const traefikStackB64 = Buffer.from(traefikStackYaml, 'utf8').toString(
+    'base64',
+  );
 
   return `
 set -e

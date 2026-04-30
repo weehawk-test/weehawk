@@ -12,4 +12,3 @@ describe('public-id helpers', () => {
     expect(isLikelyNumericId('svc_123')).toBe(false);
   });
 });
-

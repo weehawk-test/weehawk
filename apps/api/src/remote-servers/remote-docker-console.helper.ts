@@ -106,10 +106,15 @@ export function dockerodeVolumesToRawRows(
   }));
 }
 
-function serviceToRawRow(s: Dockerode.Service, index: number): Record<string, unknown> {
+function serviceToRawRow(
+  s: Dockerode.Service,
+  index: number,
+): Record<string, unknown> {
   const spec = s.Spec;
   const name = spec?.Name ?? `service-${index}`;
-  const tt = spec?.TaskTemplate as { ContainerSpec?: { Image?: string } } | undefined;
+  const tt = spec?.TaskTemplate as
+    | { ContainerSpec?: { Image?: string } }
+    | undefined;
   const image = tt?.ContainerSpec?.Image ?? '—';
   let mode = '—';
   if (spec?.Mode?.Replicated) mode = 'replicated';
@@ -118,7 +123,10 @@ function serviceToRawRow(s: Dockerode.Service, index: number): Record<string, un
   const st = s.ServiceStatus;
   if (st && typeof st.DesiredTasks === 'number') {
     replicas = `${st.RunningTasks ?? 0}/${st.DesiredTasks}`;
-  } else if (spec?.Mode?.Replicated && typeof spec.Mode.Replicated.Replicas === 'number') {
+  } else if (
+    spec?.Mode?.Replicated &&
+    typeof spec.Mode.Replicated.Replicas === 'number'
+  ) {
     replicas = `0/${spec.Mode.Replicated.Replicas}`;
   }
   return {

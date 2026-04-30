@@ -23,7 +23,9 @@ export class EmailConfirmationService {
   }
 
   getFrontendBaseUrl(): string {
-    return (this.config.get<string>('WEBFRONTEND_BASE_URL') ?? 'http://localhost:3000').replace(/\/$/, '');
+    return (
+      this.config.get<string>('WEBFRONTEND_BASE_URL') ?? 'http://localhost:3000'
+    ).replace(/\/$/, '');
   }
 
   async sendConfirmationEmail(user: User): Promise<void> {
@@ -31,13 +33,20 @@ export class EmailConfirmationService {
     const token = crypto.randomUUID();
     await this.tokenStore.set(PREFIX + token, String(user.id), TTL_MS);
     const link = `${this.getFrontendBaseUrl()}/confirm-email?token=${token}`;
-    await this.emailService.sendEmailConfirmation(user.email, user.firstName, link);
+    await this.emailService.sendEmailConfirmation(
+      user.email,
+      user.firstName,
+      link,
+    );
   }
 
   async confirmEmail(token: string): Promise<void> {
     const userId = await this.tokenStore.get(PREFIX + token);
-    if (!userId) throw new NotFoundException('Invalid or expired confirmation token');
-    const user = await this.userRepo.findOne({ where: { id: parseInt(userId, 10) } });
+    if (!userId)
+      throw new NotFoundException('Invalid or expired confirmation token');
+    const user = await this.userRepo.findOne({
+      where: { id: parseInt(userId, 10) },
+    });
     if (!user) throw new NotFoundException('User not found');
     user.emailVerified = true;
     await this.userRepo.save(user);

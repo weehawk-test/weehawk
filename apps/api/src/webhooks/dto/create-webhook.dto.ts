@@ -42,14 +42,18 @@ export class CreateWebhookDto {
   remoteServerId?: number;
 
   @ApiProperty({
-    description: 'Bash script deployed and run on the deploy host when the webhook fires.',
+    description:
+      'Bash script deployed and run on the deploy host when the webhook fires.',
   })
   @IsString()
   @IsNotEmpty()
   @MaxLength(4000)
   bashScript!: string;
 
-  @ApiPropertyOptional({ example: 1, description: 'Numeric notification channel id.' })
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Numeric notification channel id.',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)

@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -31,7 +35,10 @@ export class UserService {
     return this.toProfileResponse(user);
   }
 
-  async updateProfile(email: string, dto: UpdateProfileRequestDto): Promise<UserProfileResponseDto> {
+  async updateProfile(
+    email: string,
+    dto: UpdateProfileRequestDto,
+  ): Promise<UserProfileResponseDto> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     user.firstName = dto.firstName;
@@ -51,7 +58,10 @@ export class UserService {
     });
   }
 
-  private async deleteUserScopedData(manager: EntityManager, userId: number): Promise<void> {
+  private async deleteUserScopedData(
+    manager: EntityManager,
+    userId: number,
+  ): Promise<void> {
     await manager.delete(Webhook, { userId });
     await manager.delete(CronJob, { userId });
     await manager.delete(Project, { userId });
@@ -71,11 +81,16 @@ export class UserService {
     await this.deleteUserAndRelatedRows(user.id);
   }
 
-  async setPasswordForGoogle(email: string, newPassword: string): Promise<void> {
+  async setPasswordForGoogle(
+    email: string,
+    newPassword: string,
+  ): Promise<void> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     if (user.provider !== AuthProvider.GOOGLE) {
-      throw new ConflictException('This action is only available for Google accounts');
+      throw new ConflictException(
+        'This action is only available for Google accounts',
+      );
     }
     if (user.passwordHash) {
       throw new ConflictException('Password is already set for this account');
@@ -91,7 +106,9 @@ export class UserService {
       throw new ConflictException('Account is not linked to Google');
     }
     if (!user.passwordHash) {
-      throw new ConflictException('Set a password first before unlinking Google');
+      throw new ConflictException(
+        'Set a password first before unlinking Google',
+      );
     }
     user.provider = AuthProvider.LOCAL;
     user.providerId = null;

@@ -1,4 +1,7 @@
-export function parseConfigHeaderValue(config: string, key: string): string | null {
+export function parseConfigHeaderValue(
+  config: string,
+  key: string,
+): string | null {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const m = config.match(new RegExp(`^\\s*#\\s*${escaped}:\\s*(.+)$`, 'm'));
   return m?.[1]?.trim() || null;
@@ -8,7 +11,9 @@ export function parseConfigHeaderValue(config: string, key: string): string | nu
  * Optional override: `# nixpacks.nodeVersion: 22` in service compose headers.
  * If unset, {@link resolveNixpacksNodeMajorForRemoteBuild} uses {@link WEEHAWK_DEFAULT_NIXPACKS_NODE_MAJOR}.
  */
-export function parseNixpacksNodeMajorFromConfigHeader(config: string): string | null {
+export function parseNixpacksNodeMajorFromConfigHeader(
+  config: string,
+): string | null {
   const raw = parseConfigHeaderValue(config, 'nixpacks.nodeVersion')?.trim();
   if (!raw) return null;
   const major = raw.replace(/^v/i, '').trim();
@@ -22,7 +27,10 @@ export function parseNixpacksNodeMajorFromConfigHeader(config: string): string |
 export const WEEHAWK_DEFAULT_NIXPACKS_NODE_MAJOR = '20';
 
 export function resolveNixpacksNodeMajorForRemoteBuild(config: string): string {
-  return parseNixpacksNodeMajorFromConfigHeader(config) ?? WEEHAWK_DEFAULT_NIXPACKS_NODE_MAJOR;
+  return (
+    parseNixpacksNodeMajorFromConfigHeader(config) ??
+    WEEHAWK_DEFAULT_NIXPACKS_NODE_MAJOR
+  );
 }
 
 /** First `services:` key in compose YAML (which service to exec into). */
@@ -69,7 +77,9 @@ export function firstComposeServiceName(config: string): string {
 }
 
 /** Container port from `ports: - "host:container"` in stack compose (application services). */
-export function parseContainerPortFromComposeYaml(config: string): number | null {
+export function parseContainerPortFromComposeYaml(
+  config: string,
+): number | null {
   const m = config.match(/^\s*-\s*"(\d+):(\d+)"/m);
   if (!m) return null;
   const c = parseInt(m[2], 10);

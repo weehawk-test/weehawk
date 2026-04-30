@@ -68,7 +68,10 @@ export class PublicWebhookHostGuard implements CanActivate {
       }
     };
     const cors = this.config.get<string>('CORS_ORIGIN') ?? '';
-    for (const part of cors.split(',').map((v) => v.trim()).filter(Boolean)) {
+    for (const part of cors
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean)) {
       if (part === '*' || part.toLowerCase() === 'true') continue;
       pushMaybeUrl(part);
     }

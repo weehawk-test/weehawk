@@ -26,13 +26,15 @@ function dockerBuildEnvLinesForApplicationSwarm(service: Service): string[] {
     return [];
   }
   const raw = service.dockerConfig || '';
-  const deployMode = parseConfigHeaderValue(raw, 'deployMode')?.toLowerCase() || 'source';
+  const deployMode =
+    parseConfigHeaderValue(raw, 'deployMode')?.toLowerCase() || 'source';
   if (deployMode === 'image') {
     return [];
   }
   const sourceDir = parseConfigHeaderValue(raw, 'sourceDir') || 'app-source';
   const buildPath = parseConfigHeaderValue(raw, 'buildPath') || '.';
-  const dockerfilePath = parseConfigHeaderValue(raw, 'dockerfilePath') || 'Dockerfile';
+  const dockerfilePath =
+    parseConfigHeaderValue(raw, 'dockerfilePath') || 'Dockerfile';
   const bp = buildPath.replace(/^\.\//, '').trim() || '.';
   const sourceDirNorm = sourceDir.replace(/\\/g, '/');
   const buildCtxRel =
@@ -44,9 +46,10 @@ function dockerBuildEnvLinesForApplicationSwarm(service: Service): string[] {
     parseConfigHeaderValue(raw, 'registry.pushImage')?.trim() ||
     firstImageRefFromComposeYaml(resolvedYaml) ||
     `${(service.appName ?? '').trim() || 'app'}:latest`;
-  const containerPort =
-    parseContainerPortFromComposeYaml(raw) ?? 3000;
-  const bm = (parseConfigHeaderValue(raw, 'buildMode') || 'dockerfile').toLowerCase();
+  const containerPort = parseContainerPortFromComposeYaml(raw) ?? 3000;
+  const bm = (
+    parseConfigHeaderValue(raw, 'buildMode') || 'dockerfile'
+  ).toLowerCase();
   const weehawkBuildMode =
     bm === 'nixpacks' || bm === 'buildpacks' ? 'nixpacks' : 'dockerfile';
   const lines = [
@@ -271,8 +274,14 @@ export function onHostWebhookBundleEnvLines(
       `WEEHAWK_AUTO_DEPLOY_CLONE_URL=${remoteEnvFileQuote(autoDeploy.cloneUrl)}`,
       `WEEHAWK_AUTO_DEPLOY_BRANCH=${remoteEnvFileQuote(autoDeploy.branch || 'main')}`,
     );
-    if (autoDeploy.githubAppId && autoDeploy.githubInstallationId && autoDeploy.githubPrivateKeyPem) {
-      const pemB64 = Buffer.from(autoDeploy.githubPrivateKeyPem).toString('base64');
+    if (
+      autoDeploy.githubAppId &&
+      autoDeploy.githubInstallationId &&
+      autoDeploy.githubPrivateKeyPem
+    ) {
+      const pemB64 = Buffer.from(autoDeploy.githubPrivateKeyPem).toString(
+        'base64',
+      );
       lines.push(
         `WEEHAWK_GH_APP_ID=${remoteEnvFileQuote(autoDeploy.githubAppId)}`,
         `WEEHAWK_GH_INSTALL_ID=${remoteEnvFileQuote(autoDeploy.githubInstallationId)}`,
@@ -301,7 +310,8 @@ export function looksLikeGeneratedOnHostRedeployScript(
   const t = (bashScript ?? '').trim();
   if (!t) return false;
   return (
-    (t.includes(ON_HOST_DEPLOY_BUNDLE_ROOT) || t.includes('WEEHAWK_BUNDLE_SEGMENT')) &&
+    (t.includes(ON_HOST_DEPLOY_BUNDLE_ROOT) ||
+      t.includes('WEEHAWK_BUNDLE_SEGMENT')) &&
     (t.includes('COMPOSE_FILE') ||
       t.includes('Bundle directory missing') ||
       t.includes('No readable compose file') ||

@@ -5,7 +5,5 @@ export function channelConfigRecord(
 ): Record<string, unknown> {
   const c = channel.config;
   if (c == null) return {};
-  return typeof c === 'object' && !Array.isArray(c)
-    ? (c as Record<string, unknown>)
-    : {};
+  return typeof c === 'object' && !Array.isArray(c) ? c : {};
 }

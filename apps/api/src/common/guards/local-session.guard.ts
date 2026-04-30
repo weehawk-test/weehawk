@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { DataSource } from 'typeorm';
@@ -30,7 +35,9 @@ export class LocalSessionGuard implements CanActivate {
       .map((part) => part.trim())
       .find((part) => part.startsWith('weehawk_access_token='))
       ?.slice('weehawk_access_token='.length);
-    const tokenFromCookie = cookieToken ? decodeURIComponent(cookieToken).trim() : '';
+    const tokenFromCookie = cookieToken
+      ? decodeURIComponent(cookieToken).trim()
+      : '';
     const token =
       bearer?.startsWith('Bearer ') && bearer.slice(7).trim()
         ? bearer.slice(7).trim()
@@ -41,20 +48,30 @@ export class LocalSessionGuard implements CanActivate {
       this.configService.get<string>('auth.jwtSecret')?.trim() ||
       this.configService.get<string>('JWT_SECRET')?.trim();
     if (!secret) {
-      throw new UnauthorizedException('JWT secret is not configured (auth.jwtSecret/JWT_SECRET)');
+      throw new UnauthorizedException(
+        'JWT secret is not configured (auth.jwtSecret/JWT_SECRET)',
+      );
     }
     let decodedEmail = '';
     let decodedUserId = 0;
     try {
-      const payload = new JwtService({ secret }).verify<{ email?: string; sub?: string | number; userId?: number }>(token);
+      const payload = new JwtService({ secret }).verify<{
+        email?: string;
+        sub?: string | number;
+        userId?: number;
+      }>(token);
       decodedEmail = (payload?.email ?? '').trim().toLowerCase();
       decodedUserId = Number(payload?.userId ?? payload?.sub ?? 0);
     } catch {
       throw new UnauthorizedException('Invalid token');
     }
-    if (!decodedEmail || !decodedUserId) throw new UnauthorizedException('Invalid token payload');
-    const user = await this.dataSource.getRepository(User).findOne({ where: { id: decodedUserId } });
-    if (!user || !user.enabled) throw new UnauthorizedException('User is disabled or missing');
+    if (!decodedEmail || !decodedUserId)
+      throw new UnauthorizedException('Invalid token payload');
+    const user = await this.dataSource
+      .getRepository(User)
+      .findOne({ where: { id: decodedUserId } });
+    if (!user || !user.enabled)
+      throw new UnauthorizedException('User is disabled or missing');
     if (user.email.trim().toLowerCase() !== decodedEmail) {
       throw new UnauthorizedException('Invalid token payload');
     }

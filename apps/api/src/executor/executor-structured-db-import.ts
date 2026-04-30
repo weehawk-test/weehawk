@@ -20,8 +20,13 @@ function safeSqlUser(raw: string, fallback: string): string {
 }
 
 export type StructuredDbImportDocker = {
-  copyHostArchiveIntoContainer: (hostArchivePath: string, containerPath: string) => Promise<void>;
-  execInContainer: (innerSh: string) => Promise<{ stdout: string; stderr: string }>;
+  copyHostArchiveIntoContainer: (
+    hostArchivePath: string,
+    containerPath: string,
+  ) => Promise<void>;
+  execInContainer: (
+    innerSh: string,
+  ) => Promise<{ stdout: string; stderr: string }>;
   removeInContainer: (containerPath: string) => Promise<void>;
 };
 
@@ -50,7 +55,10 @@ export async function runStructuredDatabaseImport(
   const inside = `/tmp/weehawk-import-${Date.now()}`;
 
   try {
-    await docker.copyHostArchiveIntoContainer(hostArchivePath, `${containerId}:${inside}`);
+    await docker.copyHostArchiveIntoContainer(
+      hostArchivePath,
+      `${containerId}:${inside}`,
+    );
   } catch (e) {
     return {
       success: false,
@@ -60,7 +68,10 @@ export async function runStructuredDatabaseImport(
 
   const runExec = async (inner: string) => {
     const { stdout, stderr } = await docker.execInContainer(inner);
-    return { stdout: stdout?.toString() ?? '', stderr: stderr?.toString() ?? '' };
+    return {
+      stdout: stdout?.toString() ?? '',
+      stderr: stderr?.toString() ?? '',
+    };
   };
 
   try {

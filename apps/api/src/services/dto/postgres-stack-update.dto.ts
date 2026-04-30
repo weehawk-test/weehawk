@@ -16,7 +16,10 @@ export class PostgresStackUpdateDto {
   @Max(65535)
   publishPort?: number | null;
 
-  @ApiPropertyOptional({ example: 2, description: 'Swarm service replicas (1–10)' })
+  @ApiPropertyOptional({
+    example: 2,
+    description: 'Swarm service replicas (1–10)',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)

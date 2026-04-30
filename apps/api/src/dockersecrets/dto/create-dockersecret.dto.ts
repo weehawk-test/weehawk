@@ -1,7 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateDockersecretDto {
-  @ApiProperty({ description: 'Remote server (SSH deploy host) id', example: 1 })
+  @ApiProperty({
+    description: 'Remote server (SSH deploy host) id',
+    example: 1,
+  })
   remoteServerId: number;
 
   @ApiProperty({ example: 'DB_PASSWORD' })
@@ -12,7 +15,10 @@ export class CreateDockersecretDto {
 }
 
 export class BulkImportDto {
-  @ApiProperty({ description: 'Remote server (SSH deploy host) id', example: 1 })
+  @ApiProperty({
+    description: 'Remote server (SSH deploy host) id',
+    example: 1,
+  })
   remoteServerId: number;
 
   @ApiProperty({ example: 'KEY1=VAL1\nKEY2=VAL2' })

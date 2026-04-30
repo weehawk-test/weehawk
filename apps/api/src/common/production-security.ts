@@ -30,16 +30,21 @@ const WEAK_REFRESH_TOKEN_HASH_SECRETS = new Set(
  * Call after `ConfigModule` has loaded env / docker secrets.
  */
 export function assertProductionSecurityConfig(config: ConfigService): void {
-  const env = (config.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '').toLowerCase();
+  const env = (
+    config.get<string>('NODE_ENV') ??
+    process.env.NODE_ENV ??
+    ''
+  ).toLowerCase();
   if (env !== 'production') {
     return;
   }
 
   const log = new Logger('ProductionSecurity');
-  const jwt =
-    (config.get<string>('auth.jwtSecret') ??
-      config.get<string>('JWT_SECRET') ??
-      '').trim();
+  const jwt = (
+    config.get<string>('auth.jwtSecret') ??
+    config.get<string>('JWT_SECRET') ??
+    ''
+  ).trim();
   if (!jwt || jwt.length < 32 || WEAK_JWT_SECRETS.has(jwt.toLowerCase())) {
     log.error(
       'Refusing to start: set auth.jwtSecret (or JWT_SECRET) to a random string of at least 32 characters in production.',
@@ -55,7 +60,9 @@ export function assertProductionSecurityConfig(config: ConfigService): void {
     process.exit(1);
   }
 
-  const refreshHashSecret = (config.get<string>('REFRESH_TOKEN_HASH_SECRET') ?? '').trim();
+  const refreshHashSecret = (
+    config.get<string>('REFRESH_TOKEN_HASH_SECRET') ?? ''
+  ).trim();
   if (
     !refreshHashSecret ||
     refreshHashSecret.length < 32 ||

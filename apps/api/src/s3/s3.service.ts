@@ -29,8 +29,12 @@ import { S3Profile } from './entities/s3-profile.entity';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { inferS3ForcePathStyle } from './s3-force-path-style';
 import { getErrorMessage } from '../utils/error-message';
-import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
+import {
+  decryptPrivateKey,
+  encryptPrivateKey,
+} from '../remote-servers/ssh-key-crypto';
 import { generatePublicId } from '../common/public-id';
+import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 const MAX_PROFILES = 50;
 
@@ -77,12 +81,26 @@ function createS3Client(input: NormalizedS3Credentials): S3Client {
 
 @Injectable()
 export class S3Service implements OnModuleInit {
+  private readonly scopedProfiles: UserIdTenantScopedRepository<S3Profile>;
+
   constructor(
     @InjectRepository(S3Profile)
     private readonly profileRepo: Repository<S3Profile>,
     private readonly configService: ConfigService,
     private readonly remoteServersService: RemoteServersService,
-  ) {}
+  ) {
+    this.scopedProfiles = new UserIdTenantScopedRepository<S3Profile>(
+      this.profileRepo,
+      'S3 profile',
+    );
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for [startup migration without request user context].
+  private async _internal_system_saveProfile(
+    row: S3Profile,
+  ): Promise<S3Profile> {
+    return this.profileRepo.save(row);
+  }
 
   async onModuleInit(): Promise<void> {
     await this.migrateFromLegacyJsonIfNeeded();
@@ -109,7 +127,9 @@ export class S3Service implements OnModuleInit {
       }
     }
     if (updates.length > 0) {
-      await this.profileRepo.save(updates);
+      for (const row of updates) {
+        await this._internal_system_saveProfile(row);
+      }
     }
   }
 
@@ -152,28 +172,47 @@ export class S3Service implements OnModuleInit {
   /**
    * Resolve a saved profile by stable `publicId` (e.g. from URLs) or by human-readable `name` (UI / backup DTOs).
    */
-  private async findProfileOrThrow(userId: number, identifier: string): Promise<S3Profile> {
+  private async findProfileOrThrow(
+    userId: number,
+    identifier: string,
+  ): Promise<S3Profile> {
     const safe = identifier?.trim();
-    if (!safe) throw new BadRequestException('S3 profile identifier is required.');
-    let row = await this.profileRepo.findOne({ where: { userId, publicId: safe } });
-    if (!row) {
-      row = await this.profileRepo.findOne({ where: { userId, name: safe } });
+    if (!safe)
+      throw new BadRequestException('S3 profile identifier is required.');
+    try {
+      const byPublicId = await this.scopedProfiles.findScopedBy(
+        'publicId',
+        safe,
+        userId,
+      );
+      return this.ensureProfilePublicId(byPublicId);
+    } catch {
+      const byName = await this.scopedProfiles.findScopedBy(
+        'name',
+        safe,
+        userId,
+      );
+      return this.ensureProfilePublicId(byName);
     }
-    if (!row) throw new NotFoundException('S3 profile not found');
-    return this.ensureProfilePublicId(row);
   }
 
   private async ensureProfilePublicId(row: S3Profile): Promise<S3Profile> {
     if (row.publicId?.trim()) return row;
     row.publicId = generatePublicId('s3');
-    return this.profileRepo.save(row);
+    return this.scopedProfiles.saveScoped(row, row.userId);
   }
 
-  private async findProfileByPublicIdOrThrow(userId: number, publicId: string): Promise<S3Profile> {
+  private async findProfileByPublicIdOrThrow(
+    userId: number,
+    publicId: string,
+  ): Promise<S3Profile> {
     const safe = publicId?.trim();
     if (!safe) throw new BadRequestException('S3 profile id is required.');
-    const row = await this.profileRepo.findOne({ where: { userId, publicId: safe } });
-    if (!row) throw new NotFoundException('S3 profile not found');
+    const row = await this.scopedProfiles.findScopedBy(
+      'publicId',
+      safe,
+      userId,
+    );
     return this.ensureProfilePublicId(row);
   }
 
@@ -216,7 +255,14 @@ export class S3Service implements OnModuleInit {
       const bucket = String(p.bucket ?? '').trim();
       const accessKeyId = String(p.accessKeyId ?? '').trim();
       const secretAccessKey = String(p.secretAccessKey ?? '');
-      if (!name || !endpoint || !region || !bucket || !accessKeyId || !secretAccessKey) {
+      if (
+        !name ||
+        !endpoint ||
+        !region ||
+        !bucket ||
+        !accessKeyId ||
+        !secretAccessKey
+      ) {
         continue;
       }
       const row = this.profileRepo.create({
@@ -238,7 +284,10 @@ export class S3Service implements OnModuleInit {
       }
       return;
     }
-    await this.profileRepo.save(rows);
+    for (const row of rows) {
+      // SYSTEM-LEVEL BYPASS: Required for [legacy JSON migration without authenticated user context].
+      await this._internal_system_saveProfile(row);
+    }
     try {
       await fs.rename(legacyPath, `${legacyPath}.migrated`);
     } catch {
@@ -258,7 +307,9 @@ export class S3Service implements OnModuleInit {
     return trimmed;
   }
 
-  private normalizeProfileFields(input: UpsertS3ProfileDto): Omit<NormalizedS3Credentials, 'secretAccessKey'> {
+  private normalizeProfileFields(
+    input: UpsertS3ProfileDto,
+  ): Omit<NormalizedS3Credentials, 'secretAccessKey'> {
     const endpoint = this.assertNonEmpty(input.endpoint, 'endpoint');
     return {
       name: this.assertNonEmpty(input.name, 'name'),
@@ -270,7 +321,10 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  private resolveSecretForSave(input: UpsertS3ProfileDto, existing: S3Profile | null): string {
+  private resolveSecretForSave(
+    input: UpsertS3ProfileDto,
+    existing: S3Profile | null,
+  ): string {
     const trimmed = input.secretAccessKey?.trim() ?? '';
     if (trimmed) return trimmed;
     if (existing) return this.decryptSecretAccessKey(existing.secretAccessKey);
@@ -279,7 +333,10 @@ export class S3Service implements OnModuleInit {
 
   private normalizeProfile(input: UpsertS3ProfileDto): NormalizedS3Credentials {
     const base = this.normalizeProfileFields(input);
-    const secretAccessKey = this.assertNonEmpty(input.secretAccessKey ?? '', 'secretAccessKey');
+    const secretAccessKey = this.assertNonEmpty(
+      input.secretAccessKey ?? '',
+      'secretAccessKey',
+    );
     return { ...base, secretAccessKey };
   }
 
@@ -302,7 +359,9 @@ export class S3Service implements OnModuleInit {
       forcePathStyle: row.forcePathStyle,
       createdAt: (row.createdAt ?? row.updatedAt).toISOString(),
       updatedAt: row.updatedAt.toISOString(),
-      secretAccessKeyMasked: this.maskSecret(this.decryptSecretAccessKey(row.secretAccessKey)),
+      secretAccessKeyMasked: this.maskSecret(
+        this.decryptSecretAccessKey(row.secretAccessKey),
+      ),
     };
   }
 
@@ -312,13 +371,20 @@ export class S3Service implements OnModuleInit {
       order: { updatedAt: 'DESC' },
       take: MAX_PROFILES,
     });
-    const rowsWithPublicId = await Promise.all(rows.map((p) => this.ensureProfilePublicId(p)));
+    const rowsWithPublicId = await Promise.all(
+      rows.map((p) => this.ensureProfilePublicId(p)),
+    );
     return rowsWithPublicId.map((p) => this.toPublicProfile(p));
   }
 
   async saveProfile(userId: number, dto: UpsertS3ProfileDto) {
     const base = this.normalizeProfileFields(dto);
-    let row = await this.profileRepo.findOne({ where: { userId, name: base.name } });
+    let row: S3Profile | null = null;
+    try {
+      row = await this.scopedProfiles.findScopedBy('name', base.name, userId);
+    } catch {
+      row = null;
+    }
     const secretAccessKey = this.resolveSecretForSave(dto, row);
     const n: NormalizedS3Credentials = { ...base, secretAccessKey };
     if (row) {
@@ -340,17 +406,21 @@ export class S3Service implements OnModuleInit {
         forcePathStyle: n.forcePathStyle,
       });
     }
-    await this.profileRepo.save(row);
+    await this.scopedProfiles.saveScoped(row, userId);
 
-    const all = await this.profileRepo.find({ where: { userId }, order: { updatedAt: 'DESC' } });
+    const all = await this.profileRepo.find({
+      where: { userId },
+      order: { updatedAt: 'DESC' },
+    });
     if (all.length > MAX_PROFILES) {
       await this.profileRepo.remove(all.slice(MAX_PROFILES));
     }
 
-    const saved = await this.profileRepo.findOne({ where: { userId, name: n.name } });
-    if (!saved) {
-      throw new InternalServerErrorException('Failed to persist S3 profile');
-    }
+    const saved = await this.scopedProfiles.findScopedBy(
+      'name',
+      n.name,
+      userId,
+    );
     const ensured = await this.ensureProfilePublicId(saved);
     return {
       success: true,
@@ -360,7 +430,7 @@ export class S3Service implements OnModuleInit {
 
   async deleteProfile(userId: number, publicId: string) {
     const row = await this.findProfileByPublicIdOrThrow(userId, publicId);
-    await this.profileRepo.delete({ id: row.id, userId });
+    await this.scopedProfiles.deleteScoped(row.id, userId);
     return { success: true, publicId: row.publicId };
   }
 
@@ -375,10 +445,8 @@ export class S3Service implements OnModuleInit {
     const input = this.normalizeProfile(dto);
     const remoteId = dto.remoteServerId;
 
-    const { name: remoteName } = await this.remoteServersService.assertDeployServerById(
-      remoteId,
-      userId,
-    );
+    const { name: remoteName } =
+      await this.remoteServersService.assertDeployServerById(remoteId, userId);
 
     const client = createS3Client(input);
     let listUrl: string;
@@ -406,7 +474,11 @@ export class S3Service implements OnModuleInit {
     }
 
     try {
-      await this.remoteServersService.curlPresignedProbeOnRemote(remoteId, userId, listUrl);
+      await this.remoteServersService.curlPresignedProbeOnRemote(
+        remoteId,
+        userId,
+        listUrl,
+      );
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
@@ -429,12 +501,16 @@ export class S3Service implements OnModuleInit {
     if (!safe) {
       throw new BadRequestException('S3 profile name is required.');
     }
-    let row = await this.profileRepo.findOne({ where: { userId, publicId: safe } });
-    if (!row) {
-      row = await this.profileRepo.findOne({ where: { userId, name: safe } });
-    }
-    if (!row) {
-      throw new BadRequestException(`S3 profile "${safe}" not found.`);
+    try {
+      await this.scopedProfiles.findScopedBy('publicId', safe, userId);
+      return;
+    } catch {
+      try {
+        await this.scopedProfiles.findScopedBy('name', safe, userId);
+        return;
+      } catch {
+        throw new BadRequestException(`S3 profile "${safe}" not found.`);
+      }
     }
   }
 
@@ -472,7 +548,12 @@ export class S3Service implements OnModuleInit {
     bucket: string;
     prefix: string;
     folders: { prefix: string; name: string }[];
-    objects: { key: string; name: string; size: number; lastModified: string }[];
+    objects: {
+      key: string;
+      name: string;
+      size: number;
+      lastModified: string;
+    }[];
     isTruncated: boolean;
     continuationToken?: string;
   }> {
@@ -502,7 +583,9 @@ export class S3Service implements OnModuleInit {
         .map((c) => {
           const key = c.Key;
           if (!key || key.endsWith('/')) return null;
-          const rel = normalizedPrefix ? key.slice(normalizedPrefix.length) : key;
+          const rel = normalizedPrefix
+            ? key.slice(normalizedPrefix.length)
+            : key;
           if (rel.includes('/')) return null;
           return {
             key,
@@ -622,7 +705,7 @@ export class S3Service implements OnModuleInit {
    * Normalize a folder prefix (must be non-empty; always ends with `/`).
    */
   private normalizeFolderPrefix(raw: string): string {
-    let p = raw.replace(/^\/+/, '').trim();
+    const p = raw.replace(/^\/+/, '').trim();
     if (!p) {
       throw new BadRequestException('prefix is required.');
     }

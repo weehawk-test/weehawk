@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { ThrottlerStorageService, type ThrottlerStorage } from '@nestjs/throttler';
+import {
+  ThrottlerStorageService,
+  type ThrottlerStorage,
+} from '@nestjs/throttler';
 import { RedisService } from './redis.service';
 
 /**
@@ -67,20 +70,31 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
     limit: number,
     blockDuration: number,
     throttlerName: string,
-  ): Promise<{ totalHits: number; timeToExpire: number; isBlocked: boolean; timeToBlockExpire: number }> {
+  ): Promise<{
+    totalHits: number;
+    timeToExpire: number;
+    isBlocked: boolean;
+    timeToBlockExpire: number;
+  }> {
     if (!this.redis.isReady()) {
-      return this.fallback.increment(key, ttl, limit, blockDuration, throttlerName);
+      return this.fallback.increment(
+        key,
+        ttl,
+        limit,
+        blockDuration,
+        throttlerName,
+      );
     }
 
     const redisKey = `throttle:${throttlerName}:${key}`;
     const blockKey = `${redisKey}:blocked`;
 
     try {
-      const result = (await this.redis.eval(LUA_INCREMENT, [redisKey, blockKey], [
-        String(ttl),
-        String(limit),
-        String(blockDuration),
-      ])) as [number, number, number, number];
+      const result = (await this.redis.eval(
+        LUA_INCREMENT,
+        [redisKey, blockKey],
+        [String(ttl), String(limit), String(blockDuration)],
+      )) as [number, number, number, number];
 
       const totalHits = Number(result?.[0] ?? 0);
       const timeToExpireMs = Math.max(0, Number(result?.[1] ?? 0));
@@ -89,11 +103,20 @@ export class RedisThrottlerStorage implements ThrottlerStorage {
 
       // Match ThrottlerStorageService: time values are in whole seconds for guards/headers.
       const timeToExpire = Math.max(0, Math.ceil(timeToExpireMs / 1000));
-      const timeToBlockExpire = Math.max(0, Math.ceil(timeToBlockExpireMs / 1000));
+      const timeToBlockExpire = Math.max(
+        0,
+        Math.ceil(timeToBlockExpireMs / 1000),
+      );
 
       return { totalHits, timeToExpire, isBlocked, timeToBlockExpire };
     } catch {
-      return this.fallback.increment(key, ttl, limit, blockDuration, throttlerName);
+      return this.fallback.increment(
+        key,
+        ttl,
+        limit,
+        blockDuration,
+        throttlerName,
+      );
     }
   }
 }

@@ -20,8 +20,7 @@ export function getServiceDeploymentDir(
   serviceId?: number | null,
 ): string {
   const safeAppName = toSafePathSegment(appName || 'service');
-  const idPart =
-    serviceId != null && serviceId >= 1 ? `-svc${serviceId}` : '';
+  const idPart = serviceId != null && serviceId >= 1 ? `-svc${serviceId}` : '';
   return path.join(tmpdir(), 'weehawk-orchestrator', `${safeAppName}${idPart}`);
 }
 

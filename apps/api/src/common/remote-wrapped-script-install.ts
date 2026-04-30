@@ -78,7 +78,10 @@ export function remoteEnvFileQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function readNotificationConfigString(cfg: Record<string, unknown>, key: string): string {
+function readNotificationConfigString(
+  cfg: Record<string, unknown>,
+  key: string,
+): string {
   const v = cfg[key];
   return typeof v === 'string' ? v : '';
 }
@@ -128,7 +131,7 @@ export function remoteNotifyDispatchFunctionsBashStrict(
 ): string {
   const core = [
     'json_escape() {',
-    "  printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g; s/\r/\\\\r/g; s/\n/\\\\n/g'",
+    '  printf \'%s\' "$1" | sed \'s/\\\\/\\\\\\\\/g; s/"/\\\\"/g; s/\r/\\\\r/g; s/\n/\\\\n/g\'',
     '}',
     'send_notification() {',
     '  if [ "${WEEHAWK_NOTIFY_ENABLED:-0}" != "1" ]; then return 0; fi',
@@ -260,7 +263,9 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
     `ENV_FILE=${envPathQ}`,
     'LOG_FILE="${0%.sh}.log"',
     'mkdir -p "$(dirname "$LOG_FILE")"',
-    options.truncateLogOnStart === true ? ': >"$LOG_FILE"' : 'touch "$LOG_FILE"',
+    options.truncateLogOnStart === true
+      ? ': >"$LOG_FILE"'
+      : 'touch "$LOG_FILE"',
     'chmod 600 "$LOG_FILE" || true',
     'exec >>"$LOG_FILE" 2>&1',
     'if [ -f "$ENV_FILE" ]; then',
@@ -270,7 +275,7 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
     '  set +a',
     'fi',
     'json_escape() {',
-    "  printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g; s/\r/\\\\r/g; s/\n/\\\\n/g'",
+    '  printf \'%s\' "$1" | sed \'s/\\\\/\\\\\\\\/g; s/"/\\\\"/g; s/\r/\\\\r/g; s/\n/\\\\n/g\'',
     '}',
     'send_notification() {',
     '  if [ "${WEEHAWK_NOTIFY_ENABLED:-0}" != "1" ]; then return 0; fi',
@@ -351,7 +356,7 @@ export function buildRemoteEnvAndWrappedShInstallScript(options: {
       "  if [ ! -x '/host/bin/bash' ]; then",
       "    runner='/bin/sh'",
       '  fi',
-      "  if [ ! -x \"/host$runner\" ]; then",
+      '  if [ ! -x "/host$runner" ]; then',
       '    echo \"host shell not found: $runner\" >&2',
       '    exit 127',
       '  fi',

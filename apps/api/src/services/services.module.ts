@@ -26,11 +26,11 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
     TraefikModule,
   ],
   controllers: [ServicesController],
-  providers: [ServicesService, DatabaseGeneratorService, RemoteImportBackupInterceptor],
-  exports: [
+  providers: [
     ServicesService,
     DatabaseGeneratorService,
-    ExecutorModule,
+    RemoteImportBackupInterceptor,
   ],
+  exports: [ServicesService, DatabaseGeneratorService, ExecutorModule],
 })
 export class ServicesModule {}

@@ -14,7 +14,12 @@ import {
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
-import { ApiBearerAuth, ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiTags,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 
 @ApiTags('Projects')
@@ -81,12 +86,19 @@ export class ProjectsController {
     @Body() updateProjectDto: UpdateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.update(publicId, updateProjectDto, this.uid(req));
+    return this.projectsService.update(
+      publicId,
+      updateProjectDto,
+      this.uid(req),
+    );
   }
 
   @Delete(':publicId')
   @ApiOperation({ summary: 'delete project' })
-  remove(@Param('publicId') publicId: string, @Req() req: { user?: { userId: number } }) {
+  remove(
+    @Param('publicId') publicId: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
     return this.projectsService.remove(publicId, this.uid(req));
   }
 }

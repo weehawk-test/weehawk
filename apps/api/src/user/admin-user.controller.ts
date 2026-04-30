@@ -29,8 +29,14 @@ export class AdminUserController {
 
   @Get()
   listAll(
-    @Query('page', { transform: (v) => (v != null ? parseInt(String(v), 10) : 0) }) page: number = 0,
-    @Query('size', { transform: (v) => (v != null ? parseInt(String(v), 10) : 8) }) size: number = 8,
+    @Query('page', {
+      transform: (v) => (v != null ? parseInt(String(v), 10) : 0),
+    })
+    page: number = 0,
+    @Query('size', {
+      transform: (v) => (v != null ? parseInt(String(v), 10) : 8),
+    })
+    size: number = 8,
     @Query('email') email?: string,
   ): Promise<{
     content: UserProfileResponseDto[];
@@ -49,14 +55,18 @@ export class AdminUserController {
   }
 
   @Get('/:id')
-  getById(@Param('id', ParseIntPipe) id: number): Promise<UserProfileResponseDto> {
+  getById(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<UserProfileResponseDto> {
     return this.adminUserService.findById(id);
   }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiBody({ type: UserCreateRequestDto })
-  async create(@Body() dto: UserCreateRequestDto): Promise<UserProfileResponseDto> {
+  async create(
+    @Body() dto: UserCreateRequestDto,
+  ): Promise<UserProfileResponseDto> {
     return this.adminUserService.create(dto);
   }
 

@@ -46,13 +46,19 @@ export class S3Controller {
 
   @Post('profiles')
   @ApiOperation({ summary: 'Create or update an S3 destination profile' })
-  async saveProfile(@Req() req: { user?: { userId: number } }, @Body() dto: UpsertS3ProfileDto) {
+  async saveProfile(
+    @Req() req: { user?: { userId: number } },
+    @Body() dto: UpsertS3ProfileDto,
+  ) {
     return this.s3Service.saveProfile(this.uid(req), dto);
   }
 
   @Delete('profiles/:publicId')
   @ApiOperation({ summary: 'Delete a saved S3 destination profile' })
-  async deleteProfile(@Req() req: { user?: { userId: number } }, @Param('publicId') publicId: string) {
+  async deleteProfile(
+    @Req() req: { user?: { userId: number } },
+    @Param('publicId') publicId: string,
+  ) {
     return this.s3Service.deleteProfile(this.uid(req), publicId);
   }
 
@@ -71,7 +77,8 @@ export class S3Controller {
 
   @Get('profiles/:publicId/objects')
   @ApiOperation({
-    summary: 'List objects and common prefixes under one prefix (virtual folders)',
+    summary:
+      'List objects and common prefixes under one prefix (virtual folders)',
   })
   listBucketObjects(
     @Req() req: { user?: { userId: number } },
@@ -79,7 +86,12 @@ export class S3Controller {
     @Query('prefix') prefix?: string,
     @Query('continuationToken') continuationToken?: string,
   ) {
-    return this.s3Service.listBucketObjects(this.uid(req), publicId, prefix, continuationToken);
+    return this.s3Service.listBucketObjects(
+      this.uid(req),
+      publicId,
+      prefix,
+      continuationToken,
+    );
   }
 
   @Get('profiles/:publicId/prefix-summary')
@@ -112,10 +124,15 @@ export class S3Controller {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
-    return this.s3Service.presignPutObject(this.uid(req), publicId, body.key.trim(), {
-      contentType: body.contentType,
-      expiresInSeconds: body.expiresInSeconds,
-    });
+    return this.s3Service.presignPutObject(
+      this.uid(req),
+      publicId,
+      body.key.trim(),
+      {
+        contentType: body.contentType,
+        expiresInSeconds: body.expiresInSeconds,
+      },
+    );
   }
 
   @Post('profiles/:publicId/objects/upload')
@@ -163,14 +180,19 @@ export class S3Controller {
   @Post('profiles/:publicId/objects/mkdir')
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
-    summary: 'Create a folder marker (empty key ending with /) for S3 console-style navigation',
+    summary:
+      'Create a folder marker (empty key ending with /) for S3 console-style navigation',
   })
   mkdirFolder(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: MkdirS3FolderDto,
   ) {
-    return this.s3Service.putFolderMarker(this.uid(req), publicId, body.key.trim());
+    return this.s3Service.putFolderMarker(
+      this.uid(req),
+      publicId,
+      body.key.trim(),
+    );
   }
 
   @Get('profiles/:publicId/presign-get')
@@ -187,7 +209,8 @@ export class S3Controller {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
     }
-    const n = expiresInSecondsRaw != null ? Number(expiresInSecondsRaw) : undefined;
+    const n =
+      expiresInSecondsRaw != null ? Number(expiresInSecondsRaw) : undefined;
     const expiresInSeconds =
       expiresInSecondsRaw != null && !Number.isFinite(n) ? undefined : n;
     return this.s3Service.presignGetObject(
@@ -209,7 +232,11 @@ export class S3Controller {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
     }
-    const r = await this.s3Service.getObjectStream(this.uid(req), publicId, key.trim());
+    const r = await this.s3Service.getObjectStream(
+      this.uid(req),
+      publicId,
+      key.trim(),
+    );
     const enc = encodeURIComponent(r.filename).replace(/'/g, '%27');
     res.setHeader('Content-Type', r.contentType);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${enc}`);
@@ -260,7 +287,11 @@ export class S3Controller {
     if (!body?.keys?.length) {
       throw new BadRequestException('keys array is required.');
     }
-    return this.s3Service.deleteObjectsBatch(this.uid(req), publicId, body.keys);
+    return this.s3Service.deleteObjectsBatch(
+      this.uid(req),
+      publicId,
+      body.keys,
+    );
   }
 
   @Post('profiles/:publicId/objects/delete-prefix')
@@ -275,6 +306,10 @@ export class S3Controller {
     if (!body?.prefix?.trim()) {
       throw new BadRequestException('prefix is required in body.');
     }
-    return this.s3Service.deleteObjectsUnderPrefix(this.uid(req), publicId, body.prefix);
+    return this.s3Service.deleteObjectsUnderPrefix(
+      this.uid(req),
+      publicId,
+      body.prefix,
+    );
   }
 }

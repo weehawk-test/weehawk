@@ -18,15 +18,15 @@ export class UpdateTraefikSettingsDto {
 
   @ApiPropertyOptional({
     example: 'weehawk.example.com',
-    description: 'Hostname for Weehawk UI (HTTPS → host port 3000). Empty string clears.',
+    description:
+      'Hostname for Weehawk UI (HTTPS → host port 3000). Empty string clears.',
   })
   @IsOptional()
   @IsString()
   @MaxLength(253)
-  @Matches(
-    /^(|[a-z0-9]([a-z0-9.-]*[a-z0-9])?)$/,
-    { message: 'platformDomain must be a valid hostname' },
-  )
+  @Matches(/^(|[a-z0-9]([a-z0-9.-]*[a-z0-9])?)$/, {
+    message: 'platformDomain must be a valid hostname',
+  })
   platformDomain?: string;
 
   @ApiPropertyOptional({
@@ -53,7 +53,8 @@ export class UpdateTraefikSettingsDto {
   @MinLength(1)
   @MaxLength(64)
   @Matches(/^[a-zA-Z][a-zA-Z0-9_-]*$/, {
-    message: 'certResolverName must be alphanumeric (underscore/hyphen allowed)',
+    message:
+      'certResolverName must be alphanumeric (underscore/hyphen allowed)',
   })
   certResolverName?: string;
 

@@ -18,10 +18,20 @@ function cookieOptions(secure: boolean): {
   return { httpOnly: true, secure, sameSite: 'lax', path: '/' };
 }
 
-export function attachAuthCookies(res: Response, auth: AuthResponseDto, secure: boolean): void {
+export function attachAuthCookies(
+  res: Response,
+  auth: AuthResponseDto,
+  secure: boolean,
+): void {
   const base = cookieOptions(secure);
-  res.cookie(AUTH_ACCESS_COOKIE, auth.accessToken, { ...base, maxAge: REFRESH_MAX_AGE_MS });
-  res.cookie(AUTH_REFRESH_COOKIE, auth.refreshToken, { ...base, maxAge: REFRESH_MAX_AGE_MS });
+  res.cookie(AUTH_ACCESS_COOKIE, auth.accessToken, {
+    ...base,
+    maxAge: REFRESH_MAX_AGE_MS,
+  });
+  res.cookie(AUTH_REFRESH_COOKIE, auth.refreshToken, {
+    ...base,
+    maxAge: REFRESH_MAX_AGE_MS,
+  });
 }
 
 export function clearAuthCookies(res: Response, secure: boolean): void {
@@ -32,17 +42,29 @@ export function clearAuthCookies(res: Response, secure: boolean): void {
 
 const GOOGLE_LINK_MAX_AGE_MS = 10 * 60 * 1000;
 
-export function attachGoogleOauthLinkCookie(res: Response, token: string, secure: boolean): void {
+export function attachGoogleOauthLinkCookie(
+  res: Response,
+  token: string,
+  secure: boolean,
+): void {
   const base = cookieOptions(secure);
-  res.cookie(GOOGLE_OAUTH_LINK_COOKIE, token, { ...base, maxAge: GOOGLE_LINK_MAX_AGE_MS });
+  res.cookie(GOOGLE_OAUTH_LINK_COOKIE, token, {
+    ...base,
+    maxAge: GOOGLE_LINK_MAX_AGE_MS,
+  });
 }
 
-export function clearGoogleOauthLinkCookie(res: Response, secure: boolean): void {
+export function clearGoogleOauthLinkCookie(
+  res: Response,
+  secure: boolean,
+): void {
   const base = cookieOptions(secure);
   res.clearCookie(GOOGLE_OAUTH_LINK_COOKIE, base);
 }
 
-export function parseCookieHeader(cookieHeader: string | undefined): Record<string, string> {
+export function parseCookieHeader(
+  cookieHeader: string | undefined,
+): Record<string, string> {
   const out: Record<string, string> = {};
   if (!cookieHeader?.trim()) return out;
   for (const part of cookieHeader.split(';')) {

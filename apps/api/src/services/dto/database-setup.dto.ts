@@ -54,7 +54,10 @@ export class DatabaseSetupDto {
   @Max(10)
   replicas?: number;
 
-  @ApiPropertyOptional({ example: 5432, description: '1–65535; omit to keep internal-only.' })
+  @ApiPropertyOptional({
+    example: 5432,
+    description: '1–65535; omit to keep internal-only.',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)

@@ -2,15 +2,14 @@
 export const WEEHAWK_WEBHOOK_PUBLIC_PATH_PREFIX = 'weehawk-hooks';
 
 export function deriveHooksPublicHost(userDomainOrHost: string): string {
-  const t = userDomainOrHost
-    .trim()
-    .toLowerCase()
-    .replace(/\.+$/g, '');
+  const t = userDomainOrHost.trim().toLowerCase().replace(/\.+$/g, '');
   return t;
 }
 
 /** Display value equals stored host (no forced webhook subdomain). */
-export function hooksPublicHostForDisplay(stored: string | null | undefined): string {
+export function hooksPublicHostForDisplay(
+  stored: string | null | undefined,
+): string {
   if (stored == null || !String(stored).trim()) {
     return '';
   }
@@ -37,15 +36,24 @@ export function hostHeaderHostname(hostHeader: string | undefined): string {
 }
 
 /** Path-only check: `GET|POST /weehawk-hooks/{64-hex token}` (public trigger; token is the secret). */
-export function isPublicHooksTriggerPath(pathname: string | undefined): boolean {
+export function isPublicHooksTriggerPath(
+  pathname: string | undefined,
+): boolean {
   const raw = (pathname ?? '').trim();
   const p = raw.split('?')[0] ?? '';
-  return new RegExp(`^/${WEEHAWK_WEBHOOK_PUBLIC_PATH_PREFIX}/[a-f0-9]{64}/?$`, 'i').test(p);
+  return new RegExp(
+    `^/${WEEHAWK_WEBHOOK_PUBLIC_PATH_PREFIX}/[a-f0-9]{64}/?$`,
+    'i',
+  ).test(p);
 }
 
 export function isPublicWebhookHostAllowed(
   hostHeader: string | undefined,
-  opts: { allowAnyHost: boolean; allowLoopback: boolean; allowedHosts?: string[] },
+  opts: {
+    allowAnyHost: boolean;
+    allowLoopback: boolean;
+    allowedHosts?: string[];
+  },
 ): boolean {
   if (opts.allowAnyHost) {
     return true;

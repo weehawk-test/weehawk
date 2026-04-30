@@ -1,4 +1,13 @@
-import { Body, Controller, Delete, Get, Post, Put, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Post,
+  Put,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBody, ApiTags } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { UserProfileResponseDto } from '../auth/dto/user-profile-response.dto';
@@ -18,7 +27,9 @@ export class UserController {
   ) {}
 
   @Get('/profile')
-  getProfile(@Req() req: { user?: { email: string } }): Promise<UserProfileResponseDto> {
+  getProfile(
+    @Req() req: { user?: { email: string } },
+  ): Promise<UserProfileResponseDto> {
     const email = req.user?.email;
     if (!email) throw new Error('User email missing');
     return this.userService.getProfile(email);
@@ -36,7 +47,9 @@ export class UserController {
   }
 
   @Delete('/account')
-  async deleteAccount(@Req() req: { user?: { email: string } }): Promise<{ message: string }> {
+  async deleteAccount(
+    @Req() req: { user?: { email: string } },
+  ): Promise<{ message: string }> {
     const email = req.user?.email;
     if (!email) throw new Error('User email missing');
     await this.userService.deleteAccount(email);
@@ -68,7 +81,9 @@ export class UserController {
   }
 
   @Delete('/unlink-google')
-  async unlinkGoogle(@Req() req: { user?: { email: string } }): Promise<{ message: string }> {
+  async unlinkGoogle(
+    @Req() req: { user?: { email: string } },
+  ): Promise<{ message: string }> {
     const email = req.user?.email;
     if (!email) throw new Error('User email missing');
     await this.userService.unlinkGoogle(email);

@@ -14,7 +14,10 @@ import * as os from 'os';
 import * as path from 'path';
 import * as net from 'net';
 import { promises as dns } from 'dns';
-import { encryptPrivateKey, decryptPrivateKey } from '../remote-servers/ssh-key-crypto';
+import {
+  encryptPrivateKey,
+  decryptPrivateKey,
+} from '../remote-servers/ssh-key-crypto';
 import { RegistryAccount } from './entities/registry-account.entity';
 import type { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
 import {
@@ -133,7 +136,8 @@ export class RegistryService {
     const version = net.isIP(host);
     if (version === 4) {
       const parts = host.split('.').map((n) => Number(n));
-      if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return true;
+      if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n)))
+        return true;
       const [a, b] = parts;
       if (a === 10) return true;
       if (a === 127) return true;
@@ -169,14 +173,20 @@ export class RegistryService {
       throw new BadRequestException('Registry provider URL must use HTTPS.');
     }
     if (host === 'localhost') {
-      throw new BadRequestException('Registry provider host must be publicly reachable.');
+      throw new BadRequestException(
+        'Registry provider host must be publicly reachable.',
+      );
     }
     if (this.isPrivateOrReservedIp(host)) {
-      throw new BadRequestException('Registry provider host must not be loopback/private/link-local.');
+      throw new BadRequestException(
+        'Registry provider host must not be loopback/private/link-local.',
+      );
     }
     if (net.isIP(host) !== 0) {
       if (isRemoteSshIpBlocked(host)) {
-        throw new BadRequestException('Registry provider host must not be loopback/private/link-local.');
+        throw new BadRequestException(
+          'Registry provider host must not be loopback/private/link-local.',
+        );
       }
       return host;
     }
@@ -184,14 +194,20 @@ export class RegistryService {
     const v6 = await dns.resolve6(host).catch(() => [] as string[]);
     const ips = [...new Set([...v4, ...v6])];
     if (ips.length === 0) {
-      throw new BadRequestException('Registry provider host could not be resolved.');
+      throw new BadRequestException(
+        'Registry provider host could not be resolved.',
+      );
     }
     if (ips.length > 32) {
-      throw new BadRequestException('Registry provider host resolves to too many addresses.');
+      throw new BadRequestException(
+        'Registry provider host resolves to too many addresses.',
+      );
     }
     for (const ip of ips) {
       if (isRemoteSshIpBlocked(ip)) {
-        throw new BadRequestException('Registry provider host must resolve only to public addresses.');
+        throw new BadRequestException(
+          'Registry provider host must resolve only to public addresses.',
+        );
       }
     }
     return host;
@@ -223,7 +239,10 @@ export class RegistryService {
     let res = await fetch(`${origin}/v2/`, { method: 'GET' });
     if (res.ok) {
       // Registry allows anonymous /v2/ — still verify supplied credentials.
-      res = await fetch(`${origin}/v2/`, { method: 'GET', headers: basicHeaders });
+      res = await fetch(`${origin}/v2/`, {
+        method: 'GET',
+        headers: basicHeaders,
+      });
       if (res.ok) return;
       await throwUnauthorized(res, 'Registry rejected credentials');
     }
@@ -263,7 +282,10 @@ export class RegistryService {
     }
 
     // 2) Legacy: Basic auth directly on /v2/
-    res = await fetch(`${origin}/v2/`, { method: 'GET', headers: basicHeaders });
+    res = await fetch(`${origin}/v2/`, {
+      method: 'GET',
+      headers: basicHeaders,
+    });
     if (res.ok) return;
 
     if (res.status === 401 || res.status === 403) {
@@ -290,7 +312,10 @@ export class RegistryService {
     return rows.map((r) => this.toSafe(r));
   }
 
-  async createAccount(userId: number, dto: CreateRegistryAccountDto): Promise<RegistryAccountSafe> {
+  async createAccount(
+    userId: number,
+    dto: CreateRegistryAccountDto,
+  ): Promise<RegistryAccountSafe> {
     const providerUrl = normalizeProviderUrl(dto.providerUrl);
     if (!providerUrl) {
       throw new BadRequestException('providerUrl is required');
@@ -300,7 +325,11 @@ export class RegistryService {
     const password = dto.password;
 
     try {
-      await this.assertRegistryCredentialsValid(providerUrl, username, password);
+      await this.assertRegistryCredentialsValid(
+        providerUrl,
+        username,
+        password,
+      );
 
       const enc = encryptPrivateKey(password, this.getEncryptionSecret());
       const existing = await this.registryAccountRepository.findOne({
@@ -333,12 +362,16 @@ export class RegistryService {
         throw e;
       }
       const message = e instanceof Error ? e.message : String(e);
-      throw new InternalServerErrorException(`Registry save failed: ${message}`);
+      throw new InternalServerErrorException(
+        `Registry save failed: ${message}`,
+      );
     }
   }
 
   async removeAccount(userId: number, id: number): Promise<{ success: true }> {
-    const row = await this.registryAccountRepository.findOne({ where: { id, userId } });
+    const row = await this.registryAccountRepository.findOne({
+      where: { id, userId },
+    });
     if (!row) throw new NotFoundException(`Registry account #${id} not found`);
     await this.registryAccountRepository.remove(row);
     return { success: true };
@@ -380,10 +413,13 @@ export class RegistryService {
       return { env: base, cleanup: async () => {} };
     }
 
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'weehawk-docker-push-'));
-    const auth = Buffer.from(`${account.username}:${password}`, 'utf8').toString(
-      'base64',
+    const tmp = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'weehawk-docker-push-'),
     );
+    const auth = Buffer.from(
+      `${account.username}:${password}`,
+      'utf8',
+    ).toString('base64');
     const auths: Record<string, { auth: string }> = {
       [account.providerUrl]: { auth },
     };
@@ -499,7 +535,11 @@ export class RegistryService {
     };
   }
 
-  async verifyConnection(providerUrl: string, username: string, password: string) {
+  async verifyConnection(
+    providerUrl: string,
+    username: string,
+    password: string,
+  ) {
     const safeProviderUrl = normalizeProviderUrl(
       this.assertNonEmpty(providerUrl, 'providerUrl'),
     );

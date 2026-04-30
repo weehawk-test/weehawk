@@ -26,12 +26,20 @@ export class TraefikSettings {
   platformDomain!: string | null;
 
   /** Host path bound to `/acme.json` in the Traefik service (Let’s Encrypt storage). */
-  @Column({ type: 'varchar', length: 512, default: '/var/www/weehawk/traefik/data/acme.json' })
+  @Column({
+    type: 'varchar',
+    length: 512,
+    default: '/var/www/weehawk/traefik/data/acme.json',
+  })
   acmeStorageHostPath!: string;
 
   /** Matches `--providers.docker.network` and external overlay name services should attach to. */
   /** Synced to WEEHAWK_TRAEFIK_EXTERNAL_NETWORK; not exposed for editing. */
-  @Column({ type: 'varchar', length: 128, default: WEEHAWK_TRAEFIK_EXTERNAL_NETWORK })
+  @Column({
+    type: 'varchar',
+    length: 128,
+    default: WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+  })
   dockerNetwork!: string;
 
   @Column({ type: 'varchar', length: 128, default: 'traefik:v2.11' })

@@ -28,7 +28,10 @@ import {
 import { buildRemoteNotificationEnvLinesFromChannel } from '../common/remote-wrapped-script-install';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
-import { Webhook, type WebhookRemoteTriggerUrlScheme } from './entities/webhook.entity';
+import {
+  Webhook,
+  type WebhookRemoteTriggerUrlScheme,
+} from './entities/webhook.entity';
 import { deriveHooksPublicHost } from './hooks-public-host';
 import {
   buildOnHostRedeployScriptBody,
@@ -36,6 +39,7 @@ import {
   onHostWebhookBundleEnvLines,
 } from '../common/on-host-redeploy-script';
 import { generatePublicId } from '../common/public-id';
+import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 export type WebhookListRow = {
   id: number;
@@ -67,6 +71,7 @@ export type WebhookDetailRow = WebhookListRow & {
 @Injectable()
 export class WebhooksService implements OnApplicationBootstrap {
   private readonly logger = new Logger(WebhooksService.name);
+  private readonly scopedWebhooks: UserIdTenantScopedRepository<Webhook>;
 
   constructor(
     @InjectRepository(Webhook)
@@ -77,9 +82,17 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly notificationsService: NotificationService,
     private readonly remoteServersService: RemoteServersService,
     private readonly configService: ConfigService,
-  ) {}
+  ) {
+    this.scopedWebhooks = new UserIdTenantScopedRepository<Webhook>(
+      this.webhookRepo,
+      'Webhook',
+    );
+  }
 
-  private runRemoteSyncInBackground(taskLabel: string, run: () => Promise<void>): void {
+  private runRemoteSyncInBackground(
+    taskLabel: string,
+    run: () => Promise<void>,
+  ): void {
     setTimeout(() => {
       void run().catch((error: unknown) => {
         this.logger.warn(
@@ -89,29 +102,42 @@ export class WebhooksService implements OnApplicationBootstrap {
     }, 0);
   }
 
+  // SYSTEM-LEVEL BYPASS: Required for [bootstrap migration across tenants].
+  private async _internal_system_saveWebhook(row: Webhook): Promise<Webhook> {
+    return this.webhookRepo.save(row);
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for [public token trigger without signed user context].
+  private async _internal_system_findBySecretToken(
+    token: string,
+  ): Promise<Webhook | null> {
+    return this.webhookRepo.findOne({ where: { secretToken: token } });
+  }
+
   private async ensurePublicId(w: Webhook): Promise<Webhook> {
     if (w.publicId) return w;
     w.publicId = generatePublicId('whk');
-    return this.webhookRepo.save(w);
+    return this.scopedWebhooks.saveScoped(w, w.userId);
   }
 
-  private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<Webhook> {
+  private async resolveEntity(
+    userId: number,
+    idOrPublicId: string | number,
+  ): Promise<Webhook> {
     const raw = String(idOrPublicId).trim();
-    let row = await this.webhookRepo.findOne({
-      where: { publicId: raw, userId },
-    });
-    if (!row && /^\d+$/.test(raw)) {
-      row = await this.webhookRepo.findOne({
-        where: { id: Number(raw), userId },
-      });
+    if (/^\d+$/.test(raw)) {
+      const row = await this.scopedWebhooks.findScoped(Number(raw), userId);
+      return this.ensurePublicId(row);
     }
-    if (!row) throw new NotFoundException('Webhook not found');
+    const row = await this.scopedWebhooks.findScopedBy('publicId', raw, userId);
     return this.ensurePublicId(row);
   }
 
   private allowPrivateHooksPublicHosts(): boolean {
     const raw =
-      this.configService.get<string>('WEEHAWK_ALLOW_PRIVATE_REMOTE_SSH_HOSTS') ?? '';
+      this.configService.get<string>(
+        'WEEHAWK_ALLOW_PRIVATE_REMOTE_SSH_HOSTS',
+      ) ?? '';
     return /^(1|true|yes|on)$/i.test(String(raw).trim());
   }
 
@@ -128,7 +154,9 @@ export class WebhooksService implements OnApplicationBootstrap {
         w.hiddenFromWebhooksList = true;
       }
       if (legacy.length > 0) {
-        await this.webhookRepo.save(legacy);
+        for (const w of legacy) {
+          await this._internal_system_saveWebhook(w);
+        }
       }
     } catch {
       /* ignore if schema not ready */
@@ -203,7 +231,8 @@ export class WebhooksService implements OnApplicationBootstrap {
         const installIdStr = sep >= 0 ? repoId.slice(0, sep) : '';
         const fullName = sep >= 0 ? repoId.slice(sep + 1) : repoId;
         const cloneUrl = `https://github.com/${fullName}.git`;
-        const ghCreds = await this.servicesService.getGithubAppCredentials(ownerId);
+        const ghCreds =
+          await this.servicesService.getGithubAppCredentials(ownerId);
         if (ghCreds && installIdStr) {
           return {
             cloneUrl,
@@ -219,10 +248,11 @@ export class WebhooksService implements OnApplicationBootstrap {
         const projectId = parseInt(repoId, 10);
         if (!Number.isFinite(projectId)) {
           try {
-            const authUrl = await this.servicesService.resolveGitlabAuthenticatedUrl(
-              repoId,
-              ownerId,
-            );
+            const authUrl =
+              await this.servicesService.resolveGitlabAuthenticatedUrl(
+                repoId,
+                ownerId,
+              );
             return { cloneUrl: authUrl, branch };
           } catch {
             return { cloneUrl: repoId, branch };
@@ -235,7 +265,9 @@ export class WebhooksService implements OnApplicationBootstrap {
           );
           if (url) {
             const glApi =
-              await this.servicesService.getGitlabArchiveApiCredentials(ownerId);
+              await this.servicesService.getGitlabArchiveApiCredentials(
+                ownerId,
+              );
             if (glApi) {
               return {
                 cloneUrl: url,
@@ -247,7 +279,9 @@ export class WebhooksService implements OnApplicationBootstrap {
             }
             return { cloneUrl: url, branch };
           }
-        } catch { /* fall through */ }
+        } catch {
+          /* fall through */
+        }
         return null;
       }
       return null;
@@ -315,7 +349,9 @@ export class WebhooksService implements OnApplicationBootstrap {
         t,
       )
     ) {
-      throw new BadRequestException('hooksPublicHost does not look like a valid hostname.');
+      throw new BadRequestException(
+        'hooksPublicHost does not look like a valid hostname.',
+      );
     }
     if (!this.allowPrivateHooksPublicHosts()) {
       const v = net.isIP(t);
@@ -373,7 +409,8 @@ export class WebhooksService implements OnApplicationBootstrap {
     remoteServerId: number,
     extraHost: string | null | undefined,
   ): Promise<string[]> {
-    const fromDb = await this.collectHooksPublicHostsForRemoteServer(remoteServerId);
+    const fromDb =
+      await this.collectHooksPublicHostsForRemoteServer(remoteServerId);
     const merged = new Set(fromDb);
     const t = extraHost?.trim().toLowerCase();
     if (t) merged.add(t);
@@ -387,8 +424,13 @@ export class WebhooksService implements OnApplicationBootstrap {
     if (remoteServerId == null || remoteServerId < 1) {
       return;
     }
-    const hosts = await this.collectHooksPublicHostsForRemoteServer(remoteServerId);
-    await this.remoteServersService.ensureRemoteWebhookListening(remoteServerId, userId, hosts);
+    const hosts =
+      await this.collectHooksPublicHostsForRemoteServer(remoteServerId);
+    await this.remoteServersService.ensureRemoteWebhookListening(
+      remoteServerId,
+      userId,
+      hosts,
+    );
   }
 
   private summaryLabel(): string {
@@ -408,7 +450,9 @@ export class WebhooksService implements OnApplicationBootstrap {
       summary: this.summaryLabel(),
       secretToken: w.secretToken,
       hooksPublicHost: w.hooksPublicHost ?? null,
-      remoteTriggerUrlScheme: this.normalizeRemoteTriggerUrlScheme(w.remoteTriggerUrlScheme),
+      remoteTriggerUrlScheme: this.normalizeRemoteTriggerUrlScheme(
+        w.remoteTriggerUrlScheme,
+      ),
     };
   }
 
@@ -457,7 +501,9 @@ export class WebhooksService implements OnApplicationBootstrap {
       return null;
     }
     /** Public trigger URL is always the deploy-host agent (Traefik hostname or IP:port), not the API origin. */
-    const scheme = this.normalizeRemoteTriggerUrlScheme(w.remoteTriggerUrlScheme);
+    const scheme = this.normalizeRemoteTriggerUrlScheme(
+      w.remoteTriggerUrlScheme,
+    );
     const publicHost = w.hooksPublicHost?.trim();
     if (publicHost) {
       return this.remoteServersService.formatRemoteWebhookTriggerUrlFromPublicHost(
@@ -467,7 +513,10 @@ export class WebhooksService implements OnApplicationBootstrap {
       );
     }
     try {
-      const rs = await this.remoteServersService.findOne(w.remoteServerId, userId);
+      const rs = await this.remoteServersService.findOne(
+        w.remoteServerId,
+        userId,
+      );
       return this.remoteServersService.formatRemoteWebhookHttpTriggerUrlFromSafe(
         rs,
         w.secretToken,
@@ -534,8 +583,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
       serviceId: resolvedServiceId,
-      remoteServerId:
-        dto.remoteServerId != null ? dto.remoteServerId : null,
+      remoteServerId: dto.remoteServerId != null ? dto.remoteServerId : null,
       bashScript: resolvedBashScript ? resolvedBashScript : null,
       notifyOnTrigger: notifyOnTriggerCreate,
       notifyChannelId: dto.notifyChannelId ?? null,
@@ -544,7 +592,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       remoteTriggerUrlScheme: 'https',
       hiddenFromWebhooksList: dto.hiddenFromWebhooksList === true,
     });
-    const saved = await this.webhookRepo.save(w);
+    const saved = await this.scopedWebhooks.saveScoped(w, userId);
     if (dto.remoteServerId != null && resolvedBashScript) {
       this.runRemoteSyncInBackground(`create webhook ${saved.id}`, async () => {
         const mergedHosts = await this.mergeHooksPublicHostsForRemoteCreate(
@@ -556,13 +604,14 @@ export class WebhooksService implements OnApplicationBootstrap {
           userId,
           mergedHosts,
         );
-        const notificationEnvLines = await this.mergeRemoteWebhookNotificationAndBundleEnv(
-          userId,
-          notifyOnTriggerCreate,
-          dto.notifyChannelId,
-          dto.notifyMessage,
-          resolvedServiceId,
-        );
+        const notificationEnvLines =
+          await this.mergeRemoteWebhookNotificationAndBundleEnv(
+            userId,
+            notifyOnTriggerCreate,
+            dto.notifyChannelId,
+            dto.notifyMessage,
+            resolvedServiceId,
+          );
         await this.remoteServersService.writeRemoteWebhookScript(
           dto.remoteServerId!,
           userId,
@@ -580,7 +629,9 @@ export class WebhooksService implements OnApplicationBootstrap {
    * After a remote deploy (or mirror sync), re-upload on-host redeploy `.sh` files so paths match
    * the current `appName` / compose type. Only touches webhooks that still look like the generated template.
    */
-  async refreshGeneratedOnHostRedeployScriptsForService(serviceId: number): Promise<void> {
+  async refreshGeneratedOnHostRedeployScriptsForService(
+    serviceId: number,
+  ): Promise<void> {
     const service = await this.servicesService.findOne(serviceId);
     const canonical = buildOnHostRedeployScriptBody(service);
     const rows = await this.webhookRepo.find({
@@ -591,14 +642,15 @@ export class WebhooksService implements OnApplicationBootstrap {
       if (w.remoteServerId == null) continue;
       if (!looksLikeGeneratedOnHostRedeployScript(w.bashScript)) continue;
       w.bashScript = canonical;
-      await this.webhookRepo.save(w);
-      const notificationEnvLines = await this.mergeRemoteWebhookNotificationAndBundleEnv(
-        userId,
-        w.notifyOnTrigger,
-        w.notifyChannelId,
-        w.notifyMessage,
-        w.serviceId,
-      );
+      await this.scopedWebhooks.saveScoped(w, userId);
+      const notificationEnvLines =
+        await this.mergeRemoteWebhookNotificationAndBundleEnv(
+          userId,
+          w.notifyOnTrigger,
+          w.notifyChannelId,
+          w.notifyMessage,
+          w.serviceId,
+        );
       await this.remoteServersService.writeRemoteWebhookScript(
         w.remoteServerId,
         userId,
@@ -615,7 +667,10 @@ export class WebhooksService implements OnApplicationBootstrap {
   ): Promise<WebhookListRow[]> {
     const includeHidden = opts?.includeHidden === true;
     const list = includeHidden
-      ? await this.webhookRepo.find({ where: { userId }, order: { createdAt: 'DESC' } })
+      ? await this.webhookRepo.find({
+          where: { userId },
+          order: { createdAt: 'DESC' },
+        })
       : await this.webhookRepo.find({
           where: { userId, hiddenFromWebhooksList: false },
           order: { createdAt: 'DESC' },
@@ -638,7 +693,10 @@ export class WebhooksService implements OnApplicationBootstrap {
     return await Promise.all(rows.map((w) => this.toListRow(userId, w)));
   }
 
-  async findOne(userId: number, idOrPublicId: string | number): Promise<WebhookDetailRow> {
+  async findOne(
+    userId: number,
+    idOrPublicId: string | number,
+  ): Promise<WebhookDetailRow> {
     const w = await this.resolveEntity(userId, idOrPublicId);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
     return await this.toDetailRow(w, remoteTriggerUrl);
@@ -724,9 +782,9 @@ export class WebhooksService implements OnApplicationBootstrap {
       );
     }
 
-    const saved = await this.webhookRepo.save(w);
+    const saved = await this.scopedWebhooks.saveScoped(w, userId);
 
-    const hadRemoteFile = beforeRemote != null && !!(beforeBash?.trim());
+    const hadRemoteFile = beforeRemote != null && !!beforeBash?.trim();
     const shouldRemoveOldRemoteFile =
       hadRemoteFile &&
       (saved.remoteServerId !== beforeRemote || !saved.bashScript?.trim());
@@ -741,7 +799,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         (beforeNotifyMessage?.trim() ?? '');
     const hooksPublicHostChanged =
       (saved.hooksPublicHost?.trim() ?? '') !==
-        (beforeHooksPublicHost?.trim() ?? '');
+      (beforeHooksPublicHost?.trim() ?? '');
     const needsScriptRewrite =
       saved.remoteServerId != null &&
       !!saved.bashScript?.trim() &&
@@ -749,7 +807,9 @@ export class WebhooksService implements OnApplicationBootstrap {
     const needsAgentSync =
       saved.remoteServerId != null &&
       !!saved.bashScript?.trim() &&
-      (scriptOrTargetChanged || notifySettingsChanged || hooksPublicHostChanged);
+      (scriptOrTargetChanged ||
+        notifySettingsChanged ||
+        hooksPublicHostChanged);
 
     if (shouldRemoveOldRemoteFile || needsAgentSync || needsScriptRewrite) {
       this.runRemoteSyncInBackground(`update webhook ${saved.id}`, async () => {
@@ -761,7 +821,10 @@ export class WebhooksService implements OnApplicationBootstrap {
         }
 
         if (needsAgentSync && saved.remoteServerId != null) {
-          await this.syncWebhookAgentForRemoteServer(saved.remoteServerId, userId);
+          await this.syncWebhookAgentForRemoteServer(
+            saved.remoteServerId,
+            userId,
+          );
         }
 
         if (needsScriptRewrite && saved.remoteServerId != null) {
@@ -774,7 +837,7 @@ export class WebhooksService implements OnApplicationBootstrap {
               const svc = await this.servicesService.findOne(saved.serviceId);
               body = buildOnHostRedeployScriptBody(svc);
               saved.bashScript = body;
-              await this.webhookRepo.save(saved);
+              await this.scopedWebhooks.saveScoped(saved, userId);
             } catch {
               /* keep saved body */
             }
@@ -810,8 +873,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         .removeRemoteWebhookScript(w.remoteServerId, userId, w.secretToken)
         .catch(() => undefined);
     }
-    const res = await this.webhookRepo.delete({ id: w.id, userId });
-    if (!res.affected) throw new NotFoundException('Webhook not found');
+    await this.scopedWebhooks.deleteScoped(w.id, userId);
     await this.syncWebhookAgentForRemoteServer(remoteId, userId);
   }
 
@@ -828,9 +890,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   }
 
   async triggerByToken(token: string): Promise<Record<string, unknown>> {
-    const w = await this.webhookRepo.findOne({
-      where: { secretToken: token },
-    });
+    const w = await this._internal_system_findBySecretToken(token);
     if (!w) {
       throw new NotFoundException('Unknown webhook');
     }
@@ -876,7 +936,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           const r = await this.executorService.runSystemScript(
             scriptToRun,
             w.remoteServerId,
-            1,
+            w.userId,
           );
           success = r.success;
           output = r.output;

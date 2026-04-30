@@ -16,7 +16,10 @@ import { ServicesService } from '../services/services.service';
 import { composeType } from '../services/entities/composeType.enum';
 import { Service } from '../services/entities/service.entity';
 import type { ServiceVolumesResponseDto } from '../services/dto/service-volume-mount.dto';
-import { getServiceDeploymentDir, toSafePathSegment } from '../services/deployment-paths';
+import {
+  getServiceDeploymentDir,
+  toSafePathSegment,
+} from '../services/deployment-paths';
 import { resolveEffectiveDockerfileRel } from '../services/weehawk-build-paths';
 import { maybeRemoveApplicationSourceAfterDeploy } from './executor-app-source';
 import {
@@ -27,7 +30,11 @@ import {
   resolveNixpacksNodeMajorForRemoteBuild,
 } from './executor-compose-parse';
 import { removeDeploymentFolder } from './executor-deployment-fs';
-import { emitDeployLog, formatExecError, stderrIndicatesDockerFailure } from './executor-docker';
+import {
+  emitDeployLog,
+  formatExecError,
+  stderrIndicatesDockerFailure,
+} from './executor-docker';
 import type { ExecuteDeployOptions } from './executor-types';
 import { isSwarmStackService } from './executor-swarm';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
@@ -65,13 +72,11 @@ function remoteHostPublicLabel(
 ): string {
   if (remoteServerId == null) return 'remote-host';
   const fromBuild =
-    service.buildRemoteServer &&
-    service.buildRemoteServerId === remoteServerId
+    service.buildRemoteServer && service.buildRemoteServerId === remoteServerId
       ? service.buildRemoteServer.publicId
       : null;
   const fromDeploy =
-    service.remoteServer &&
-    service.remoteServerId === remoteServerId
+    service.remoteServer && service.remoteServerId === remoteServerId
       ? service.remoteServer.publicId
       : null;
   const publicId = (fromBuild ?? fromDeploy ?? '').trim();
@@ -181,15 +186,20 @@ fi
       pemBase64: string;
     };
   }> {
-    const isRemoteGit = parseConfigHeaderValue(rawConfig, 'app.git.remoteOnly') === 'true';
-    const ref = parseConfigHeaderValue(rawConfig, 'app.git.ref')?.trim() || 'main';
+    const isRemoteGit =
+      parseConfigHeaderValue(rawConfig, 'app.git.remoteOnly') === 'true';
+    const ref =
+      parseConfigHeaderValue(rawConfig, 'app.git.ref')?.trim() || 'main';
     let cloneUrl: string | null = null;
     let gitProviderLabel: string | undefined;
     let githubBashAuth:
       | { appId: string; installationId: number; pemBase64: string }
       | undefined;
     if (isRemoteGit) {
-      gitProviderLabel = parseConfigHeaderValue(rawConfig, 'app.git.provider')?.trim();
+      gitProviderLabel = parseConfigHeaderValue(
+        rawConfig,
+        'app.git.provider',
+      )?.trim();
       const ownerUserIdRaw = service.project?.userId;
       if (!ownerUserIdRaw || ownerUserIdRaw < 1) {
         throw new InternalServerErrorException(
@@ -221,14 +231,19 @@ fi
         }
       } else if (gitProviderLabel === 'github') {
         const ghInstallationId = parseInt(
-          parseConfigHeaderValue(rawConfig, 'app.git.githubInstallationId') || '',
+          parseConfigHeaderValue(rawConfig, 'app.git.githubInstallationId') ||
+            '',
           10,
         );
         const ghFullName = parseConfigHeaderValue(
           rawConfig,
           'app.git.githubRepoFullName',
         )?.trim();
-        if (ghFullName && Number.isFinite(ghInstallationId) && ghInstallationId > 0) {
+        if (
+          ghFullName &&
+          Number.isFinite(ghInstallationId) &&
+          ghInstallationId > 0
+        ) {
           const ghCreds =
             await this.servicesService.getGithubAppCredentials(ownerUserId);
           if (!ghCreds?.appId?.trim() || !ghCreds?.privateKeyPem?.trim()) {
@@ -293,7 +308,10 @@ fi
 
   /** `${APP_NAME}` substitution plus DATABASES fixes (Postgres 18+ expects mount at `/var/lib/postgresql`). */
   private composeYamlForResolvedDeploy(service: Service): string {
-    let c = (service.dockerConfig || '').replace(/\${APP_NAME}/g, service.appName);
+    let c = (service.dockerConfig || '').replace(
+      /\${APP_NAME}/g,
+      service.appName,
+    );
     if (service.composeType === composeType.DATABASES) {
       c = c.replace(/\/var\/lib\/postgresql\/data/g, '/var/lib/postgresql');
     }
@@ -310,7 +328,9 @@ fi
     options?: ExecuteDeployOptions,
   ) {
     const service = await this.servicesService.findOne(id);
-    const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
+    const sshTargets = await this.servicesService.getDockerSshTargetIds(
+      service.id,
+    );
     const projectUserId: number | null = service.project?.userId ?? null;
     const rawConfig = (service.dockerConfig || '').trim();
     if (!rawConfig) {
@@ -364,16 +384,23 @@ fi
         let buildLogPrefix = '';
         if (service.composeType === composeType.APPLICATION) {
           const deployMode =
-            parseConfigHeaderValue(rawConfig, 'deployMode')?.toLowerCase() || 'source';
-          const sourceDir = parseConfigHeaderValue(rawConfig, 'sourceDir') || 'app-source';
-          const buildPath = parseConfigHeaderValue(rawConfig, 'buildPath') || '.';
+            parseConfigHeaderValue(rawConfig, 'deployMode')?.toLowerCase() ||
+            'source';
+          const sourceDir =
+            parseConfigHeaderValue(rawConfig, 'sourceDir') || 'app-source';
+          const buildPath =
+            parseConfigHeaderValue(rawConfig, 'buildPath') || '.';
           const dockerfilePath =
             parseConfigHeaderValue(rawConfig, 'dockerfilePath') || 'Dockerfile';
-          const registryPush = parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim();
+          const registryPush = parseConfigHeaderValue(
+            rawConfig,
+            'registry.pushImage',
+          )?.trim();
           const defaultTag = `${service.appName}:latest`;
           const imageTag = registryPush?.length ? registryPush : defaultTag;
           const buildModeHeader =
-            parseConfigHeaderValue(rawConfig, 'buildMode')?.toLowerCase() || 'dockerfile';
+            parseConfigHeaderValue(rawConfig, 'buildMode')?.toLowerCase() ||
+            'dockerfile';
           const isNixpacksBuild =
             buildModeHeader === 'nixpacks' || buildModeHeader === 'buildpacks';
           const sourceRoot = path.join(deployDir, sourceDir);
@@ -384,18 +411,22 @@ fi
             .catch(() => false);
           /* Start (`execute(..., 'reload')` from startContainers) must not rebuild — only reapply the stack. */
           if (mode !== 'reload' && deployMode !== 'image' && sourceRootExists) {
-            const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-            const buildBase = await this.getBaseProcessEnvForService(service);
-            const projectUserId: number | null = service.project?.userId ?? null;
-            const buildEnv = await this.remoteServersService.mergeDockerHostEnvForBuildIds(
-              buildBase,
-              {
-                buildRemoteServerId: sshIds.buildRemoteServerId,
-                remoteServerId: sshIds.remoteServerId,
-                buildOnLocalDockerHost: sshIds.buildOnLocalDockerHost,
-              },
-              projectUserId,
+            const sshIds = await this.servicesService.getDockerSshTargetIds(
+              service.id,
             );
+            const buildBase = await this.getBaseProcessEnvForService(service);
+            const projectUserId: number | null =
+              service.project?.userId ?? null;
+            const buildEnv =
+              await this.remoteServersService.mergeDockerHostEnvForBuildIds(
+                buildBase,
+                {
+                  buildRemoteServerId: sshIds.buildRemoteServerId,
+                  remoteServerId: sshIds.remoteServerId,
+                  buildOnLocalDockerHost: sshIds.buildOnLocalDockerHost,
+                },
+                projectUserId,
+              );
             const useRemoteDockerBuild = Boolean(pickDockerSshEnv(buildEnv));
             const buildRemoteServerId =
               sshIds.buildRemoteServerId ?? sshIds.remoteServerId;
@@ -417,10 +448,11 @@ fi
                 buildRemoteServerId,
               );
               if (isNixpacksBuild) {
-                const gitParams = await this.resolveApplicationRemoteGitCloneParams(
-                  service,
-                  rawConfig,
-                );
+                const gitParams =
+                  await this.resolveApplicationRemoteGitCloneParams(
+                    service,
+                    rawConfig,
+                  );
                 if (!gitParams.isRemoteGit || !gitParams.cloneUrl) {
                   return {
                     success: false,
@@ -456,7 +488,8 @@ fi
                 emitChunk(
                   `Building image with Nixpacks on remote host ${buildHostLabel} (${remoteContext})…\n`,
                 );
-                const nixNodeMajor = resolveNixpacksNodeMajorForRemoteBuild(rawConfig);
+                const nixNodeMajor =
+                  resolveNixpacksNodeMajorForRemoteBuild(rawConfig);
                 const nixNodeExport = `export NIXPACKS_NODE_VERSION=${shQ(nixNodeMajor)}\n`;
                 const remoteNixpacksScript = `set -euo pipefail
 CTX=${shQ(remoteContext)}
@@ -474,20 +507,27 @@ ${NIXPACKS_ENSURE_DOT_NIXPACKS_IN_DOCKER_CONTEXT}
 rm -rf .nixpacks
 nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${nixNodeMajor}`)} ${NIXPACKS_BUILD_CLI_TAIL}
 `;
-                const np = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
-                  buildRemoteServerId,
-                  projectUserId,
-                  remoteNixpacksScript,
-                  deployLogEmitter ? emitChunk : undefined,
-                );
-                buildLogPrefix = [np.stdout, np.stderr].filter((s) => s?.trim()).join('\n');
+                const np =
+                  await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                    buildRemoteServerId,
+                    projectUserId,
+                    remoteNixpacksScript,
+                    deployLogEmitter ? emitChunk : undefined,
+                  );
+                buildLogPrefix = [np.stdout, np.stderr]
+                  .filter((s) => s?.trim())
+                  .join('\n');
                 if (buildLogPrefix) emitChunk(`${buildLogPrefix}\n`);
               } else {
-                const { relativePath: dockerfileRel } = await resolveEffectiveDockerfileRel(
+                const { relativePath: dockerfileRel } =
+                  await resolveEffectiveDockerfileRel(
+                    fullContext,
+                    dockerfilePath,
+                  );
+                const fullDockerfile = path.join(
                   fullContext,
-                  dockerfilePath,
+                  ...dockerfileRel.split('/'),
                 );
-                const fullDockerfile = path.join(fullContext, ...dockerfileRel.split('/'));
                 await fs.access(fullDockerfile).catch(() => {
                   throw new InternalServerErrorException(
                     `Dockerfile not found for build: "${dockerfileRel}" under build context.`,
@@ -495,16 +535,19 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
                 });
                 const dockerfilePosix = dockerfileRel.split(/[/\\]/).join('/');
                 emitChunk(`Building image on remote host ${buildHostLabel}…\n`);
-                const buildResult = await this.remoteServersService.buildImageUsingDockerodeSsh(
-                  buildRemoteServerId,
-                  {
-                    contextPath: fullContext,
-                    dockerfilePosix,
-                    tag: imageTag,
-                  },
-                  projectUserId,
-                );
-                buildLogPrefix = buildResult.output ? `${buildResult.output}\n` : '';
+                const buildResult =
+                  await this.remoteServersService.buildImageUsingDockerodeSsh(
+                    buildRemoteServerId,
+                    {
+                      contextPath: fullContext,
+                      dockerfilePosix,
+                      tag: imageTag,
+                    },
+                    projectUserId,
+                  );
+                buildLogPrefix = buildResult.output
+                  ? `${buildResult.output}\n`
+                  : '';
                 if (buildLogPrefix) emitChunk(buildLogPrefix);
               }
             } else {
@@ -524,16 +567,20 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
               }
               emitChunk(`Pushing image "${registryPush}" on remote host…\n`);
               const pushAuth =
-                await this.registryService.getRegistryAuthConfigForImageRef(registryPush, projectUserId);
-              try {
-                const pushResult = await this.remoteServersService.pushImageUsingDockerodeSsh(
-                  buildRemoteServerId,
-                  {
-                    imageRef: registryPush,
-                    auth: pushAuth,
-                  },
+                await this.registryService.getRegistryAuthConfigForImageRef(
+                  registryPush,
                   projectUserId,
                 );
+              try {
+                const pushResult =
+                  await this.remoteServersService.pushImageUsingDockerodeSsh(
+                    buildRemoteServerId,
+                    {
+                      imageRef: registryPush,
+                      auth: pushAuth,
+                    },
+                    projectUserId,
+                  );
                 if (pushResult.output) {
                   const pushChunk = pushResult.output + '\n';
                   buildLogPrefix = (buildLogPrefix || '') + pushChunk;
@@ -552,8 +599,14 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
               }
             }
           }
-          if (mode !== 'reload' && deployMode !== 'image' && !sourceRootExists) {
-            const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
+          if (
+            mode !== 'reload' &&
+            deployMode !== 'image' &&
+            !sourceRootExists
+          ) {
+            const sshIds = await this.servicesService.getDockerSshTargetIds(
+              service.id,
+            );
             const remoteDeployId = sshIds.remoteServerId;
             if (remoteDeployId == null) {
               return {
@@ -565,12 +618,26 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
             const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
             const remoteSourceRoot = `${persist}/${sourceDir.replace(/\\/g, '/')}`;
             const remoteBuildPath = buildPath.replace(/\\/g, '/');
-            const remoteContext = remoteBuildPath === '.' ? remoteSourceRoot : `${remoteSourceRoot}/${remoteBuildPath}`;
+            const remoteContext =
+              remoteBuildPath === '.'
+                ? remoteSourceRoot
+                : `${remoteSourceRoot}/${remoteBuildPath}`;
             const dockerfilePosix = dockerfilePath.replace(/\\/g, '/');
-            const deployHostLabel = remoteHostPublicLabel(service, remoteDeployId);
+            const deployHostLabel = remoteHostPublicLabel(
+              service,
+              remoteDeployId,
+            );
 
-            const { isRemoteGit, cloneUrl, ref, gitProviderLabel, githubBashAuth } =
-              await this.resolveApplicationRemoteGitCloneParams(service, rawConfig);
+            const {
+              isRemoteGit,
+              cloneUrl,
+              ref,
+              gitProviderLabel,
+              githubBashAuth,
+            } = await this.resolveApplicationRemoteGitCloneParams(
+              service,
+              rawConfig,
+            );
 
             if (isRemoteGit && cloneUrl) {
               emitChunk(
@@ -671,22 +738,28 @@ fi
                 deployLogEmitter ? emitChunk : undefined,
               );
             }
-            buildLogPrefix = [rb.stdout, rb.stderr].filter((s) => s?.trim()).join('\n');
+            buildLogPrefix = [rb.stdout, rb.stderr]
+              .filter((s) => s?.trim())
+              .join('\n');
             if (buildLogPrefix) {
               emitChunk(`${buildLogPrefix}\n`);
             }
             if (registryPush?.trim()) {
               emitChunk(`Pushing image "${registryPush}" on deploy host…\n`);
               const pushAuth =
-                await this.registryService.getRegistryAuthConfigForImageRef(registryPush, projectUserId);
-              const pushResult = await this.remoteServersService.pushImageUsingDockerodeSsh(
-                remoteDeployId,
-                {
-                  imageRef: registryPush,
-                  auth: pushAuth,
-                },
-                null,
-              );
+                await this.registryService.getRegistryAuthConfigForImageRef(
+                  registryPush,
+                  projectUserId,
+                );
+              const pushResult =
+                await this.remoteServersService.pushImageUsingDockerodeSsh(
+                  remoteDeployId,
+                  {
+                    imageRef: registryPush,
+                    auth: pushAuth,
+                  },
+                  null,
+                );
               if (pushResult.output) {
                 const pushChunk = pushResult.output + '\n';
                 buildLogPrefix = (buildLogPrefix || '') + pushChunk;
@@ -713,14 +786,19 @@ fi
         }
         const remoteDeployId = sshTargets.remoteServerId;
         if (remoteDeployId != null) {
-          const deployHostLabel = remoteHostPublicLabel(service, remoteDeployId);
+          const deployHostLabel = remoteHostPublicLabel(
+            service,
+            remoteDeployId,
+          );
           let localDockerConfigDir: string | undefined;
           const dockerCfg = stackDeployEnv.DOCKER_CONFIG;
           if (typeof dockerCfg === 'string' && dockerCfg.trim().length > 0) {
             localDockerConfigDir = dockerCfg.trim();
           }
           try {
-            emitChunk(`Deploying stack "${service.appName}" on remote host ${deployHostLabel}…\n`);
+            emitChunk(
+              `Deploying stack "${service.appName}" on remote host ${deployHostLabel}…\n`,
+            );
             const r = await this.remoteServersService.stackDeployViaSsh(
               remoteDeployId,
               projectUserId,
@@ -732,19 +810,22 @@ fi
                 deployEnv: parseEnv(service.env || ''),
               },
             );
-            let out = [buildLogPrefix, r.stdout, r.stderr].filter((s) => s && s.trim()).join('\n');
+            let out = [buildLogPrefix, r.stdout, r.stderr]
+              .filter((s) => s && s.trim())
+              .join('\n');
             let err = [buildLogPrefix, r.stderr]
               .filter((s) => s && String(s).trim())
               .join('\n');
 
             if (mode === 'redeploy') {
               emitChunk('Force-updating services for rolling restart…\n');
-              const forced = await this.remoteServersService.forceRollingRestartStackViaSsh(
-                remoteDeployId,
-                projectUserId,
-                service.appName,
-                deployLogEmitter ? emitChunk : undefined,
-              );
+              const forced =
+                await this.remoteServersService.forceRollingRestartStackViaSsh(
+                  remoteDeployId,
+                  projectUserId,
+                  service.appName,
+                  deployLogEmitter ? emitChunk : undefined,
+                );
               out = [out, forced.output].filter(Boolean).join('\n');
               err += forced.stderr;
             }
@@ -769,7 +850,7 @@ fi
         );
       }
 
-      const remoteComposeId = sshTargets.remoteServerId!;
+      const remoteComposeId = sshTargets.remoteServerId;
       const deployEnvCompose = parseEnv(service.env || '');
       if (mode === 'redeploy') {
         try {
@@ -791,22 +872,29 @@ fi
         mode === 'deploy' || mode === 'redeploy'
           ? (['up', '-d', '--build'] as const)
           : (['up', '-d', '--no-build'] as const);
-      const cr = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
-        remoteComposeId,
-        projectUserId,
-        {
-          projectName: service.appName,
-          composeArgvTail: [...composeTail],
-          deployEnv: deployEnvCompose,
-          onChunk: deployLogEmitter ? emitChunk : undefined,
-        },
-      );
-      const out = [cr.stdout, cr.stderr].filter((s) => s && s.trim()).join('\n');
+      const cr =
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          remoteComposeId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: [...composeTail],
+            deployEnv: deployEnvCompose,
+            onChunk: deployLogEmitter ? emitChunk : undefined,
+          },
+        );
+      const out = [cr.stdout, cr.stderr]
+        .filter((s) => s && s.trim())
+        .join('\n');
       const err = cr.stderr ?? '';
       const stderrIndicatesFailure = stderrIndicatesDockerFailure(err);
       const success = !stderrIndicatesFailure;
       if (success) {
-        await maybeRemoveApplicationSourceAfterDeploy(service, deployDir, this.configService);
+        await maybeRemoveApplicationSourceAfterDeploy(
+          service,
+          deployDir,
+          this.configService,
+        );
       }
       return { success, output: out };
     } catch (error) {
@@ -839,7 +927,9 @@ fi
     _actingUserId: number,
   ): Promise<{ ok: boolean }> {
     const service = await this.servicesService.findOne(id);
-    const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
+    const sshTargets = await this.servicesService.getDockerSshTargetIds(
+      service.id,
+    );
     const projectUserId: number | null = service.project?.userId ?? null;
     const remoteId = sshTargets.remoteServerId;
     if (remoteId == null) {
@@ -867,36 +957,50 @@ fi
     }
 
     try {
-    if (!isSwarmStackService(service)) {
-      await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
-        remoteId,
-        projectUserId,
-        {
-          composeYaml: finalConfig,
-          projectName: service.appName || 'service',
-        },
-      );
-      return { ok: true };
-    }
-
-    const authImageRef =
-      parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim() ||
-      firstImageRefFromComposeYaml(finalConfig) ||
-      '';
-    const deployEnv = parseEnv(service.env || '');
-    const execEnv = await this.getProcessEnvForService(service);
-    if (authImageRef.trim()) {
-      const merged = await this.registryService.mergePushEnvForImageRef(
-        authImageRef,
-        execEnv,
-        projectUserId,
-      );
-      let localDockerConfigDir: string | undefined;
-      const dockerCfg = merged.env.DOCKER_CONFIG;
-      if (typeof dockerCfg === 'string' && dockerCfg.trim().length > 0) {
-        localDockerConfigDir = dockerCfg.trim();
+      if (!isSwarmStackService(service)) {
+        await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
+          remoteId,
+          projectUserId,
+          {
+            composeYaml: finalConfig,
+            projectName: service.appName || 'service',
+          },
+        );
+        return { ok: true };
       }
-      try {
+
+      const authImageRef =
+        parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim() ||
+        firstImageRefFromComposeYaml(finalConfig) ||
+        '';
+      const deployEnv = parseEnv(service.env || '');
+      const execEnv = await this.getProcessEnvForService(service);
+      if (authImageRef.trim()) {
+        const merged = await this.registryService.mergePushEnvForImageRef(
+          authImageRef,
+          execEnv,
+          projectUserId,
+        );
+        let localDockerConfigDir: string | undefined;
+        const dockerCfg = merged.env.DOCKER_CONFIG;
+        if (typeof dockerCfg === 'string' && dockerCfg.trim().length > 0) {
+          localDockerConfigDir = dockerCfg.trim();
+        }
+        try {
+          await this.remoteServersService.writePersistentDeploymentMirror(
+            remoteId,
+            projectUserId,
+            {
+              stackName: service.appName || 'service',
+              composeYaml: finalConfig,
+              deployEnv,
+              localDockerConfigDir,
+            },
+          );
+        } finally {
+          await merged.cleanup();
+        }
+      } else {
         await this.remoteServersService.writePersistentDeploymentMirror(
           remoteId,
           projectUserId,
@@ -904,24 +1008,10 @@ fi
             stackName: service.appName || 'service',
             composeYaml: finalConfig,
             deployEnv,
-            localDockerConfigDir,
           },
         );
-      } finally {
-        await merged.cleanup();
       }
-    } else {
-      await this.remoteServersService.writePersistentDeploymentMirror(
-        remoteId,
-        projectUserId,
-        {
-          stackName: service.appName || 'service',
-          composeYaml: finalConfig,
-          deployEnv,
-        },
-      );
-    }
-    return { ok: true };
+      return { ok: true };
     } finally {
       await removeDeploymentFolder(deployDir);
     }
@@ -951,27 +1041,35 @@ fi
     );
     const deployEnv = parseEnv(service.env || '');
     try {
-      const r = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
-        sshIds.remoteServerId,
-        projectUserId,
-        {
-          projectName: service.appName,
-          composeArgvTail: ['start'],
-          deployEnv,
-        },
-      );
-      return { success: true, output: [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n') };
+      const r =
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['start'],
+            deployEnv,
+          },
+        );
+      return {
+        success: true,
+        output: [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n'),
+      };
     } catch {
-      const r = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
-        sshIds.remoteServerId,
-        projectUserId,
-        {
-          projectName: service.appName,
-          composeArgvTail: ['up', '-d', '--no-build'],
-          deployEnv,
-        },
-      );
-      return { success: true, output: [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n') };
+      const r =
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['up', '-d', '--no-build'],
+            deployEnv,
+          },
+        );
+      return {
+        success: true,
+        output: [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n'),
+      };
     }
   }
 
@@ -1074,33 +1172,40 @@ fi
         let stdout: string;
         if (sshIds.remoteServerId != null) {
           const stackName = service.appName;
-          const swarmSvcLabel = `${stackName}_${key}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const swarmSvcLabel = `${stackName}_${key}`
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"');
           const nameFilter = swarmSvcLabel;
           try {
-            const rLabel = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
-              sshIds.remoteServerId,
-              projectUserId,
-              `docker ps -q -f "label=com.docker.swarm.service.name=${swarmSvcLabel}" -f "status=running" 2>/dev/null || true`,
-            );
-            stdout = rLabel.stdout;
-            if (!stdout.trim()) {
-              const rName = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+            const rLabel =
+              await this.remoteServersService.execDockerCliOnRemoteViaSsh(
                 sshIds.remoteServerId,
                 projectUserId,
-                `docker ps -q -f "name=${nameFilter}" -f "status=running" 2>/dev/null || true`,
+                `docker ps -q -f "label=com.docker.swarm.service.name=${swarmSvcLabel}" -f "status=running" 2>/dev/null || true`,
               );
+            stdout = rLabel.stdout;
+            if (!stdout.trim()) {
+              const rName =
+                await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                  sshIds.remoteServerId,
+                  projectUserId,
+                  `docker ps -q -f "name=${nameFilter}" -f "status=running" 2>/dev/null || true`,
+                );
               stdout = rName.stdout;
             }
             if (
               !stdout.trim() &&
               service.composeType === composeType.DATABASES
             ) {
-              const nsLabel = stackName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-              const rNs = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
-                sshIds.remoteServerId,
-                projectUserId,
-                `docker ps -q -f "label=com.docker.stack.namespace=${nsLabel}" -f "status=running" 2>/dev/null || true`,
-              );
+              const nsLabel = stackName
+                .replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"');
+              const rNs =
+                await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+                  sshIds.remoteServerId,
+                  projectUserId,
+                  `docker ps -q -f "label=com.docker.stack.namespace=${nsLabel}" -f "status=running" 2>/dev/null || true`,
+                );
               stdout = rNs.stdout;
             }
           } catch (e) {
@@ -1125,15 +1230,16 @@ fi
       }
 
       const deployEnv = parseEnv(service.env || '');
-      const pr = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
-        sshIds.remoteServerId,
-        projectUserId,
-        {
-          projectName: service.appName,
-          composeArgvTail: ['ps', '-q', '--status', 'running', key],
-          deployEnv,
-        },
-      );
+      const pr =
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['ps', '-q', '--status', 'running', key],
+            deployEnv,
+          },
+        );
       const cid = pr.stdout.trim().split(/\r?\n/).filter(Boolean)[0];
       if (!cid) {
         return {
@@ -1217,15 +1323,16 @@ fi
         { composeYaml: finalConfig, projectName: service.appName || 'service' },
       );
       const deployEnv = parseEnv(service.env || '');
-      const { stdout } = await this.remoteServersService.composeInPersistentDeploymentViaSsh(
-        sshIds.remoteServerId,
-        projectUserId,
-        {
-          projectName: service.appName,
-          composeArgvTail: ['config', '--format', 'json'],
-          deployEnv,
-        },
-      );
+      const { stdout } =
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['config', '--format', 'json'],
+            deployEnv,
+          },
+        );
       const cfg = JSON.parse(stdout) as Record<string, unknown>;
       const items = flattenVolumesFromComposeJson(cfg);
       return { items };
@@ -1270,11 +1377,12 @@ fi
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
     const projectUserId: number | null = service.project?.userId ?? null;
-    const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
-      sshIds.remoteServerId,
-      projectUserId,
-      'weehawk-db-bk',
-    );
+    const stagingDir =
+      await this.remoteServersService.allocRemoteWeehawkTempDir(
+        sshIds.remoteServerId,
+        projectUserId,
+        'weehawk-db-bk',
+      );
     const r = await runStructuredDatabaseBackupOnRemoteHost(
       config,
       stagingDir,
@@ -1298,7 +1406,7 @@ fi
     return {
       ...r,
       remoteArtifact: {
-        remoteServerId: sshIds.remoteServerId!,
+        remoteServerId: sshIds.remoteServerId,
         projectUserId,
         stagingDir,
         remoteFilePath: `${stagingDir}/${r.archiveBasename}`,
@@ -1433,15 +1541,19 @@ ${marker}
     try {
       const buf = await fs.readFile(hostArchivePath);
       const base = path.basename(hostArchivePath);
-      const r = await this.remoteServersService.dockerNamedVolumeImportArchiveOnRemote(
-        remoteServerId,
-        projectUserId,
-        volumeName,
-        buf,
-        base,
-      );
+      const r =
+        await this.remoteServersService.dockerNamedVolumeImportArchiveOnRemote(
+          remoteServerId,
+          projectUserId,
+          volumeName,
+          buf,
+          base,
+        );
       const out = [r.stdout, r.stderr].filter((s) => s?.trim()).join('\n');
-      return { success: true, output: (out || 'Volume import finished.').slice(0, 8000) };
+      return {
+        success: true,
+        output: (out || 'Volume import finished.').slice(0, 8000),
+      };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return { success: false, output: msg };
@@ -1496,11 +1608,12 @@ ${marker}
     const projectUserId: number | null = service.project?.userId ?? null;
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
     const persistQ = persist.replace(/'/g, `'\\''`);
-    const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
-      sshIds.remoteServerId,
-      projectUserId,
-      'weehawk-dbcmd',
-    );
+    const stagingDir =
+      await this.remoteServersService.allocRemoteWeehawkTempDir(
+        sshIds.remoteServerId,
+        projectUserId,
+        'weehawk-dbcmd',
+      );
     const archiveBasename = `db-${service.appName}-${Date.now()}.sql.gz`;
     const outFile = `${stagingDir}/${archiveBasename}`;
     const outQ = `'${outFile.replace(/'/g, `'\\''`)}'`;
@@ -1524,16 +1637,20 @@ test -s "$OUT"
           projectUserId,
           stagingDir,
         );
-        const out = [r.stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
+        const out = [r.stdout, stderr]
+          .filter((s) => s && String(s).trim())
+          .join('\n');
         return { success: false, output: out || '(no output)' };
       }
-      const out = [r.stdout, stderr].filter((s) => s && String(s).trim()).join('\n');
+      const out = [r.stdout, stderr]
+        .filter((s) => s && String(s).trim())
+        .join('\n');
       return {
         success: true,
         output: [out, `Archive: ${outFile}`].filter(Boolean).join('\n'),
         archiveBasename,
         remoteArtifact: {
-          remoteServerId: sshIds.remoteServerId!,
+          remoteServerId: sshIds.remoteServerId,
           projectUserId,
           stagingDir,
           remoteFilePath: outFile,
@@ -1637,7 +1754,10 @@ ${script}
           projectUserId,
           service.appName,
         );
-        return { success: true, message: 'Stack services scaled to 0 (Stopped)' };
+        return {
+          success: true,
+          message: 'Stack services scaled to 0 (Stopped)',
+        };
       }
       if (sshIds.remoteServerId == null) {
         throw new BadRequestException(COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE);

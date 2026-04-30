@@ -24,7 +24,12 @@ export class User {
   @Column({ length: 254, unique: true })
   email!: string;
 
-  @Column({ type: 'varchar', name: 'password_hash', length: 60, nullable: true })
+  @Column({
+    type: 'varchar',
+    name: 'password_hash',
+    length: 60,
+    nullable: true,
+  })
   passwordHash: string | null = null;
 
   @Column({ type: 'enum', enum: Role, default: Role.USER })
@@ -33,13 +38,24 @@ export class User {
   @Column({ type: 'enum', enum: AuthProvider, default: AuthProvider.LOCAL })
   provider: AuthProvider = AuthProvider.LOCAL;
 
-  @Column({ type: 'varchar', name: 'provider_id', length: 100, nullable: true, unique: true })
+  @Column({
+    type: 'varchar',
+    name: 'provider_id',
+    length: 100,
+    nullable: true,
+    unique: true,
+  })
   providerId: string | null = null;
 
   /**
    * Email returned by Google on OAuth (may differ from {@link User.email} after an in-app email change).
    */
-  @Column({ type: 'varchar', name: 'google_account_email', length: 254, nullable: true })
+  @Column({
+    type: 'varchar',
+    name: 'google_account_email',
+    length: 254,
+    nullable: true,
+  })
   googleAccountEmail: string | null = null;
 
   @Column({ default: true })

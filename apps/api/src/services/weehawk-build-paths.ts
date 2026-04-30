@@ -12,7 +12,10 @@ export async function resolveEffectiveDockerfileRel(
   fullContextPath: string,
   dockerfilePathFromConfig: string,
 ): Promise<{ relativePath: string; usedGenerated: boolean }> {
-  const generatedAbs = path.join(fullContextPath, WEEHAWK_GENERATED_DOCKERFILE_REL);
+  const generatedAbs = path.join(
+    fullContextPath,
+    WEEHAWK_GENERATED_DOCKERFILE_REL,
+  );
   const hasGenerated = await fs
     .access(generatedAbs)
     .then(() => true)

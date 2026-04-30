@@ -48,7 +48,10 @@ export class UpdateCronJobDto {
   @MaxLength(4000)
   notifyMessage?: string | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Numeric notification channel id, or null to clear.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Numeric notification channel id, or null to clear.',
+  })
   @IsOptional()
   @ValidateIf((_, v) => v != null)
   @IsInt()

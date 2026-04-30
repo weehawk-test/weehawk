@@ -37,7 +37,13 @@ async function hasIndexEntry(dir: string): Promise<boolean> {
 
 /** Common server entry files when package.json has no explicit start (some templates). */
 async function hasCommonServerEntry(dir: string): Promise<boolean> {
-  for (const name of ['server.js', 'server.mjs', 'server.cjs', 'app.js', 'main.js']) {
+  for (const name of [
+    'server.js',
+    'server.mjs',
+    'server.cjs',
+    'app.js',
+    'main.js',
+  ]) {
     try {
       await fs.access(path.join(dir, name));
       return true;
@@ -48,7 +54,9 @@ async function hasCommonServerEntry(dir: string): Promise<boolean> {
   return false;
 }
 
-async function hasFrameworkOrBundlerConfigAtRoot(dir: string): Promise<boolean> {
+async function hasFrameworkOrBundlerConfigAtRoot(
+  dir: string,
+): Promise<boolean> {
   let entries: import('fs').Dirent[];
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
@@ -72,7 +80,10 @@ export async function isNodeAppStartableAt(dir: string): Promise<boolean> {
   }
   let pkg: { scripts?: Record<string, string>; main?: string };
   try {
-    pkg = JSON.parse(raw) as { scripts?: Record<string, string>; main?: string };
+    pkg = JSON.parse(raw) as {
+      scripts?: Record<string, string>;
+      main?: string;
+    };
   } catch {
     return false;
   }
@@ -180,7 +191,9 @@ async function collectStartableUnderMonorepoRoot(
   return out;
 }
 
-async function collectStartableTopLevelDirs(contextDir: string): Promise<string[]> {
+async function collectStartableTopLevelDirs(
+  contextDir: string,
+): Promise<string[]> {
   const out: string[] = [];
   let entries: import('fs').Dirent[];
   try {
@@ -221,7 +234,9 @@ export async function inferNodeBuildContext(
 
   const candidates: string[] = [];
   for (const root of SUBROOTS) {
-    candidates.push(...(await collectStartableUnderMonorepoRoot(contextDir, root)));
+    candidates.push(
+      ...(await collectStartableUnderMonorepoRoot(contextDir, root)),
+    );
   }
   candidates.push(...(await collectStartableTopLevelDirs(contextDir)));
 

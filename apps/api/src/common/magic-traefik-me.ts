@@ -18,11 +18,13 @@ export function slugifySubdomainLabel(input: string): string {
   return s;
 }
 
-export function parseIpv4Octets(raw: string): [number, number, number, number] | null {
+export function parseIpv4Octets(
+  raw: string,
+): [number, number, number, number] | null {
   const t = raw.trim();
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(t);
   if (!m) return null;
-  const parts = [1, 2, 3, 4].map((i) => parseInt(m[i]!, 10));
+  const parts = [1, 2, 3, 4].map((i) => parseInt(m[i], 10));
   if (parts.some((n) => n < 0 || n > 255)) return null;
   return parts as [number, number, number, number];
 }

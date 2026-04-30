@@ -55,7 +55,12 @@ export class Webhook {
    * Optional hostname for the on-server webhook agent behind Traefik (e.g. `hooks.example.com`).
    * Requires API `WEEHAWK_WEBHOOK_AGENT_IMAGE` and Swarm + overlay {@code weehawk} on the deploy host.
    */
-  @Column({ name: 'hooks_public_host', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'hooks_public_host',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   hooksPublicHost: string | null = null;
 
   /**

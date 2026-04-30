@@ -58,7 +58,11 @@ async function bootstrap() {
     .addTag('users')
     .build();
 
-  const env = (configService.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '').toLowerCase();
+  const env = (
+    configService.get<string>('NODE_ENV') ??
+    process.env.NODE_ENV ??
+    ''
+  ).toLowerCase();
   if (env !== 'production') {
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('swagger', app, document);

@@ -88,7 +88,9 @@ return 1
 
   @Post('github/webhook')
   @HttpCode(200)
-  @ApiOperation({ summary: 'GitHub App webhook receiver (signed requests only)' })
+  @ApiOperation({
+    summary: 'GitHub App webhook receiver (signed requests only)',
+  })
   async githubWebhookPlaceholder(
     @Req()
     req: ExpressRequest & {
@@ -97,7 +99,9 @@ return 1
     },
   ) {
     const deliveryHeader = req.headers['x-github-delivery'];
-    const deliveryId = (Array.isArray(deliveryHeader) ? deliveryHeader[0] : deliveryHeader ?? '').trim();
+    const deliveryId = (
+      Array.isArray(deliveryHeader) ? deliveryHeader[0] : (deliveryHeader ?? '')
+    ).trim();
     if (!deliveryId) {
       throw new UnauthorizedException('Missing GitHub delivery id');
     }
@@ -159,7 +163,8 @@ return 1
   @UseGuards(LocalSessionGuard)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'List branch names for a GitLab project (requires GitLab token in settings)',
+    summary:
+      'List branch names for a GitLab project (requires GitLab token in settings)',
   })
   async listGitlabBranches(
     @Req() req: { user?: { userId: number } },
@@ -210,7 +215,9 @@ return 1
     }
     const r = (repo ?? '').trim();
     if (!r) {
-      throw new BadRequestException('repo query parameter is required (owner/repo)');
+      throw new BadRequestException(
+        'repo query parameter is required (owner/repo)',
+      );
     }
     return this.gitService.listGithubBranchNames(this.uid(req), iid, r);
   }
@@ -228,7 +235,10 @@ return 1
       forbidNonWhitelisted: true,
     }),
   )
-  async updateSettings(@Req() req: { user?: { userId: number } }, @Body() dto: UpdateGitSettingsDto) {
+  async updateSettings(
+    @Req() req: { user?: { userId: number } },
+    @Body() dto: UpdateGitSettingsDto,
+  ) {
     return this.gitService.updateSettings(this.uid(req), dto);
   }
 
@@ -245,7 +255,10 @@ return 1
       forbidNonWhitelisted: true,
     }),
   )
-  async exchangeGithubManifest(@Req() req: { user?: { userId: number } }, @Body() dto: ExchangeGithubManifestDto) {
+  async exchangeGithubManifest(
+    @Req() req: { user?: { userId: number } },
+    @Body() dto: ExchangeGithubManifestDto,
+  ) {
     return this.gitService.exchangeGithubManifestCode(this.uid(req), dto.code);
   }
 }

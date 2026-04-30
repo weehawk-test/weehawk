@@ -29,7 +29,10 @@ export class UpdateWebhookDto {
   @MaxLength(4000)
   notifyMessage?: string | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Numeric notification channel id, or null to clear.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Numeric notification channel id, or null to clear.',
+  })
   @IsOptional()
   @ValidateIf((_, v) => v != null && v !== '')
   @IsInt()
@@ -46,7 +49,10 @@ export class UpdateWebhookDto {
   @Min(1)
   remoteServerId?: number | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Bash script on the deploy host.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Bash script on the deploy host.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(4000)

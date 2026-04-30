@@ -69,7 +69,9 @@ export class CreateRemoteServerDto {
     example: '203.0.113.10',
   })
   @IsOptional()
-  @ValidateIf((_object, value) => value != null && String(value).trim().length > 0)
+  @ValidateIf(
+    (_object, value) => value != null && String(value).trim().length > 0,
+  )
   @IsString()
   @Matches(/^(\d{1,3}\.){3}\d{1,3}$/, {
     message: 'publicIpv4 must be a dotted IPv4 address',

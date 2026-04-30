@@ -30,7 +30,9 @@ export class EmailService {
         const logBodyRaw = this.config.get<string>('MAIL_LOG_BODY');
         const logBody =
           logBodyRaw != null
-            ? ['true', '1', 'on', 'yes'].includes(logBodyRaw.toLowerCase().trim())
+            ? ['true', '1', 'on', 'yes'].includes(
+                logBodyRaw.toLowerCase().trim(),
+              )
             : this.config.get<boolean>('mail.logBody', false);
         this.logger.debug(
           `MAIL_DISABLED: MAIL_ENABLED="${enabledRaw ?? 'undefined'}"; skipped email to="${request.to}" subject="${request.subject}" (${request.isHtml ? 'html' : 'text'})`,
@@ -54,7 +56,11 @@ export class EmailService {
         ...(request.isHtml ? { html: request.body } : { text: request.body }),
       });
     } catch (error) {
-      const err = error as { code?: string; response?: string; message?: string };
+      const err = error as {
+        code?: string;
+        response?: string;
+        message?: string;
+      };
       this.logger.error(
         `MAIL_SEND_FAILED: to="${request.to}" subject="${request.subject}" code="${err?.code ?? 'unknown'}" message="${err?.message ?? 'unknown'}"${err?.response ? ` response="${err.response}"` : ''}`,
       );
@@ -77,7 +83,11 @@ export class EmailService {
     await this.send({ to, subject, body: htmlBody, isHtml: true });
   }
 
-  async sendEmailConfirmation(to: string, firstName: string, confirmationLink: string): Promise<void> {
+  async sendEmailConfirmation(
+    to: string,
+    firstName: string,
+    confirmationLink: string,
+  ): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
         <h2>Hello ${firstName}!</h2>
@@ -96,7 +106,11 @@ export class EmailService {
     await this.sendHtml(to, 'Confirm Your Email Address', html);
   }
 
-  async sendPasswordReset(to: string, firstName: string, resetLink: string): Promise<void> {
+  async sendPasswordReset(
+    to: string,
+    firstName: string,
+    resetLink: string,
+  ): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
         <h2>Hello ${firstName}!</h2>
@@ -137,7 +151,10 @@ export class EmailService {
     await this.sendHtml(to, 'Confirm your new email', html);
   }
 
-  async sendEmailChangeNotification(to: string, firstName: string): Promise<void> {
+  async sendEmailChangeNotification(
+    to: string,
+    firstName: string,
+  ): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Hello ${firstName}!</h2>
@@ -147,7 +164,10 @@ export class EmailService {
     await this.sendHtml(to, 'Security Alert: Email Change Requested', html);
   }
 
-  async sendEmailChangedConfirmation(to: string, firstName: string): Promise<void> {
+  async sendEmailChangedConfirmation(
+    to: string,
+    firstName: string,
+  ): Promise<void> {
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Hello ${firstName}!</h2>

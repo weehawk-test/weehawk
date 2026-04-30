@@ -21,6 +21,7 @@ import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
 import { generatePublicId } from '../common/public-id';
+import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 export type CronJobListRow = {
   id: number;
@@ -44,6 +45,7 @@ export type CronJobDetailRow = CronJobListRow & {
 @Injectable()
 export class CronJobsService {
   private readonly logger = new Logger(CronJobsService.name);
+  private readonly scopedCronJobs: UserIdTenantScopedRepository<CronJob>;
 
   constructor(
     @InjectRepository(CronJob)
@@ -51,9 +53,17 @@ export class CronJobsService {
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
     private readonly remoteServersService: RemoteServersService,
-  ) {}
+  ) {
+    this.scopedCronJobs = new UserIdTenantScopedRepository<CronJob>(
+      this.cronJobRepo,
+      'Cron job',
+    );
+  }
 
-  private runRemoteSyncInBackground(taskLabel: string, run: () => Promise<void>): void {
+  private runRemoteSyncInBackground(
+    taskLabel: string,
+    run: () => Promise<void>,
+  ): void {
     setTimeout(() => {
       void run().catch((error: unknown) => {
         this.logger.warn(
@@ -66,20 +76,19 @@ export class CronJobsService {
   private async ensurePublicId(row: CronJob): Promise<CronJob> {
     if (row.publicId) return row;
     row.publicId = generatePublicId('crn');
-    return this.cronJobRepo.save(row);
+    return this.scopedCronJobs.saveScoped(row, row.userId);
   }
 
-  private async resolveEntity(userId: number, idOrPublicId: string | number): Promise<CronJob> {
+  private async resolveEntity(
+    userId: number,
+    idOrPublicId: string | number,
+  ): Promise<CronJob> {
     const raw = String(idOrPublicId).trim();
-    let row = await this.cronJobRepo.findOne({
-      where: { publicId: raw, userId },
-    });
-    if (!row && /^\d+$/.test(raw)) {
-      row = await this.cronJobRepo.findOne({
-        where: { id: Number(raw), userId },
-      });
+    if (/^\d+$/.test(raw)) {
+      const row = await this.scopedCronJobs.findScoped(Number(raw), userId);
+      return this.ensurePublicId(row);
     }
-    if (!row) throw new NotFoundException('Cron job not found');
+    const row = await this.scopedCronJobs.findScopedBy('publicId', raw, userId);
     return this.ensurePublicId(row);
   }
 
@@ -142,7 +151,9 @@ export class CronJobsService {
     return job.remoteServerId;
   }
 
-  private async tryResolveCronRemoteServerId(job: CronJob): Promise<number | null> {
+  private async tryResolveCronRemoteServerId(
+    job: CronJob,
+  ): Promise<number | null> {
     try {
       return await this.resolveCronRemoteServerId(job);
     } catch {
@@ -242,7 +253,9 @@ export class CronJobsService {
     }
     const linesRaw = opts?.lines ?? 200;
     const lines =
-      Number.isFinite(linesRaw) && linesRaw > 0 ? Math.min(Math.floor(linesRaw), 2000) : 200;
+      Number.isFinite(linesRaw) && linesRaw > 0
+        ? Math.min(Math.floor(linesRaw), 2000)
+        : 200;
     const logPath = `${this.scriptDirRemote()}/${job.id}.log`;
     const script = `
 set -e
@@ -266,7 +279,8 @@ fi
         `Failed to read cron run log for job "${job.name}": ${out.output}`,
       );
     }
-    const normalized = (out.output ?? '').trim() === '(no output)' ? '' : out.output ?? '';
+    const normalized =
+      (out.output ?? '').trim() === '(no output)' ? '' : (out.output ?? '');
     return { log: normalized, source: 'remote-script-log' };
   }
 
@@ -318,7 +332,9 @@ fi
       return step >= 1 && step <= max;
     }
     if (v.includes(',')) {
-      return v.split(',').every((part) => this.validateCronField(part.trim(), min, max));
+      return v
+        .split(',')
+        .every((part) => this.validateCronField(part.trim(), min, max));
     }
     const rangeMatch = /^(\d+)-(\d+)$/.exec(v);
     if (rangeMatch) {
@@ -406,12 +422,18 @@ fi
     };
   }
 
-  async create(userId: number, dto: CreateCronJobDto): Promise<CronJobDetailRow> {
+  async create(
+    userId: number,
+    dto: CreateCronJobDto,
+  ): Promise<CronJobDetailRow> {
     this.validateCreate(dto);
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(userId, dto.notifyChannelId);
     }
-    await this.remoteServersService.assertDeployServerById(dto.remoteServerId, userId);
+    await this.remoteServersService.assertDeployServerById(
+      dto.remoteServerId,
+      userId,
+    );
 
     const job = this.cronJobRepo.create({
       publicId: generatePublicId('crn'),
@@ -429,7 +451,7 @@ fi
       notifyChannelId: dto.notifyChannelId ?? null,
       notifyMessage: dto.notifyMessage?.trim() || null,
     });
-    const saved = await this.cronJobRepo.save(job);
+    const saved = await this.scopedCronJobs.saveScoped(job, userId);
     this.runRemoteSyncInBackground(`create cron job ${saved.id}`, async () => {
       await this.upsertCrontabEntry(saved);
     });
@@ -444,7 +466,10 @@ fi
     return Promise.all(list.map((w) => this.toListRow(w)));
   }
 
-  async findOne(userId: number, idOrPublicId: string | number): Promise<CronJobDetailRow> {
+  async findOne(
+    userId: number,
+    idOrPublicId: string | number,
+  ): Promise<CronJobDetailRow> {
     const job = await this.resolveEntity(userId, idOrPublicId);
     return await this.toDetailRow(job);
   }
@@ -458,7 +483,8 @@ fi
     const previousJob = this.cronJobRepo.create({ ...job });
 
     if (dto.name !== undefined) job.name = dto.name.trim();
-    if (dto.description !== undefined) job.description = dto.description.trim() || null;
+    if (dto.description !== undefined)
+      job.description = dto.description.trim() || null;
     if (dto.isActive !== undefined) job.isActive = dto.isActive;
     if (dto.cronExpression !== undefined) {
       const expr = dto.cronExpression.trim();
@@ -498,14 +524,24 @@ fi
       );
     }
 
-    await this.remoteServersService.assertDeployServerById(job.remoteServerId, userId);
+    await this.remoteServersService.assertDeployServerById(
+      job.remoteServerId,
+      userId,
+    );
 
-    const saved = await this.cronJobRepo.save(job);
+    const saved = await this.scopedCronJobs.saveScoped(job, userId);
     const prevRemoteId = await this.tryResolveCronRemoteServerId(previousJob);
     const nextRemoteId = await this.tryResolveCronRemoteServerId(saved);
     this.runRemoteSyncInBackground(`update cron job ${saved.id}`, async () => {
-      if (prevRemoteId != null && (nextRemoteId == null || prevRemoteId !== nextRemoteId)) {
-        await this.removeCrontabEntryForRemote(prevRemoteId, previousJob.userId, saved.id);
+      if (
+        prevRemoteId != null &&
+        (nextRemoteId == null || prevRemoteId !== nextRemoteId)
+      ) {
+        await this.removeCrontabEntryForRemote(
+          prevRemoteId,
+          previousJob.userId,
+          saved.id,
+        );
       }
       await this.upsertCrontabEntry(saved);
     });
@@ -515,8 +551,7 @@ fi
   async remove(userId: number, idOrPublicId: string | number): Promise<void> {
     const existing = await this.resolveEntity(userId, idOrPublicId);
     await this.removeCrontabEntry(existing);
-    const res = await this.cronJobRepo.delete({ id: existing.id, userId });
-    if (!res.affected) throw new NotFoundException('Cron job not found');
+    await this.scopedCronJobs.deleteScoped(existing.id, userId);
   }
 
   private async execute(
@@ -562,7 +597,12 @@ fi
   async triggerNow(
     userId: number,
     idOrPublicId: string | number,
-  ): Promise<{ ok: boolean; success: boolean; action: string; output: string }> {
+  ): Promise<{
+    ok: boolean;
+    success: boolean;
+    action: string;
+    output: string;
+  }> {
     const job = await this.resolveEntity(userId, idOrPublicId);
     if (!job.isActive) {
       throw new BadRequestException('Cron job is inactive.');

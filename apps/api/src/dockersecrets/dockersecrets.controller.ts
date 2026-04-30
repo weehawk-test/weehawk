@@ -51,13 +51,21 @@ export class DockerSecretsController {
 
   @Get()
   @ApiOperation({ summary: 'List all secrets on a remote Docker host' })
-  async findAll(@Query('remoteServerId') remoteServerIdStr: string, @Req() req: { user?: { userId: number } }) {
-    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
+  async findAll(
+    @Query('remoteServerId') remoteServerIdStr: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    const remoteServerId = await this.parseRemoteServerId(
+      remoteServerIdStr,
+      req,
+    );
     return await this.secretsService.findAll(remoteServerId, this.uid(req));
   }
 
   @Get('paged')
-  @ApiOperation({ summary: 'List secrets (paginated, search) on a remote host' })
+  @ApiOperation({
+    summary: 'List secrets (paginated, search) on a remote host',
+  })
   async findAllPaged(
     @Query('remoteServerId') remoteServerIdStr: string,
     @Query('page') pageStr?: string,
@@ -65,7 +73,10 @@ export class DockerSecretsController {
     @Query('q') q?: string,
     @Req() req?: { user?: { userId: number } },
   ) {
-    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
+    const remoteServerId = await this.parseRemoteServerId(
+      remoteServerIdStr,
+      req,
+    );
     const page = parseInt(pageStr ?? '1', 10);
     const pageSize = parseInt(pageSizeStr ?? '10', 10);
     return await this.secretsService.findAllPaged(
@@ -79,8 +90,14 @@ export class DockerSecretsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a secret on a remote host' })
-  async create(@Body() dto: CreateDockersecretDto, @Req() req: { user?: { userId: number } }) {
-    const remoteServerId = await this.parseRemoteServerId(dto.remoteServerId, req);
+  async create(
+    @Body() dto: CreateDockersecretDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    const remoteServerId = await this.parseRemoteServerId(
+      dto.remoteServerId,
+      req,
+    );
     await this.secretsService.create(
       remoteServerId,
       this.uid(req),
@@ -92,8 +109,14 @@ export class DockerSecretsController {
 
   @Post('bulk-import')
   @ApiOperation({ summary: 'Import from .env onto a remote host' })
-  async bulkImport(@Body() dto: BulkImportDto, @Req() req: { user?: { userId: number } }) {
-    const remoteServerId = await this.parseRemoteServerId(dto.remoteServerId, req);
+  async bulkImport(
+    @Body() dto: BulkImportDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    const remoteServerId = await this.parseRemoteServerId(
+      dto.remoteServerId,
+      req,
+    );
     const lines = dto.envText.split('\n');
 
     const results: string[] = [];
@@ -142,8 +165,16 @@ export class DockerSecretsController {
     @Query('remoteServerId') remoteServerIdStr: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
-    return await this.secretsService.remove(remoteServerId, this.uid(req), name, false);
+    const remoteServerId = await this.parseRemoteServerId(
+      remoteServerIdStr,
+      req,
+    );
+    return await this.secretsService.remove(
+      remoteServerId,
+      this.uid(req),
+      name,
+      false,
+    );
   }
 
   @Get(':name/inspect')
@@ -153,7 +184,14 @@ export class DockerSecretsController {
     @Query('remoteServerId') remoteServerIdStr: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    const remoteServerId = await this.parseRemoteServerId(remoteServerIdStr, req);
-    return await this.secretsService.findOne(remoteServerId, this.uid(req), name);
+    const remoteServerId = await this.parseRemoteServerId(
+      remoteServerIdStr,
+      req,
+    );
+    return await this.secretsService.findOne(
+      remoteServerId,
+      this.uid(req),
+      name,
+    );
   }
 }

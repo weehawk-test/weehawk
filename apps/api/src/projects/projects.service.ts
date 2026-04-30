@@ -60,7 +60,7 @@ export class ProjectsService {
       .where('project.userId = :userId', { userId });
     if (trimmed) {
       countQb.andWhere(
-        '(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, \'\')) LIKE :q)',
+        "(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, '')) LIKE :q)",
         { q: `%${trimmed}%` },
       );
     }
@@ -73,7 +73,7 @@ export class ProjectsService {
 
     if (trimmed) {
       dataQb.andWhere(
-        '(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, \'\')) LIKE :q)',
+        "(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, '')) LIKE :q)",
         { q: `%${trimmed}%` },
       );
     }
@@ -92,11 +92,17 @@ export class ProjectsService {
     };
   }
 
-  async resolveProjectByIdentifier(identifier: string, userId: number): Promise<Project> {
+  async resolveProjectByIdentifier(
+    identifier: string,
+    userId: number,
+  ): Promise<Project> {
     const trimmed = String(identifier).trim();
-    if (!trimmed) throw new BadRequestException('Project identifier is required');
+    if (!trimmed)
+      throw new BadRequestException('Project identifier is required');
     if (isLikelyNumericId(trimmed)) {
-      throw new BadRequestException('Numeric project id is not allowed. Use publicId.');
+      throw new BadRequestException(
+        'Numeric project id is not allowed. Use publicId.',
+      );
     }
     const where = [{ publicId: trimmed, userId }];
     const project = await this.projectRepository.findOne({
@@ -113,7 +119,11 @@ export class ProjectsService {
     return this.resolveProjectByIdentifier(idOrPublicId, userId);
   }
 
-  async update(idOrPublicId: string, updateProjectDto: UpdateProjectDto, userId: number) {
+  async update(
+    idOrPublicId: string,
+    updateProjectDto: UpdateProjectDto,
+    userId: number,
+  ) {
     const project = await this.findOne(idOrPublicId, userId);
     const updated = this.projectRepository.merge(project, updateProjectDto);
     return await this.projectRepository.save(updated);

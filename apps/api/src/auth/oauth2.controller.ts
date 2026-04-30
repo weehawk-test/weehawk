@@ -42,12 +42,19 @@ export class Oauth2Controller {
   ) {}
 
   private frontendBase(): string {
-    return this.config.get<string>('WEBFRONTEND_BASE_URL', 'http://localhost:3000').replace(/\/$/, '');
+    return this.config
+      .get<string>('WEBFRONTEND_BASE_URL', 'http://localhost:3000')
+      .replace(/\/$/, '');
   }
 
   private isSecureCookie(): boolean {
-    return (this.config.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '').toLowerCase() ===
-      'production';
+    return (
+      (
+        this.config.get<string>('NODE_ENV') ??
+        process.env.NODE_ENV ??
+        ''
+      ).toLowerCase() === 'production'
+    );
   }
 
   /**
@@ -63,7 +70,9 @@ export class Oauth2Controller {
     const base = this.frontendBase();
     const userId = req.user?.userId;
     if (userId == null) {
-      res.redirect(`${base}/login?${new URLSearchParams({ error: 'Sign in required to link Google.' }).toString()}`);
+      res.redirect(
+        `${base}/login?${new URLSearchParams({ error: 'Sign in required to link Google.' }).toString()}`,
+      );
       return;
     }
     try {
@@ -102,7 +111,10 @@ export class Oauth2Controller {
   ])
   @Public()
   @UseGuards(GoogleAuthGuard)
-  async googleCallback(@Req() req: Request & { user?: Profile }, @Res() res: Response) {
+  async googleCallback(
+    @Req() req: Request & { user?: Profile },
+    @Res() res: Response,
+  ) {
     const frontendBase = this.frontendBase();
     const secure = this.isSecureCookie();
     let oauthLinkIntent = false;
@@ -114,7 +126,9 @@ export class Oauth2Controller {
       }
 
       const cookies = parseCookieHeader(
-        typeof req.headers?.cookie === 'string' ? req.headers.cookie : undefined,
+        typeof req.headers?.cookie === 'string'
+          ? req.headers.cookie
+          : undefined,
       );
       const linkToken = cookies[GOOGLE_OAUTH_LINK_COOKIE];
       oauthLinkIntent = Boolean(linkToken);
@@ -122,7 +136,8 @@ export class Oauth2Controller {
 
       const auth = linkToken
         ? await (async () => {
-            const userId = this.authService.verifyGoogleLinkIntentToken(linkToken);
+            const userId =
+              this.authService.verifyGoogleLinkIntentToken(linkToken);
             return this.authService.linkGoogleAccount(userId, profile);
           })()
         : await this.authService.loginWithGoogle(profile);
@@ -146,4 +161,3 @@ export class Oauth2Controller {
     }
   }
 }
-

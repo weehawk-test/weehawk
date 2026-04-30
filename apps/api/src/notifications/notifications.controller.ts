@@ -87,10 +87,7 @@ export class NotificationsController {
   }
 
   @Delete('channels/:id')
-  async deleteChannel(
-    @Req() req: AuthedReq,
-    @Param('id') id: string,
-  ) {
+  async deleteChannel(@Req() req: AuthedReq, @Param('id') id: string) {
     await this.notificationsService.deleteChannel(this.userId(req), id);
     return { ok: true };
   }
@@ -99,5 +96,4 @@ export class NotificationsController {
   testChannel(@Req() req: AuthedReq, @Param('id') id: string) {
     return this.notificationsService.testChannel(this.userId(req), id);
   }
-
 }

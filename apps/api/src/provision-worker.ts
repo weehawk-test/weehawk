@@ -14,7 +14,9 @@ async function bootstrapProvisionWorker() {
   assertProductionSecurityConfig(app.get(ConfigService));
   const provision = app.get(RemoteServerProvisionService);
 
-  logger.log('Provision worker started (SSH: Docker + Swarm + weehawk overlay)');
+  logger.log(
+    'Provision worker started (SSH: Docker + Swarm + weehawk overlay)',
+  );
 
   const tick = () => {
     void provision.processNextPendingJob().catch((e) => {

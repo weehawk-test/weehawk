@@ -53,7 +53,13 @@ export class AuthController {
   ) {}
 
   private isSecureCookie(): boolean {
-    return (this.config.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+    return (
+      (
+        this.config.get<string>('NODE_ENV') ??
+        process.env.NODE_ENV ??
+        ''
+      ).toLowerCase() === 'production'
+    );
   }
 
   private sessionBody(auth: AuthResponseDto): AuthSessionBodyDto {
@@ -79,7 +85,10 @@ export class AuthController {
     },
   })
   @ApiBody({ type: RegisterDto })
-  async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response): Promise<AuthSessionBodyDto> {
+  async register(
+    @Body() dto: RegisterDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthSessionBodyDto> {
     const auth = await this.authService.register(dto);
     attachAuthCookies(res, auth, this.isSecureCookie());
     return this.sessionBody(auth);
@@ -95,7 +104,10 @@ export class AuthController {
     },
   })
   @ApiBody({ type: LoginDto })
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response): Promise<AuthSessionBodyDto> {
+  async login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthSessionBodyDto> {
     const auth = await this.authService.login(dto);
     attachAuthCookies(res, auth, this.isSecureCookie());
     return this.sessionBody(auth);
@@ -110,8 +122,11 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthSessionBodyDto> {
     const rawCookie = req.headers?.cookie;
-    const cookies = parseCookieHeader(typeof rawCookie === 'string' ? rawCookie : undefined);
-    const refreshToken = dto.refreshToken?.trim() || cookies[AUTH_REFRESH_COOKIE];
+    const cookies = parseCookieHeader(
+      typeof rawCookie === 'string' ? rawCookie : undefined,
+    );
+    const refreshToken =
+      dto.refreshToken?.trim() || cookies[AUTH_REFRESH_COOKIE];
     if (!refreshToken) throw new UnauthorizedException('Missing refresh token');
     const auth = await this.authService.refresh(refreshToken);
     attachAuthCookies(res, auth, this.isSecureCookie());
@@ -126,8 +141,11 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ message: string }> {
     const rawCookie = req.headers?.cookie;
-    const cookies = parseCookieHeader(typeof rawCookie === 'string' ? rawCookie : undefined);
-    const refreshToken = dto.refreshToken?.trim() || cookies[AUTH_REFRESH_COOKIE];
+    const cookies = parseCookieHeader(
+      typeof rawCookie === 'string' ? rawCookie : undefined,
+    );
+    const refreshToken =
+      dto.refreshToken?.trim() || cookies[AUTH_REFRESH_COOKIE];
     if (refreshToken && req.user?.email) {
       await this.authService.logout(req.user.email, refreshToken);
     }
@@ -137,14 +155,19 @@ export class AuthController {
 
   @Post('/change-password')
   @ApiBody({ type: ChangePasswordDto })
-  async changePassword(@Body() dto: ChangePasswordDto, @Req() req: any): Promise<{ message: string }> {
+  async changePassword(
+    @Body() dto: ChangePasswordDto,
+    @Req() req: any,
+  ): Promise<{ message: string }> {
     await this.authService.changePassword(req.user?.email, dto);
     return { message: 'Password changed successfully' };
   }
 
   @Get('/confirm-email')
   @Public()
-  async confirmEmail(@Query('token') token: string): Promise<{ message: string }> {
+  async confirmEmail(
+    @Query('token') token: string,
+  ): Promise<{ message: string }> {
     await this.emailConfirmationService.confirmEmail(token);
     return { message: 'Email confirmed successfully!' };
   }
@@ -158,7 +181,9 @@ export class AuthController {
   @Post('/forgot-password')
   @Public()
   @ApiBody({ type: ForgotPasswordDto })
-  async forgotPassword(@Body() body: ForgotPasswordDto): Promise<{ message: string }> {
+  async forgotPassword(
+    @Body() body: ForgotPasswordDto,
+  ): Promise<{ message: string }> {
     const email = body?.email?.trim();
     if (email) {
       try {
@@ -177,7 +202,9 @@ export class AuthController {
   @Post('/reset-password')
   @Public()
   @ApiBody({ type: ResetPasswordDto })
-  async resetPassword(@Body() dto: ResetPasswordDto): Promise<{ message: string }> {
+  async resetPassword(
+    @Body() dto: ResetPasswordDto,
+  ): Promise<{ message: string }> {
     await this.passwordResetService.resetPassword(dto.token, dto.newPassword);
     return { message: 'Password reset successfully!' };
   }

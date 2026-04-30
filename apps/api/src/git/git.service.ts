@@ -13,7 +13,10 @@ import * as path from 'path';
 import { Repository } from 'typeorm';
 import { GitIntegrationSettings } from './entities/git-integration.entity';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
-import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
+import {
+  decryptPrivateKey,
+  encryptPrivateKey,
+} from '../remote-servers/ssh-key-crypto';
 import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
 import type { Request } from 'express';
 
@@ -115,7 +118,9 @@ export class GitService implements OnModuleInit {
     return String(s).trim();
   }
 
-  private decryptSecretOrPlain(value: string | null | undefined): string | null {
+  private decryptSecretOrPlain(
+    value: string | null | undefined,
+  ): string | null {
     if (!value?.trim()) return null;
     try {
       return decryptPrivateKey(value, this.getEncryptionSecret());
@@ -129,7 +134,9 @@ export class GitService implements OnModuleInit {
     return encryptPrivateKey(value, this.getEncryptionSecret());
   }
 
-  private ensureEncryptedSecret(value: string | null | undefined): string | null {
+  private ensureEncryptedSecret(
+    value: string | null | undefined,
+  ): string | null {
     const raw = value?.trim();
     if (!raw) return null;
     try {
@@ -144,10 +151,18 @@ export class GitService implements OnModuleInit {
     }
   }
 
-  private async migrateRowSecrets(row: GitIntegrationSettings): Promise<GitIntegrationSettings> {
-    const nextGithubClientSecret = this.ensureEncryptedSecret(row.githubClientSecret);
-    const nextGithubPrivateKey = this.ensureEncryptedSecret(row.githubPrivateKey);
-    const nextGithubWebhookSecret = this.ensureEncryptedSecret(row.githubWebhookSecret);
+  private async migrateRowSecrets(
+    row: GitIntegrationSettings,
+  ): Promise<GitIntegrationSettings> {
+    const nextGithubClientSecret = this.ensureEncryptedSecret(
+      row.githubClientSecret,
+    );
+    const nextGithubPrivateKey = this.ensureEncryptedSecret(
+      row.githubPrivateKey,
+    );
+    const nextGithubWebhookSecret = this.ensureEncryptedSecret(
+      row.githubWebhookSecret,
+    );
     const nextGitlabApplicationSecret = this.ensureEncryptedSecret(
       row.gitlabApplicationSecret,
     );
@@ -169,7 +184,9 @@ export class GitService implements OnModuleInit {
     return this.repo.save(row);
   }
 
-  private async settingsRowForUser(userId: number): Promise<GitIntegrationSettings> {
+  private async settingsRowForUser(
+    userId: number,
+  ): Promise<GitIntegrationSettings> {
     let row = await this.repo.findOne({ where: { userId } });
     if (row) return this.migrateRowSecrets(row);
     row = this.repo.create({
@@ -196,15 +213,25 @@ export class GitService implements OnModuleInit {
       github: {
         appId: row.githubAppId,
         clientId: row.githubClientId,
-        clientSecretSet: Boolean(this.decryptSecretOrPlain(row.githubClientSecret)?.trim()),
-        privateKeySet: Boolean(this.decryptSecretOrPlain(row.githubPrivateKey)?.trim()),
-        webhookSecretSet: Boolean(this.decryptSecretOrPlain(row.githubWebhookSecret)?.trim()),
+        clientSecretSet: Boolean(
+          this.decryptSecretOrPlain(row.githubClientSecret)?.trim(),
+        ),
+        privateKeySet: Boolean(
+          this.decryptSecretOrPlain(row.githubPrivateKey)?.trim(),
+        ),
+        webhookSecretSet: Boolean(
+          this.decryptSecretOrPlain(row.githubWebhookSecret)?.trim(),
+        ),
         appSlug: slug,
-        installAppUrl: slug ? `https://github.com/apps/${encodeURIComponent(slug)}/installations/new` : null,
+        installAppUrl: slug
+          ? `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`
+          : null,
       },
       gitlab: {
         baseUrl: row.gitlabBaseUrl,
-        groupAccessTokenSet: Boolean(this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim()),
+        groupAccessTokenSet: Boolean(
+          this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim(),
+        ),
       },
       updatedAt: row.updatedAt?.toISOString() ?? null,
     };
@@ -218,7 +245,9 @@ export class GitService implements OnModuleInit {
   }
 
   /** Fills `githubAppSlug` via GET /app when credentials exist but slug is missing (older rows). */
-  private async refreshGithubAppSlugIfNeeded(row: GitIntegrationSettings): Promise<void> {
+  private async refreshGithubAppSlugIfNeeded(
+    row: GitIntegrationSettings,
+  ): Promise<void> {
     if (row.githubAppSlug?.trim()) return;
     const appId = row.githubAppId?.trim();
     const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
@@ -261,7 +290,10 @@ export class GitService implements OnModuleInit {
     return this.encryptSecret(t);
   }
 
-  private async assertPublicHttpEndpoint(rawUrl: string, label: string): Promise<string> {
+  private async assertPublicHttpEndpoint(
+    rawUrl: string,
+    label: string,
+  ): Promise<string> {
     let parsed: URL;
     try {
       parsed = new URL(rawUrl.trim());
@@ -277,7 +309,9 @@ export class GitService implements OnModuleInit {
     }
     if (net.isIP(host) !== 0) {
       if (isRemoteSshIpBlocked(host)) {
-        throw new BadRequestException(`${label} host must be publicly reachable.`);
+        throw new BadRequestException(
+          `${label} host must be publicly reachable.`,
+        );
       }
       return parsed.toString().replace(/\/+$/, '');
     }
@@ -288,11 +322,15 @@ export class GitService implements OnModuleInit {
       throw new BadRequestException(`${label} host could not be resolved.`);
     }
     if (ips.length > 32) {
-      throw new BadRequestException(`${label} host resolves to too many addresses.`);
+      throw new BadRequestException(
+        `${label} host resolves to too many addresses.`,
+      );
     }
     for (const ip of ips) {
       if (isRemoteSshIpBlocked(ip)) {
-        throw new BadRequestException(`${label} host resolves to non-public IP addresses.`);
+        throw new BadRequestException(
+          `${label} host resolves to non-public IP addresses.`,
+        );
       }
     }
     return parsed.toString().replace(/\/+$/, '');
@@ -322,7 +360,9 @@ export class GitService implements OnModuleInit {
     for (const row of rows) {
       const secret = this.decryptSecretOrPlain(row.githubWebhookSecret)?.trim();
       if (!secret) continue;
-      const expectedHex = createHmac('sha256', secret).update(rawBody).digest('hex');
+      const expectedHex = createHmac('sha256', secret)
+        .update(rawBody)
+        .digest('hex');
       const expectedBuf = Buffer.from(expectedHex, 'utf8');
       const providedBuf = Buffer.from(providedHex, 'utf8');
       if (expectedBuf.length !== providedBuf.length) continue;
@@ -333,7 +373,10 @@ export class GitService implements OnModuleInit {
     return false;
   }
 
-  async updateSettings(userId: number, dto: UpdateGitSettingsDto): Promise<GitSettingsPublic> {
+  async updateSettings(
+    userId: number,
+    dto: UpdateGitSettingsDto,
+  ): Promise<GitSettingsPublic> {
     const uid = this.requireIntegrationUserId(userId);
     const row = await this.settingsRowForUser(uid);
 
@@ -390,7 +433,9 @@ export class GitService implements OnModuleInit {
     return this.toPublic(row);
   }
 
-  private async gitlabSettingsRow(userId: number): Promise<GitIntegrationSettings> {
+  private async gitlabSettingsRow(
+    userId: number,
+  ): Promise<GitIntegrationSettings> {
     const uid = this.requireIntegrationUserId(userId);
     return this.settingsRowForUser(uid);
   }
@@ -399,10 +444,15 @@ export class GitService implements OnModuleInit {
    * Build an authenticated HTTPS URL for `git clone` using a GitLab personal or group access token.
    * @see https://docs.gitlab.com/ee/user/profile/personal_access_tokens.html#clone-using-a-token
    */
-  static injectGitlabTokenIntoGitHttpUrl(httpUrl: string, token: string): string {
+  static injectGitlabTokenIntoGitHttpUrl(
+    httpUrl: string,
+    token: string,
+  ): string {
     const u = new URL(httpUrl);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-      throw new BadRequestException('Only http(s) Git clone URLs are supported');
+      throw new BadRequestException(
+        'Only http(s) Git clone URLs are supported',
+      );
     }
     u.username = 'oauth2';
     u.password = token;
@@ -423,7 +473,9 @@ export class GitService implements OnModuleInit {
     }
     const trimmed = httpUrlToRepo.trim();
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-      throw new BadRequestException('Only http(s) Git clone URLs are supported');
+      throw new BadRequestException(
+        'Only http(s) Git clone URLs are supported',
+      );
     }
     return GitService.injectGitlabTokenIntoGitHttpUrl(trimmed, token);
   }
@@ -431,12 +483,17 @@ export class GitService implements OnModuleInit {
   /**
    * URL passed to `git clone`: embed token when set (private repos), otherwise plain HTTPS (public repos).
    */
-  async resolveGitlabHttpCloneUrl(httpUrlToRepo: string, userId: number): Promise<string> {
+  async resolveGitlabHttpCloneUrl(
+    httpUrlToRepo: string,
+    userId: number,
+  ): Promise<string> {
     const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     const trimmed = httpUrlToRepo.trim();
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
-      throw new BadRequestException('Only http(s) Git clone URLs are supported');
+      throw new BadRequestException(
+        'Only http(s) Git clone URLs are supported',
+      );
     }
     if (token) {
       return GitService.injectGitlabTokenIntoGitHttpUrl(trimmed, token);
@@ -449,11 +506,18 @@ export class GitService implements OnModuleInit {
    * Without this, GitLab returns a broad “visible” list including many public projects unrelated to the user.
    * Requires a personal or group access token.
    */
-  async listGitlabProjects(userId: number, params: {
-    page?: number;
-    perPage?: number;
-    search?: string;
-  }): Promise<{ projects: GitlabProjectListItem[]; totalPages: number; page: number }> {
+  async listGitlabProjects(
+    userId: number,
+    params: {
+      page?: number;
+      perPage?: number;
+      search?: string;
+    },
+  ): Promise<{
+    projects: GitlabProjectListItem[];
+    totalPages: number;
+    page: number;
+  }> {
     const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
     if (!token) {
@@ -462,11 +526,16 @@ export class GitService implements OnModuleInit {
       );
     }
     const base = await this.assertPublicHttpEndpoint(
-      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      this.normalizeGitlabWebBase(
+        row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+      ),
       'GitLab base URL',
     );
     const page = Math.max(1, Math.floor(params.page ?? 1));
-    const perPage = Math.min(100, Math.max(1, Math.floor(params.perPage ?? 20)));
+    const perPage = Math.min(
+      100,
+      Math.max(1, Math.floor(params.perPage ?? 20)),
+    );
     const url = new URL(`${base}/api/v4/projects`);
     url.searchParams.set('membership', 'true');
     url.searchParams.set('order_by', 'last_activity_at');
@@ -496,10 +565,7 @@ export class GitService implements OnModuleInit {
       throw new BadRequestException('Unexpected GitLab API response');
     }
     const totalPagesRaw = res.headers.get('x-total-pages');
-    const totalPages = Math.max(
-      1,
-      parseInt(totalPagesRaw || '1', 10) || 1,
-    );
+    const totalPages = Math.max(1, parseInt(totalPagesRaw || '1', 10) || 1);
     const projects: GitlabProjectListItem[] = raw
       .map((p) => {
         const o = p as Record<string, unknown>;
@@ -530,7 +596,9 @@ export class GitService implements OnModuleInit {
       );
     }
     const base = await this.assertPublicHttpEndpoint(
-      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      this.normalizeGitlabWebBase(
+        row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+      ),
       'GitLab base URL',
     );
     const branches: string[] = [];
@@ -578,7 +646,10 @@ export class GitService implements OnModuleInit {
   }
 
   /** Resolve clone URL and default branch for a GitLab project id (API). */
-  async gitlabCloneInfoForProject(projectId: number, userId: number): Promise<{
+  async gitlabCloneInfoForProject(
+    projectId: number,
+    userId: number,
+  ): Promise<{
     cloneUrl: string;
     defaultBranch: string | null;
   }> {
@@ -590,7 +661,9 @@ export class GitService implements OnModuleInit {
       );
     }
     const base = await this.assertPublicHttpEndpoint(
-      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      this.normalizeGitlabWebBase(
+        row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+      ),
       'GitLab base URL',
     );
     const url = `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}`;
@@ -613,10 +686,7 @@ export class GitService implements OnModuleInit {
     }
     const defaultBranch =
       typeof data.default_branch === 'string' ? data.default_branch : null;
-    const cloneUrl = GitService.injectGitlabTokenIntoGitHttpUrl(
-      httpUrl,
-      token,
-    );
+    const cloneUrl = GitService.injectGitlabTokenIntoGitHttpUrl(httpUrl, token);
     return { cloneUrl, defaultBranch };
   }
 
@@ -631,11 +701,15 @@ export class GitService implements OnModuleInit {
   } | null> {
     try {
       const row = await this.gitlabSettingsRow(userId);
-      const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+      const token = this.decryptSecretOrPlain(
+        row.gitlabGroupAccessToken,
+      )?.trim();
       if (!token) return null;
-      const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
-        /\/+$/,
-        '',
+      const base = await this.assertPublicHttpEndpoint(
+        this.normalizeGitlabWebBase(
+          row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+        ),
+        'GitLab base URL',
       );
       return { apiBase: base, privateToken: token };
     } catch (e) {
@@ -650,7 +724,8 @@ export class GitService implements OnModuleInit {
    */
   private inferPublicOriginFromRequest(req: Request): string | null {
     const host =
-      req.get('x-forwarded-host')?.split(',')[0]?.trim() || req.get('host')?.trim();
+      req.get('x-forwarded-host')?.split(',')[0]?.trim() ||
+      req.get('host')?.trim();
     if (!host) return null;
 
     let proto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
@@ -669,7 +744,9 @@ export class GitService implements OnModuleInit {
   }
 
   private resolveManifestWebOrigin(req?: Request): string {
-    const envWeb = (this.config.get<string>('WEB_ORIGIN')?.trim() || '').replace(/\/+$/, '');
+    const envWeb = (
+      this.config.get<string>('WEB_ORIGIN')?.trim() || ''
+    ).replace(/\/+$/, '');
     const inferred = req ? this.inferPublicOriginFromRequest(req) : null;
 
     if (envWeb && !this.manifestUrlsLookUnreachableForGithub(envWeb)) {
@@ -683,14 +760,24 @@ export class GitService implements OnModuleInit {
     return 'http://localhost:3000';
   }
 
-  private resolveManifestApiBase(req: Request | undefined, manifestWeb: string): string {
-    const fromEnv = (this.config.get<string>('API_PUBLIC_URL')?.trim() || '').replace(/\/+$/, '');
+  private resolveManifestApiBase(
+    req: Request | undefined,
+    manifestWeb: string,
+  ): string {
+    const fromEnv = (
+      this.config.get<string>('API_PUBLIC_URL')?.trim() || ''
+    ).replace(/\/+$/, '');
     if (fromEnv) return fromEnv;
 
-    const webEnv = (this.config.get<string>('WEB_ORIGIN')?.trim() || '').replace(/\/+$/, '');
+    const webEnv = (
+      this.config.get<string>('WEB_ORIGIN')?.trim() || ''
+    ).replace(/\/+$/, '');
     if (webEnv) return webEnv;
 
-    if (manifestWeb && !this.manifestUrlsLookUnreachableForGithub(manifestWeb)) {
+    if (
+      manifestWeb &&
+      !this.manifestUrlsLookUnreachableForGithub(manifestWeb)
+    ) {
       return manifestWeb.replace(/\/+$/, '');
     }
 
@@ -768,10 +855,7 @@ export class GitService implements OnModuleInit {
         'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
       );
     }
-    const appJwt = this.createGithubAppJwt(
-      appId,
-      privateKey,
-    );
+    const appJwt = this.createGithubAppJwt(appId, privateKey);
     const instTok = await this.githubInstallationAccessToken(
       params.installationId,
       appJwt,
@@ -801,13 +885,17 @@ export class GitService implements OnModuleInit {
     );
     const text = await res.text();
     if (!res.ok) {
-      if (res.status === 403 && /Resource not accessible by integration/i.test(text)) {
+      if (
+        res.status === 403 &&
+        /Resource not accessible by integration/i.test(text)
+      ) {
         throw new BadRequestException(
           'GitHub App cannot create repository webhooks for this repo. Grant repository permission "Webhooks: Read and write" to the app, ensure the app is installed on this repository, then re-install/refresh the app installation.',
         );
       }
       throw new BadRequestException(
-        text.trim().slice(0, 800) || `GitHub create hook failed (${res.status})`,
+        text.trim().slice(0, 800) ||
+          `GitHub create hook failed (${res.status})`,
       );
     }
     let data: Record<string, unknown>;
@@ -833,12 +921,11 @@ export class GitService implements OnModuleInit {
     try {
       const row = await this.githubAppCredentialsRow(userId);
       const appId = row.githubAppId?.trim();
-      const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+      const privateKey = this.decryptSecretOrPlain(
+        row.githubPrivateKey,
+      )?.trim();
       if (!appId || !privateKey) return;
-      const appJwt = this.createGithubAppJwt(
-        appId,
-        privateKey,
-      );
+      const appJwt = this.createGithubAppJwt(appId, privateKey);
       const instTok = await this.githubInstallationAccessToken(
         installationId,
         appJwt,
@@ -858,7 +945,8 @@ export class GitService implements OnModuleInit {
       if (!res.ok && res.status !== 404) {
         const text = await res.text();
         throw new BadRequestException(
-          text.trim().slice(0, 800) || `GitHub delete hook failed (${res.status})`,
+          text.trim().slice(0, 800) ||
+            `GitHub delete hook failed (${res.status})`,
         );
       }
     } catch {
@@ -877,14 +965,18 @@ export class GitService implements OnModuleInit {
     userId: number;
   }): Promise<number> {
     const row = await this.gitlabSettingsRow(params.userId);
-    const privateToken = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+    const privateToken = this.decryptSecretOrPlain(
+      row.gitlabGroupAccessToken,
+    )?.trim();
     if (!privateToken) {
       throw new BadRequestException(
         'GitLab token is not configured. Add it under Git → GitLab.',
       );
     }
     const base = await this.assertPublicHttpEndpoint(
-      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      this.normalizeGitlabWebBase(
+        row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+      ),
       'GitLab base URL',
     );
     const res = await fetch(
@@ -940,12 +1032,16 @@ export class GitService implements OnModuleInit {
     userId: number,
   ): Promise<void> {
     const row = await this.gitlabSettingsRow(userId);
-    const privateToken = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+    const privateToken = this.decryptSecretOrPlain(
+      row.gitlabGroupAccessToken,
+    )?.trim();
     if (!privateToken) {
       return;
     }
     const base = await this.assertPublicHttpEndpoint(
-      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      this.normalizeGitlabWebBase(
+        row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+      ),
       'GitLab base URL',
     );
     const res = await fetch(
@@ -958,7 +1054,8 @@ export class GitService implements OnModuleInit {
     if (!res.ok && res.status !== 404) {
       const text = await res.text();
       throw new BadRequestException(
-        text.trim().slice(0, 800) || `GitLab delete hook failed (${res.status})`,
+        text.trim().slice(0, 800) ||
+          `GitLab delete hook failed (${res.status})`,
       );
     }
   }
@@ -1037,7 +1134,9 @@ export class GitService implements OnModuleInit {
 
   // ─── GitHub App (installation token + repo list + clone) ─────────────────
 
-  private async githubAppCredentialsRow(userId: number): Promise<GitIntegrationSettings> {
+  private async githubAppCredentialsRow(
+    userId: number,
+  ): Promise<GitIntegrationSettings> {
     const row = await this.gitlabSettingsRow(userId);
     const appId = row.githubAppId?.trim();
     const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
@@ -1164,11 +1263,15 @@ export class GitService implements OnModuleInit {
     try {
       data = JSON.parse(text) as Record<string, unknown>;
     } catch {
-      throw new BadRequestException('Invalid JSON from GitHub (installation token)');
+      throw new BadRequestException(
+        'Invalid JSON from GitHub (installation token)',
+      );
     }
     const tok = data.token;
     if (typeof tok !== 'string' || !tok.trim()) {
-      throw new BadRequestException('GitHub did not return an installation token');
+      throw new BadRequestException(
+        'GitHub did not return an installation token',
+      );
     }
     return tok.trim();
   }
@@ -1179,7 +1282,9 @@ export class GitService implements OnModuleInit {
   ): string {
     const u = new URL(httpUrl);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-      throw new BadRequestException('Only http(s) Git clone URLs are supported');
+      throw new BadRequestException(
+        'Only http(s) Git clone URLs are supported',
+      );
     }
     u.username = 'x-access-token';
     u.password = token;
@@ -1202,10 +1307,7 @@ export class GitService implements OnModuleInit {
         'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
       );
     }
-    const appJwt = this.createGithubAppJwt(
-      appId,
-      privateKey,
-    );
+    const appJwt = this.createGithubAppJwt(appId, privateKey);
     const instTok = await this.githubInstallationAccessToken(
       installationId,
       appJwt,
@@ -1245,11 +1347,14 @@ export class GitService implements OnModuleInit {
   /**
    * Repositories across all installations of this GitHub App (paginated after merge + optional search).
    */
-  async listGithubRepositories(userId: number, params: {
-    page?: number;
-    perPage?: number;
-    search?: string;
-  }): Promise<{
+  async listGithubRepositories(
+    userId: number,
+    params: {
+      page?: number;
+      perPage?: number;
+      search?: string;
+    },
+  ): Promise<{
     repositories: GithubRepoListItem[];
     totalPages: number;
     page: number;
@@ -1262,10 +1367,7 @@ export class GitService implements OnModuleInit {
         'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
       );
     }
-    const appJwt = this.createGithubAppJwt(
-      appId,
-      privateKey,
-    );
+    const appJwt = this.createGithubAppJwt(appId, privateKey);
 
     const merged = new Map<number, GithubRepoListItem>();
 
@@ -1292,10 +1394,14 @@ export class GitService implements OnModuleInit {
       try {
         raw = JSON.parse(text);
       } catch {
-        throw new BadRequestException('Invalid JSON from GitHub (installations)');
+        throw new BadRequestException(
+          'Invalid JSON from GitHub (installations)',
+        );
       }
       if (!Array.isArray(raw)) {
-        throw new BadRequestException('Unexpected GitHub installations response');
+        throw new BadRequestException(
+          'Unexpected GitHub installations response',
+        );
       }
       for (const item of raw) {
         const o = item as Record<string, unknown>;
@@ -1363,7 +1469,10 @@ export class GitService implements OnModuleInit {
       list = list.filter((r) => r.full_name.toLowerCase().includes(q));
     }
 
-    const perPage = Math.min(100, Math.max(1, Math.floor(params.perPage ?? 20)));
+    const perPage = Math.min(
+      100,
+      Math.max(1, Math.floor(params.perPage ?? 20)),
+    );
     const page = Math.max(1, Math.floor(params.page ?? 1));
     const totalPages = Math.max(1, Math.ceil(list.length / perPage));
     const slice = list.slice((page - 1) * perPage, page * perPage);
@@ -1505,10 +1614,7 @@ export class GitService implements OnModuleInit {
       return pathPart;
     }
     const mount = cfgParsed.pathname.replace(/\/+$/, '').replace(/^\//, '');
-    if (
-      mount &&
-      pathPart.toLowerCase().startsWith(mount.toLowerCase() + '/')
-    ) {
+    if (mount && pathPart.toLowerCase().startsWith(mount.toLowerCase() + '/')) {
       pathPart = pathPart.slice(mount.length + 1);
     }
     return pathPart;
@@ -1576,7 +1682,9 @@ export class GitService implements OnModuleInit {
 
     if (options.gitlabProjectId != null && options.gitlabProjectId > 0) {
       const row = await this.gitlabSettingsRow(userId);
-      const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+      const token = this.decryptSecretOrPlain(
+        row.gitlabGroupAccessToken,
+      )?.trim();
       if (!token) {
         throw new BadRequestException(
           'GitLab access token is not configured. Add a group or personal access token in Git → GitLab.',
@@ -1587,9 +1695,14 @@ export class GitService implements OnModuleInit {
       );
       let ref = requestedBranch;
       if (!ref) {
-        const safeBase = await this.assertPublicHttpEndpoint(base, 'GitLab API base URL');
+        const safeBase = await this.assertPublicHttpEndpoint(
+          base,
+          'GitLab API base URL',
+        );
         const metaUrl = `${safeBase}/api/v4/projects/${encodeURIComponent(String(options.gitlabProjectId))}`;
-        const res = await fetch(metaUrl, { headers: this.gitlabJsonHeaders(token) });
+        const res = await fetch(metaUrl, {
+          headers: this.gitlabJsonHeaders(token),
+        });
         const text = await res.text();
         if (!res.ok) {
           throw new BadRequestException(
@@ -1598,7 +1711,9 @@ export class GitService implements OnModuleInit {
         }
         const data = JSON.parse(text) as Record<string, unknown>;
         ref =
-          typeof data.default_branch === 'string' ? data.default_branch : 'main';
+          typeof data.default_branch === 'string'
+            ? data.default_branch
+            : 'main';
       }
       return {
         v: 1,
@@ -1615,7 +1730,9 @@ export class GitService implements OnModuleInit {
     ) {
       const row = await this.githubAppCredentialsRow(userId);
       const appId = row.githubAppId?.trim();
-      const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+      const privateKey = this.decryptSecretOrPlain(
+        row.githubPrivateKey,
+      )?.trim();
       if (!appId || !privateKey) {
         throw new BadRequestException(
           'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
@@ -1643,7 +1760,9 @@ export class GitService implements OnModuleInit {
         }
         const data = JSON.parse(text) as Record<string, unknown>;
         ref =
-          typeof data.default_branch === 'string' ? data.default_branch : 'main';
+          typeof data.default_branch === 'string'
+            ? data.default_branch
+            : 'main';
       }
       return {
         v: 1,
@@ -1674,7 +1793,9 @@ export class GitService implements OnModuleInit {
         .split('/')
         .filter(Boolean);
       if (parts.length < 2) {
-        throw new BadRequestException('Could not parse owner/repo from GitHub URL');
+        throw new BadRequestException(
+          'Could not parse owner/repo from GitHub URL',
+        );
       }
       const owner = parts[0];
       const repo = parts[1];
@@ -1696,7 +1817,9 @@ export class GitService implements OnModuleInit {
         }
         const data = JSON.parse(text) as Record<string, unknown>;
         ref =
-          typeof data.default_branch === 'string' ? data.default_branch : 'main';
+          typeof data.default_branch === 'string'
+            ? data.default_branch
+            : 'main';
       }
       return {
         v: 1,
@@ -1721,7 +1844,9 @@ export class GitService implements OnModuleInit {
         );
       }
       const metaUrl = `${apiBase}/api/v4/projects/${encodeURIComponent(pathPart)}`;
-      const res = await fetch(metaUrl, { headers: this.gitlabJsonHeaders(token) });
+      const res = await fetch(metaUrl, {
+        headers: this.gitlabJsonHeaders(token),
+      });
       const text = await res.text();
       if (!res.ok) {
         throw new BadRequestException(
