@@ -244,11 +244,18 @@ export class RegistryService {
   async mergePushEnvForImageRef(
     imageRef: string,
     base: NodeJS.ProcessEnv,
+    userId: number | null,
   ): Promise<{ env: NodeJS.ProcessEnv; cleanup: () => Promise<void> }> {
+    if (!userId || userId < 1) {
+      return {
+        env: base,
+        cleanup: async () => {},
+      };
+    }
     const host = registryHostFromImageRef(imageRef);
     const normalized = normalizeProviderUrl(host);
     const account = await this.registryAccountRepository.findOne({
-      where: { providerUrl: normalized },
+      where: { providerUrl: normalized, userId },
     });
     if (!account) {
       return {
@@ -304,15 +311,19 @@ export class RegistryService {
    */
   async getRegistryAuthConfigForImageRef(
     imageRef: string,
+    userId: number | null,
   ): Promise<{
     username: string;
     password: string;
     serveraddress: string;
   } | null> {
+    if (!userId || userId < 1) {
+      return null;
+    }
     const host = registryHostFromImageRef(imageRef);
     const normalized = normalizeProviderUrl(host);
     const account = await this.registryAccountRepository.findOne({
-      where: { providerUrl: normalized },
+      where: { providerUrl: normalized, userId },
     });
     if (!account) {
       return null;

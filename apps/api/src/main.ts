@@ -11,7 +11,7 @@ import { assertProductionSecurityConfig } from './common/production-security';
 import { HttpErrorSanitizerFilter } from './common/http-error-sanitizer.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.useWebSocketAdapter(new WsAdapter(app));
   const configService = app.get(ConfigService);

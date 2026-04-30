@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createSign } from 'crypto';
+import { createHmac, createSign, timingSafeEqual } from 'crypto';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 import { GitIntegrationSettings } from './entities/git-integration.entity';
@@ -256,6 +256,36 @@ export class GitService implements OnModuleInit {
     const t = incoming.trim();
     if (t === '') return null;
     return this.encryptSecret(t);
+  }
+
+  async verifyGithubWebhookSignature(
+    signature256Header: string | undefined,
+    rawBody: Buffer | undefined,
+  ): Promise<boolean> {
+    const sig = (signature256Header ?? '').trim();
+    if (!sig.startsWith('sha256=') || !rawBody || rawBody.length === 0) {
+      return false;
+    }
+    const providedHex = sig.slice('sha256='.length).trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(providedHex)) {
+      return false;
+    }
+    const rows = await this.repo.find({
+      select: ['githubWebhookSecret'],
+      where: {},
+    });
+    for (const row of rows) {
+      const secret = this.decryptSecretOrPlain(row.githubWebhookSecret)?.trim();
+      if (!secret) continue;
+      const expectedHex = createHmac('sha256', secret).update(rawBody).digest('hex');
+      const expectedBuf = Buffer.from(expectedHex, 'utf8');
+      const providedBuf = Buffer.from(providedHex, 'utf8');
+      if (expectedBuf.length !== providedBuf.length) continue;
+      if (timingSafeEqual(expectedBuf, providedBuf)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async updateSettings(userId: number, dto: UpdateGitSettingsDto): Promise<GitSettingsPublic> {

@@ -271,7 +271,7 @@ fi
   ): Promise<NodeJS.ProcessEnv> {
     const base = await this.getBaseProcessEnvForService(service);
     const ids = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     return this.remoteServersService.mergeDockerHostEnvForDeployIds(
       base,
       ids.remoteServerId,
@@ -311,7 +311,7 @@ fi
   ) {
     const service = await this.servicesService.findOne(id);
     const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     const rawConfig = (service.dockerConfig || '').trim();
     if (!rawConfig) {
       if (service.composeType === composeType.DATABASES) {
@@ -524,7 +524,7 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
               }
               emitChunk(`Pushing image "${registryPush}" on remote host…\n`);
               const pushAuth =
-                await this.registryService.getRegistryAuthConfigForImageRef(registryPush);
+                await this.registryService.getRegistryAuthConfigForImageRef(registryPush, projectUserId);
               try {
                 const pushResult = await this.remoteServersService.pushImageUsingDockerodeSsh(
                   buildRemoteServerId,
@@ -678,7 +678,7 @@ fi
             if (registryPush?.trim()) {
               emitChunk(`Pushing image "${registryPush}" on deploy host…\n`);
               const pushAuth =
-                await this.registryService.getRegistryAuthConfigForImageRef(registryPush);
+                await this.registryService.getRegistryAuthConfigForImageRef(registryPush, projectUserId);
               const pushResult = await this.remoteServersService.pushImageUsingDockerodeSsh(
                 remoteDeployId,
                 {
@@ -706,6 +706,7 @@ fi
           const merged = await this.registryService.mergePushEnvForImageRef(
             authImageRef,
             execOpts.env,
+            projectUserId,
           );
           stackDeployEnv = merged.env;
           stackRegistryCleanup = merged.cleanup;
@@ -839,7 +840,7 @@ fi
   ): Promise<{ ok: boolean }> {
     const service = await this.servicesService.findOne(id);
     const sshTargets = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     const remoteId = sshTargets.remoteServerId;
     if (remoteId == null) {
       throw new BadRequestException(
@@ -888,6 +889,7 @@ fi
       const merged = await this.registryService.mergePushEnvForImageRef(
         authImageRef,
         execEnv,
+        projectUserId,
       );
       let localDockerConfigDir: string | undefined;
       const dockerCfg = merged.env.DOCKER_CONFIG;

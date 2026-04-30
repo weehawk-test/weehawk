@@ -46,8 +46,23 @@ export class GitController {
 
   @Post('github/webhook')
   @HttpCode(200)
-  @ApiOperation({ summary: 'GitHub App webhook receiver (placeholder)' })
-  githubWebhookPlaceholder() {
+  @ApiOperation({ summary: 'GitHub App webhook receiver (signed requests only)' })
+  async githubWebhookPlaceholder(
+    @Req()
+    req: ExpressRequest & {
+      headers: Record<string, string | string[] | undefined>;
+      rawBody?: Buffer;
+    },
+  ) {
+    const sig = req.headers['x-hub-signature-256'];
+    const signature = Array.isArray(sig) ? sig[0] : sig;
+    const verified = await this.gitService.verifyGithubWebhookSignature(
+      signature,
+      req.rawBody,
+    );
+    if (!verified) {
+      throw new UnauthorizedException('Invalid GitHub webhook signature');
+    }
     return { ok: true };
   }
 
