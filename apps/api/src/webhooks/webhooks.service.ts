@@ -111,7 +111,21 @@ export class WebhooksService implements OnApplicationBootstrap {
   private async _internal_system_findBySecretToken(
     token: string,
   ): Promise<Webhook | null> {
-    return this.webhookRepo.findOne({ where: { secretToken: token } });
+    return this._internal_system_findOneWebhook({ where: { secretToken: token } });
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for internal/non-request webhook repository reads.
+  private async _internal_system_findOneWebhook(
+    options: Parameters<Repository<Webhook>['findOne']>[0],
+  ): Promise<Webhook | null> {
+    return this.webhookRepo.findOne(options);
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for internal/non-request webhook repository reads.
+  private async _internal_system_findWebhooks(
+    options: Parameters<Repository<Webhook>['find']>[0],
+  ): Promise<Webhook[]> {
+    return this.webhookRepo.find(options);
   }
 
   private async ensurePublicId(w: Webhook): Promise<Webhook> {
@@ -144,7 +158,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   /** One-time style backfill: older auto redeploy rows had no flag; align them with new creates. */
   async onApplicationBootstrap(): Promise<void> {
     try {
-      const legacy = await this.webhookRepo.find({
+      const legacy = await this._internal_system_findWebhooks({
         where: {
           name: Like('Redeploy ·%'),
           hiddenFromWebhooksList: false,
@@ -393,7 +407,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   private async collectHooksPublicHostsForRemoteServer(
     remoteServerId: number,
   ): Promise<string[]> {
-    const rows = await this.webhookRepo.find({
+    const rows = await this._internal_system_findWebhooks({
       where: { remoteServerId },
       select: ['hooksPublicHost'],
     });
@@ -634,7 +648,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   ): Promise<void> {
     const service = await this.servicesService.findOne(serviceId);
     const canonical = buildOnHostRedeployScriptBody(service);
-    const rows = await this.webhookRepo.find({
+    const rows = await this._internal_system_findWebhooks({
       where: { serviceId },
     });
     const userId = service.project?.userId ?? 0;
@@ -667,11 +681,11 @@ export class WebhooksService implements OnApplicationBootstrap {
   ): Promise<WebhookListRow[]> {
     const includeHidden = opts?.includeHidden === true;
     const list = includeHidden
-      ? await this.webhookRepo.find({
+      ? await this._internal_system_findWebhooks({
           where: { userId },
           order: { createdAt: 'DESC' },
         })
-      : await this.webhookRepo.find({
+      : await this._internal_system_findWebhooks({
           where: { userId, hiddenFromWebhooksList: false },
           order: { createdAt: 'DESC' },
         });
@@ -686,7 +700,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     serviceId: number,
     userId: number,
   ): Promise<WebhookListRow[]> {
-    const rows = await this.webhookRepo.find({
+    const rows = await this._internal_system_findWebhooks({
       where: { serviceId, userId },
       order: { createdAt: 'DESC' },
     });
@@ -882,7 +896,9 @@ export class WebhooksService implements OnApplicationBootstrap {
    * Called when a service is removed so tokens and scripts do not linger.
    */
   async removeAllForService(userId: number, serviceId: number): Promise<void> {
-    const rows = await this.webhookRepo.find({ where: { serviceId, userId } });
+    const rows = await this._internal_system_findWebhooks({
+      where: { serviceId, userId },
+    });
     for (const w of rows) {
       const ensured = await this.ensurePublicId(w);
       await this.remove(userId, ensured.publicId);

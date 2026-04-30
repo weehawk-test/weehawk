@@ -8,6 +8,8 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHmac, createSign, timingSafeEqual } from 'crypto';
 import { promises as dns } from 'dns';
+import * as http from 'http';
+import * as https from 'https';
 import * as net from 'net';
 import * as path from 'path';
 import { Repository } from 'typeorm';
@@ -89,6 +91,131 @@ export class GitService implements OnModuleInit {
     @InjectRepository(GitIntegrationSettings)
     private readonly repo: Repository<GitIntegrationSettings>,
   ) {}
+
+  private static readonly REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
+
+  private static readonly SAFE_REDIRECT_CODES = new Set([307, 308]);
+
+  private static readonly EMPTY_BODY_STATUSES = new Set([204, 205, 304]);
+
+  private static readonly MAX_REDIRECTS = 5;
+
+  private static readonly NO_BODY_METHODS = new Set(['GET', 'HEAD']);
+
+  private normalizeHeaders(
+    headers?: Record<string, string>,
+  ): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers ?? {})) {
+      out[String(k).toLowerCase()] = String(v);
+    }
+    return out;
+  }
+
+  private async fetchPinnedWithValidation(
+    rawUrl: string,
+    options?: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      redirectLimit?: number;
+      label?: string;
+    },
+  ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+    const limit = Math.max(0, options?.redirectLimit ?? GitService.MAX_REDIRECTS);
+    let currentUrl = rawUrl;
+    let method = String(options?.method ?? 'GET').toUpperCase();
+    let body = options?.body;
+    let headers = this.normalizeHeaders(options?.headers);
+    const label = options?.label ?? 'URL';
+
+    for (let i = 0; i <= limit; i += 1) {
+      const endpoint = await this.assertPublicHttpEndpoint(currentUrl, label);
+      const res = await this.singlePinnedRequest(endpoint, {
+        method,
+        headers,
+        body,
+      });
+      if (!GitService.REDIRECT_CODES.has(res.status)) {
+        return res;
+      }
+      const location = res.headers['location']?.trim();
+      if (!location) return res;
+      if (i === limit) {
+        throw new BadRequestException(`${label} redirected too many times.`);
+      }
+      currentUrl = new URL(location, endpoint.url).toString();
+      if (!GitService.SAFE_REDIRECT_CODES.has(res.status) && method === 'POST') {
+        method = 'GET';
+        body = undefined;
+        delete headers['content-type'];
+        delete headers['content-length'];
+      }
+    }
+    throw new BadRequestException(`${label} redirect handling failed.`);
+  }
+
+  private async singlePinnedRequest(
+    endpoint: { url: string; hostname: string; ipAddress: string },
+    options: {
+      method: string;
+      headers: Record<string, string>;
+      body?: string;
+    },
+  ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+    const u = new URL(endpoint.url);
+    const isHttps = u.protocol === 'https:';
+    const requestFn = isHttps ? https.request : http.request;
+    const hasBody =
+      options.body != null &&
+      !GitService.NO_BODY_METHODS.has(options.method.toUpperCase());
+    const headers = { ...options.headers };
+    if (hasBody && headers['content-length'] == null) {
+      headers['content-length'] = String(Buffer.byteLength(options.body!, 'utf8'));
+    }
+    return await new Promise((resolve, reject) => {
+      const req = requestFn(
+        {
+          protocol: u.protocol,
+          hostname: endpoint.hostname,
+          port: u.port ? Number(u.port) : undefined,
+          method: options.method,
+          path: `${u.pathname}${u.search}`,
+          headers,
+          lookup: (hostname, _opts, cb) => {
+            if (hostname.toLowerCase() !== endpoint.hostname.toLowerCase()) {
+              cb(new Error(`Blocked DNS lookup host mismatch: ${hostname}`), '', 0);
+              return;
+            }
+            cb(null, endpoint.ipAddress, net.isIP(endpoint.ipAddress));
+          },
+          ...(isHttps ? { servername: endpoint.hostname } : {}),
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const hdrs: Record<string, string> = {};
+            for (const [k, v] of Object.entries(res.headers)) {
+              if (v == null) continue;
+              hdrs[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : String(v);
+            }
+            const allowBody = !GitService.EMPTY_BODY_STATUSES.has(
+              res.statusCode ?? 0,
+            );
+            resolve({
+              status: res.statusCode ?? 0,
+              headers: hdrs,
+              body: allowBody ? Buffer.concat(chunks).toString('utf8') : '',
+            });
+          });
+        },
+      );
+      req.on('error', reject);
+      if (hasBody) req.write(options.body!);
+      req.end();
+    });
+  }
 
   async onModuleInit(): Promise<void> {
     return;
@@ -254,16 +381,17 @@ export class GitService implements OnModuleInit {
     if (!appId || !pem) return;
     try {
       const appJwt = this.createGithubAppJwt(appId, pem);
-      const res = await fetch('https://api.github.com/app', {
+      const res = await this.fetchPinnedWithValidation('https://api.github.com/app', {
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
           Authorization: `Bearer ${appJwt}`,
           'User-Agent': 'weehawk-api',
         },
+        label: 'GitHub API URL',
       });
-      if (!res.ok) return;
-      const text = await res.text();
+      if (!(res.status >= 200 && res.status < 300)) return;
+      const text = res.body;
       let j: Record<string, unknown>;
       try {
         j = JSON.parse(text) as Record<string, unknown>;
@@ -293,7 +421,7 @@ export class GitService implements OnModuleInit {
   private async assertPublicHttpEndpoint(
     rawUrl: string,
     label: string,
-  ): Promise<string> {
+  ): Promise<{ url: string; hostname: string; ipAddress: string }> {
     let parsed: URL;
     try {
       parsed = new URL(rawUrl.trim());
@@ -313,7 +441,11 @@ export class GitService implements OnModuleInit {
           `${label} host must be publicly reachable.`,
         );
       }
-      return parsed.toString().replace(/\/+$/, '');
+      return {
+        url: parsed.toString().replace(/\/+$/, ''),
+        hostname: host,
+        ipAddress: host,
+      };
     }
     const v4 = await dns.resolve4(host).catch(() => [] as string[]);
     const v6 = await dns.resolve6(host).catch(() => [] as string[]);
@@ -333,7 +465,11 @@ export class GitService implements OnModuleInit {
         );
       }
     }
-    return parsed.toString().replace(/\/+$/, '');
+    return {
+      url: parsed.toString().replace(/\/+$/, ''),
+      hostname: host,
+      ipAddress: ips[0],
+    };
   }
 
   async verifyGithubWebhookSignature(
@@ -416,10 +552,9 @@ export class GitService implements OnModuleInit {
         row.gitlabBaseUrl = null;
       } else {
         const normalized = this.normalizeGitlabWebBase(v);
-        row.gitlabBaseUrl = await this.assertPublicHttpEndpoint(
-          normalized,
-          'GitLab base URL',
-        );
+        row.gitlabBaseUrl = (
+          await this.assertPublicHttpEndpoint(normalized, 'GitLab base URL')
+        ).url;
       }
     }
     if (dto.gitlabGroupAccessToken !== undefined) {
@@ -525,12 +660,14 @@ export class GitService implements OnModuleInit {
         'GitLab access token is not configured. Add a group or personal access token with read_api (and read_repository for private repos) in Git → GitLab.',
       );
     }
-    const base = await this.assertPublicHttpEndpoint(
+    const base = (
+      await this.assertPublicHttpEndpoint(
       this.normalizeGitlabWebBase(
         row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
       ),
       'GitLab base URL',
-    );
+      )
+    ).url;
     const page = Math.max(1, Math.floor(params.page ?? 1));
     const perPage = Math.min(
       100,
@@ -546,11 +683,12 @@ export class GitService implements OnModuleInit {
     url.searchParams.set('per_page', String(perPage));
     url.searchParams.set('page', String(page));
 
-    const res = await fetch(url, {
+    const res = await this.fetchPinnedWithValidation(url.toString(), {
       headers: { 'PRIVATE-TOKEN': token },
+      label: 'GitLab API URL',
     });
-    const text = await res.text();
-    if (!res.ok) {
+    const text = res.body;
+    if (!(res.status >= 200 && res.status < 300)) {
       throw new BadRequestException(
         text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
       );
@@ -564,7 +702,7 @@ export class GitService implements OnModuleInit {
     if (!Array.isArray(raw)) {
       throw new BadRequestException('Unexpected GitLab API response');
     }
-    const totalPagesRaw = res.headers.get('x-total-pages');
+    const totalPagesRaw = res.headers['x-total-pages'];
     const totalPages = Math.max(1, parseInt(totalPagesRaw || '1', 10) || 1);
     const projects: GitlabProjectListItem[] = raw
       .map((p) => {
@@ -595,12 +733,14 @@ export class GitService implements OnModuleInit {
         'GitLab access token is not configured. Add a token in Git → GitLab.',
       );
     }
-    const base = await this.assertPublicHttpEndpoint(
+    const base = (
+      await this.assertPublicHttpEndpoint(
       this.normalizeGitlabWebBase(
         row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
       ),
       'GitLab base URL',
-    );
+      )
+    ).url;
     const branches: string[] = [];
     const seen = new Set<string>();
     let page = 1;
@@ -611,11 +751,12 @@ export class GitService implements OnModuleInit {
       );
       url.searchParams.set('per_page', '100');
       url.searchParams.set('page', String(page));
-      const res = await fetch(url, {
+      const res = await this.fetchPinnedWithValidation(url.toString(), {
         headers: { 'PRIVATE-TOKEN': token },
+        label: 'GitLab API URL',
       });
-      const text = await res.text();
-      if (!res.ok) {
+      const text = res.body;
+      if (!(res.status >= 200 && res.status < 300)) {
         throw new BadRequestException(
           text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
         );
@@ -660,16 +801,21 @@ export class GitService implements OnModuleInit {
         'GitLab access token is not configured. Add a group or personal access token in Git → GitLab.',
       );
     }
-    const base = await this.assertPublicHttpEndpoint(
+    const base = (
+      await this.assertPublicHttpEndpoint(
       this.normalizeGitlabWebBase(
         row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
       ),
       'GitLab base URL',
-    );
+      )
+    ).url;
     const url = `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}`;
-    const res = await fetch(url, { headers: { 'PRIVATE-TOKEN': token } });
-    const text = await res.text();
-    if (!res.ok) {
+    const res = await this.fetchPinnedWithValidation(url, {
+      headers: { 'PRIVATE-TOKEN': token },
+      label: 'GitLab API URL',
+    });
+    const text = res.body;
+    if (!(res.status >= 200 && res.status < 300)) {
       throw new BadRequestException(
         text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
       );
@@ -711,7 +857,7 @@ export class GitService implements OnModuleInit {
         ),
         'GitLab base URL',
       );
-      return { apiBase: base, privateToken: token };
+      return { apiBase: base.url, privateToken: token };
     } catch (e) {
       if (e instanceof InternalServerErrorException) throw e;
       return null;
@@ -860,7 +1006,7 @@ export class GitService implements OnModuleInit {
       params.installationId,
       appJwt,
     );
-    const res = await fetch(
+    const res = await this.fetchPinnedWithValidation(
       `https://api.github.com/repos/${GitService.githubRepoApiPath(params.repoFullName)}/hooks`,
       {
         method: 'POST',
@@ -881,10 +1027,11 @@ export class GitService implements OnModuleInit {
             ...(params.secret ? { secret: params.secret } : {}),
           },
         }),
+        label: 'GitHub API URL',
       },
     );
-    const text = await res.text();
-    if (!res.ok) {
+    const text = res.body;
+    if (!(res.status >= 200 && res.status < 300)) {
       if (
         res.status === 403 &&
         /Resource not accessible by integration/i.test(text)
@@ -930,7 +1077,7 @@ export class GitService implements OnModuleInit {
         installationId,
         appJwt,
       );
-      const res = await fetch(
+      const res = await this.fetchPinnedWithValidation(
         `https://api.github.com/repos/${GitService.githubRepoApiPath(repoFullName)}/hooks/${encodeURIComponent(String(hookId))}`,
         {
           method: 'DELETE',
@@ -940,10 +1087,11 @@ export class GitService implements OnModuleInit {
             Authorization: `Bearer ${instTok}`,
             'User-Agent': 'weehawk-api',
           },
+          label: 'GitHub API URL',
         },
       );
-      if (!res.ok && res.status !== 404) {
-        const text = await res.text();
+      if (!(res.status >= 200 && res.status < 300) && res.status !== 404) {
+        const text = res.body;
         throw new BadRequestException(
           text.trim().slice(0, 800) ||
             `GitHub delete hook failed (${res.status})`,
@@ -973,13 +1121,15 @@ export class GitService implements OnModuleInit {
         'GitLab token is not configured. Add it under Git → GitLab.',
       );
     }
-    const base = await this.assertPublicHttpEndpoint(
+    const base = (
+      await this.assertPublicHttpEndpoint(
       this.normalizeGitlabWebBase(
         row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
       ),
       'GitLab base URL',
-    );
-    const res = await fetch(
+      )
+    ).url;
+    const res = await this.fetchPinnedWithValidation(
       `${base}/api/v4/projects/${encodeURIComponent(String(params.projectId))}/hooks`,
       {
         method: 'POST',
@@ -993,10 +1143,11 @@ export class GitService implements OnModuleInit {
           token: params.token,
           enable_ssl_verification: true,
         }),
+        label: 'GitLab API URL',
       },
     );
-    const text = await res.text();
-    if (!res.ok) {
+    const text = res.body;
+    if (!(res.status >= 200 && res.status < 300)) {
       const raw = text.trim().slice(0, 800);
       try {
         const errJson = JSON.parse(text) as { error?: string };
@@ -1038,21 +1189,24 @@ export class GitService implements OnModuleInit {
     if (!privateToken) {
       return;
     }
-    const base = await this.assertPublicHttpEndpoint(
+    const base = (
+      await this.assertPublicHttpEndpoint(
       this.normalizeGitlabWebBase(
         row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
       ),
       'GitLab base URL',
-    );
-    const res = await fetch(
+      )
+    ).url;
+    const res = await this.fetchPinnedWithValidation(
       `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/hooks/${encodeURIComponent(String(hookId))}`,
       {
         method: 'DELETE',
         headers: { 'PRIVATE-TOKEN': privateToken },
+        label: 'GitLab API URL',
       },
     );
-    if (!res.ok && res.status !== 404) {
-      const text = await res.text();
+    if (!(res.status >= 200 && res.status < 300) && res.status !== 404) {
+      const text = res.body;
       throw new BadRequestException(
         text.trim().slice(0, 800) ||
           `GitLab delete hook failed (${res.status})`,
@@ -1074,7 +1228,7 @@ export class GitService implements OnModuleInit {
       throw new BadRequestException('Missing manifest code');
     }
 
-    const res = await fetch(
+    const res = await this.fetchPinnedWithValidation(
       `https://api.github.com/app-manifests/${encodeURIComponent(trimmed)}/conversions`,
       {
         method: 'POST',
@@ -1082,11 +1236,12 @@ export class GitService implements OnModuleInit {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
         },
+        label: 'GitHub API URL',
       },
     );
 
-    const text = await res.text();
-    if (!res.ok) {
+    const text = res.body;
+    if (!(res.status >= 200 && res.status < 300)) {
       throw new BadRequestException(
         text.trim() || `GitHub manifest exchange failed (${res.status})`,
       );
@@ -1225,16 +1380,16 @@ export class GitService implements OnModuleInit {
     url: string,
     bearer: string,
   ): Promise<{ status: number; text: string }> {
-    const res = await fetch(url, {
+    const res = await this.fetchPinnedWithValidation(url, {
       headers: {
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         Authorization: `Bearer ${bearer}`,
         'User-Agent': 'weehawk-api',
       },
+      label: 'GitHub API URL',
     });
-    const text = await res.text();
-    return { status: res.status, text };
+    return { status: res.status, text: res.body };
   }
 
   private async githubInstallationAccessToken(
@@ -1242,7 +1397,7 @@ export class GitService implements OnModuleInit {
     appJwt: string,
   ): Promise<string> {
     const url = `https://api.github.com/app/installations/${encodeURIComponent(String(installationId))}/access_tokens`;
-    const res = await fetch(url, {
+    const res = await this.fetchPinnedWithValidation(url, {
       method: 'POST',
       headers: {
         Accept: 'application/vnd.github+json',
@@ -1252,9 +1407,10 @@ export class GitService implements OnModuleInit {
         'Content-Type': 'application/json',
       },
       body: '{}',
+      label: 'GitHub API URL',
     });
-    const text = await res.text();
-    if (!res.ok) {
+    const text = res.body;
+    if (!(res.status >= 200 && res.status < 300)) {
       throw new BadRequestException(
         text.trim().slice(0, 800) || `GitHub token error (${res.status})`,
       );
@@ -1375,16 +1531,17 @@ export class GitService implements OnModuleInit {
       'https://api.github.com/app/installations?per_page=100';
     const installationIds: number[] = [];
     while (instUrl) {
-      const res = await fetch(instUrl, {
+      const res = await this.fetchPinnedWithValidation(instUrl, {
         headers: {
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
           Authorization: `Bearer ${appJwt}`,
           'User-Agent': 'weehawk-api',
         },
+        label: 'GitHub API URL',
       });
-      const text = await res.text();
-      if (!res.ok) {
+      const text = res.body;
+      if (!(res.status >= 200 && res.status < 300)) {
         throw new BadRequestException(
           text.trim().slice(0, 800) ||
             `GitHub installations error (${res.status})`,
@@ -1408,7 +1565,7 @@ export class GitService implements OnModuleInit {
         const id = Number(o.id);
         if (id > 0) installationIds.push(id);
       }
-      instUrl = GitService.parseGithubNextUrl(res.headers.get('link'));
+      instUrl = GitService.parseGithubNextUrl(res.headers['link'] ?? null);
     }
 
     for (const iid of installationIds) {
@@ -1421,16 +1578,17 @@ export class GitService implements OnModuleInit {
       let repoUrl: string | null =
         'https://api.github.com/installation/repositories?per_page=100';
       while (repoUrl) {
-        const res = await fetch(repoUrl, {
+        const res = await this.fetchPinnedWithValidation(repoUrl, {
           headers: {
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
             Authorization: `Bearer ${instTok}`,
             'User-Agent': 'weehawk-api',
           },
+          label: 'GitHub API URL',
         });
-        const text = await res.text();
-        if (!res.ok) {
+        const text = res.body;
+        if (!(res.status >= 200 && res.status < 300)) {
           break;
         }
         let data: Record<string, unknown>;
@@ -1457,7 +1615,7 @@ export class GitService implements OnModuleInit {
             installation_id: iid,
           });
         }
-        repoUrl = GitService.parseGithubNextUrl(res.headers.get('link'));
+        repoUrl = GitService.parseGithubNextUrl(res.headers['link'] ?? null);
       }
     }
 
@@ -1699,12 +1857,13 @@ export class GitService implements OnModuleInit {
           base,
           'GitLab API base URL',
         );
-        const metaUrl = `${safeBase}/api/v4/projects/${encodeURIComponent(String(options.gitlabProjectId))}`;
-        const res = await fetch(metaUrl, {
+        const metaUrl = `${safeBase.url}/api/v4/projects/${encodeURIComponent(String(options.gitlabProjectId))}`;
+        const res = await this.fetchPinnedWithValidation(metaUrl, {
           headers: this.gitlabJsonHeaders(token),
+          label: 'GitLab API URL',
         });
-        const text = await res.text();
-        if (!res.ok) {
+        const text = res.body;
+        if (!(res.status >= 200 && res.status < 300)) {
           throw new BadRequestException(
             text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
           );
@@ -1802,15 +1961,16 @@ export class GitService implements OnModuleInit {
       let ref = requestedBranch;
       if (!ref) {
         const apiUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-        const res = await fetch(apiUrl, {
+        const res = await this.fetchPinnedWithValidation(apiUrl, {
           headers: {
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
             'User-Agent': 'weehawk-api',
           },
+          label: 'GitHub API URL',
         });
-        const text = await res.text();
-        if (!res.ok) {
+        const text = res.body;
+        if (!(res.status >= 200 && res.status < 300)) {
           throw new BadRequestException(
             text.trim().slice(0, 800) || `GitHub repo error (${res.status})`,
           );
@@ -1843,12 +2003,13 @@ export class GitService implements OnModuleInit {
           'GitLab access token is required to resolve the default branch for this URL.',
         );
       }
-      const metaUrl = `${apiBase}/api/v4/projects/${encodeURIComponent(pathPart)}`;
-      const res = await fetch(metaUrl, {
+      const metaUrl = `${apiBase.url}/api/v4/projects/${encodeURIComponent(pathPart)}`;
+      const res = await this.fetchPinnedWithValidation(metaUrl, {
         headers: this.gitlabJsonHeaders(token),
+        label: 'GitLab API URL',
       });
-      const text = await res.text();
-      if (!res.ok) {
+      const text = res.body;
+      if (!(res.status >= 200 && res.status < 300)) {
         throw new BadRequestException(
           text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
         );

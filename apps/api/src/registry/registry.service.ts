@@ -13,6 +13,8 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import * as net from 'net';
+import * as http from 'http';
+import * as https from 'https';
 import { promises as dns } from 'dns';
 import {
   encryptPrivateKey,
@@ -41,6 +43,136 @@ export class RegistryService {
     private readonly registryAccountRepository: Repository<RegistryAccount>,
     private readonly configService: ConfigService,
   ) {}
+
+  private static readonly REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
+
+  private static readonly MAX_REDIRECTS = 5;
+
+  private static readonly EMPTY_BODY_STATUSES = new Set([204, 205, 304]);
+
+  private static readonly SAFE_REDIRECT_STATUSES = new Set([307, 308]);
+
+  private static readonly NO_BODY_METHODS = new Set(['GET', 'HEAD']);
+
+  private static readonly JSON_HEADERS = {
+    'content-type': 'application/json',
+  };
+
+  private normalizeHeaders(
+    headers?: Record<string, string>,
+  ): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers ?? {})) {
+      out[String(k).toLowerCase()] = String(v);
+    }
+    return out;
+  }
+
+  private async requestWithPinnedIp(
+    urlRaw: string,
+    options?: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      redirectLimit?: number;
+    },
+  ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+    const limit = Math.max(0, options?.redirectLimit ?? RegistryService.MAX_REDIRECTS);
+    let currentUrl = urlRaw;
+    let method = String(options?.method ?? 'GET').toUpperCase();
+    let body = options?.body;
+    let headers = this.normalizeHeaders(options?.headers);
+
+    for (let i = 0; i <= limit; i += 1) {
+      const endpoint = await this.assertPublicRegistryEndpoint(currentUrl);
+      const res = await this.singlePinnedRequest(endpoint, {
+        method,
+        headers,
+        body,
+      });
+      if (!RegistryService.REDIRECT_CODES.has(res.status)) {
+        return res;
+      }
+      const location = res.headers['location']?.trim();
+      if (!location) return res;
+      if (i === limit) {
+        throw new BadRequestException('Too many redirects while contacting registry.');
+      }
+      currentUrl = new URL(location, endpoint.url).toString();
+      if (
+        !RegistryService.SAFE_REDIRECT_STATUSES.has(res.status) &&
+        method === 'POST'
+      ) {
+        method = 'GET';
+        body = undefined;
+        delete headers['content-type'];
+        delete headers['content-length'];
+      }
+    }
+    throw new BadRequestException('Redirect handling failed unexpectedly.');
+  }
+
+  private async singlePinnedRequest(
+    endpoint: { url: string; hostname: string; ipAddress: string },
+    options: {
+      method: string;
+      headers: Record<string, string>;
+      body?: string;
+    },
+  ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+    const u = new URL(endpoint.url);
+    const isHttps = u.protocol === 'https:';
+    const requestFn = isHttps ? https.request : http.request;
+    const hasBody =
+      options.body != null &&
+      !RegistryService.NO_BODY_METHODS.has(options.method.toUpperCase());
+    const headers = { ...options.headers };
+    if (hasBody && headers['content-length'] == null) {
+      headers['content-length'] = String(Buffer.byteLength(options.body!, 'utf8'));
+    }
+    return await new Promise((resolve, reject) => {
+      const req = requestFn(
+        {
+          protocol: u.protocol,
+          hostname: endpoint.hostname,
+          port: u.port ? Number(u.port) : undefined,
+          method: options.method,
+          path: `${u.pathname}${u.search}`,
+          headers,
+          lookup: (hostname, _opts, cb) => {
+            if (hostname.toLowerCase() !== endpoint.hostname.toLowerCase()) {
+              cb(new Error(`Blocked DNS lookup host mismatch: ${hostname}`), '', 0);
+              return;
+            }
+            cb(null, endpoint.ipAddress, net.isIP(endpoint.ipAddress));
+          },
+          ...(isHttps ? { servername: endpoint.hostname } : {}),
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const hdrs: Record<string, string> = {};
+            for (const [k, v] of Object.entries(res.headers)) {
+              if (v == null) continue;
+              hdrs[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : String(v);
+            }
+            const allowBody = !RegistryService.EMPTY_BODY_STATUSES.has(
+              res.statusCode ?? 0,
+            );
+            resolve({
+              status: res.statusCode ?? 0,
+              headers: hdrs,
+              body: allowBody ? Buffer.concat(chunks).toString('utf8') : '',
+            });
+          });
+        },
+      );
+      req.on('error', reject);
+      if (hasBody) req.write(options.body!);
+      req.end();
+    });
+  }
 
   private assertNonEmpty(value: string, label: string): string {
     const trimmed = value?.trim();
@@ -157,7 +289,9 @@ export class RegistryService {
     return false;
   }
 
-  private async assertPublicRegistryEndpoint(origin: string): Promise<string> {
+  private async assertPublicRegistryEndpoint(
+    origin: string,
+  ): Promise<{ url: string; hostname: string; ipAddress: string }> {
     let host = '';
     let parsed: URL;
     try {
@@ -188,7 +322,11 @@ export class RegistryService {
           'Registry provider host must not be loopback/private/link-local.',
         );
       }
-      return host;
+      return {
+        url: parsed.toString(),
+        hostname: host,
+        ipAddress: host,
+      };
     }
     const v4 = await dns.resolve4(host).catch(() => [] as string[]);
     const v6 = await dns.resolve6(host).catch(() => [] as string[]);
@@ -210,7 +348,11 @@ export class RegistryService {
         );
       }
     }
-    return host;
+    return {
+      url: parsed.toString(),
+      hostname: host,
+      ipAddress: ips[0],
+    };
   }
 
   private async assertRegistryCredentialsValid(
@@ -219,37 +361,43 @@ export class RegistryService {
     password: string,
   ): Promise<void> {
     const origin = this.registryV2Origin(providerUrl);
-    const registryHost = await this.assertPublicRegistryEndpoint(origin);
+    const registryEndpoint = await this.assertPublicRegistryEndpoint(origin);
+    const registryHost = registryEndpoint.hostname;
     const basicAuth = Buffer.from(`${username}:${password}`, 'utf8').toString(
       'base64',
     );
     const basicHeaders = { Authorization: `Basic ${basicAuth}` };
 
-    const readBody = async (res: Response, max = 800): Promise<string> =>
-      (await res.text()).trim().slice(0, max);
+    const readBody = (
+      res: { body: string },
+      max = 800,
+    ): string => (res.body ?? '').trim().slice(0, max);
 
-    const throwUnauthorized = async (res: Response, fallback: string) => {
-      const t = await readBody(res);
+    const throwUnauthorized = async (
+      res: { body: string; status: number },
+      fallback: string,
+    ) => {
+      const t = readBody(res);
       throw new UnauthorizedException(
         t || `${fallback} (${res.status}) for ${origin}`,
       );
     };
 
     // 1) Anonymous ping (Docker/GitLab/GHCR return 401 + Bearer challenge for /v2/)
-    let res = await fetch(`${origin}/v2/`, { method: 'GET' });
-    if (res.ok) {
+    let res = await this.requestWithPinnedIp(`${origin}/v2/`, { method: 'GET' });
+    if (res.status >= 200 && res.status < 300) {
       // Registry allows anonymous /v2/ — still verify supplied credentials.
-      res = await fetch(`${origin}/v2/`, {
+      res = await this.requestWithPinnedIp(`${origin}/v2/`, {
         method: 'GET',
         headers: basicHeaders,
       });
-      if (res.ok) return;
+      if (res.status >= 200 && res.status < 300) return;
       await throwUnauthorized(res, 'Registry rejected credentials');
     }
 
     if (res.status === 401) {
       const challenge = this.parseDockerRegistryBearerChallenge(
-        res.headers.get('www-authenticate'),
+        res.headers['www-authenticate'] ?? null,
       );
       if (challenge?.realm) {
         const tokenUrl = this.buildDockerRegistryTokenUrl(
@@ -258,19 +406,21 @@ export class RegistryService {
           username,
         );
         await this.assertPublicRegistryEndpoint(tokenUrl);
-        const tokenRes = await fetch(tokenUrl, { headers: basicHeaders });
-        if (tokenRes.ok) {
-          const j = (await tokenRes.json()) as {
+        const tokenRes = await this.requestWithPinnedIp(tokenUrl, {
+          headers: basicHeaders,
+        });
+        if (tokenRes.status >= 200 && tokenRes.status < 300) {
+          const j = JSON.parse(tokenRes.body) as {
             token?: string;
             access_token?: string;
           };
           const bearer = (j.token ?? j.access_token)?.trim();
           if (bearer) {
-            res = await fetch(`${origin}/v2/`, {
+            res = await this.requestWithPinnedIp(`${origin}/v2/`, {
               method: 'GET',
               headers: { Authorization: `Bearer ${bearer}` },
             });
-            if (res.ok) return;
+            if (res.status >= 200 && res.status < 300) return;
           }
         } else if (tokenRes.status === 401 || tokenRes.status === 403) {
           await throwUnauthorized(
@@ -282,11 +432,11 @@ export class RegistryService {
     }
 
     // 2) Legacy: Basic auth directly on /v2/
-    res = await fetch(`${origin}/v2/`, {
+    res = await this.requestWithPinnedIp(`${origin}/v2/`, {
       method: 'GET',
       headers: basicHeaders,
     });
-    if (res.ok) return;
+    if (res.status >= 200 && res.status < 300) return;
 
     if (res.status === 401 || res.status === 403) {
       await throwUnauthorized(res, 'Registry rejected credentials');
