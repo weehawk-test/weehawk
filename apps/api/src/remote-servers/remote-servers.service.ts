@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -244,6 +245,7 @@ function normalizeDomainsJsonInput(raw: string | undefined): string | null {
 
 @Injectable()
 export class RemoteServersService {
+  private readonly logger = new Logger(RemoteServersService.name);
   /**
    * Serialize Swarm webhook-agent deploys per remote server so concurrent API calls
    * do not race on `docker service rm` / `docker service create` (AlreadyExists).
@@ -1083,13 +1085,21 @@ rm -rf ${inDirQ}
           await new Promise((r) => setTimeout(r, 1200 * attempt));
           continue;
         }
+        this.logger.error(
+          `Remote docker secret remove failed (server #${remoteServerId}, secret="${name}").`,
+          e instanceof Error ? e.stack : String(e),
+        );
         throw new InternalServerErrorException(
-          `Could not remove remote secret ${name}: ${msg}`,
+          'Docker operation failed on remote host',
         );
       }
     }
+    this.logger.error(
+      `Remote docker secret remove retries exhausted (server #${remoteServerId}, secret="${name}")`,
+      lastErr,
+    );
     throw new InternalServerErrorException(
-      `Could not remove remote secret ${name}: ${lastErr}`,
+      'Docker operation failed on remote host',
     );
   }
 
@@ -2602,11 +2612,14 @@ done
           if (code === 0) {
             resolve();
           } else {
+            const stderrSafe = stderr.trim().slice(0, 2000);
+            this.logger.error(
+              `Remote docker secret create failed (exit=${code}, secret="${secretName}").`,
+              stderrSafe || '(no stderr)',
+            );
             reject(
               new InternalServerErrorException(
-                stderr.trim()
-                  ? `Remote docker secret create failed: ${stderr.trim().slice(0, 2000)}`
-                  : `Remote docker secret create failed (exit ${code})`,
+                'Docker operation failed on remote host',
               ),
             );
           }
@@ -3251,9 +3264,12 @@ curl -fsS -o /dev/null "$U"
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
-      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.error(
+        `Remote Docker console operation failed (host #${id}).`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `Remote Docker console (host #${id}): ${msg}`,
+        'Docker operation failed on remote host',
       );
     }
   }
@@ -3380,9 +3396,12 @@ curl -fsS -o /dev/null "$U"
           },
         );
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.error(
+          `Remote Docker build failed to start (host #${remoteServerId}).`,
+          e instanceof Error ? e.stack : String(e),
+        );
         throw new InternalServerErrorException(
-          `Remote Docker build (host #${remoteServerId}) failed to start: ${msg}`,
+          'Docker operation failed on remote host',
         );
       }
       try {
@@ -3391,8 +3410,12 @@ curl -fsS -o /dev/null "$U"
           stream,
         );
         if (streamError) {
+          this.logger.error(
+            `Remote Docker build stream reported failure (host #${remoteServerId}).`,
+            `${streamError}\n${text}`.trim(),
+          );
           throw new InternalServerErrorException(
-            `Docker build failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+            'Docker operation failed on remote host',
           );
         }
         return { output: text.trim() || '(build finished with no log output)' };
@@ -3403,9 +3426,12 @@ curl -fsS -o /dev/null "$U"
         ) {
           throw e;
         }
-        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.error(
+          `Remote Docker build failed (host #${remoteServerId}).`,
+          e instanceof Error ? e.stack : String(e),
+        );
         throw new InternalServerErrorException(
-          `Docker build failed on remote host #${remoteServerId}: ${msg}`,
+          'Docker operation failed on remote host',
         );
       }
     } finally {
@@ -3446,9 +3472,12 @@ curl -fsS -o /dev/null "$U"
       try {
         stream = await image.push(opts);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.error(
+          `Remote Docker push failed to start (host #${remoteServerId}, image="${params.imageRef}").`,
+          e instanceof Error ? e.stack : String(e),
+        );
         throw new InternalServerErrorException(
-          `Remote Docker push (host #${remoteServerId}) failed to start: ${msg}`,
+          'Docker operation failed on remote host',
         );
       }
       try {
@@ -3457,8 +3486,12 @@ curl -fsS -o /dev/null "$U"
           stream,
         );
         if (streamError) {
+          this.logger.error(
+            `Remote Docker push stream reported failure (host #${remoteServerId}, image="${params.imageRef}").`,
+            `${streamError}\n${text}`.trim(),
+          );
           throw new InternalServerErrorException(
-            `Docker registry push failed on remote host #${remoteServerId}:\n${streamError}\n\n${text}`,
+            'Docker operation failed on remote host',
           );
         }
         return { output: text.trim() || '(push finished with no log output)' };
@@ -3469,9 +3502,12 @@ curl -fsS -o /dev/null "$U"
         ) {
           throw e;
         }
-        const msg = e instanceof Error ? e.message : String(e);
+        this.logger.error(
+          `Remote Docker push failed (host #${remoteServerId}, image="${params.imageRef}").`,
+          e instanceof Error ? e.stack : String(e),
+        );
         throw new InternalServerErrorException(
-          `Docker registry push failed on remote host #${remoteServerId}: ${msg}`,
+          'Docker operation failed on remote host',
         );
       }
     } finally {
@@ -3845,12 +3881,13 @@ curl -fsS -o /dev/null "$U"
           if (code === 0) {
             resolve({ stdout, stderr });
           } else {
+            const stderrSafe = stderr.trim().slice(0, 4000);
+            this.logger.error(
+              `Remote command failed (exit=${code}) in execSshBashScriptCollectOutputOnClient.`,
+              stderrSafe || '(no stderr)',
+            );
             reject(
-              new InternalServerErrorException(
-                stderr.trim()
-                  ? `Remote command failed (exit ${code}): ${stderr.trim().slice(0, 4000)}`
-                  : `Remote command exited with code ${code}`,
-              ),
+              new InternalServerErrorException('Remote command failed'),
             );
           }
         });
@@ -3887,12 +3924,13 @@ curl -fsS -o /dev/null "$U"
           if (code === 0) {
             resolve({ stdout, stderr });
           } else {
+            const stderrSafe = stderr.trim().slice(0, 2000);
+            this.logger.error(
+              `Remote command failed (exit=${code}) in sshExecCollectOutput.`,
+              stderrSafe || '(no stderr)',
+            );
             reject(
-              new InternalServerErrorException(
-                stderr.trim()
-                  ? `Remote command failed (exit ${code}): ${stderr.trim().slice(0, 2000)}`
-                  : `Remote command exited with code ${code}`,
-              ),
+              new InternalServerErrorException('Remote command failed'),
             );
           }
         });
@@ -3948,12 +3986,13 @@ curl -fsS -o /dev/null "$U"
               stderr,
             });
           } else {
+            const stderrSafe = stderr.trim().slice(0, 4000);
+            this.logger.error(
+              `Remote command failed (exit=${code}) in execSshBashScriptCollectOutputBinaryStdoutOnClient.`,
+              stderrSafe || '(no stderr)',
+            );
             reject(
-              new InternalServerErrorException(
-                stderr.trim()
-                  ? `Remote command failed (exit ${code}): ${stderr.trim().slice(0, 4000)}`
-                  : `Remote command exited with code ${code}`,
-              ),
+              new InternalServerErrorException('Remote command failed'),
             );
           }
         });
@@ -4054,9 +4093,12 @@ curl -fsS -o /dev/null "$U"
     try {
       return generateEd25519SshKeyPair();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.error(
+        'SSH key generation failed.',
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `Could not generate SSH keys: ${msg}`,
+        'Could not generate SSH keys',
       );
     }
   }

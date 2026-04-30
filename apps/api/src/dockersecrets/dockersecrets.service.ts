@@ -1,6 +1,7 @@
 import {
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -29,6 +30,8 @@ export interface PaginatedSecretsDto {
 
 @Injectable()
 export class DockerSecretsService {
+  private readonly logger = new Logger(DockerSecretsService.name);
+
   constructor(private readonly remoteServersService: RemoteServersService) {}
 
   async create(
@@ -59,9 +62,12 @@ export class DockerSecretsService {
         .filter(Boolean)
         .map((line) => JSON.parse(line));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.error(
+        `Could not list secrets on remote #${remoteServerId}.`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `Could not list secrets on remote #${remoteServerId}: ${msg}`,
+        'Could not retrieve secrets from remote server',
       );
     }
   }

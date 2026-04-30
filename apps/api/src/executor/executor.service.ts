@@ -3,6 +3,7 @@ import {
   HttpException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   forwardRef,
   Inject,
@@ -118,6 +119,8 @@ fi
 
 @Injectable()
 export class ExecutorService {
+  private readonly logger = new Logger(ExecutorService.name);
+
   constructor(
     @Inject(forwardRef(() => ServicesService))
     private readonly servicesService: ServicesService,
@@ -1777,8 +1780,12 @@ ${script}
       if (error instanceof BadRequestException) {
         throw error;
       }
+      this.logger.error(
+        'Shutdown failed.',
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new InternalServerErrorException(
-        `Shutdown failed: ${error.message}`,
+        'Shutdown failed',
       );
     }
   }
