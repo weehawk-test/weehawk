@@ -146,12 +146,12 @@ export class GitService implements OnModuleInit {
     let body = options?.body;
     let headers = this.normalizeHeaders(options?.headers);
     const label = options?.label ?? 'URL';
-    let originalHostname: string | null = null;
+    let originalOrigin: string | null = null;
 
     for (let i = 0; i <= limit; i += 1) {
       const endpoint = await this.assertPublicHttpEndpoint(currentUrl, label);
-      if (!originalHostname) {
-        originalHostname = endpoint.hostname.toLowerCase();
+      if (!originalOrigin) {
+        originalOrigin = new URL(endpoint.url).origin;
       }
       const res = await this.singlePinnedRequest(endpoint, {
         method,
@@ -168,11 +168,8 @@ export class GitService implements OnModuleInit {
       }
       const redirectedUrl = new URL(location, endpoint.url);
       currentUrl = redirectedUrl.toString();
-      const redirectedHostname = redirectedUrl.hostname.toLowerCase();
-      if (
-        originalHostname != null &&
-        redirectedHostname !== originalHostname
-      ) {
+      const redirectedOrigin = redirectedUrl.origin;
+      if (originalOrigin != null && redirectedOrigin !== originalOrigin) {
         headers = this.stripSensitiveForwardHeaders(headers);
       }
       if (!GitService.SAFE_REDIRECT_CODES.has(res.status) && method === 'POST') {

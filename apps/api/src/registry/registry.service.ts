@@ -108,12 +108,12 @@ export class RegistryService {
     let method = String(options?.method ?? 'GET').toUpperCase();
     let body = options?.body;
     let headers = this.normalizeHeaders(options?.headers);
-    let originalHostname: string | null = null;
+    let originalOrigin: string | null = null;
 
     for (let i = 0; i <= limit; i += 1) {
       const endpoint = await this.assertPublicRegistryEndpoint(currentUrl);
-      if (!originalHostname) {
-        originalHostname = endpoint.hostname.toLowerCase();
+      if (!originalOrigin) {
+        originalOrigin = new URL(endpoint.url).origin;
       }
       const res = await this.singlePinnedRequest(endpoint, {
         method,
@@ -130,11 +130,8 @@ export class RegistryService {
       }
       const redirectedUrl = new URL(location, endpoint.url);
       currentUrl = redirectedUrl.toString();
-      const redirectedHostname = redirectedUrl.hostname.toLowerCase();
-      if (
-        originalHostname != null &&
-        redirectedHostname !== originalHostname
-      ) {
+      const redirectedOrigin = redirectedUrl.origin;
+      if (originalOrigin != null && redirectedOrigin !== originalOrigin) {
         headers = this.stripSensitiveForwardHeaders(headers);
       }
       if (

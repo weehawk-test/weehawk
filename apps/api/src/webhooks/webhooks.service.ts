@@ -51,7 +51,6 @@ export type WebhookListRow = {
   notifyOnTrigger: boolean;
   createdAt: string;
   summary: string;
-  secretToken: string;
   remoteTriggerUrl: string | null;
   /** Traefik hostname for the Swarm webhook agent when configured. */
   hooksPublicHost: string | null;
@@ -63,7 +62,6 @@ export type WebhookDetailRow = WebhookListRow & {
   bashScript: string | null;
   notifyChannelId: number | null;
   notifyMessage: string | null;
-  secretToken: string;
   /** When script runs on a remote server: URL for the on-host agent at that server’s public host. */
   remoteTriggerUrl: string | null;
 };
@@ -462,7 +460,6 @@ export class WebhooksService implements OnApplicationBootstrap {
       notifyOnTrigger: w.notifyOnTrigger,
       createdAt: w.createdAt.toISOString(),
       summary: this.summaryLabel(),
-      secretToken: w.secretToken,
       hooksPublicHost: w.hooksPublicHost ?? null,
       remoteTriggerUrlScheme: this.normalizeRemoteTriggerUrlScheme(
         w.remoteTriggerUrlScheme,
