@@ -2,12 +2,13 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHmac, createSign, timingSafeEqual } from 'crypto';
-import { promises as dns } from 'dns';
+import { lookup as dnsLookup, promises as dns } from 'dns';
 import * as http from 'http';
 import * as https from 'https';
 import * as net from 'net';
@@ -86,6 +87,8 @@ export type GithubRepoListItem = {
 
 @Injectable()
 export class GitService implements OnModuleInit {
+  private readonly logger = new Logger(GitService.name);
+
   constructor(
     private readonly config: ConfigService,
     @InjectRepository(GitIntegrationSettings)
@@ -109,6 +112,50 @@ export class GitService implements OnModuleInit {
     'x-auth-token',
     'cookie',
   ]);
+
+  /**
+   * Convert unexpected runtime/network failures into safe client-facing errors.
+   * This avoids leaking stack/internal details and prevents generic 500s in UI flows.
+   */
+  private toExternalApiException(
+    provider: 'GitHub' | 'GitLab',
+    error: unknown,
+    fallback: string,
+  ): BadRequestException {
+    if (error instanceof BadRequestException) return error;
+    const errObj = error as { name?: unknown; message?: unknown; code?: unknown };
+    this.logger.error(
+      `${provider} external API failure`,
+      JSON.stringify({
+        name:
+          typeof errObj?.name === 'string' ? errObj.name : typeof error,
+        code:
+          typeof errObj?.code === 'string' || typeof errObj?.code === 'number'
+            ? String(errObj.code)
+            : undefined,
+        message:
+          typeof errObj?.message === 'string'
+            ? errObj.message.slice(0, 500)
+            : undefined,
+      }),
+    );
+    const message =
+      error instanceof Error ? error.message.trim() : '';
+    const low = message.toLowerCase();
+    if (
+      low.includes('timed out') ||
+      low.includes('timeout') ||
+      low.includes('econnreset') ||
+      low.includes('econnrefused') ||
+      low.includes('enotfound') ||
+      low.includes('eai_again')
+    ) {
+      return new BadRequestException(
+        `${provider} is temporarily unreachable. Check network/DNS and try again.`,
+      );
+    }
+    return new BadRequestException(fallback);
+  }
 
   private normalizeHeaders(
     headers?: Record<string, string>,
@@ -191,7 +238,12 @@ export class GitService implements OnModuleInit {
   }
 
   private async singlePinnedRequest(
-    endpoint: { url: string; hostname: string; ipAddress: string },
+    endpoint: {
+      url: string;
+      hostname: string;
+      ipAddress: string;
+      ipAddresses?: string[];
+    },
     options: {
       method: string;
       headers: Record<string, string>;
@@ -217,13 +269,6 @@ export class GitService implements OnModuleInit {
           method: options.method,
           path: `${u.pathname}${u.search}`,
           headers,
-          lookup: (hostname, _opts, cb) => {
-            if (hostname.toLowerCase() !== endpoint.hostname.toLowerCase()) {
-              cb(new Error(`Blocked DNS lookup host mismatch: ${hostname}`), '', 0);
-              return;
-            }
-            cb(null, endpoint.ipAddress, net.isIP(endpoint.ipAddress));
-          },
           ...(isHttps ? { servername: endpoint.hostname } : {}),
         },
         (res) => {
@@ -233,7 +278,9 @@ export class GitService implements OnModuleInit {
             const hdrs: Record<string, string> = {};
             for (const [k, v] of Object.entries(res.headers)) {
               if (v == null) continue;
-              hdrs[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : String(v);
+              hdrs[k.toLowerCase()] = Array.isArray(v)
+                ? v.join(', ')
+                : String(v);
             }
             const allowBody = !GitService.EMPTY_BODY_STATUSES.has(
               res.statusCode ?? 0,
@@ -365,8 +412,27 @@ export class GitService implements OnModuleInit {
       gitlabApplicationSecret: null,
       gitlabGroupAccessToken: null,
     });
-    const saved = await this.repo.save(row);
-    return this.migrateRowSecrets(saved);
+    try {
+      const saved = await this.repo.save(row);
+      return this.migrateRowSecrets(saved);
+    } catch (error) {
+      /**
+       * Concurrent first-use requests (e.g. rapid callback retries) can race on the unique
+       * user row and trigger a duplicate-key error. In that case re-read and continue.
+       */
+      const code =
+        typeof error === 'object' &&
+        error != null &&
+        'code' in error &&
+        typeof (error as { code?: unknown }).code === 'string'
+          ? (error as { code: string }).code
+          : '';
+      if (code === '23505') {
+        const existing = await this.repo.findOne({ where: { userId } });
+        if (existing) return this.migrateRowSecrets(existing);
+      }
+      throw error;
+    }
   }
 
   private toPublic(row: GitIntegrationSettings): GitSettingsPublic {
@@ -456,7 +522,12 @@ export class GitService implements OnModuleInit {
   private async assertPublicHttpEndpoint(
     rawUrl: string,
     label: string,
-  ): Promise<{ url: string; hostname: string; ipAddress: string }> {
+  ): Promise<{
+    url: string;
+    hostname: string;
+    ipAddress: string;
+    ipAddresses?: string[];
+  }> {
     let parsed: URL;
     try {
       parsed = new URL(rawUrl.trim());
@@ -480,11 +551,14 @@ export class GitService implements OnModuleInit {
         url: parsed.toString().replace(/\/+$/, ''),
         hostname: host,
         ipAddress: host,
+        ipAddresses: [host],
       };
     }
     const v4 = await dns.resolve4(host).catch(() => [] as string[]);
     const v6 = await dns.resolve6(host).catch(() => [] as string[]);
-    const ips = [...new Set([...v4, ...v6])];
+    const ips = [...new Set([...v4, ...v6])]
+      .map((ip) => String(ip).trim())
+      .filter((ip) => net.isIP(ip) !== 0);
     if (ips.length === 0) {
       throw new BadRequestException(`${label} host could not be resolved.`);
     }
@@ -504,6 +578,7 @@ export class GitService implements OnModuleInit {
       url: parsed.toString().replace(/\/+$/, ''),
       hostname: host,
       ipAddress: ips[0],
+      ipAddresses: ips,
     };
   }
 
@@ -688,104 +763,37 @@ export class GitService implements OnModuleInit {
     totalPages: number;
     page: number;
   }> {
-    const row = await this.gitlabSettingsRow(userId);
-    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
-    if (!token) {
-      throw new BadRequestException(
-        'GitLab access token is not configured. Add a group or personal access token with read_api (and read_repository for private repos) in Git → GitLab.',
-      );
-    }
-    const base = (
-      await this.assertPublicHttpEndpoint(
-      this.normalizeGitlabWebBase(
-        row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
-      ),
-      'GitLab base URL',
-      )
-    ).url;
-    const page = Math.max(1, Math.floor(params.page ?? 1));
-    const perPage = Math.min(
-      100,
-      Math.max(1, Math.floor(params.perPage ?? 20)),
-    );
-    const url = new URL(`${base}/api/v4/projects`);
-    url.searchParams.set('membership', 'true');
-    url.searchParams.set('order_by', 'last_activity_at');
-    url.searchParams.set('sort', 'desc');
-    if (params.search?.trim()) {
-      url.searchParams.set('search', params.search.trim());
-    }
-    url.searchParams.set('per_page', String(perPage));
-    url.searchParams.set('page', String(page));
-
-    const res = await this.fetchPinnedWithValidation(url.toString(), {
-      headers: { 'PRIVATE-TOKEN': token },
-      label: 'GitLab API URL',
-    });
-    const text = res.body;
-    if (!(res.status >= 200 && res.status < 300)) {
-      throw new BadRequestException(
-        text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
-      );
-    }
-    let raw: unknown;
     try {
-      raw = JSON.parse(text);
-    } catch {
-      throw new BadRequestException('Invalid JSON from GitLab');
-    }
-    if (!Array.isArray(raw)) {
-      throw new BadRequestException('Unexpected GitLab API response');
-    }
-    const totalPagesRaw = res.headers['x-total-pages'];
-    const totalPages = Math.max(1, parseInt(totalPagesRaw || '1', 10) || 1);
-    const projects: GitlabProjectListItem[] = raw
-      .map((p) => {
-        const o = p as Record<string, unknown>;
-        return {
-          id: Number(o.id),
-          name: String(o.name ?? ''),
-          path_with_namespace: String(o.path_with_namespace ?? ''),
-          http_url_to_repo: String(o.http_url_to_repo ?? ''),
-          default_branch:
-            typeof o.default_branch === 'string' ? o.default_branch : null,
-        };
-      })
-      .filter((p) => p.id > 0 && p.http_url_to_repo.length > 0);
-
-    return { projects, totalPages, page };
-  }
-
-  /** Branch names for a GitLab project (`GET .../repository/branches`), paginated. */
-  async listGitlabBranchNames(
-    userId: number,
-    projectId: number,
-  ): Promise<{ branches: string[] }> {
-    const row = await this.gitlabSettingsRow(userId);
-    const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
-    if (!token) {
-      throw new BadRequestException(
-        'GitLab access token is not configured. Add a token in Git → GitLab.',
+      const row = await this.gitlabSettingsRow(userId);
+      const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+      if (!token) {
+        throw new BadRequestException(
+          'GitLab access token is not configured. Add a group or personal access token with read_api (and read_repository for private repos) in Git → GitLab.',
+        );
+      }
+      const base = (
+        await this.assertPublicHttpEndpoint(
+          this.normalizeGitlabWebBase(
+            row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+          ),
+          'GitLab base URL',
+        )
+      ).url;
+      const page = Math.max(1, Math.floor(params.page ?? 1));
+      const perPage = Math.min(
+        100,
+        Math.max(1, Math.floor(params.perPage ?? 20)),
       );
-    }
-    const base = (
-      await this.assertPublicHttpEndpoint(
-      this.normalizeGitlabWebBase(
-        row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
-      ),
-      'GitLab base URL',
-      )
-    ).url;
-    const branches: string[] = [];
-    const seen = new Set<string>();
-    let page = 1;
-    const maxPages = 30;
-    for (; page <= maxPages; page += 1) {
-      const url = new URL(
-        `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/repository/branches`,
-      );
-      url.searchParams.set('per_page', '100');
+      const url = new URL(`${base}/api/v4/projects`);
+      url.searchParams.set('membership', 'true');
+      url.searchParams.set('order_by', 'last_activity_at');
+      url.searchParams.set('sort', 'desc');
+      if (params.search?.trim()) {
+        url.searchParams.set('search', params.search.trim());
+      }
+      url.searchParams.set('per_page', String(perPage));
       url.searchParams.set('page', String(page));
+
       const res = await this.fetchPinnedWithValidation(url.toString(), {
         headers: { 'PRIVATE-TOKEN': token },
         label: 'GitLab API URL',
@@ -800,25 +808,108 @@ export class GitService implements OnModuleInit {
       try {
         raw = JSON.parse(text);
       } catch {
-        throw new BadRequestException('Invalid JSON from GitLab (branches)');
+        throw new BadRequestException('Invalid JSON from GitLab');
       }
-      if (!Array.isArray(raw) || raw.length === 0) {
-        break;
+      if (!Array.isArray(raw)) {
+        throw new BadRequestException('Unexpected GitLab API response');
       }
-      for (const item of raw) {
-        const o = item as Record<string, unknown>;
-        const name = typeof o.name === 'string' ? o.name.trim() : '';
-        if (name && !seen.has(name)) {
-          seen.add(name);
-          branches.push(name);
+      const totalPagesRaw = res.headers['x-total-pages'];
+      const totalPages = Math.max(1, parseInt(totalPagesRaw || '1', 10) || 1);
+      const projects: GitlabProjectListItem[] = raw
+        .map((p) => {
+          const o = p as Record<string, unknown>;
+          return {
+            id: Number(o.id),
+            name: String(o.name ?? ''),
+            path_with_namespace: String(o.path_with_namespace ?? ''),
+            http_url_to_repo: String(o.http_url_to_repo ?? ''),
+            default_branch:
+              typeof o.default_branch === 'string' ? o.default_branch : null,
+          };
+        })
+        .filter((p) => p.id > 0 && p.http_url_to_repo.length > 0);
+
+      return { projects, totalPages, page };
+    } catch (error) {
+      throw this.toExternalApiException(
+        'GitLab',
+        error,
+        'Unable to fetch GitLab projects right now. Verify Git settings and try again.',
+      );
+    }
+  }
+
+  /** Branch names for a GitLab project (`GET .../repository/branches`), paginated. */
+  async listGitlabBranchNames(
+    userId: number,
+    projectId: number,
+  ): Promise<{ branches: string[] }> {
+    try {
+      const row = await this.gitlabSettingsRow(userId);
+      const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
+      if (!token) {
+        throw new BadRequestException(
+          'GitLab access token is not configured. Add a token in Git → GitLab.',
+        );
+      }
+      const base = (
+        await this.assertPublicHttpEndpoint(
+          this.normalizeGitlabWebBase(
+            row.gitlabBaseUrl?.trim() || 'https://gitlab.com',
+          ),
+          'GitLab base URL',
+        )
+      ).url;
+      const branches: string[] = [];
+      const seen = new Set<string>();
+      let page = 1;
+      const maxPages = 30;
+      for (; page <= maxPages; page += 1) {
+        const url = new URL(
+          `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/repository/branches`,
+        );
+        url.searchParams.set('per_page', '100');
+        url.searchParams.set('page', String(page));
+        const res = await this.fetchPinnedWithValidation(url.toString(), {
+          headers: { 'PRIVATE-TOKEN': token },
+          label: 'GitLab API URL',
+        });
+        const text = res.body;
+        if (!(res.status >= 200 && res.status < 300)) {
+          throw new BadRequestException(
+            text.trim().slice(0, 800) || `GitLab API error (${res.status})`,
+          );
+        }
+        let raw: unknown;
+        try {
+          raw = JSON.parse(text);
+        } catch {
+          throw new BadRequestException('Invalid JSON from GitLab (branches)');
+        }
+        if (!Array.isArray(raw) || raw.length === 0) {
+          break;
+        }
+        for (const item of raw) {
+          const o = item as Record<string, unknown>;
+          const name = typeof o.name === 'string' ? o.name.trim() : '';
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            branches.push(name);
+          }
+        }
+        if (raw.length < 100) {
+          break;
         }
       }
-      if (raw.length < 100) {
-        break;
-      }
+      branches.sort((a, b) => a.localeCompare(b, 'en'));
+      return { branches };
+    } catch (error) {
+      throw this.toExternalApiException(
+        'GitLab',
+        error,
+        'Unable to fetch GitLab branches right now. Verify Git settings and try again.',
+      );
     }
-    branches.sort((a, b) => a.localeCompare(b, 'en'));
-    return { branches };
   }
 
   /** Resolve clone URL and default branch for a GitLab project id (API). */
@@ -1257,69 +1348,79 @@ export class GitService implements OnModuleInit {
     userId: number,
     code: string,
   ): Promise<GitSettingsPublic> {
-    const uid = this.requireIntegrationUserId(userId);
-    const trimmed = code?.trim();
-    if (!trimmed) {
-      throw new BadRequestException('Missing manifest code');
-    }
+    try {
+      const uid = this.requireIntegrationUserId(userId);
+      const trimmed = code?.trim();
+      if (!trimmed) {
+        throw new BadRequestException('Missing manifest code');
+      }
 
-    const res = await this.fetchPinnedWithValidation(
-      `https://api.github.com/app-manifests/${encodeURIComponent(trimmed)}/conversions`,
-      {
-        method: 'POST',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
+      const res = await this.fetchPinnedWithValidation(
+        `https://api.github.com/app-manifests/${encodeURIComponent(trimmed)}/conversions`,
+        {
+          method: 'POST',
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'weehawk-api',
+          },
+          label: 'GitHub API URL',
         },
-        label: 'GitHub API URL',
-      },
-    );
+      );
 
-    const text = res.body;
-    if (!(res.status >= 200 && res.status < 300)) {
-      throw new BadRequestException(
-        text.trim() || `GitHub manifest exchange failed (${res.status})`,
+      const text = res.body;
+      if (!(res.status >= 200 && res.status < 300)) {
+        throw new BadRequestException(
+          text.trim().slice(0, 800) ||
+            `GitHub manifest exchange failed (${res.status})`,
+        );
+      }
+
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        throw new BadRequestException('Invalid JSON from GitHub');
+      }
+
+      const id = data['id'];
+      const clientId = data['client_id'];
+      const clientSecret = data['client_secret'];
+      const pem = data['pem'];
+      const webhookSecret = data['webhook_secret'];
+
+      const row = await this.settingsRowForUser(uid);
+
+      if (typeof id === 'number' || typeof id === 'string') {
+        row.githubAppId = String(id);
+      }
+      if (typeof clientId === 'string' && clientId.trim()) {
+        row.githubClientId = clientId.trim();
+      }
+      const slugRaw = data['slug'];
+      if (typeof slugRaw === 'string' && slugRaw.trim()) {
+        row.githubAppSlug = slugRaw.trim();
+      }
+      if (typeof clientSecret === 'string' && clientSecret.trim()) {
+        row.githubClientSecret = this.encryptSecret(clientSecret.trim());
+      }
+      if (typeof pem === 'string' && pem.trim()) {
+        row.githubPrivateKey = this.encryptSecret(pem.trim());
+      }
+      if (typeof webhookSecret === 'string' && webhookSecret.trim()) {
+        row.githubWebhookSecret = this.encryptSecret(webhookSecret.trim());
+      }
+
+      await this.repo.save(row);
+      await this.refreshGithubAppSlugIfNeeded(row);
+      return this.toPublic(row);
+    } catch (error) {
+      throw this.toExternalApiException(
+        'GitHub',
+        error,
+        'Unable to complete GitHub App setup right now. Please retry and verify GitHub connectivity/settings.',
       );
     }
-
-    let data: Record<string, unknown>;
-    try {
-      data = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      throw new BadRequestException('Invalid JSON from GitHub');
-    }
-
-    const id = data['id'];
-    const clientId = data['client_id'];
-    const clientSecret = data['client_secret'];
-    const pem = data['pem'];
-    const webhookSecret = data['webhook_secret'];
-
-    const row = await this.settingsRowForUser(uid);
-
-    if (typeof id === 'number' || typeof id === 'string') {
-      row.githubAppId = String(id);
-    }
-    if (typeof clientId === 'string' && clientId.trim()) {
-      row.githubClientId = clientId.trim();
-    }
-    const slugRaw = data['slug'];
-    if (typeof slugRaw === 'string' && slugRaw.trim()) {
-      row.githubAppSlug = slugRaw.trim();
-    }
-    if (typeof clientSecret === 'string' && clientSecret.trim()) {
-      row.githubClientSecret = this.encryptSecret(clientSecret.trim());
-    }
-    if (typeof pem === 'string' && pem.trim()) {
-      row.githubPrivateKey = this.encryptSecret(pem.trim());
-    }
-    if (typeof webhookSecret === 'string' && webhookSecret.trim()) {
-      row.githubWebhookSecret = this.encryptSecret(webhookSecret.trim());
-    }
-
-    await this.repo.save(row);
-    await this.refreshGithubAppSlugIfNeeded(row);
-    return this.toPublic(row);
   }
 
   // ─── GitHub App (installation token + repo list + clone) ─────────────────
@@ -1550,127 +1651,135 @@ export class GitService implements OnModuleInit {
     totalPages: number;
     page: number;
   }> {
-    const row = await this.githubAppCredentialsRow(userId);
-    const appId = row.githubAppId?.trim();
-    const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
-    if (!appId || !privateKey) {
-      throw new BadRequestException(
-        'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
-      );
-    }
-    const appJwt = this.createGithubAppJwt(appId, privateKey);
-
-    const merged = new Map<number, GithubRepoListItem>();
-
-    let instUrl: string | null =
-      'https://api.github.com/app/installations?per_page=100';
-    const installationIds: number[] = [];
-    while (instUrl) {
-      const res = await this.fetchPinnedWithValidation(instUrl, {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-          Authorization: `Bearer ${appJwt}`,
-          'User-Agent': 'weehawk-api',
-        },
-        label: 'GitHub API URL',
-      });
-      const text = res.body;
-      if (!(res.status >= 200 && res.status < 300)) {
+    try {
+      const row = await this.githubAppCredentialsRow(userId);
+      const appId = row.githubAppId?.trim();
+      const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+      if (!appId || !privateKey) {
         throw new BadRequestException(
-          text.trim().slice(0, 800) ||
-            `GitHub installations error (${res.status})`,
+          'GitHub App is not configured. Register the app under Git → GitHub (App ID and private key required).',
         );
       }
-      let raw: unknown;
-      try {
-        raw = JSON.parse(text);
-      } catch {
-        throw new BadRequestException(
-          'Invalid JSON from GitHub (installations)',
-        );
-      }
-      if (!Array.isArray(raw)) {
-        throw new BadRequestException(
-          'Unexpected GitHub installations response',
-        );
-      }
-      for (const item of raw) {
-        const o = item as Record<string, unknown>;
-        const id = Number(o.id);
-        if (id > 0) installationIds.push(id);
-      }
-      instUrl = GitService.parseGithubNextUrl(res.headers['link'] ?? null);
-    }
+      const appJwt = this.createGithubAppJwt(appId, privateKey);
 
-    for (const iid of installationIds) {
-      let instTok: string;
-      try {
-        instTok = await this.githubInstallationAccessToken(iid, appJwt);
-      } catch {
-        continue;
-      }
-      let repoUrl: string | null =
-        'https://api.github.com/installation/repositories?per_page=100';
-      while (repoUrl) {
-        const res = await this.fetchPinnedWithValidation(repoUrl, {
+      const merged = new Map<number, GithubRepoListItem>();
+
+      let instUrl: string | null =
+        'https://api.github.com/app/installations?per_page=100';
+      const installationIds: number[] = [];
+      while (instUrl) {
+        const res = await this.fetchPinnedWithValidation(instUrl, {
           headers: {
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
-            Authorization: `Bearer ${instTok}`,
+            Authorization: `Bearer ${appJwt}`,
             'User-Agent': 'weehawk-api',
           },
           label: 'GitHub API URL',
         });
         const text = res.body;
         if (!(res.status >= 200 && res.status < 300)) {
-          break;
+          throw new BadRequestException(
+            text.trim().slice(0, 800) ||
+              `GitHub installations error (${res.status})`,
+          );
         }
-        let data: Record<string, unknown>;
+        let raw: unknown;
         try {
-          data = JSON.parse(text) as Record<string, unknown>;
+          raw = JSON.parse(text);
         } catch {
-          break;
+          throw new BadRequestException(
+            'Invalid JSON from GitHub (installations)',
+          );
         }
-        const repos = data.repositories;
-        if (!Array.isArray(repos)) break;
-        for (const r of repos) {
-          const o = r as Record<string, unknown>;
+        if (!Array.isArray(raw)) {
+          throw new BadRequestException(
+            'Unexpected GitHub installations response',
+          );
+        }
+        for (const item of raw) {
+          const o = item as Record<string, unknown>;
           const id = Number(o.id);
-          const full_name = String(o.full_name ?? '').trim();
-          const clone_url = String(o.clone_url ?? '').trim();
-          if (id <= 0 || !full_name || !clone_url) continue;
-          merged.set(id, {
-            id,
-            full_name,
-            clone_url,
-            default_branch:
-              typeof o.default_branch === 'string' ? o.default_branch : null,
-            private: o.private === true,
-            installation_id: iid,
-          });
+          if (id > 0) installationIds.push(id);
         }
-        repoUrl = GitService.parseGithubNextUrl(res.headers['link'] ?? null);
+        instUrl = GitService.parseGithubNextUrl(res.headers['link'] ?? null);
       }
+
+      for (const iid of installationIds) {
+        let instTok: string;
+        try {
+          instTok = await this.githubInstallationAccessToken(iid, appJwt);
+        } catch {
+          continue;
+        }
+        let repoUrl: string | null =
+          'https://api.github.com/installation/repositories?per_page=100';
+        while (repoUrl) {
+          const res = await this.fetchPinnedWithValidation(repoUrl, {
+            headers: {
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+              Authorization: `Bearer ${instTok}`,
+              'User-Agent': 'weehawk-api',
+            },
+            label: 'GitHub API URL',
+          });
+          const text = res.body;
+          if (!(res.status >= 200 && res.status < 300)) {
+            break;
+          }
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(text) as Record<string, unknown>;
+          } catch {
+            break;
+          }
+          const repos = data.repositories;
+          if (!Array.isArray(repos)) break;
+          for (const r of repos) {
+            const o = r as Record<string, unknown>;
+            const id = Number(o.id);
+            const full_name = String(o.full_name ?? '').trim();
+            const clone_url = String(o.clone_url ?? '').trim();
+            if (id <= 0 || !full_name || !clone_url) continue;
+            merged.set(id, {
+              id,
+              full_name,
+              clone_url,
+              default_branch:
+                typeof o.default_branch === 'string' ? o.default_branch : null,
+              private: o.private === true,
+              installation_id: iid,
+            });
+          }
+          repoUrl = GitService.parseGithubNextUrl(res.headers['link'] ?? null);
+        }
+      }
+
+      let list = [...merged.values()].sort((a, b) =>
+        a.full_name.localeCompare(b.full_name, 'en'),
+      );
+      const q = params.search?.trim().toLowerCase();
+      if (q) {
+        list = list.filter((r) => r.full_name.toLowerCase().includes(q));
+      }
+
+      const perPage = Math.min(
+        100,
+        Math.max(1, Math.floor(params.perPage ?? 20)),
+      );
+      const page = Math.max(1, Math.floor(params.page ?? 1));
+      const totalPages = Math.max(1, Math.ceil(list.length / perPage));
+      const slice = list.slice((page - 1) * perPage, page * perPage);
+
+      return { repositories: slice, totalPages, page };
+    } catch (error) {
+      throw this.toExternalApiException(
+        'GitHub',
+        error,
+        'Unable to fetch GitHub repositories right now. Verify GitHub app settings and try again.',
+      );
     }
-
-    let list = [...merged.values()].sort((a, b) =>
-      a.full_name.localeCompare(b.full_name, 'en'),
-    );
-    const q = params.search?.trim().toLowerCase();
-    if (q) {
-      list = list.filter((r) => r.full_name.toLowerCase().includes(q));
-    }
-
-    const perPage = Math.min(
-      100,
-      Math.max(1, Math.floor(params.perPage ?? 20)),
-    );
-    const page = Math.max(1, Math.floor(params.page ?? 1));
-    const totalPages = Math.max(1, Math.ceil(list.length / perPage));
-    const slice = list.slice((page - 1) * perPage, page * perPage);
-
-    return { repositories: slice, totalPages, page };
   }
 
   /** Branch names for a GitHub repo using an installation access token. */
@@ -1679,60 +1788,68 @@ export class GitService implements OnModuleInit {
     installationId: number,
     fullName: string,
   ): Promise<{ branches: string[] }> {
-    const fn = fullName.trim();
-    if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(fn)) {
-      throw new BadRequestException(
-        'repo must look like owner/name (letters, numbers, ._-).',
-      );
-    }
-    const row = await this.githubAppCredentialsRow(userId);
-    const appId = row.githubAppId?.trim();
-    const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
-    if (!appId || !privateKey) {
-      throw new BadRequestException(
-        'GitHub App is not configured. Register the app under Git → GitHub.',
-      );
-    }
-    const appJwt = this.createGithubAppJwt(appId, privateKey);
-    const instTok = await this.githubInstallationAccessToken(
-      installationId,
-      appJwt,
-    );
-    const branches: string[] = [];
-    const seen = new Set<string>();
-    let page = 1;
-    const maxPages = 30;
-    for (; page <= maxPages; page += 1) {
-      const apiUrl = `https://api.github.com/repos/${GitService.githubRepoApiPath(fn)}/branches?per_page=100&page=${page}`;
-      const { status, text } = await this.githubFetchJson(apiUrl, instTok);
-      if (!status.toString().startsWith('2')) {
+    try {
+      const fn = fullName.trim();
+      if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(fn)) {
         throw new BadRequestException(
-          text.trim().slice(0, 800) || `GitHub branches error (${status})`,
+          'repo must look like owner/name (letters, numbers, ._-).',
         );
       }
-      let raw: unknown;
-      try {
-        raw = JSON.parse(text);
-      } catch {
-        throw new BadRequestException('Invalid JSON from GitHub (branches)');
+      const row = await this.githubAppCredentialsRow(userId);
+      const appId = row.githubAppId?.trim();
+      const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
+      if (!appId || !privateKey) {
+        throw new BadRequestException(
+          'GitHub App is not configured. Register the app under Git → GitHub.',
+        );
       }
-      if (!Array.isArray(raw) || raw.length === 0) {
-        break;
-      }
-      for (const item of raw) {
-        const o = item as Record<string, unknown>;
-        const name = typeof o.name === 'string' ? o.name.trim() : '';
-        if (name && !seen.has(name)) {
-          seen.add(name);
-          branches.push(name);
+      const appJwt = this.createGithubAppJwt(appId, privateKey);
+      const instTok = await this.githubInstallationAccessToken(
+        installationId,
+        appJwt,
+      );
+      const branches: string[] = [];
+      const seen = new Set<string>();
+      let page = 1;
+      const maxPages = 30;
+      for (; page <= maxPages; page += 1) {
+        const apiUrl = `https://api.github.com/repos/${GitService.githubRepoApiPath(fn)}/branches?per_page=100&page=${page}`;
+        const { status, text } = await this.githubFetchJson(apiUrl, instTok);
+        if (!status.toString().startsWith('2')) {
+          throw new BadRequestException(
+            text.trim().slice(0, 800) || `GitHub branches error (${status})`,
+          );
+        }
+        let raw: unknown;
+        try {
+          raw = JSON.parse(text);
+        } catch {
+          throw new BadRequestException('Invalid JSON from GitHub (branches)');
+        }
+        if (!Array.isArray(raw) || raw.length === 0) {
+          break;
+        }
+        for (const item of raw) {
+          const o = item as Record<string, unknown>;
+          const name = typeof o.name === 'string' ? o.name.trim() : '';
+          if (name && !seen.has(name)) {
+            seen.add(name);
+            branches.push(name);
+          }
+        }
+        if (raw.length < 100) {
+          break;
         }
       }
-      if (raw.length < 100) {
-        break;
-      }
+      branches.sort((a, b) => a.localeCompare(b, 'en'));
+      return { branches };
+    } catch (error) {
+      throw this.toExternalApiException(
+        'GitHub',
+        error,
+        'Unable to fetch GitHub branches right now. Verify GitHub app settings and try again.',
+      );
     }
-    branches.sort((a, b) => a.localeCompare(b, 'en'));
-    return { branches };
   }
 
   /** Web UI base (may include subpath, e.g. https://company.com/gitlab). */

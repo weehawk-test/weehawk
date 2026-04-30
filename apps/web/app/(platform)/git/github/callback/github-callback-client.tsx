@@ -30,16 +30,26 @@ export function GithubCallbackClient() {
     }
     if (!accessToken) return;
 
+    const dedupeKey = `github_manifest_exchange:${code.trim()}`;
+    if (typeof window !== "undefined" && sessionStorage.getItem(dedupeKey) === "1") {
+      ran.current = true;
+      setStatus("ok");
+      router.replace("/git/github");
+      return;
+    }
+
     ran.current = true;
     setStatus("working");
 
     void (async () => {
       try {
+        if (typeof window !== "undefined") sessionStorage.setItem(dedupeKey, "1");
         await exchangeGithubManifest(accessToken, code.trim());
         setStatus("ok");
         toast({ title: "GitHub App connected", description: "Credentials were saved to Weehawk." });
         router.replace("/git/github");
       } catch (e) {
+        if (typeof window !== "undefined") sessionStorage.removeItem(dedupeKey);
         setStatus("error");
         const msg = e instanceof Error ? e.message : String(e);
         setMessage(msg);
