@@ -57,7 +57,6 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     if (req.method === 'OPTIONS') return next();
 
     const path = normalizePath(req);
-    if (path.includes('/oauth2/')) return next();
     if (EXCLUDED_PREFIXES.some((prefix) => path.startsWith(prefix))) return next();
 
     const expectedApiKey =

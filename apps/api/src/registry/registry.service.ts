@@ -13,6 +13,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import * as net from 'net';
+import { promises as dns } from 'dns';
 import { encryptPrivateKey, decryptPrivateKey } from '../remote-servers/ssh-key-crypto';
 import { RegistryAccount } from './entities/registry-account.entity';
 import type { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
@@ -20,6 +21,7 @@ import {
   normalizeProviderUrl,
   registryHostFromImageRef,
 } from './registry-host-from-image';
+import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
 
 export type RegistryAccountSafe = {
   id: number;
@@ -87,15 +89,44 @@ export class RegistryService {
 
   private buildDockerRegistryTokenUrl(
     challenge: Record<string, string>,
+    registryHost: string,
     username: string,
   ): string {
     const realm = challenge.realm;
-    const u = new URL(realm);
+    let u: URL;
+    try {
+      u = new URL(realm);
+    } catch {
+      throw new BadRequestException('Registry token endpoint is invalid.');
+    }
+    if (u.protocol !== 'https:') {
+      throw new BadRequestException('Registry token endpoint must use HTTPS.');
+    }
+    const realmHost = u.hostname.trim().toLowerCase();
+    if (!this.isAllowedTokenRealmHost(registryHost, realmHost)) {
+      throw new BadRequestException(
+        'Registry token endpoint host is not allowed for this provider.',
+      );
+    }
     if (challenge.service) u.searchParams.set('service', challenge.service);
     if (challenge.scope) u.searchParams.set('scope', challenge.scope);
     const acc = username.trim();
     if (acc) u.searchParams.set('account', acc);
     return u.toString();
+  }
+
+  private isAllowedTokenRealmHost(
+    registryHost: string,
+    realmHost: string,
+  ): boolean {
+    const r = registryHost.trim().toLowerCase();
+    const t = realmHost.trim().toLowerCase();
+    if (!r || !t) return false;
+    if (r === t) return true;
+    if (t.endsWith(`.${r}`)) return true;
+    // Docker Hub uses registry-1.docker.io for /v2/ and auth.docker.io for token minting.
+    if (r === 'registry-1.docker.io' && t === 'auth.docker.io') return true;
+    return false;
   }
 
   private isPrivateOrReservedIp(host: string): boolean {
@@ -122,15 +153,20 @@ export class RegistryService {
     return false;
   }
 
-  private assertPublicRegistryEndpoint(origin: string): void {
+  private async assertPublicRegistryEndpoint(origin: string): Promise<string> {
     let host = '';
+    let parsed: URL;
     try {
-      host = new URL(origin).hostname.trim().toLowerCase();
+      parsed = new URL(origin);
+      host = parsed.hostname.trim().toLowerCase();
     } catch {
       throw new BadRequestException('Invalid registry provider URL.');
     }
     if (!host) {
       throw new BadRequestException('Invalid registry provider URL.');
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new BadRequestException('Registry provider URL must use HTTPS.');
     }
     if (host === 'localhost') {
       throw new BadRequestException('Registry provider host must be publicly reachable.');
@@ -138,6 +174,27 @@ export class RegistryService {
     if (this.isPrivateOrReservedIp(host)) {
       throw new BadRequestException('Registry provider host must not be loopback/private/link-local.');
     }
+    if (net.isIP(host) !== 0) {
+      if (isRemoteSshIpBlocked(host)) {
+        throw new BadRequestException('Registry provider host must not be loopback/private/link-local.');
+      }
+      return host;
+    }
+    const v4 = await dns.resolve4(host).catch(() => [] as string[]);
+    const v6 = await dns.resolve6(host).catch(() => [] as string[]);
+    const ips = [...new Set([...v4, ...v6])];
+    if (ips.length === 0) {
+      throw new BadRequestException('Registry provider host could not be resolved.');
+    }
+    if (ips.length > 32) {
+      throw new BadRequestException('Registry provider host resolves to too many addresses.');
+    }
+    for (const ip of ips) {
+      if (isRemoteSshIpBlocked(ip)) {
+        throw new BadRequestException('Registry provider host must resolve only to public addresses.');
+      }
+    }
+    return host;
   }
 
   private async assertRegistryCredentialsValid(
@@ -146,7 +203,7 @@ export class RegistryService {
     password: string,
   ): Promise<void> {
     const origin = this.registryV2Origin(providerUrl);
-    this.assertPublicRegistryEndpoint(origin);
+    const registryHost = await this.assertPublicRegistryEndpoint(origin);
     const basicAuth = Buffer.from(`${username}:${password}`, 'utf8').toString(
       'base64',
     );
@@ -176,7 +233,12 @@ export class RegistryService {
         res.headers.get('www-authenticate'),
       );
       if (challenge?.realm) {
-        const tokenUrl = this.buildDockerRegistryTokenUrl(challenge, username);
+        const tokenUrl = this.buildDockerRegistryTokenUrl(
+          challenge,
+          registryHost,
+          username,
+        );
+        await this.assertPublicRegistryEndpoint(tokenUrl);
         const tokenRes = await fetch(tokenUrl, { headers: basicHeaders });
         if (tokenRes.ok) {
           const j = (await tokenRes.json()) as {
