@@ -45,7 +45,7 @@ export function isPublicHooksTriggerPath(pathname: string | undefined): boolean 
 
 export function isPublicWebhookHostAllowed(
   hostHeader: string | undefined,
-  opts: { allowAnyHost: boolean; allowLoopback: boolean },
+  opts: { allowAnyHost: boolean; allowLoopback: boolean; allowedHosts?: string[] },
 ): boolean {
   if (opts.allowAnyHost) {
     return true;
@@ -60,5 +60,11 @@ export function isPublicWebhookHostAllowed(
   ) {
     return true;
   }
-  return true;
+  const allowed = (opts.allowedHosts ?? [])
+    .map((h) => hostHeaderHostname(h))
+    .filter(Boolean);
+  if (allowed.length === 0) {
+    return false;
+  }
+  return allowed.includes(host);
 }

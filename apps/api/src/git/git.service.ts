@@ -259,9 +259,14 @@ export class GitService implements OnModuleInit {
   }
 
   async verifyGithubWebhookSignature(
+    githubAppIdHeader: string | undefined,
     signature256Header: string | undefined,
     rawBody: Buffer | undefined,
   ): Promise<boolean> {
+    const appId = (githubAppIdHeader ?? '').trim();
+    if (!appId) {
+      return false;
+    }
     const sig = (signature256Header ?? '').trim();
     if (!sig.startsWith('sha256=') || !rawBody || rawBody.length === 0) {
       return false;
@@ -271,8 +276,8 @@ export class GitService implements OnModuleInit {
       return false;
     }
     const rows = await this.repo.find({
-      select: ['githubWebhookSecret'],
-      where: {},
+      select: ['githubWebhookSecret', 'githubAppId'],
+      where: { githubAppId: appId },
     });
     for (const row of rows) {
       const secret = this.decryptSecretOrPlain(row.githubWebhookSecret)?.trim();

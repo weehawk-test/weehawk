@@ -26,14 +26,16 @@ export class PublicWebhookHostGuard implements CanActivate {
       url?: string;
     }>();
     const pathname = req.path ?? req.url?.split('?')[0] ?? '';
-    if (isPublicHooksTriggerPath(pathname)) {
-      return true;
+    if (!isPublicHooksTriggerPath(pathname)) {
+      throw new ForbiddenException('Webhook trigger path is invalid.');
     }
+    const allowedHosts = this.allowedHosts();
     const host = req.headers?.host;
     if (
       isPublicWebhookHostAllowed(host, {
         allowAnyHost: allowAny,
         allowLoopback: true,
+        allowedHosts,
       })
     ) {
       return true;
@@ -51,5 +53,27 @@ export class PublicWebhookHostGuard implements CanActivate {
       ?.trim()
       .toLowerCase();
     return v === '1' || v === 'true' || v === 'yes';
+  }
+
+  private allowedHosts(): string[] {
+    const out = new Set<string>();
+    const pushMaybeUrl = (raw: string | undefined) => {
+      const t = raw?.trim();
+      if (!t) return;
+      try {
+        const u = new URL(t.includes('://') ? t : `https://${t}`);
+        out.add(u.host);
+      } catch {
+        out.add(t);
+      }
+    };
+    const cors = this.config.get<string>('CORS_ORIGIN') ?? '';
+    for (const part of cors.split(',').map((v) => v.trim()).filter(Boolean)) {
+      if (part === '*' || part.toLowerCase() === 'true') continue;
+      pushMaybeUrl(part);
+    }
+    pushMaybeUrl(this.config.get<string>('WEB_ORIGIN'));
+    pushMaybeUrl(this.config.get<string>('API_PUBLIC_URL'));
+    return [...out];
   }
 }

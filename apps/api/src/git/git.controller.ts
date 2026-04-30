@@ -24,6 +24,9 @@ import { ExchangeGithubManifestDto } from './dto/exchange-github-manifest.dto';
 @ApiTags('Git')
 @Controller('api/git')
 export class GitController {
+  private readonly seenGithubDeliveries = new Map<string, number>();
+  private static readonly GITHUB_DELIVERY_TTL_MS = 15 * 60 * 1000;
+
   constructor(private readonly gitService: GitService) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
@@ -54,15 +57,34 @@ export class GitController {
       rawBody?: Buffer;
     },
   ) {
+    const deliveryHeader = req.headers['x-github-delivery'];
+    const deliveryId = (Array.isArray(deliveryHeader) ? deliveryHeader[0] : deliveryHeader ?? '').trim();
+    if (!deliveryId) {
+      throw new UnauthorizedException('Missing GitHub delivery id');
+    }
+    const now = Date.now();
+    for (const [key, expiresAt] of this.seenGithubDeliveries.entries()) {
+      if (expiresAt <= now) this.seenGithubDeliveries.delete(key);
+    }
+    if (this.seenGithubDeliveries.has(deliveryId)) {
+      throw new UnauthorizedException('Replay detected');
+    }
+    const appIdHeader = req.headers['x-github-hook-installation-target-id'];
+    const appId = Array.isArray(appIdHeader) ? appIdHeader[0] : appIdHeader;
     const sig = req.headers['x-hub-signature-256'];
     const signature = Array.isArray(sig) ? sig[0] : sig;
     const verified = await this.gitService.verifyGithubWebhookSignature(
+      appId,
       signature,
       req.rawBody,
     );
     if (!verified) {
       throw new UnauthorizedException('Invalid GitHub webhook signature');
     }
+    this.seenGithubDeliveries.set(
+      deliveryId,
+      now + GitController.GITHUB_DELIVERY_TTL_MS,
+    );
     return { ok: true };
   }
 
