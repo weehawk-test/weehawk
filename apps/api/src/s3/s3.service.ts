@@ -963,9 +963,7 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
-      throw new InternalServerErrorException(
-        `S3 upload failed: ${getErrorMessage(e)} (file: ${resolvedPath})`,
-      );
+      throw new InternalServerErrorException('Upload failed');
     } finally {
       client.destroy();
     }

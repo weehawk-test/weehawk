@@ -176,6 +176,7 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
     try {
       const ctx = await this.remoteServersService.getSshTerminalContext(
         sshIds.remoteServerId,
+        userId,
       );
       ssh = new Client();
       const remoteCmd = `docker exec -i -t ${cid} env TERM=xterm-256color /bin/sh`;

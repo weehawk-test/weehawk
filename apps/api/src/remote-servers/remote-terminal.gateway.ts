@@ -118,7 +118,7 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
         userId,
       );
       const ctx =
-        await this.remoteServersService.getSshTerminalContext(serverId);
+        await this.remoteServersService.getSshTerminalContext(serverId, userId);
       ssh = new Client();
       ssh
         .once('ready', () => {

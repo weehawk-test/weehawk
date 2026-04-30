@@ -327,7 +327,7 @@ fi
     mode: 'deploy' | 'reload' | 'redeploy' = 'deploy',
     options?: ExecuteDeployOptions,
   ) {
-    const service = await this.servicesService.findOne(id);
+    const service = await this.servicesService.internalFindOneById(id);
     const sshTargets = await this.servicesService.getDockerSshTargetIds(
       service.id,
     );
@@ -926,7 +926,7 @@ fi
     id: number,
     _actingUserId: number,
   ): Promise<{ ok: boolean }> {
-    const service = await this.servicesService.findOne(id);
+    const service = await this.servicesService.internalFindOneById(id);
     const sshTargets = await this.servicesService.getDockerSshTargetIds(
       service.id,
     );
@@ -1019,7 +1019,7 @@ fi
 
   /** Start stopped containers; compose tries `start` then `up -d --no-build`. Stack: stack deploy. */
   async startContainers(id: number) {
-    const service = await this.servicesService.findOne(id);
+    const service = await this.servicesService.internalFindOneById(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
 
     if (isSwarmStackService(service)) {
@@ -1074,7 +1074,7 @@ fi
   }
 
   async getRuntimeStatus(id: number): Promise<{ running: boolean }> {
-    const service = await this.servicesService.findOne(id);
+    const service = await this.servicesService.internalFindOneById(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = service.project?.userId ?? null;
 
@@ -1146,7 +1146,7 @@ fi
   ): Promise<{ id: string } | { error: string }> {
     let service: Service;
     try {
-      service = await this.servicesService.findOne(id);
+      service = await this.servicesService.internalFindOneById(id);
     } catch (e) {
       if (e instanceof NotFoundException) {
         return { error: 'Service not found.' };
@@ -1255,7 +1255,7 @@ fi
   }
 
   async stopAndRemove(id: number) {
-    const service = await this.servicesService.findOne(id);
+    const service = await this.servicesService.internalFindOneById(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = service.project?.userId ?? null;
     const deployDir = getServiceDeploymentDir(service.appName, service.id);
@@ -1300,7 +1300,7 @@ fi
    * Declared volume/bind mounts from the service compose file (`docker compose config --format json`).
    */
   async getServiceVolumeMounts(id: number): Promise<ServiceVolumesResponseDto> {
-    const service = await this.servicesService.findOne(id);
+    const service = await this.servicesService.internalFindOneById(id);
     const raw = (service.dockerConfig || '').trim();
     if (!raw) {
       return { items: [], error: 'No compose configuration on this service.' };
@@ -1362,7 +1362,7 @@ fi
       remoteFilePath: string;
     };
   }> {
-    const service = await this.servicesService.findOne(serviceId);
+    const service = await this.servicesService.internalFindOneById(serviceId);
 
     const resolved = await this.getExecContainerId(
       serviceId,
@@ -1463,7 +1463,7 @@ fi
     hostArchivePath: string,
     opts?: { archiveOnRemoteHost?: boolean },
   ): Promise<{ success: boolean; output: string }> {
-    const service = await this.servicesService.findOne(serviceId);
+    const service = await this.servicesService.internalFindOneById(serviceId);
 
     const resolved = await this.getExecContainerId(
       serviceId,
@@ -1579,7 +1579,7 @@ ${marker}
       remoteFilePath: string;
     };
   }> {
-    const service = await this.servicesService.findOne(serviceId);
+    const service = await this.servicesService.internalFindOneById(serviceId);
     let cmd = rawInput.trim().replace(/\s+/g, ' ');
     const lower = cmd.toLowerCase();
     if (!lower.startsWith('docker')) {
@@ -1675,7 +1675,7 @@ test -s "$OUT"
     serviceId: number,
     rawInput: string,
   ): Promise<{ success: boolean; output: string }> {
-    const service = await this.servicesService.findOne(serviceId);
+    const service = await this.servicesService.internalFindOneById(serviceId);
     const script = rawInput.trim();
     if (!script) {
       return { success: false, output: 'Script is empty.' };
@@ -1740,7 +1740,7 @@ ${script}
   }
 
   async shutdown(id: number) {
-    const service = await this.servicesService.findOne(id);
+    const service = await this.servicesService.internalFindOneById(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = service.project?.userId ?? null;
 

@@ -14,7 +14,7 @@ export class WebhooksTriggerController {
 
   @All(':token')
   @ApiOperation({ summary: 'Trigger webhook by secret token' })
-  trigger(@Param('token') token: string) {
+  trigger(@Param('token') token: string): Promise<{ ok: boolean; message: string }> {
     return this.webhooksService.triggerByToken(token);
   }
 }

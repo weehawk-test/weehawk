@@ -131,8 +131,19 @@ export class RegistryService {
       const redirectedUrl = new URL(location, endpoint.url);
       currentUrl = redirectedUrl.toString();
       const redirectedOrigin = redirectedUrl.origin;
-      if (originalOrigin != null && redirectedOrigin !== originalOrigin) {
+      const crossOriginRedirect =
+        originalOrigin != null && redirectedOrigin !== originalOrigin;
+      if (crossOriginRedirect) {
         headers = this.stripSensitiveForwardHeaders(headers);
+        if (
+          method === 'POST' &&
+          RegistryService.SAFE_REDIRECT_STATUSES.has(res.status)
+        ) {
+          method = 'GET';
+          body = undefined;
+          delete headers['content-type'];
+          delete headers['content-length'];
+        }
       }
       if (
         !RegistryService.SAFE_REDIRECT_STATUSES.has(res.status) &&
@@ -555,10 +566,7 @@ export class RegistryService {
       ) {
         throw e;
       }
-      const message = e instanceof Error ? e.message : String(e);
-      throw new InternalServerErrorException(
-        `Registry save failed: ${message}`,
-      );
+      throw new InternalServerErrorException('Storage error');
     }
   }
 

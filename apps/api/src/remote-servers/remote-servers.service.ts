@@ -2958,14 +2958,17 @@ curl -fsS -o /dev/null "$U"
   }
 
   /** For WebSocket remote terminal. */
-  async getSshTerminalContext(id: number): Promise<{
+  async getSshTerminalContext(id: number, userId?: number): Promise<{
     remoteServerId: number;
     connect: ConnectConfig;
   }> {
-    const rs = await this._internal_system_findRemoteServerByIdOrFail(
-      id,
-      'remote terminal context currently resolves by id only',
-    );
+    const rs =
+      userId != null
+        ? await this.resolveRemoteServerForUser(id, userId)
+        : await this._internal_system_findRemoteServerByIdOrFail(
+            id,
+            'remote terminal context currently resolves by id only',
+          );
     const pem = await this.resolvePrivateKeyPem(rs);
     return {
       remoteServerId: rs.id,
@@ -2979,6 +2982,13 @@ curl -fsS -o /dev/null "$U"
   ): Promise<RemoteServer> {
     const rs = await this.scopedRemoteServers.findScoped(Number(id), userId);
     return this.ensurePublicId(rs);
+  }
+
+  private async resolveRemoteServerForUser(
+    id: number,
+    userId: number,
+  ): Promise<RemoteServer> {
+    return this.findEntityOrFail(id, userId);
   }
 
   private async resolveRemoteServerForProjectContext(

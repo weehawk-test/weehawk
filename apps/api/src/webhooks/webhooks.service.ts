@@ -905,7 +905,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
   }
 
-  async triggerByToken(token: string): Promise<Record<string, unknown>> {
+  async triggerByToken(token: string): Promise<{ ok: boolean; message: string }> {
     const w = await this._internal_system_findBySecretToken(token);
     if (!w) {
       throw new NotFoundException('Unknown webhook');
@@ -968,12 +968,27 @@ export class WebhooksService implements OnApplicationBootstrap {
 
     const actionLabel = action;
 
+    const outputForLogs = output.slice(0, 32000);
     const payload = {
       ok: success,
-      webhook: w.name,
-      action: actionLabel,
-      output: output.slice(0, 32000),
+      message: 'Triggered',
     };
+
+    const logLine = [
+      `public webhook trigger result`,
+      `id=${w.publicId ?? w.id}`,
+      `name=${w.name}`,
+      `action=${actionLabel}`,
+      `ok=${success}`,
+      outputForLogs ? `output=${outputForLogs}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    if (success) {
+      this.logger.log(logLine);
+    } else {
+      this.logger.warn(logLine);
+    }
 
     const ranRemoteBashOnly =
       w.remoteServerId != null &&

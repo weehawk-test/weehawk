@@ -2131,7 +2131,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       }
       await this.getScopedServiceForUser(id, options.actingUserId);
     } else {
-      await this.findOne(id);
+      await this.internalFindOneById(id);
     }
 
     if (mode === 'redeploy' || mode === 'deploy') {
@@ -2946,10 +2946,11 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
   }
 
-  async findOne(id: number, userId?: number) {
-    if (userId != null) {
-      return this.getScopedServiceForUser(id, userId);
-    }
+  async findOne(id: number, userId: number) {
+    return this.getScopedServiceForUser(id, userId);
+  }
+
+  async internalFindOneById(id: number) {
     const service = await this._internal_systemFindOneService({
       where: { id },
       relations: ['project', 'remoteServer', 'buildRemoteServer'],
