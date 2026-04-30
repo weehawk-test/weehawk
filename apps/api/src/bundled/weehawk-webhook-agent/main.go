@@ -95,6 +95,23 @@ func resolveScript(scriptsDir, token string) (string, error) {
 	return abs, nil
 }
 
+func resolveScriptWithRetry(scriptsDir, token string) (string, error) {
+	// Webhook scripts are written asynchronously in some flows; give the file a short window
+	// to appear before returning "unknown or invalid webhook".
+	var lastErr error
+	for i := 0; i < 4; i++ {
+		p, err := resolveScript(scriptsDir, token)
+		if err == nil {
+			return p, nil
+		}
+		lastErr = err
+		if i < 3 {
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	return "", lastErr
+}
+
 type responseBody struct {
 	OK     bool   `json:"ok"`
 	Output string `json:"output"`
@@ -195,9 +212,9 @@ func main() {
 			return
 		}
 		rest := strings.TrimPrefix(p, urlPrefix+"/")
-		token := strings.TrimSpace(strings.Split(rest, "/")[0])
+		token := strings.ToLower(strings.TrimSpace(strings.Split(rest, "/")[0]))
 
-		scriptPath, err := resolveScript(scriptsDir, token)
+		scriptPath, err := resolveScriptWithRetry(scriptsDir, token)
 		if err != nil {
 			writeJSON(w, http.StatusNotFound, responseBody{OK: false, Error: "unknown or invalid webhook"})
 			return
