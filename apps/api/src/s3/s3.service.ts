@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -28,7 +29,6 @@ import { TestS3ConnectionDto } from './dto/test-s3-connection.dto';
 import { S3Profile } from './entities/s3-profile.entity';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { inferS3ForcePathStyle } from './s3-force-path-style';
-import { getErrorMessage } from '../utils/error-message';
 import {
   decryptPrivateKey,
   encryptPrivateKey,
@@ -81,6 +81,7 @@ function createS3Client(input: NormalizedS3Credentials): S3Client {
 
 @Injectable()
 export class S3Service implements OnModuleInit {
+  private readonly logger = new Logger(S3Service.name);
   private readonly scopedProfiles: UserIdTenantScopedRepository<S3Profile>;
 
   constructor(
@@ -466,8 +467,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 remote test presign failed for profile "${input.name}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `Could not presign list request for remote test: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -483,10 +488,11 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
-      const hint = getErrorMessage(e);
-      throw new InternalServerErrorException(
-        `S3 connection from deploy host "${remoteName}" failed: ${hint}`,
+      this.logger.error(
+        `S3 remote probe failed from deploy host "${remoteName}"`,
+        e instanceof Error ? e.stack : String(e),
       );
+      throw new InternalServerErrorException('Storage service error');
     }
 
     return {
@@ -608,8 +614,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 list failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 list failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -634,8 +644,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 delete failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 delete failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -693,8 +707,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 batch delete failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 batch delete failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -775,8 +793,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 prefix summary failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 prefix summary failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -861,8 +883,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 prefix delete failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 prefix delete failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -893,7 +919,7 @@ export class S3Service implements OnModuleInit {
       const body = response.Body;
       if (!body) {
         client.destroy();
-        throw new InternalServerErrorException('Empty S3 object body.');
+        throw new InternalServerErrorException('Storage service error');
       }
       const stream = body as Readable;
       let cleaned = false;
@@ -917,8 +943,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 download stream failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 download failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     }
   }
@@ -963,7 +993,11 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
-      throw new InternalServerErrorException('Upload failed');
+      this.logger.error(
+        `S3 upload failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
+      throw new InternalServerErrorException('Storage service error');
     } finally {
       client.destroy();
     }
@@ -1010,8 +1044,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 buffer upload failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 upload failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -1047,8 +1085,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 folder marker failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 mkdir failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -1100,8 +1142,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 presigned PUT failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 presigned PUT failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -1137,8 +1183,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 presigned GET failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 presigned GET failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();
@@ -1162,7 +1212,7 @@ export class S3Service implements OnModuleInit {
       );
       const body = response.Body;
       if (!body) {
-        throw new InternalServerErrorException('Empty S3 object body.');
+        throw new InternalServerErrorException('Storage service error');
       }
       const rs = body as Readable;
       await pipeline(rs, createWriteStream(resolvedPath));
@@ -1170,8 +1220,12 @@ export class S3Service implements OnModuleInit {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
       }
+      this.logger.error(
+        `S3 download-to-file failed for profile "${profileName}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
       throw new InternalServerErrorException(
-        `S3 download failed: ${getErrorMessage(e)}`,
+        'Storage service error',
       );
     } finally {
       client.destroy();

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -39,6 +40,7 @@ export type RegistryAccountSafe = {
 
 @Injectable()
 export class RegistryService {
+  private readonly logger = new Logger(RegistryService.name);
   private readonly scopedRegistryAccounts: UserIdTenantScopedRepository<RegistryAccount>;
 
   constructor(
@@ -135,10 +137,7 @@ export class RegistryService {
         originalOrigin != null && redirectedOrigin !== originalOrigin;
       if (crossOriginRedirect) {
         headers = this.stripSensitiveForwardHeaders(headers);
-        if (
-          method === 'POST' &&
-          RegistryService.SAFE_REDIRECT_STATUSES.has(res.status)
-        ) {
+        if (!RegistryService.NO_BODY_METHODS.has(method)) {
           method = 'GET';
           body = undefined;
           delete headers['content-type'];
@@ -566,7 +565,11 @@ export class RegistryService {
       ) {
         throw e;
       }
-      throw new InternalServerErrorException('Storage error');
+      this.logger.error(
+        `Registry account upsert failed for provider "${providerUrl}"`,
+        e instanceof Error ? e.stack : String(e),
+      );
+      throw new InternalServerErrorException('Registry operation failed');
     }
   }
 
@@ -728,11 +731,11 @@ export class RegistryService {
       ) {
         throw error;
       }
-
-      const message = error instanceof Error ? error.message : String(error);
-      throw new InternalServerErrorException(
-        `Registry login failed: ${message}`,
+      this.logger.error(
+        `Registry login failed for provider "${safeProviderUrl}"`,
+        error instanceof Error ? error.stack : String(error),
       );
+      throw new InternalServerErrorException('Registry operation failed');
     }
   }
 
@@ -775,10 +778,11 @@ export class RegistryService {
       ) {
         throw error;
       }
-      const message = error instanceof Error ? error.message : String(error);
-      throw new InternalServerErrorException(
-        `Registry verify failed: ${message}`,
+      this.logger.error(
+        `Registry verify failed for provider "${safeProviderUrl}"`,
+        error instanceof Error ? error.stack : String(error),
       );
+      throw new InternalServerErrorException('Registry operation failed');
     }
   }
 }

@@ -173,7 +173,7 @@ export class GitService implements OnModuleInit {
         originalOrigin != null && redirectedOrigin !== originalOrigin;
       if (crossOriginRedirect) {
         headers = this.stripSensitiveForwardHeaders(headers);
-        if (method === 'POST' && GitService.SAFE_REDIRECT_CODES.has(res.status)) {
+        if (!GitService.NO_BODY_METHODS.has(method)) {
           method = 'GET';
           body = undefined;
           delete headers['content-type'];
