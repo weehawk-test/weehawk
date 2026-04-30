@@ -168,10 +168,17 @@ export class RegistryService {
     const u = new URL(endpoint.url);
     const isHttps = u.protocol === 'https:';
     const requestFn = isHttps ? https.request : http.request;
+    const pinnedAddress = String(endpoint.ipAddress ?? '').trim();
+    const pinnedFamily = net.isIP(pinnedAddress);
+    if (pinnedFamily === 0) {
+      throw new BadRequestException(
+        'Registry provider host resolved to an invalid IP address.',
+      );
+    }
     const hasBody =
       options.body != null &&
       !RegistryService.NO_BODY_METHODS.has(options.method.toUpperCase());
-    const headers = { ...options.headers };
+    const headers = { ...options.headers, host: endpoint.hostname };
     if (hasBody && headers['content-length'] == null) {
       headers['content-length'] = String(Buffer.byteLength(options.body!, 'utf8'));
     }
@@ -179,18 +186,11 @@ export class RegistryService {
       const req = requestFn(
         {
           protocol: u.protocol,
-          hostname: endpoint.hostname,
+          hostname: pinnedAddress,
           port: u.port ? Number(u.port) : undefined,
           method: options.method,
           path: `${u.pathname}${u.search}`,
           headers,
-          lookup: (hostname, _opts, cb) => {
-            if (hostname.toLowerCase() !== endpoint.hostname.toLowerCase()) {
-              cb(new Error(`Blocked DNS lookup host mismatch: ${hostname}`), '', 0);
-              return;
-            }
-            cb(null, endpoint.ipAddress, net.isIP(endpoint.ipAddress));
-          },
           ...(isHttps ? { servername: endpoint.hostname } : {}),
         },
         (res) => {
@@ -306,6 +306,8 @@ export class RegistryService {
     if (t.endsWith(`.${r}`)) return true;
     // Docker Hub uses registry-1.docker.io for /v2/ and auth.docker.io for token minting.
     if (r === 'registry-1.docker.io' && t === 'auth.docker.io') return true;
+    // GitLab registry uses registry.gitlab.com for /v2/ and gitlab.com for token minting.
+    if (r === 'registry.gitlab.com' && t === 'gitlab.com') return true;
     return false;
   }
 
@@ -375,7 +377,16 @@ export class RegistryService {
     }
     const v4 = await dns.resolve4(host).catch(() => [] as string[]);
     const v6 = await dns.resolve6(host).catch(() => [] as string[]);
-    const ips = [...new Set([...v4, ...v6])];
+    let ips = [...new Set([...v4, ...v6])];
+    if (ips.length === 0) {
+      // Fallback for environments where authoritative resolvers fail but the OS resolver works.
+      const lookedUp = await dns
+        .lookup(host, { all: true, verbatim: true })
+        .catch(() => [] as { address: string; family: number }[]);
+      ips = [...new Set(lookedUp.map((entry) => String(entry?.address ?? '').trim()))]
+        .filter((entry) => entry.length > 0)
+        .filter((entry) => net.isIP(entry) !== 0);
+    }
     if (ips.length === 0) {
       throw new BadRequestException(
         'Registry provider host could not be resolved.',
@@ -393,10 +404,16 @@ export class RegistryService {
         );
       }
     }
+    const selectedIp = ips.find((ip) => net.isIP(ip) !== 0);
+    if (!selectedIp) {
+      throw new BadRequestException(
+        'Registry provider host could not be resolved to a valid IP.',
+      );
+    }
     return {
       url: parsed.toString(),
       hostname: host,
-      ipAddress: ips[0],
+      ipAddress: selectedIp,
     };
   }
 

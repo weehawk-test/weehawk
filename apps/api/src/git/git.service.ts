@@ -556,9 +556,17 @@ export class GitService implements OnModuleInit {
     }
     const v4 = await dns.resolve4(host).catch(() => [] as string[]);
     const v6 = await dns.resolve6(host).catch(() => [] as string[]);
-    const ips = [...new Set([...v4, ...v6])]
+    let ips = [...new Set([...v4, ...v6])]
       .map((ip) => String(ip).trim())
       .filter((ip) => net.isIP(ip) !== 0);
+    if (ips.length === 0) {
+      // Fallback for environments where resolve4/resolve6 fails but OS DNS works.
+      const lookedUp = await dns
+        .lookup(host, { all: true, verbatim: true })
+        .catch(() => [] as { address: string; family: number }[]);
+      ips = [...new Set(lookedUp.map((entry) => String(entry?.address ?? '').trim()))]
+        .filter((ip) => net.isIP(ip) !== 0);
+    }
     if (ips.length === 0) {
       throw new BadRequestException(`${label} host could not be resolved.`);
     }
