@@ -3957,7 +3957,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       emit('[auto-deploy] Stack configuration generated.\n');
 
       emit('[auto-deploy] Syncing files to deploy host…\n');
-      const mirrorResult = await this.pushApplicationMirrorToDeployHostIfConfigured(service.id, 1);
+      const mirrorResult = await this.pushApplicationMirrorToDeployHostIfConfigured(
+        service.id,
+        ownerId,
+      );
       if (mirrorResult.status === 'failed') {
         const warnMsg = `Auto-deploy mirror sync failed for ${servicePublicLabel}: ${sanitizeUserMessage(mirrorResult.message)}`;
         this.log.warn(

@@ -7,11 +7,14 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHmac, createSign, timingSafeEqual } from 'crypto';
+import { promises as dns } from 'dns';
+import * as net from 'net';
 import * as path from 'path';
 import { Repository } from 'typeorm';
 import { GitIntegrationSettings } from './entities/git-integration.entity';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
 import { decryptPrivateKey, encryptPrivateKey } from '../remote-servers/ssh-key-crypto';
+import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
 import type { Request } from 'express';
 
 export type WeehawkRemoteGitMarkerV1 = {
@@ -258,6 +261,43 @@ export class GitService implements OnModuleInit {
     return this.encryptSecret(t);
   }
 
+  private async assertPublicHttpEndpoint(rawUrl: string, label: string): Promise<string> {
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl.trim());
+    } catch {
+      throw new BadRequestException(`${label} is invalid.`);
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new BadRequestException(`${label} must use HTTPS.`);
+    }
+    const host = parsed.hostname.trim().toLowerCase();
+    if (!host || host === 'localhost') {
+      throw new BadRequestException(`${label} host is not allowed.`);
+    }
+    if (net.isIP(host) !== 0) {
+      if (isRemoteSshIpBlocked(host)) {
+        throw new BadRequestException(`${label} host must be publicly reachable.`);
+      }
+      return parsed.toString().replace(/\/+$/, '');
+    }
+    const v4 = await dns.resolve4(host).catch(() => [] as string[]);
+    const v6 = await dns.resolve6(host).catch(() => [] as string[]);
+    const ips = [...new Set([...v4, ...v6])];
+    if (ips.length === 0) {
+      throw new BadRequestException(`${label} host could not be resolved.`);
+    }
+    if (ips.length > 32) {
+      throw new BadRequestException(`${label} host resolves to too many addresses.`);
+    }
+    for (const ip of ips) {
+      if (isRemoteSshIpBlocked(ip)) {
+        throw new BadRequestException(`${label} host resolves to non-public IP addresses.`);
+      }
+    }
+    return parsed.toString().replace(/\/+$/, '');
+  }
+
   async verifyGithubWebhookSignature(
     githubAppIdHeader: string | undefined,
     signature256Header: string | undefined,
@@ -329,7 +369,15 @@ export class GitService implements OnModuleInit {
     }
     if (dto.gitlabBaseUrl !== undefined) {
       const v = dto.gitlabBaseUrl.trim();
-      row.gitlabBaseUrl = v === '' ? null : v.replace(/\/+$/, '');
+      if (v === '') {
+        row.gitlabBaseUrl = null;
+      } else {
+        const normalized = this.normalizeGitlabWebBase(v);
+        row.gitlabBaseUrl = await this.assertPublicHttpEndpoint(
+          normalized,
+          'GitLab base URL',
+        );
+      }
     }
     if (dto.gitlabGroupAccessToken !== undefined) {
       row.gitlabGroupAccessToken = this.applySecret(
@@ -413,9 +461,9 @@ export class GitService implements OnModuleInit {
         'GitLab access token is not configured. Add a group or personal access token with read_api (and read_repository for private repos) in Git → GitLab.',
       );
     }
-    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
-      /\/+$/,
-      '',
+    const base = await this.assertPublicHttpEndpoint(
+      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      'GitLab base URL',
     );
     const page = Math.max(1, Math.floor(params.page ?? 1));
     const perPage = Math.min(100, Math.max(1, Math.floor(params.perPage ?? 20)));
@@ -481,9 +529,9 @@ export class GitService implements OnModuleInit {
         'GitLab access token is not configured. Add a token in Git → GitLab.',
       );
     }
-    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
-      /\/+$/,
-      '',
+    const base = await this.assertPublicHttpEndpoint(
+      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      'GitLab base URL',
     );
     const branches: string[] = [];
     const seen = new Set<string>();
@@ -541,9 +589,9 @@ export class GitService implements OnModuleInit {
         'GitLab access token is not configured. Add a group or personal access token in Git → GitLab.',
       );
     }
-    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
-      /\/+$/,
-      '',
+    const base = await this.assertPublicHttpEndpoint(
+      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      'GitLab base URL',
     );
     const url = `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}`;
     const res = await fetch(url, { headers: { 'PRIVATE-TOKEN': token } });
@@ -835,9 +883,9 @@ export class GitService implements OnModuleInit {
         'GitLab token is not configured. Add it under Git → GitLab.',
       );
     }
-    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
-      /\/+$/,
-      '',
+    const base = await this.assertPublicHttpEndpoint(
+      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      'GitLab base URL',
     );
     const res = await fetch(
       `${base}/api/v4/projects/${encodeURIComponent(String(params.projectId))}/hooks`,
@@ -896,9 +944,9 @@ export class GitService implements OnModuleInit {
     if (!privateToken) {
       return;
     }
-    const base = (row.gitlabBaseUrl?.trim() || 'https://gitlab.com').replace(
-      /\/+$/,
-      '',
+    const base = await this.assertPublicHttpEndpoint(
+      this.normalizeGitlabWebBase(row.gitlabBaseUrl?.trim() || 'https://gitlab.com'),
+      'GitLab base URL',
     );
     const res = await fetch(
       `${base}/api/v4/projects/${encodeURIComponent(String(projectId))}/hooks/${encodeURIComponent(String(hookId))}`,
@@ -1539,7 +1587,8 @@ export class GitService implements OnModuleInit {
       );
       let ref = requestedBranch;
       if (!ref) {
-        const metaUrl = `${base}/api/v4/projects/${encodeURIComponent(String(options.gitlabProjectId))}`;
+        const safeBase = await this.assertPublicHttpEndpoint(base, 'GitLab API base URL');
+        const metaUrl = `${safeBase}/api/v4/projects/${encodeURIComponent(String(options.gitlabProjectId))}`;
         const res = await fetch(metaUrl, { headers: this.gitlabJsonHeaders(token) });
         const text = await res.text();
         if (!res.ok) {
@@ -1659,7 +1708,10 @@ export class GitService implements OnModuleInit {
 
     const row = await this.gitlabSettingsRow(userId);
     const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
-    const apiBase = this.resolveGitlabApiRootFromCloneUrl(row, trimmed);
+    const apiBase = await this.assertPublicHttpEndpoint(
+      this.resolveGitlabApiRootFromCloneUrl(row, trimmed),
+      'GitLab API base URL',
+    );
     const pathPart = this.gitlabProjectPathFromClonePathname(row, trimmed);
     let ref = requestedBranch;
     if (!ref) {
