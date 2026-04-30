@@ -12,6 +12,7 @@ import { Repository } from 'typeorm';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import * as net from 'net';
 import { encryptPrivateKey, decryptPrivateKey } from '../remote-servers/ssh-key-crypto';
 import { RegistryAccount } from './entities/registry-account.entity';
 import type { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
@@ -97,12 +98,55 @@ export class RegistryService {
     return u.toString();
   }
 
+  private isPrivateOrReservedIp(host: string): boolean {
+    const version = net.isIP(host);
+    if (version === 4) {
+      const parts = host.split('.').map((n) => Number(n));
+      if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return true;
+      const [a, b] = parts;
+      if (a === 10) return true;
+      if (a === 127) return true;
+      if (a === 0) return true;
+      if (a === 169 && b === 254) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 192 && b === 168) return true;
+      return false;
+    }
+    if (version === 6) {
+      const v = host.toLowerCase();
+      if (v === '::1') return true;
+      if (v.startsWith('fe80:')) return true; // link-local
+      if (v.startsWith('fc') || v.startsWith('fd')) return true; // unique local
+      return false;
+    }
+    return false;
+  }
+
+  private assertPublicRegistryEndpoint(origin: string): void {
+    let host = '';
+    try {
+      host = new URL(origin).hostname.trim().toLowerCase();
+    } catch {
+      throw new BadRequestException('Invalid registry provider URL.');
+    }
+    if (!host) {
+      throw new BadRequestException('Invalid registry provider URL.');
+    }
+    if (host === 'localhost') {
+      throw new BadRequestException('Registry provider host must be publicly reachable.');
+    }
+    if (this.isPrivateOrReservedIp(host)) {
+      throw new BadRequestException('Registry provider host must not be loopback/private/link-local.');
+    }
+  }
+
   private async assertRegistryCredentialsValid(
     providerUrl: string,
     username: string,
     password: string,
   ): Promise<void> {
     const origin = this.registryV2Origin(providerUrl);
+    this.assertPublicRegistryEndpoint(origin);
     const basicAuth = Buffer.from(`${username}:${password}`, 'utf8').toString(
       'base64',
     );
