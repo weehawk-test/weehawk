@@ -13,7 +13,7 @@ import { Inject, forwardRef } from '@nestjs/common';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { ExecutorService } from './executor.service';
 import { ServicesService } from '../services/services.service';
-import { resolveCorsOrigin } from '../common/cors-origin';
+import { isRequestOriginAllowed, resolveCorsOrigin } from '../common/cors-origin';
 import { parseCookieHeader, AUTH_ACCESS_COOKIE } from '../auth/auth-cookies';
 
 /**
@@ -64,6 +64,18 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
 
   async handleConnection(client: WebSocket, ...args: unknown[]) {
     const req = args[0] as IncomingMessage | undefined;
+    const rawOrigin = req?.headers?.origin;
+    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+    if (!isRequestOriginAllowed(origin, process.env.CORS_ORIGIN, process.env.NODE_ENV)) {
+      client.send(
+        JSON.stringify({
+          type: 'error',
+          message: 'WebSocket origin is not allowed.',
+        }),
+      );
+      client.close(4008, 'origin not allowed');
+      return;
+    }
     const pathAndQuery = req?.url ?? '/';
     const host = req?.headers?.host ?? 'localhost';
     const url = new URL(pathAndQuery, `http://${host}`);

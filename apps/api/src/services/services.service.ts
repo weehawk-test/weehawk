@@ -184,10 +184,10 @@ export class ServicesService {
     }
 
     if (remoteServerId != null) {
-      await this.assertDeployRemoteServer(remoteServerId, null);
+      await this.assertDeployRemoteServer(remoteServerId, project.userId);
     }
     if (buildRemoteServerId != null) {
-      await this.assertBuildRemoteServer(buildRemoteServerId, null);
+      await this.assertBuildRemoteServer(buildRemoteServerId, project.userId);
     }
 
     const uniqueAppName = `${appName}-${randomBytes(2).toString('hex')}`;
@@ -2593,10 +2593,17 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
   /** Same rules as {@link RemoteServersService.assertRemoteServerMatchesProject} but user-facing BadRequest for form/API. */
   private assertRemoteServerBelongsToProjectOwner(
-    _rs: RemoteServer,
-    _projectUserId: number | null,
+    rs: RemoteServer,
+    projectUserId: number | null,
   ): void {
-    return;
+    if (projectUserId == null || projectUserId < 1) {
+      throw new BadRequestException('Project owner is missing; cannot validate remote server ownership.');
+    }
+    if (rs.userId !== projectUserId) {
+      throw new BadRequestException(
+        'Remote server does not belong to this project owner. Choose one of your own remote servers.',
+      );
+    }
   }
 
   async findOne(id: number) {
@@ -2714,7 +2721,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (updateServiceDto.remoteServerId !== null) {
         await this.assertDeployRemoteServer(
           updateServiceDto.remoteServerId,
-          null,
+          service.project?.userId ?? null,
         );
       }
     }
@@ -2731,7 +2738,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (updateServiceDto.buildRemoteServerId !== null) {
         await this.assertBuildRemoteServer(
           updateServiceDto.buildRemoteServerId,
-          null,
+          service.project?.userId ?? null,
         );
       }
     }

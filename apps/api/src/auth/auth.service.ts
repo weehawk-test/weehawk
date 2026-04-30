@@ -88,6 +88,7 @@ export class AuthService {
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
     const rt = await this.refreshTokenService.validateRefreshToken(refreshToken);
     const user = rt.user;
+    await this.refreshTokenService.deleteByToken(refreshToken);
     const accessToken = this.generateAccessToken(user);
     const newRt = await this.refreshTokenService.createRefreshToken(user);
     return this.buildAuthResponse(user, accessToken, newRt);

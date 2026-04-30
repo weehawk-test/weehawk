@@ -20,6 +20,7 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { GitService } from './git.service';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
 import { ExchangeGithubManifestDto } from './dto/exchange-github-manifest.dto';
+import { RedisService } from '../common/redis/redis.service';
 
 @ApiTags('Git')
 @Controller('api/git')
@@ -27,7 +28,45 @@ export class GitController {
   private readonly seenGithubDeliveries = new Map<string, number>();
   private static readonly GITHUB_DELIVERY_TTL_MS = 15 * 60 * 1000;
 
-  constructor(private readonly gitService: GitService) {}
+  constructor(
+    private readonly gitService: GitService,
+    private readonly redisService: RedisService,
+  ) {}
+
+  private replayKey(deliveryId: string): string {
+    return `github:webhook:delivery:${deliveryId}`;
+  }
+
+  private async markGithubDeliveryIfNew(deliveryId: string): Promise<boolean> {
+    const key = this.replayKey(deliveryId);
+    try {
+      const result = await this.redisService.eval(
+        `
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return 0
+end
+redis.call('PSETEX', KEYS[1], ARGV[1], '1')
+return 1
+`,
+        [key],
+        [String(GitController.GITHUB_DELIVERY_TTL_MS)],
+      );
+      return Number(result) === 1;
+    } catch {
+      const now = Date.now();
+      for (const [seenKey, expiresAt] of this.seenGithubDeliveries.entries()) {
+        if (expiresAt <= now) this.seenGithubDeliveries.delete(seenKey);
+      }
+      if (this.seenGithubDeliveries.has(deliveryId)) {
+        return false;
+      }
+      this.seenGithubDeliveries.set(
+        deliveryId,
+        now + GitController.GITHUB_DELIVERY_TTL_MS,
+      );
+      return true;
+    }
+  }
 
   private uid(req?: { user?: { userId?: number } }): number {
     const id = req?.user?.userId;
@@ -62,11 +101,8 @@ export class GitController {
     if (!deliveryId) {
       throw new UnauthorizedException('Missing GitHub delivery id');
     }
-    const now = Date.now();
-    for (const [key, expiresAt] of this.seenGithubDeliveries.entries()) {
-      if (expiresAt <= now) this.seenGithubDeliveries.delete(key);
-    }
-    if (this.seenGithubDeliveries.has(deliveryId)) {
+    const accepted = await this.markGithubDeliveryIfNew(deliveryId);
+    if (!accepted) {
       throw new UnauthorizedException('Replay detected');
     }
     const appIdHeader = req.headers['x-github-hook-installation-target-id'];
@@ -79,12 +115,13 @@ export class GitController {
       req.rawBody,
     );
     if (!verified) {
+      try {
+        await this.redisService.del(this.replayKey(deliveryId));
+      } catch {
+        this.seenGithubDeliveries.delete(deliveryId);
+      }
       throw new UnauthorizedException('Invalid GitHub webhook signature');
     }
-    this.seenGithubDeliveries.set(
-      deliveryId,
-      now + GitController.GITHUB_DELIVERY_TTL_MS,
-    );
     return { ok: true };
   }
 

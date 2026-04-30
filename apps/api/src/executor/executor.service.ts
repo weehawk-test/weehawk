@@ -386,7 +386,7 @@ fi
           if (mode !== 'reload' && deployMode !== 'image' && sourceRootExists) {
             const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
             const buildBase = await this.getBaseProcessEnvForService(service);
-            const projectUserId: number | null = null;
+            const projectUserId: number | null = service.project?.userId ?? null;
             const buildEnv = await this.remoteServersService.mergeDockerHostEnvForBuildIds(
               buildBase,
               {
@@ -943,7 +943,7 @@ fi
     }
 
     const finalConfig = this.composeYamlForResolvedDeploy(service);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
       sshIds.remoteServerId,
       projectUserId,
@@ -978,7 +978,7 @@ fi
   async getRuntimeStatus(id: number): Promise<{ running: boolean }> {
     const service = await this.servicesService.findOne(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
 
     try {
       if (isSwarmStackService(service)) {
@@ -1057,7 +1057,7 @@ fi
     }
 
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     let key: string;
     if (composeServiceKey !== undefined && composeServiceKey.trim() !== '') {
       try {
@@ -1151,7 +1151,7 @@ fi
   async stopAndRemove(id: number) {
     const service = await this.servicesService.findOne(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     const deployDir = getServiceDeploymentDir(service.appName, service.id);
 
     try {
@@ -1202,7 +1202,7 @@ fi
 
     const finalConfig = this.composeYamlForResolvedDeploy(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     if (sshIds.remoteServerId == null) {
       return {
         items: [],
@@ -1269,7 +1269,7 @@ fi
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
       sshIds.remoteServerId,
       projectUserId,
@@ -1368,7 +1368,7 @@ fi
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     const cid = resolved.id;
     const onRemote = Boolean(opts?.archiveOnRemoteHost);
     const docker: StructuredDbImportDocker = {
@@ -1493,7 +1493,7 @@ ${marker}
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
     const persistQ = persist.replace(/'/g, `'\\''`);
     const stagingDir = await this.remoteServersService.allocRemoteWeehawkTempDir(
@@ -1567,7 +1567,7 @@ test -s "$OUT"
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
     const persistQ = persist.replace(/'/g, `'\\''`);
     const body = `set -euo pipefail
@@ -1625,7 +1625,7 @@ ${script}
   async shutdown(id: number) {
     const service = await this.servicesService.findOne(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = null;
+    const projectUserId: number | null = service.project?.userId ?? null;
 
     try {
       if (isSwarmStackService(service)) {

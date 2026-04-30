@@ -4,6 +4,10 @@ const logger = new Logger('CorsOrigin');
 
 export type CorsOriginOption = boolean | string[];
 
+function normalizeOrigin(raw: string): string {
+  return raw.trim().replace(/\/+$/, '').toLowerCase();
+}
+
 /**
  * Resolves `cors.origin` for Express and WebSocket gateways from `CORS_ORIGIN`.
  * When unset in production, returns `false` (deny cross-origin). In non-production, returns `true` (reflect Origin).
@@ -49,4 +53,21 @@ export function resolveCorsOrigin(
     .map((o) => o.trim())
     .filter(Boolean);
   return list.length > 0 ? list : false;
+}
+
+export function isRequestOriginAllowed(
+  requestOrigin: string | undefined,
+  corsEnv: string | undefined,
+  nodeEnv?: string,
+): boolean {
+  const origin = requestOrigin?.trim();
+  if (!origin) return false;
+  const allowed = resolveCorsOrigin(corsEnv, nodeEnv, { logWarnings: false });
+  if (allowed === false) return false;
+  if (allowed === true) {
+    const env = (nodeEnv ?? process.env.NODE_ENV ?? '').toLowerCase();
+    return env !== 'production';
+  }
+  const needle = normalizeOrigin(origin);
+  return allowed.map((v) => normalizeOrigin(v)).includes(needle);
 }

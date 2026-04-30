@@ -9,7 +9,7 @@ import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import { URL } from 'url';
 import { Client } from 'ssh2';
-import { resolveCorsOrigin } from '../common/cors-origin';
+import { isRequestOriginAllowed, resolveCorsOrigin } from '../common/cors-origin';
 import { RemoteServersService } from './remote-servers.service';
 import { AUTH_ACCESS_COOKIE, parseCookieHeader } from '../auth/auth-cookies';
 
@@ -54,6 +54,18 @@ export class RemoteTerminalGateway implements OnGatewayConnection {
 
   async handleConnection(client: WebSocket, ...args: unknown[]) {
     const req = args[0] as IncomingMessage | undefined;
+    const rawOrigin = req?.headers?.origin;
+    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
+    if (!isRequestOriginAllowed(origin, process.env.CORS_ORIGIN, process.env.NODE_ENV)) {
+      client.send(
+        JSON.stringify({
+          type: 'error',
+          message: 'WebSocket origin is not allowed.',
+        }),
+      );
+      client.close(4008, 'origin not allowed');
+      return;
+    }
     const pathAndQuery = req?.url ?? '/';
     const host = req?.headers?.host ?? 'localhost';
     const url = new URL(pathAndQuery, `http://${host}`);
