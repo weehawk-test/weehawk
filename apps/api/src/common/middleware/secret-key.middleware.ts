@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import type { NextFunction, Request, Response } from 'express';
+import { timingSafeEqual } from 'crypto';
 
 /**
  * Global internal API-key gate.
@@ -27,6 +28,13 @@ export function createSecretKeyMiddleware(config: ConfigService) {
     '/api/git/github/manifest',
     '/api/git/github/webhook',
   ];
+
+  const apiKeyMatches = (actual: string, expected: string): boolean => {
+    const actualBuf = Buffer.from(actual, 'utf8');
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    if (actualBuf.length !== expectedBuf.length) return false;
+    return timingSafeEqual(actualBuf, expectedBuf);
+  };
 
   const normalizePath = (req: Request): string => {
     let raw = (req.originalUrl ?? req.url ?? '').split('?')[0];
@@ -60,7 +68,7 @@ export function createSecretKeyMiddleware(config: ConfigService) {
         .trim();
     const apiKey = extractApiKey(req);
 
-    if (!expectedApiKey || !apiKey || apiKey !== expectedApiKey) {
+    if (!expectedApiKey || !apiKey || !apiKeyMatches(apiKey, expectedApiKey)) {
       res.status(403);
       res.setHeader('Content-Type', 'application/json');
       res.send(FORBIDDEN_JSON);

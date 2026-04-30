@@ -34,6 +34,14 @@ export function resolveCorsOrigin(
   }
   const lower = raw.toLowerCase();
   if (lower === '*' || lower === 'true') {
+    if (env === 'production') {
+      if (logWarnings) {
+        logger.warn(
+          'CORS_ORIGIN cannot be "*" or "true" in production; blocking cross-origin browser requests until explicit origins are configured.',
+        );
+      }
+      return false;
+    }
     return true;
   }
   const list = raw
