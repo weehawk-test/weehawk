@@ -24,8 +24,12 @@ import { EmailModule } from '../email/email.module';
       useFactory: (config: ConfigService) => {
         const exp = config.get<string>('auth.jwtExpiresIn', '7d');
         const seconds = exp === '7d' ? 7 * 24 * 60 * 60 : parseInt(exp, 10) || 604800;
+        const jwtSecret = config.get<string>('auth.jwtSecret')?.trim();
+        if (!jwtSecret) {
+          throw new Error('Missing auth.jwtSecret');
+        }
         return {
-          secret: config.get<string>('auth.jwtSecret', 'change-me-in-production'),
+          secret: jwtSecret,
           signOptions: { expiresIn: seconds },
         };
       },

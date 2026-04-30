@@ -20,6 +20,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     config: ConfigService,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
   ) {
+    const jwtSecret = config.get<string>('auth.jwtSecret')?.trim();
+    if (!jwtSecret) {
+      throw new Error('Missing auth.jwtSecret');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -40,7 +44,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         },
       ]),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('auth.jwtSecret', 'change-me-in-production'),
+      secretOrKey: jwtSecret,
     });
   }
 
