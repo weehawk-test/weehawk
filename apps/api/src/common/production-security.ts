@@ -36,10 +36,13 @@ export function assertProductionSecurityConfig(config: ConfigService): void {
   }
 
   const log = new Logger('ProductionSecurity');
-  const jwt = (config.get<string>('auth.jwtSecret') ?? '').trim();
+  const jwt =
+    (config.get<string>('auth.jwtSecret') ??
+      config.get<string>('JWT_SECRET') ??
+      '').trim();
   if (!jwt || jwt.length < 32 || WEAK_JWT_SECRETS.has(jwt.toLowerCase())) {
     log.error(
-      'Refusing to start: set auth.jwtSecret to a random string of at least 32 characters in production.',
+      'Refusing to start: set auth.jwtSecret (or JWT_SECRET) to a random string of at least 32 characters in production.',
     );
     process.exit(1);
   }

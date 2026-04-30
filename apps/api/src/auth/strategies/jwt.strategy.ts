@@ -20,9 +20,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     config: ConfigService,
     @InjectRepository(User) private readonly userRepo: Repository<User>,
   ) {
-    const jwtSecret = config.get<string>('auth.jwtSecret')?.trim();
+    const jwtSecret =
+      config.get<string>('auth.jwtSecret')?.trim() ||
+      config.get<string>('JWT_SECRET')?.trim();
     if (!jwtSecret) {
-      throw new Error('Missing auth.jwtSecret');
+      throw new Error('Missing auth.jwtSecret/JWT_SECRET');
     }
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([

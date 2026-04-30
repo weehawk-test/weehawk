@@ -1,15 +1,14 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
 
 @Injectable()
 export class LocalSessionGuard implements CanActivate {
   constructor(
     private readonly configService: ConfigService,
-    @InjectRepository(User) private readonly userRepo: Repository<User>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -38,9 +37,11 @@ export class LocalSessionGuard implements CanActivate {
         : tokenFromCookie;
     if (!token) throw new UnauthorizedException('Missing bearer token');
 
-    const secret = this.configService.get<string>('auth.jwtSecret')?.trim();
+    const secret =
+      this.configService.get<string>('auth.jwtSecret')?.trim() ||
+      this.configService.get<string>('JWT_SECRET')?.trim();
     if (!secret) {
-      throw new UnauthorizedException('JWT secret is not configured');
+      throw new UnauthorizedException('JWT secret is not configured (auth.jwtSecret/JWT_SECRET)');
     }
     let decodedEmail = '';
     let decodedUserId = 0;
@@ -52,7 +53,7 @@ export class LocalSessionGuard implements CanActivate {
       throw new UnauthorizedException('Invalid token');
     }
     if (!decodedEmail || !decodedUserId) throw new UnauthorizedException('Invalid token payload');
-    const user = await this.userRepo.findOne({ where: { id: decodedUserId } });
+    const user = await this.dataSource.getRepository(User).findOne({ where: { id: decodedUserId } });
     if (!user || !user.enabled) throw new UnauthorizedException('User is disabled or missing');
     if (user.email.trim().toLowerCase() !== decodedEmail) {
       throw new UnauthorizedException('Invalid token payload');
