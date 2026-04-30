@@ -596,7 +596,7 @@ export class ServicesController {
     @Req() req: { user?: { userId: number } },
   ) {
     const resolvedId = await this.sid(id, req);
-    const s = await this.servicesService.assertServiceOwnedByUser(
+    const s = await this.servicesService.getScopedServiceForUser(
       resolvedId,
       this.uid(req),
     );

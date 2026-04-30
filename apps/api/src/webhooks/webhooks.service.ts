@@ -194,7 +194,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
     try {
       const svc = await this.servicesService.findOne(serviceId, userId);
-      const autoDeploy = await this.resolveAutoDeployCloneInfo(serviceId);
+      const autoDeploy = await this.resolveAutoDeployCloneInfo(serviceId, userId);
       return [...base, ...onHostWebhookBundleEnvLines(svc, autoDeploy)];
     } catch {
       return base;
@@ -212,6 +212,7 @@ export class WebhooksService implements OnApplicationBootstrap {
    */
   private async resolveAutoDeployCloneInfo(
     serviceId: number | null | undefined,
+    userId: number,
   ): Promise<{
     cloneUrl: string;
     branch: string;
@@ -224,7 +225,10 @@ export class WebhooksService implements OnApplicationBootstrap {
   } | null> {
     if (!serviceId || serviceId < 1) return null;
     try {
-      const svc = await this.servicesService.findOne(serviceId, userId);
+      const svc = await this.servicesService.getScopedServiceForUser(
+        serviceId,
+        userId,
+      );
       // Redeploy webhooks need clone credentials whenever a Git repo is linked, even if push-trigger
       // auto-deploy is disabled — otherwise on-host Dockerfile/Nixpacks runs never pull fresh source.
       if (!svc.autoDeployGitProvider || !svc.autoDeployRepoId) {
@@ -643,7 +647,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   async refreshGeneratedOnHostRedeployScriptsForService(
     serviceId: number,
   ): Promise<void> {
-    const service = await this.servicesService.findOne(serviceId, userId);
+    const service = await this.servicesService.internalFindOneById(serviceId);
     const canonical = buildOnHostRedeployScriptBody(service);
     const rows = await this._internal_system_findWebhooks({
       where: { serviceId },

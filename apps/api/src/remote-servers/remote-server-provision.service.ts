@@ -16,7 +16,6 @@ import {
   buildWeehawkProvisionScript,
 } from './remote-server-provision.script';
 import { TraefikService } from '../traefik/traefik.service';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 const MAX_LOG_CHARS = 512_000;
 
@@ -24,19 +23,13 @@ const MAX_LOG_CHARS = 512_000;
 export class RemoteServerProvisionService {
   private readonly logger = new Logger(RemoteServerProvisionService.name);
   private isProcessing = false;
-  private readonly scopedJobs: UserIdTenantScopedRepository<RemoteServerProvisionJob>;
 
   constructor(
     @InjectRepository(RemoteServerProvisionJob)
     private readonly jobRepo: Repository<RemoteServerProvisionJob>,
     private readonly remoteServersService: RemoteServersService,
     private readonly traefikService: TraefikService,
-  ) {
-    this.scopedJobs = new UserIdTenantScopedRepository<RemoteServerProvisionJob>(
-      this.jobRepo,
-      'Provision job',
-    );
-  }
+  ) {}
 
   /** Same bash the worker runs over SSH — for UI preview. */
   async getProvisionScriptPreview(
@@ -125,7 +118,10 @@ export class RemoteServerProvisionService {
     createdAt: Date;
     updatedAt: Date;
   }> {
-    const job = await this.scopedJobs.findScoped(jobId, userId);
+    const job = await this.jobRepo.findOne({ where: { id: jobId, userId } });
+    if (!job) {
+      throw new NotFoundException('Provision job not found');
+    }
     return {
       id: job.id,
       remoteServerId: job.remoteServerId,
