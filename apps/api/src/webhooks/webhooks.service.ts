@@ -195,7 +195,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       return base;
     }
     try {
-      const svc = await this.servicesService.findOne(serviceId);
+      const svc = await this.servicesService.findOne(serviceId, userId);
       const autoDeploy = await this.resolveAutoDeployCloneInfo(serviceId);
       return [...base, ...onHostWebhookBundleEnvLines(svc, autoDeploy)];
     } catch {
@@ -226,7 +226,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   } | null> {
     if (!serviceId || serviceId < 1) return null;
     try {
-      const svc = await this.servicesService.findOne(serviceId);
+      const svc = await this.servicesService.findOne(serviceId, userId);
       // Redeploy webhooks need clone credentials whenever a Git repo is linked, even if push-trigger
       // auto-deploy is disabled — otherwise on-host Dockerfile/Nixpacks runs never pull fresh source.
       if (!svc.autoDeployGitProvider || !svc.autoDeployRepoId) {
@@ -583,7 +583,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       looksLikeGeneratedOnHostRedeployScript(resolvedBashScript)
     ) {
       try {
-        const svc = await this.servicesService.findOne(resolvedServiceId);
+        const svc = await this.servicesService.findOne(resolvedServiceId, userId);
         resolvedBashScript = buildOnHostRedeployScriptBody(svc);
       } catch {
         /* keep client body */
@@ -646,7 +646,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   async refreshGeneratedOnHostRedeployScriptsForService(
     serviceId: number,
   ): Promise<void> {
-    const service = await this.servicesService.findOne(serviceId);
+    const service = await this.servicesService.findOne(serviceId, userId);
     const canonical = buildOnHostRedeployScriptBody(service);
     const rows = await this._internal_system_findWebhooks({
       where: { serviceId },
@@ -848,7 +848,10 @@ export class WebhooksService implements OnApplicationBootstrap {
             looksLikeGeneratedOnHostRedeployScript(body)
           ) {
             try {
-              const svc = await this.servicesService.findOne(saved.serviceId);
+              const svc = await this.servicesService.findOne(
+                saved.serviceId,
+                userId,
+              );
               body = buildOnHostRedeployScriptBody(svc);
               saved.bashScript = body;
               await this.scopedWebhooks.saveScoped(saved, userId);
@@ -920,7 +923,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           this.shouldRunExecutorRedeployForDockerWebhook(w);
         if (useExecutorRedeploy) {
           const svcRowCmd = w.serviceId
-            ? await this.servicesService.findOne(w.serviceId)
+            ? await this.servicesService.findOne(w.serviceId, w.userId)
             : null;
           const useAutoDeployCmd =
             svcRowCmd?.autoDeployEnabled &&

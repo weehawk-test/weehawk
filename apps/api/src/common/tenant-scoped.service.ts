@@ -1,5 +1,10 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import type { ObjectLiteral, FindOneOptions, Repository } from 'typeorm';
+import type {
+  ObjectLiteral,
+  FindManyOptions,
+  FindOneOptions,
+  Repository,
+} from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 function requireScopedUserId(userId: number): number {
@@ -116,6 +121,22 @@ export class UserIdTenantScopedRepository<
     }
     e.userId = uid;
     return this.repo.save(entity);
+  }
+
+  async listScoped(
+    userId: number,
+    options?: Omit<FindManyOptions<TEntity>, 'where'> & {
+      where?: ObjectLiteral;
+    },
+  ): Promise<TEntity[]> {
+    const uid = requireScopedUserId(userId);
+    return this.repo.find({
+      ...(options ?? {}),
+      where: {
+        ...(options?.where as ObjectLiteral | undefined),
+        userId: uid,
+      } as any,
+    });
   }
 }
 

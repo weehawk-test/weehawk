@@ -27,6 +27,7 @@ import {
   registryHostFromImageRef,
 } from './registry-host-from-image';
 import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
+import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 export type RegistryAccountSafe = {
   id: number;
@@ -38,11 +39,18 @@ export type RegistryAccountSafe = {
 
 @Injectable()
 export class RegistryService {
+  private readonly scopedRegistryAccounts: UserIdTenantScopedRepository<RegistryAccount>;
+
   constructor(
     @InjectRepository(RegistryAccount)
     private readonly registryAccountRepository: Repository<RegistryAccount>,
     private readonly configService: ConfigService,
-  ) {}
+  ) {
+    this.scopedRegistryAccounts = new UserIdTenantScopedRepository<RegistryAccount>(
+      this.registryAccountRepository,
+      'Registry account',
+    );
+  }
 
   private static readonly REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
 
@@ -53,6 +61,14 @@ export class RegistryService {
   private static readonly SAFE_REDIRECT_STATUSES = new Set([307, 308]);
 
   private static readonly NO_BODY_METHODS = new Set(['GET', 'HEAD']);
+
+  private static readonly SENSITIVE_FORWARD_HEADERS = new Set([
+    'authorization',
+    'proxy-authorization',
+    'private-token',
+    'x-auth-token',
+    'cookie',
+  ]);
 
   private static readonly JSON_HEADERS = {
     'content-type': 'application/json',
@@ -66,6 +82,16 @@ export class RegistryService {
       out[String(k).toLowerCase()] = String(v);
     }
     return out;
+  }
+
+  private stripSensitiveForwardHeaders(
+    headers: Record<string, string>,
+  ): Record<string, string> {
+    const next = { ...headers };
+    for (const name of RegistryService.SENSITIVE_FORWARD_HEADERS) {
+      delete next[name];
+    }
+    return next;
   }
 
   private async requestWithPinnedIp(
@@ -82,9 +108,13 @@ export class RegistryService {
     let method = String(options?.method ?? 'GET').toUpperCase();
     let body = options?.body;
     let headers = this.normalizeHeaders(options?.headers);
+    let originalHostname: string | null = null;
 
     for (let i = 0; i <= limit; i += 1) {
       const endpoint = await this.assertPublicRegistryEndpoint(currentUrl);
+      if (!originalHostname) {
+        originalHostname = endpoint.hostname.toLowerCase();
+      }
       const res = await this.singlePinnedRequest(endpoint, {
         method,
         headers,
@@ -98,7 +128,15 @@ export class RegistryService {
       if (i === limit) {
         throw new BadRequestException('Too many redirects while contacting registry.');
       }
-      currentUrl = new URL(location, endpoint.url).toString();
+      const redirectedUrl = new URL(location, endpoint.url);
+      currentUrl = redirectedUrl.toString();
+      const redirectedHostname = redirectedUrl.hostname.toLowerCase();
+      if (
+        originalHostname != null &&
+        redirectedHostname !== originalHostname
+      ) {
+        headers = this.stripSensitiveForwardHeaders(headers);
+      }
       if (
         !RegistryService.SAFE_REDIRECT_STATUSES.has(res.status) &&
         method === 'POST'
@@ -455,8 +493,7 @@ export class RegistryService {
   }
 
   async listAccounts(userId: number): Promise<RegistryAccountSafe[]> {
-    const rows = await this.registryAccountRepository.find({
-      where: { userId },
+    const rows = await this.scopedRegistryAccounts.listScoped(userId, {
       order: { name: 'ASC' },
     });
     return rows.map((r) => this.toSafe(r));
@@ -482,15 +519,25 @@ export class RegistryService {
       );
 
       const enc = encryptPrivateKey(password, this.getEncryptionSecret());
-      const existing = await this.registryAccountRepository.findOne({
-        where: { userId, providerUrl },
-      });
+      let existing: RegistryAccount | null = null;
+      try {
+        existing = await this.scopedRegistryAccounts.findScopedBy(
+          'providerUrl',
+          providerUrl,
+          userId,
+        );
+      } catch {
+        existing = null;
+      }
       if (existing) {
         existing.name = name;
         existing.username = username;
         existing.passwordEncrypted = enc;
         existing.lastVerifiedAt = new Date();
-        const saved = await this.registryAccountRepository.save(existing);
+        const saved = await this.scopedRegistryAccounts.saveScoped(
+          existing,
+          userId,
+        );
         return this.toSafe(saved);
       }
       const created = this.registryAccountRepository.create({
@@ -501,7 +548,7 @@ export class RegistryService {
         passwordEncrypted: enc,
         lastVerifiedAt: new Date(),
       });
-      const saved = await this.registryAccountRepository.save(created);
+      const saved = await this.scopedRegistryAccounts.saveScoped(created, userId);
       return this.toSafe(saved);
     } catch (e) {
       if (
@@ -519,11 +566,7 @@ export class RegistryService {
   }
 
   async removeAccount(userId: number, id: number): Promise<{ success: true }> {
-    const row = await this.registryAccountRepository.findOne({
-      where: { id, userId },
-    });
-    if (!row) throw new NotFoundException(`Registry account #${id} not found`);
-    await this.registryAccountRepository.remove(row);
+    await this.scopedRegistryAccounts.deleteScoped(id, userId);
     return { success: true };
   }
 
@@ -543,9 +586,16 @@ export class RegistryService {
     }
     const host = registryHostFromImageRef(imageRef);
     const normalized = normalizeProviderUrl(host);
-    const account = await this.registryAccountRepository.findOne({
-      where: { providerUrl: normalized, userId },
-    });
+    let account: RegistryAccount | null = null;
+    try {
+      account = await this.scopedRegistryAccounts.findScopedBy(
+        'providerUrl',
+        normalized,
+        userId,
+      );
+    } catch {
+      account = null;
+    }
     if (!account) {
       return {
         env: base,
@@ -614,9 +664,16 @@ export class RegistryService {
     }
     const host = registryHostFromImageRef(imageRef);
     const normalized = normalizeProviderUrl(host);
-    const account = await this.registryAccountRepository.findOne({
-      where: { providerUrl: normalized, userId },
-    });
+    let account: RegistryAccount | null = null;
+    try {
+      account = await this.scopedRegistryAccounts.findScopedBy(
+        'providerUrl',
+        normalized,
+        userId,
+      );
+    } catch {
+      account = null;
+    }
     if (!account) {
       return null;
     }

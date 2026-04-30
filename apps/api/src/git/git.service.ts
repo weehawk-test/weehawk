@@ -102,6 +102,14 @@ export class GitService implements OnModuleInit {
 
   private static readonly NO_BODY_METHODS = new Set(['GET', 'HEAD']);
 
+  private static readonly SENSITIVE_FORWARD_HEADERS = new Set([
+    'authorization',
+    'proxy-authorization',
+    'private-token',
+    'x-auth-token',
+    'cookie',
+  ]);
+
   private normalizeHeaders(
     headers?: Record<string, string>,
   ): Record<string, string> {
@@ -110,6 +118,16 @@ export class GitService implements OnModuleInit {
       out[String(k).toLowerCase()] = String(v);
     }
     return out;
+  }
+
+  private stripSensitiveForwardHeaders(
+    headers: Record<string, string>,
+  ): Record<string, string> {
+    const next = { ...headers };
+    for (const name of GitService.SENSITIVE_FORWARD_HEADERS) {
+      delete next[name];
+    }
+    return next;
   }
 
   private async fetchPinnedWithValidation(
@@ -128,9 +146,13 @@ export class GitService implements OnModuleInit {
     let body = options?.body;
     let headers = this.normalizeHeaders(options?.headers);
     const label = options?.label ?? 'URL';
+    let originalHostname: string | null = null;
 
     for (let i = 0; i <= limit; i += 1) {
       const endpoint = await this.assertPublicHttpEndpoint(currentUrl, label);
+      if (!originalHostname) {
+        originalHostname = endpoint.hostname.toLowerCase();
+      }
       const res = await this.singlePinnedRequest(endpoint, {
         method,
         headers,
@@ -144,7 +166,15 @@ export class GitService implements OnModuleInit {
       if (i === limit) {
         throw new BadRequestException(`${label} redirected too many times.`);
       }
-      currentUrl = new URL(location, endpoint.url).toString();
+      const redirectedUrl = new URL(location, endpoint.url);
+      currentUrl = redirectedUrl.toString();
+      const redirectedHostname = redirectedUrl.hostname.toLowerCase();
+      if (
+        originalHostname != null &&
+        redirectedHostname !== originalHostname
+      ) {
+        headers = this.stripSensitiveForwardHeaders(headers);
+      }
       if (!GitService.SAFE_REDIRECT_CODES.has(res.status) && method === 'POST') {
         method = 'GET';
         body = undefined;

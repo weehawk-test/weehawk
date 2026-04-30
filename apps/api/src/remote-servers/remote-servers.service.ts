@@ -2794,8 +2794,7 @@ done
   }
 
   async findAll(userId: number): Promise<RemoteServerSafe[]> {
-    const rows = await this.remoteServerRepository.find({
-      where: { userId },
+    const rows = await this.scopedRemoteServers.listScoped(userId, {
       order: { name: 'ASC' },
     });
     return Promise.all(

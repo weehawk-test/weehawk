@@ -10,18 +10,34 @@ import { Project } from './entities/project.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { generatePublicId, isLikelyNumericId } from '../common/public-id';
+import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 
 @Injectable()
 export class ProjectsService {
+  private readonly scopedProjects: UserIdTenantScopedRepository<Project>;
+
   constructor(
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
-  ) {}
+  ) {
+    this.scopedProjects = new UserIdTenantScopedRepository<Project>(
+      this.projectRepository,
+      'Project',
+    );
+  }
+
+  private async _internal_system_saveProject(project: Project): Promise<Project> {
+    return this.projectRepository.save(project);
+  }
+
+  private async _internal_system_removeProject(project: Project): Promise<Project> {
+    return this.projectRepository.remove(project);
+  }
 
   private async ensureProjectPublicId(project: Project): Promise<Project> {
     if (project.publicId) return project;
     project.publicId = generatePublicId('prj');
-    return this.projectRepository.save(project);
+    return this._internal_system_saveProject(project);
   }
 
   private async ensureProjectPublicIds(rows: Project[]): Promise<Project[]> {
@@ -29,10 +45,16 @@ export class ProjectsService {
   }
 
   async create(createProjectDto: CreateProjectDto, userId: number) {
-    const existing = await this.projectRepository.findOneBy({
-      name: createProjectDto.name,
-      userId,
-    });
+    let existing: Project | null = null;
+    try {
+      existing = await this.scopedProjects.findScopedBy(
+        'name',
+        createProjectDto.name,
+        userId,
+      );
+    } catch {
+      existing = null;
+    }
     if (existing) {
       throw new ConflictException('Project name already exists');
     }
@@ -42,7 +64,7 @@ export class ProjectsService {
       userId,
       publicId: generatePublicId('prj'),
     });
-    return await this.projectRepository.save(project);
+    return await this.scopedProjects.saveScoped(project, userId);
   }
 
   async findAllPaginated(
@@ -104,14 +126,9 @@ export class ProjectsService {
         'Numeric project id is not allowed. Use publicId.',
       );
     }
-    const where = [{ publicId: trimmed, userId }];
-    const project = await this.projectRepository.findOne({
-      where,
+    const project = await this.scopedProjects.findScopedBy('publicId', trimmed, userId, {
       relations: ['services'],
     });
-    if (!project) {
-      throw new NotFoundException(`Project not found`);
-    }
     return this.ensureProjectPublicId(project);
   }
 
@@ -126,7 +143,7 @@ export class ProjectsService {
   ) {
     const project = await this.findOne(idOrPublicId, userId);
     const updated = this.projectRepository.merge(project, updateProjectDto);
-    return await this.projectRepository.save(updated);
+    return await this.scopedProjects.saveScoped(updated, userId);
   }
 
   async remove(idOrPublicId: string, userId: number) {
@@ -137,6 +154,6 @@ export class ProjectsService {
         `Cannot delete project while it still contains services (${services.length}). Delete all services in this project first, then try again.`,
       );
     }
-    return await this.projectRepository.remove(project);
+    return await this._internal_system_removeProject(project);
   }
 }

@@ -459,8 +459,7 @@ fi
   }
 
   async list(userId: number): Promise<CronJobListRow[]> {
-    const list = await this.cronJobRepo.find({
-      where: { userId },
+    const list = await this.scopedCronJobs.listScoped(userId, {
       order: { createdAt: 'DESC' },
     });
     return Promise.all(list.map((w) => this.toListRow(w)));

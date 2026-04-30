@@ -136,6 +136,13 @@ export class ServicesService {
     return this.serviceRepository.remove(service);
   }
 
+  // SYSTEM-LEVEL BYPASS: Required for internal list reads reused by scoped user-facing queries.
+  private async _internal_systemFindServices(
+    options: Parameters<Repository<Service>['find']>[0],
+  ): Promise<Service[]> {
+    return this.serviceRepository.find(options);
+  }
+
   async resolveProjectIdForUser(
     identifier: string,
     userId: number,
@@ -2808,7 +2815,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   }
 
   async findAll(_userId: number) {
-    const rows = await this.serviceRepository.find({
+    const rows = await this._internal_systemFindServices({
       where: { project: { userId: _userId } },
       relations: ['project', 'remoteServer'],
       order: { createdAt: 'DESC' },
@@ -2819,7 +2826,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
   async findByProjectId(projectId: number, userId: number) {
     await this.getScopedProjectForUser(projectId, userId);
-    const rows = await this.serviceRepository.find({
+    const rows = await this._internal_systemFindServices({
       where: { project: { id: projectId } },
       relations: ['project', 'remoteServer'],
       order: { createdAt: 'DESC' },
@@ -2939,7 +2946,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, userId?: number) {
+    if (userId != null) {
+      return this.getScopedServiceForUser(id, userId);
+    }
     const service = await this._internal_systemFindOneService({
       where: { id },
       relations: ['project', 'remoteServer', 'buildRemoteServer'],

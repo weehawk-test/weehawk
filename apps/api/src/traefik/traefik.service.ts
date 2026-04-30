@@ -16,6 +16,20 @@ export class TraefikService {
     private readonly repo: Repository<TraefikSettings>,
   ) {}
 
+  // SYSTEM-LEVEL BYPASS: Required for tenant-keyed Traefik settings row reads.
+  private async _internal_system_findOneTraefik(
+    options: Parameters<Repository<TraefikSettings>['findOne']>[0],
+  ): Promise<TraefikSettings | null> {
+    return this.repo.findOne(options);
+  }
+
+  // SYSTEM-LEVEL BYPASS: Required for tenant-keyed Traefik settings row writes.
+  private async _internal_system_saveTraefik(
+    row: TraefikSettings,
+  ): Promise<TraefikSettings> {
+    return this.repo.save(row);
+  }
+
   private requireTraefikUserId(userId: unknown): number {
     const n = typeof userId === 'number' ? userId : Number(userId);
     if (!Number.isFinite(n) || n < 1) {
@@ -28,7 +42,7 @@ export class TraefikService {
 
   async getSettings(userId: number): Promise<TraefikSettings> {
     const uid = this.requireTraefikUserId(userId);
-    let row = await this.repo.findOne({ where: { userId: uid } });
+    let row = await this._internal_system_findOneTraefik({ where: { userId: uid } });
     if (!row) {
       row = this.repo.create({
         id: uid,
@@ -46,10 +60,10 @@ export class TraefikService {
         swarmMode: true,
         staticConfigOverride: null,
       });
-      await this.repo.save(row);
+      await this._internal_system_saveTraefik(row);
     } else if (row.dockerNetwork !== WEEHAWK_TRAEFIK_EXTERNAL_NETWORK) {
       row.dockerNetwork = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK;
-      await this.repo.save(row);
+      await this._internal_system_saveTraefik(row);
     }
     return row;
   }
@@ -89,7 +103,7 @@ export class TraefikService {
       const raw = dto.staticConfigOverride;
       current.staticConfigOverride = raw.trim() === '' ? null : raw;
     }
-    return await this.repo.save(current);
+    return await this._internal_system_saveTraefik(current);
   }
 
   /** Normalized hostname for Traefik Host() or null if unset/invalid. */

@@ -180,8 +180,7 @@ export class NotificationService {
   }
 
   async listChannels(userId: number): Promise<NotificationChannelRow[]> {
-    const list = await this.channelRepo.find({
-      where: { userId },
+    const list = await this.scopedChannels.listScoped(userId, {
       order: { createdAt: 'DESC' },
     });
     const rows: NotificationChannelRow[] = [];
