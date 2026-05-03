@@ -20,6 +20,39 @@ function clampPageSize(size: number): number {
   return Math.min(Math.max(n, 1), 100);
 }
 
+/** Dotenv-style lines for bulk import (not a full dotenv parser). */
+function parseDotenvLinesForBulkImport(
+  envText: string,
+): Array<{ name: string; value: string }> {
+  const normalized = envText
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  const out: Array<{ name: string; value: string }> = [];
+  for (const line of lines) {
+    let trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (/^export\s+/i.test(trimmed)) {
+      trimmed = trimmed.replace(/^export\s+/i, '').trim();
+    }
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const rawKey = trimmed.slice(0, eq).trim();
+    if (!rawKey) continue;
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out.push({ name: rawKey, value });
+  }
+  return out;
+}
+
 export interface PaginatedSecretsDto {
   items: DockerSecretListItemDto[];
   total: number;
@@ -46,6 +79,34 @@ export class DockerSecretsService {
       name,
       value,
     );
+  }
+
+  async bulkImportFromEnvText(
+    remoteServerId: number,
+    projectUserId: number | null,
+    envText: string,
+  ): Promise<{
+    message: string;
+    created: string[];
+    failed: Array<{ key: string; error: string }>;
+    skipped: string[];
+  }> {
+    const entries = parseDotenvLinesForBulkImport(envText);
+    const { created, failed, skipped } =
+      await this.remoteServersService.bulkEnsureDockerSecretsOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId,
+        entries,
+      );
+    const parts: string[] = [`${created.length} created`];
+    if (skipped.length) parts.push(`${skipped.length} already existed (skipped)`);
+    if (failed.length) parts.push(`${failed.length} failed`);
+    return {
+      message: parts.join(', ') + '.',
+      created,
+      failed,
+      skipped,
+    };
   }
 
   async findAll(remoteServerId: number, projectUserId: number | null) {

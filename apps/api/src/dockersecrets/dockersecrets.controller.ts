@@ -117,45 +117,11 @@ export class DockerSecretsController {
       dto.remoteServerId,
       req,
     );
-    const lines = dto.envText.split('\n');
-
-    const results: string[] = [];
-    const errors: Array<{ key: string; error: string }> = [];
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...valueParts] = trimmed.split('=');
-
-        if (key && valueParts.length > 0) {
-          const name = key.trim();
-          const value = valueParts.join('=').trim();
-
-          try {
-            await this.secretsService.create(
-              remoteServerId,
-              this.uid(req),
-              name,
-              value,
-            );
-            results.push(name);
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'Unknown error';
-            errors.push({
-              key: name,
-              error: msg,
-            });
-          }
-        }
-      }
-    }
-
-    return {
-      message: `${results.length} secrets processed.`,
-      created: results,
-      failed: errors,
-    };
+    return await this.secretsService.bulkImportFromEnvText(
+      remoteServerId,
+      this.uid(req),
+      dto.envText,
+    );
   }
 
   @Delete(':name')

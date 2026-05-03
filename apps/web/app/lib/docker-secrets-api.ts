@@ -101,8 +101,13 @@ export async function replaceDockerSecretApi(
 }
 
 export async function bulkImportSecretsApi(remoteServerId: DockerSecretsRemoteServerId, envText: string) {
-  return request<{ message: string; created: string[]; failed: Array<{ key: string; error: string }> }>(
-    "/api/docker-secrets/bulk-import",
-    { method: "POST", body: JSON.stringify({ remoteServerId, envText }) },
-  );
+  return request<{
+    message: string;
+    created: string[];
+    failed: Array<{ key: string; error: string }>;
+    skipped: string[];
+  }>("/api/docker-secrets/bulk-import", {
+    method: "POST",
+    body: JSON.stringify({ remoteServerId, envText }),
+  });
 }

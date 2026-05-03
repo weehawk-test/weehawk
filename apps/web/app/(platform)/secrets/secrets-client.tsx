@@ -364,9 +364,12 @@ function BulkImportPanel({
     if (!text.trim()) return;
     bulk.mutate(text, {
       onSuccess: (res) => {
+        const extra: string[] = [];
+        if (res.skipped?.length) extra.push(`${res.skipped.length} skipped (already exist).`);
+        if (res.failed.length) extra.push(`${res.failed.length} failed.`);
         toast({
           title: "Import finished",
-          description: res.message + (res.failed.length ? ` ${res.failed.length} failed.` : ""),
+          description: [res.message, ...extra].filter(Boolean).join(" "),
         });
         if (res.failed.length) {
           console.warn(res.failed);

@@ -2572,6 +2572,55 @@ done
     });
   }
 
+  /**
+   * Creates many Swarm secrets using one SSH connection (avoids N× handshake latency)
+   * and reports keys that already exist on the remote.
+   */
+  async bulkEnsureDockerSecretsOnRemoteViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    entries: Array<{ name: string; value: string }>,
+  ): Promise<{
+    created: string[];
+    failed: Array<{ key: string; error: string }>;
+    skipped: string[];
+  }> {
+    if (entries.length === 0) {
+      return { created: [], failed: [], skipped: [] };
+    }
+    const rs = await this.resolveRemoteServerForProjectContext(
+      remoteServerId,
+      projectUserId,
+    );
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const created: string[] = [];
+    const failed: Array<{ key: string; error: string }> = [];
+    const skipped: string[] = [];
+
+    await this.withSshClient(rs, pem, async (client) => {
+      for (const { name, value } of entries) {
+        try {
+          const exists = await this.sshExecExitCode(
+            client,
+            `docker secret inspect ${JSON.stringify(name)} >/dev/null 2>&1`,
+          );
+          if (exists === 0) {
+            skipped.push(name);
+            continue;
+          }
+          await this.sshExecDockerSecretCreateStdin(client, name, value);
+          created.push(name);
+        } catch (err: unknown) {
+          const msg =
+            err instanceof Error ? err.message : 'Unknown error';
+          failed.push({ key: name, error: msg });
+        }
+      }
+    });
+
+    return { created, failed, skipped };
+  }
+
   /** Returns process exit code (0–255). */
   private async sshExecExitCode(
     client: Client,
@@ -2605,6 +2654,9 @@ done
           return;
         }
         let stderr = '';
+        stream.on('data', () => {
+          /* drain stdout — docker secret create prints the secret id; ignoring it can stall the session */
+        });
         stream.stderr.on('data', (d: Buffer) => {
           stderr += d.toString();
         });
