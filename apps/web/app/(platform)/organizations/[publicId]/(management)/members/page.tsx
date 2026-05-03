@@ -16,7 +16,7 @@ export default async function OrganizationMembersPage({ params }: PageProps) {
       initialMembers={members}
       intro={
         <p className="text-sm text-muted-foreground md:max-w-2xl">
-          Teammates listed here can work in this organization after you invite them. They sign in with the same Weehawk email and password they already use—no extra account.
+          Members listed here have accepted access to this organization. Invitations are sent by email; the recipient must already have a Weehawk account and accept the link while signed in with that email.
         </p>
       }
     />

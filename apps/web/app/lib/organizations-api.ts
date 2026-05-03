@@ -3,6 +3,7 @@ import { authFetch } from "./auth-fetch";
 import { getServerApiBase } from "./server-api";
 import type {
   CreateOrganizationInput,
+  OrganizationInviteAcceptResult,
   OrganizationMemberPublic,
   OrganizationProjectListItem,
   OrganizationPublic,
@@ -10,6 +11,7 @@ import type {
 
 export type {
   CreateOrganizationInput,
+  OrganizationInviteAcceptResult,
   OrganizationMemberPublic,
   OrganizationProjectListItem,
   OrganizationPublic,
@@ -155,10 +157,11 @@ export async function fetchOrganizationProjects(
   return data.map(mapOrgProject);
 }
 
-export async function addOrganizationMember(
+/** Sends invitation email; invitee accepts via link while signed in as that email. */
+export async function inviteOrganizationMember(
   organizationPublicId: string,
   email: string,
-): Promise<OrganizationMemberPublic> {
+): Promise<{ message: string }> {
   const res = await apiFetch(
     `/api/organizations/${encodeURIComponent(organizationPublicId.trim())}/members`,
     {
@@ -170,7 +173,46 @@ export async function addOrganizationMember(
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
-  return mapMember(JSON.parse(text) as unknown);
+  const data = JSON.parse(text) as unknown as { message?: string };
+  return { message: typeof data.message === "string" ? data.message : "Invitation sent." };
+}
+
+function mapInviteAccept(raw: unknown): OrganizationInviteAcceptResult {
+  const m = mapMember(raw);
+  const row = raw as Record<string, unknown>;
+  return {
+    ...m,
+    organizationPublicId: String(row.organizationPublicId ?? ""),
+    organizationName: String(row.organizationName ?? ""),
+  };
+}
+
+/** Accept invite (authenticated; session email must match invitation). */
+export async function acceptOrganizationInvite(token: string): Promise<OrganizationInviteAcceptResult> {
+  const res = await apiFetch("/api/organizations/invitations/accept", {
+    method: "POST",
+    body: JSON.stringify({ token: token.trim() }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapInviteAccept(JSON.parse(text) as unknown);
+}
+
+/** Leave organization (non-owners only). */
+export async function leaveOrganization(organizationPublicId: string): Promise<{ message: string }> {
+  const id = organizationPublicId.trim();
+  if (!id) throw new Error("Organization id required");
+  const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/membership`, {
+    method: "DELETE",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as unknown as { message?: string };
+  return { message: typeof data.message === "string" ? data.message : "You left the organization." };
 }
 
 export async function createOrganization(

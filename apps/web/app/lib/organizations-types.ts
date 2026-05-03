@@ -17,6 +17,12 @@ export type OrganizationMemberPublic = {
   joinedAt: string;
 };
 
+/** Response from POST /api/organizations/invitations/accept */
+export type OrganizationInviteAcceptResult = OrganizationMemberPublic & {
+  organizationPublicId: string;
+  organizationName: string;
+};
+
 export type OrganizationProjectListItem = {
   publicId: string;
   name: string;

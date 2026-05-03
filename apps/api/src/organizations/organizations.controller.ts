@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Post,
   Req,
@@ -19,15 +20,20 @@ import { OrganizationsService } from './organizations.service';
 import type { OrganizationMemberContext } from './organizations.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { AddOrganizationMemberDto } from './dto/add-organization-member.dto';
+import { AcceptOrganizationInviteDto } from './dto/accept-organization-invite.dto';
 import { OrgMembershipGuard } from './guards/org-membership.guard';
 import { OrgMemberContextParam } from './decorators/organization-member-context.decorator';
+import { OrganizationInviteService } from './organization-invite.service';
 
 @ApiTags('Organizations')
 @ApiBearerAuth()
 @UseGuards(LocalSessionGuard)
 @Controller('api/organizations')
 export class OrganizationsController {
-  constructor(private readonly organizationsService: OrganizationsService) {}
+  constructor(
+    private readonly organizationsService: OrganizationsService,
+    private readonly organizationInviteService: OrganizationInviteService,
+  ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
     const id = req?.user?.userId;
@@ -57,11 +63,46 @@ export class OrganizationsController {
     return this.organizationsService.listMine(this.uid(req));
   }
 
+  @Post('invitations/accept')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Accept an organization invitation (session must match invited email; token from email)',
+  })
+  acceptInvitation(
+    @Body() dto: AcceptOrganizationInviteDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.organizationInviteService.acceptInvite(
+      dto.token,
+      this.uid(req),
+    );
+  }
+
   @Get(':publicId/members')
   @UseGuards(OrgMembershipGuard)
   @ApiOperation({ summary: 'List organization members (members only)' })
   listMembers(@OrgMemberContextParam() ctx: OrganizationMemberContext) {
     return this.organizationsService.listMembers(ctx);
+  }
+
+  @Delete(':publicId/membership')
+  @UseGuards(OrgMembershipGuard)
+  @ApiOperation({
+    summary:
+      'Leave organization (removes your membership; owners cannot leave)',
+  })
+  leaveOrganization(
+    @OrgMemberContextParam() ctx: OrganizationMemberContext,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.organizationsService.leaveOrganization(ctx, this.uid(req));
   }
 
   @Post(':publicId/members')
@@ -74,14 +115,15 @@ export class OrganizationsController {
     }),
   )
   @ApiOperation({
-    summary: 'Invite a user by email (organization owner only; user must already exist)',
+    summary:
+      'Send invitation email (owner only; invitee must already have a Weehawk account)',
   })
   addMember(
     @OrgMemberContextParam() ctx: OrganizationMemberContext,
     @Body() dto: AddOrganizationMemberDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.organizationsService.addMemberByEmail(
+    return this.organizationInviteService.sendMemberInvite(
       ctx,
       this.uid(req),
       dto.email,

@@ -354,7 +354,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                             key={item.href}
                             collapsed={railMode}
                             href={href}
-                            label={isOrgSettings ? "Settings" : item.label}
+                            label={isOrgSettings ? "Management" : item.label}
                             active={active}
                             icon={isOrgSettings ? Settings : item.icon}
                             activeLayoutId={ORG_ACTIVE}

@@ -4,13 +4,16 @@ import { Organization } from './entities/organization.entity';
 import { OrganizationMembership } from './entities/organization-membership.entity';
 import { User } from '../auth/entities/user.entity';
 import { Project } from '../projects/entities/project.entity';
+import { EmailModule } from '../email/email.module';
 import { OrganizationsRepository } from './organizations.repository';
 import { OrganizationsService } from './organizations.service';
 import { OrganizationsController } from './organizations.controller';
 import { OrgMembershipGuard } from './guards/org-membership.guard';
+import { OrganizationInviteService } from './organization-invite.service';
 
 @Module({
   imports: [
+    EmailModule,
     TypeOrmModule.forFeature([
       Organization,
       OrganizationMembership,
@@ -19,7 +22,12 @@ import { OrgMembershipGuard } from './guards/org-membership.guard';
     ]),
   ],
   controllers: [OrganizationsController],
-  providers: [OrganizationsRepository, OrganizationsService, OrgMembershipGuard],
+  providers: [
+    OrganizationsRepository,
+    OrganizationsService,
+    OrganizationInviteService,
+    OrgMembershipGuard,
+  ],
   exports: [
     OrganizationsService,
     OrgMembershipGuard,

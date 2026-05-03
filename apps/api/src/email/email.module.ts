@@ -88,6 +88,7 @@ import { ChangeEmailService } from './change-email.service';
   ],
   exports: [
     EmailService,
+    TokenStoreService,
     EmailConfirmationService,
     PasswordResetService,
     ChangeEmailService,

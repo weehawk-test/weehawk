@@ -176,4 +176,38 @@ export class EmailService {
       </div>`;
     await this.sendHtml(to, 'Your email has been changed', html);
   }
+
+  async sendOrganizationInvite(
+    to: string,
+    firstName: string,
+    organizationName: string,
+    inviterDisplayName: string,
+    acceptLink: string,
+  ): Promise<void> {
+    const esc = (s: string) => s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const safeName = esc(firstName);
+    const safeOrg = esc(organizationName);
+    const safeInviter = esc(inviterDisplayName);
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto;">
+        <h2>Hello ${safeName}!</h2>
+        <p><strong>${safeInviter}</strong> invited you to join the organization <strong>${safeOrg}</strong> on Weehawk.</p>
+        <p>Sign in to your Weehawk account (this email), then click the button below to accept:</p>
+        <a href="${acceptLink}" style="
+          background-color: #2563eb;
+          color: white;
+          padding: 14px 20px;
+          text-decoration: none;
+          border-radius: 4px;
+          display: inline-block;">
+          Accept invitation
+        </a>
+        <p style="color: #888; margin-top: 20px;">This link expires in 72 hours. If you did not expect this, you can ignore this email.</p>
+      </div>`;
+    await this.sendHtml(
+      to,
+      `Invitation to join ${organizationName} on Weehawk`,
+      html,
+    );
+  }
 }

@@ -107,6 +107,22 @@ export class OrganizationsService {
     return rows.map((o) => this.toPublicDto(o, userId));
   }
 
+  async leaveOrganization(
+    ctx: OrganizationMemberContext,
+    userId: number,
+  ): Promise<{ message: string }> {
+    if (ctx.ownerId === userId) {
+      throw new ForbiddenException(
+        'The organization owner cannot leave the organization.',
+      );
+    }
+    const n = await this.repo.deleteMembership(userId, ctx.internalId);
+    if (n === 0) {
+      throw new NotFoundException('Organization not found');
+    }
+    return { message: 'You left the organization.' };
+  }
+
   /**
    * Validates publicId, resolves org, verifies membership. Same 404 for unknown org and non-member.
    */
@@ -151,42 +167,30 @@ export class OrganizationsService {
     });
   }
 
-  async addMemberByEmail(
-    ctx: OrganizationMemberContext,
-    actingUserId: number,
-    rawEmail: string,
+  /**
+   * Adds an existing user to an organization (e.g. after they accept an email invite).
+   */
+  async addMemberByUserId(
+    organizationInternalId: number,
+    userId: number,
   ): Promise<OrganizationMemberPublicDto> {
-    if (ctx.ownerId !== actingUserId) {
-      throw new ForbiddenException(
-        'Only the organization owner can invite members.',
-      );
-    }
-    const email = String(rawEmail ?? '')
-      .trim()
-      .toLowerCase();
-    if (!email) throw new BadRequestException('email is required');
-    const user = await this.users
-      .createQueryBuilder('u')
-      .where('LOWER(u.email) = :email', { email })
-      .getOne();
-    if (!user) {
-      throw new NotFoundException(
-        'No user with this email was found. They must sign up first.',
-      );
-    }
-    const existing = await this.repo.findMembership(user.id, ctx.internalId);
+    const org = await this.repo.findById(organizationInternalId);
+    if (!org) throw new NotFoundException('Organization not found');
+    const user = await this.users.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const existing = await this.repo.findMembership(user.id, organizationInternalId);
     if (existing) {
       throw new ConflictException('This user is already a member.');
     }
     const membership = new OrganizationMembership();
     membership.userId = user.id;
-    membership.organizationId = ctx.internalId;
+    membership.organizationId = organizationInternalId;
     const saved = await this.repo.saveMembership(membership);
     return {
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
-      isOwner: ctx.ownerId === user.id,
+      isOwner: org.ownerId === user.id,
       joinedAt: saved.createdAt.toISOString(),
     };
   }

@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { Building2, ChevronRight, Clock, Plus } from "lucide-react";
+import { Building2, Plus } from "lucide-react";
 import { fetchOrganizationsListSSR } from "@/lib/server-fetch";
+import { OrganizationCardFooter } from "./organization-card-footer";
 
 export const dynamic = "force-dynamic";
 
@@ -69,23 +70,20 @@ export default async function OrganizationsPage() {
                         </span>
                       ) : null}
                     </div>
+                    <p className="mt-1 text-xs text-muted-foreground truncate" title={org.publicId}>
+                      <span className="font-mono text-foreground/80">{org.publicId}</span>
+                    </p>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-auto pt-4 border-t border-slate-200 text-xs text-muted-foreground dark:border-white/5 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-1 min-w-0" title={`${formatDateUTC(org.createdAt)} (UTC)`}>
-                  <Clock className="w-3 h-3 shrink-0" aria-hidden />
-                  <span className="truncate">{formatDateUTC(org.createdAt)}</span>
-                </div>
-                <Link
-                  href={`/organizations/${encodeURIComponent(org.publicId)}/projects`}
-                  className="shrink-0 text-primary hover:underline font-medium inline-flex items-center gap-1"
-                >
-                  View
-                  <ChevronRight className="w-3 h-3" aria-hidden />
-                </Link>
-              </div>
+              <OrganizationCardFooter
+                publicId={org.publicId}
+                name={org.name}
+                dateLabel={formatDateUTC(org.createdAt)}
+                dateTitle={`${formatDateUTC(org.createdAt)} (UTC)`}
+                isOwner={org.isOwner}
+              />
             </div>
           ))}
         </div>

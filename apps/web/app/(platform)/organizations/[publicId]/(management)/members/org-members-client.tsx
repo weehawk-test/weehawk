@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { Loader2, UserPlus } from "lucide-react";
 import type { OrganizationMemberPublic } from "@/lib/organizations-types";
-import { addOrganizationMember } from "@/lib/organizations-api";
+import { inviteOrganizationMember } from "@/lib/organizations-api";
 import { useOrgWorkspace } from "../../org-workspace-context";
 import {
   Dialog,
@@ -51,17 +51,12 @@ export function OrgMembersClient({
     setError(null);
     setAdding(true);
     try {
-      const row = await addOrganizationMember(organizationPublicId, email);
-      setMembers((prev) => {
-        const exists = prev.some((m) => m.email.toLowerCase() === row.email.toLowerCase());
-        if (exists) return prev.map((m) => (m.email.toLowerCase() === row.email.toLowerCase() ? row : m));
-        return [...prev, row].sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
-      });
+      await inviteOrganizationMember(organizationPublicId, email);
       resetInviteForm();
       setInviteOpen(false);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not add member");
+      setError(err instanceof Error ? err.message : "Could not send invitation");
     } finally {
       setAdding(false);
     }
@@ -84,7 +79,8 @@ export function OrgMembersClient({
                 <DialogHeader>
                   <DialogTitle>Invite member</DialogTitle>
                   <DialogDescription>
-                    Enter the teammate&apos;s Weehawk account email. They must sign up before you can add them.
+                    Enter their Weehawk account email (they must already be registered). We&apos;ll email them a link to
+                    accept— they need to open it while signed in as that address.
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={onAdd} className="space-y-4">
@@ -120,7 +116,7 @@ export function OrgMembersClient({
                     </button>
                     <button type="submit" disabled={adding} className="btn-primary inline-flex items-center justify-center gap-2">
                       {adding ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
-                      Add member
+                      Send invitation
                     </button>
                   </DialogFooter>
                 </form>

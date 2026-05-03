@@ -17,6 +17,10 @@ export class OrganizationsRepository {
     return this.organizations.findOne({ where: { publicId } });
   }
 
+  async findById(id: number): Promise<Organization | null> {
+    return this.organizations.findOne({ where: { id } });
+  }
+
   async saveOrganization(row: Organization): Promise<Organization> {
     return this.organizations.save(row);
   }
@@ -30,6 +34,14 @@ export class OrganizationsRepository {
     organizationId: number,
   ): Promise<OrganizationMembership | null> {
     return this.memberships.findOne({ where: { userId, organizationId } });
+  }
+
+  async deleteMembership(
+    userId: number,
+    organizationId: number,
+  ): Promise<number> {
+    const r = await this.memberships.delete({ userId, organizationId });
+    return r.affected ?? 0;
   }
 
   async listMembershipsForOrganization(

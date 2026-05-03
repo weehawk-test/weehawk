@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
 import { AuthHttpError, loginApi } from "@/lib/auth-api";
 import { useAuth } from "@/contexts/auth-context";
@@ -13,8 +13,20 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { PasswordInput } from "@/components/inputs/password-input";
 import { API_BASE, normalizeApiBase } from "@/lib/api";
 
+function safeInternalNext(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const t = raw.trim();
+  if (!t.startsWith("/") || t.startsWith("//")) return null;
+  return t;
+}
+
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextAfterAuth = useMemo(
+    () => safeInternalNext(searchParams.get("next")),
+    [searchParams],
+  );
   const { accessToken, isReady, setSession } = useAuth();
   const { toast } = useToast();
   const [email, setEmail] = useState("");
@@ -26,14 +38,13 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!isReady || !accessToken) return;
-    const err = new URLSearchParams(window.location.search).get("error")?.trim();
+    const err = searchParams.get("error")?.trim();
     if (err) return;
-    router.replace("/");
-  }, [isReady, accessToken, router]);
+    router.replace(nextAfterAuth ?? "/");
+  }, [isReady, accessToken, router, nextAfterAuth, searchParams]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const err = params.get("error")?.trim();
+    const err = searchParams.get("error")?.trim();
     if (!err) return;
     setBannerError(err);
     toast({
@@ -41,8 +52,10 @@ export default function LoginPage() {
       description: err,
       variant: "destructive",
     });
-    router.replace("/login", { scroll: false });
-  }, [router, toast]);
+    const qp = new URLSearchParams();
+    if (nextAfterAuth) qp.set("next", nextAfterAuth);
+    router.replace(qp.toString() ? `/login?${qp.toString()}` : "/login", { scroll: false });
+  }, [router, toast, nextAfterAuth, searchParams]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -69,7 +82,7 @@ export default function LoginPage() {
         emailVerified: user.emailVerified,
         imageUrl: user.imageUrl ?? null,
       });
-      router.replace("/");
+      router.replace(nextAfterAuth ?? "/");
     } catch (err) {
       if (err instanceof AuthHttpError && err.status === 429) {
         const waitSec = err.retryAfterSeconds ?? 15 * 60;
