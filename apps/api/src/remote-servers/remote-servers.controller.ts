@@ -251,12 +251,18 @@ export class RemoteServersController {
     @Req() req: { user?: { userId: number } },
     @Param('id') id: string,
     @Query('ref') ref: string,
+    @Query('force') forceRaw?: string,
   ) {
     const rid = await this.rid(id, req);
+    const force =
+      forceRaw === 'true' ||
+      forceRaw === '1' ||
+      String(forceRaw).toLowerCase() === 'yes';
     return this.remoteServersService.remoteConsoleRemoveImage(
       rid,
       this.uid(req),
       decodeURIComponent(ref ?? ''),
+      force,
     );
   }
 

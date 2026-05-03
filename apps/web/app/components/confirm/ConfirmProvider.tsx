@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 
 export type ConfirmOptions = {
   title: string;
-  description?: string;
+  description?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   /** Destructive styling for delete / irreversible actions */
@@ -72,7 +72,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       <AlertDialog open={open} onOpenChange={handleOpenChange}>
         <AlertDialogContent
           className={cn(
-            "max-w-md border border-border bg-card p-0 text-card-foreground shadow-2xl backdrop-blur-xl sm:rounded-2xl",
+            "max-w-lg border border-border bg-card p-0 text-card-foreground shadow-2xl backdrop-blur-xl sm:rounded-2xl",
             destructive && "border-destructive/30",
           )}
         >
@@ -92,8 +92,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 {options?.title ?? ""}
               </AlertDialogTitle>
               {options?.description ? (
-                <AlertDialogDescription className="text-sm leading-relaxed text-muted-foreground">
-                  {options.description}
+                <AlertDialogDescription asChild>
+                  <div className="max-h-[min(40vh,16rem)] min-w-0 overflow-y-auto text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                    {options.description}
+                  </div>
                 </AlertDialogDescription>
               ) : (
                 <AlertDialogDescription className="sr-only">Please confirm or cancel.</AlertDialogDescription>

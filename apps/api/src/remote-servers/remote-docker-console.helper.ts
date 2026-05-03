@@ -1,3 +1,4 @@
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import type Dockerode from 'dockerode';
 import {
   filterContainers,
@@ -327,11 +328,71 @@ export async function removeRemoteContainer(
   await docker.getContainer(id).remove({ force });
 }
 
+function httpStatus(err: unknown): number | undefined {
+  return (err as { statusCode?: number }).statusCode;
+}
+
+function dockerErrMessage(err: unknown): string {
+  const j = (err as { json?: { message?: string } }).json?.message;
+  if (typeof j === 'string' && j.length) return j;
+  if (err instanceof Error && err.message) return err.message;
+  return '';
+}
+
+/**
+ * Removes an image by repo:tag or id. Default `force: false` matches `docker rmi` (no untag-and-dangle on conflict).
+ * With `force: true`, Docker may untag even when layers stay referenced — we verify and error if the image becomes dangling.
+ */
 export async function removeRemoteImage(
   docker: Dockerode,
   refOrId: string,
+  opts?: { force?: boolean },
 ): Promise<void> {
-  await docker.getImage(refOrId).remove({ force: true });
+  const force = opts?.force === true;
+  const image = docker.getImage(refOrId);
+  let id: string;
+  try {
+    id = (await image.inspect()).Id;
+  } catch (e: unknown) {
+    if (httpStatus(e) === 404) {
+      throw new NotFoundException('Image not found');
+    }
+    throw e;
+  }
+
+  try {
+    await image.remove({ force });
+  } catch (e: unknown) {
+    const code = httpStatus(e);
+    const msg = dockerErrMessage(e);
+    if (
+      !force &&
+      (code === 409 ||
+        /in use|being used|are using|dependent child|conflict/i.test(msg))
+    ) {
+      throw new ConflictException(
+        'Cannot remove this image while something on the host still references it (for example a container or service). Remove or stop those first, then try again — or use force remove if appropriate.',
+      );
+    }
+    throw e;
+  }
+
+  try {
+    const after = await docker.getImage(id).inspect();
+    const tags = after.RepoTags;
+    if (Array.isArray(tags) && tags.length > 0) {
+      return;
+    }
+  } catch (e: unknown) {
+    if (httpStatus(e) === 404) {
+      return;
+    }
+    throw e;
+  }
+
+  throw new ConflictException(
+    'Image tag was dropped but the image could not be fully removed (dangling / <none>). Another object still references these layers. Remove dependent containers or services, then delete the leftover image by ID or prune on the host.',
+  );
 }
 
 export async function removeRemoteVolume(

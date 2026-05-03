@@ -129,7 +129,20 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
     const ref = dockerImageDeleteRef(img);
     const ok = await confirm({
       title: "Remove image?",
-      description: `Remove ${ref}? Containers using it may block removal.`,
+      description: (
+        <div className="space-y-3">
+          <p>Remove this image reference?</p>
+          <p
+            className="rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[11px] leading-snug text-foreground shadow-inner"
+            title={ref}
+          >
+            {ref}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Containers or services using it may block removal until they are removed or updated.
+          </p>
+        </div>
+      ),
       confirmLabel: "Remove",
       variant: "destructive",
     });
@@ -157,7 +170,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
     const ref = dockerImageForceDeleteRef(forceDialog);
     void (async () => {
       try {
-        await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget, ref);
+        await deleteRemoteConsoleImage(accessToken ?? "", consoleTarget, ref, { force: true });
         toast({ title: "Image removed (force)", description: ref });
         setForceDialog(null);
         void listQuery.refetch();

@@ -164,10 +164,14 @@ export async function deleteRemoteConsoleImage(
   accessToken: string,
   serverId: string,
   ref: string,
+  options?: { force?: boolean },
 ): Promise<void> {
+  const params = new URLSearchParams();
+  params.set("ref", ref);
+  if (options?.force) params.set("force", "true");
   await authDelete(
     accessToken,
-    `/api/remote-servers/${serverId}/console/images?ref=${encodeURIComponent(ref)}`,
+    `/api/remote-servers/${serverId}/console/images?${params.toString()}`,
   );
 }
 

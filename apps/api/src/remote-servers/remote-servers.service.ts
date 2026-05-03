@@ -3667,9 +3667,10 @@ curl -fsS -o /dev/null "$U"
     id: number,
     userId: number,
     ref: string,
+    force = false,
   ): Promise<{ success: boolean }> {
     await this.withRemoteDocker(id, userId, (docker) =>
-      removeRemoteImage(docker, decodeURIComponent(ref)),
+      removeRemoteImage(docker, decodeURIComponent(ref), { force }),
     );
     return { success: true };
   }
