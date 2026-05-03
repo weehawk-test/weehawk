@@ -1,19 +1,9 @@
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { DockerSecretsClient } from "./secrets-client";
 
 export const dynamic = "force-dynamic";
-import {
-  DOCKER_LIST_PAGE_SIZE,
-  type PaginatedSecretsResponse,
-} from "@/lib/docker-paged-fetch";
-import { filterSecretsPageWithPendingSet } from "@/lib/docker-secrets-pending";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
-import {
-  pendingDeletionCookieKey,
-  readPendingDeletionsFromCookie,
-} from "@/lib/pending-deletions";
-import { fetchDockerSecretsPagedSSR, fetchRemoteServersSSR } from "@/lib/server-fetch";
+import { fetchRemoteServersSSR } from "@/lib/server-fetch";
 
 export default async function Page({
   searchParams,
@@ -35,26 +25,6 @@ export default async function Page({
       : explicitId != null && !idInDeployList
         ? null
         : deployServers[0]?.id ?? null;
-
-  let data: PaginatedSecretsResponse | null = null;
-  let error: string | null = null;
-  if (selectedId != null) {
-    try {
-      data = await fetchDockerSecretsPagedSSR(selectedId, page, DOCKER_LIST_PAGE_SIZE, q);
-      const cookieStore = await cookies();
-      const pending = readPendingDeletionsFromCookie(
-        "docker-secrets",
-        cookieStore.get(pendingDeletionCookieKey("docker-secrets"))?.value,
-      );
-      if (data) {
-        data = filterSecretsPageWithPendingSet(data, pending, selectedId);
-      }
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    }
-  } else {
-    error = null;
-  }
 
   if (selectedId == null) {
     const invalidExplicit = explicitId != null && !idInDeployList;
@@ -120,10 +90,11 @@ export default async function Page({
       )}
       <DockerSecretsClient
         remoteServerId={selectedId}
-        data={data}
-        error={error}
+        data={null}
+        error={null}
         urlPage={page}
         urlQ={q}
+        loadSecretsOnClient
       />
     </>
   );

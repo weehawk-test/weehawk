@@ -16,12 +16,14 @@ import {
   Loader2,
   AlertCircle,
   OctagonAlert,
+  RefreshCw,
 } from "lucide-react";
 import {
   useCreateDockerSecret,
   useDeleteDockerSecret,
   useReplaceDockerSecret,
   useBulkImportDockerSecrets,
+  useDockerSecretsPagedWithInitialData,
 } from "@/hooks/use-docker-secrets";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -518,9 +520,18 @@ type Props = {
   error: string | null;
   urlPage: number;
   urlQ: string;
+  /** When true, the server does not fetch the list; React Query loads after paint (fast RSC / TTFB). */
+  loadSecretsOnClient?: boolean;
 };
 
-export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ }: Props) {
+export function DockerSecretsClient({
+  remoteServerId,
+  data,
+  error,
+  urlPage,
+  urlQ,
+  loadSecretsOnClient = false,
+}: Props) {
   const router = useRouter();
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<DockerSecretListItem | null>(null);
@@ -534,10 +545,21 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
   const deletingName =
     deleteMutation.isPending && typeof deleteMutation.variables === "string" ? deleteMutation.variables : null;
   const listUrlPersistent = useMemo(() => ({ server: String(remoteServerId) }), [remoteServerId]);
-  const { q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ, listUrlPersistent);
+  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ, listUrlPersistent);
   const { toast } = useToast();
   const confirm = useConfirm();
-  const [liveData, setLiveData] = useState<PaginatedSecretsResponse | null>(data);
+
+  const listQueryEnabled = loadSecretsOnClient || error == null;
+  const pagedListQuery = useDockerSecretsPagedWithInitialData(remoteServerId, page, q, {
+    initialData: loadSecretsOnClient ? undefined : data != null ? data : undefined,
+    enabled: listQueryEnabled,
+  });
+
+  const [liveData, setLiveData] = useState<PaginatedSecretsResponse | null>(() => {
+    if (loadSecretsOnClient) return null;
+    if (data == null) return null;
+    return reconcileSecretsPageWithPendingDeletions(data, remoteServerId);
+  });
   const [liveError, setLiveError] = useState<string | null>(error);
 
   const onOptimisticCreate = useCallback((name: string) => {
@@ -554,13 +576,38 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
   }, []);
 
   useEffect(() => {
+    if (loadSecretsOnClient) {
+      const err = pagedListQuery.error;
+      setLiveError(err ? (err instanceof Error ? err.message : String(err)) : null);
+      if (pagedListQuery.data != null) {
+        setLiveData(
+          reconcileSecretsPageWithPendingDeletions(pagedListQuery.data, remoteServerId),
+        );
+        return;
+      }
+      if (!pagedListQuery.isPending) {
+        setLiveData(null);
+      }
+      return;
+    }
+
     setLiveError(error);
     if (data == null) {
       setLiveData(null);
       return;
     }
     setLiveData(reconcileSecretsPageWithPendingDeletions(data, remoteServerId));
-  }, [data, error, urlPage, urlQ, remoteServerId]);
+  }, [
+    loadSecretsOnClient,
+    data,
+    error,
+    urlPage,
+    urlQ,
+    remoteServerId,
+    pagedListQuery.data,
+    pagedListQuery.error,
+    pagedListQuery.isPending,
+  ]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -690,17 +737,27 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
         {showBulk && <BulkImportPanel remoteServerId={remoteServerId} onClose={() => setShowBulk(false)} />}
       </AnimatePresence>
 
-      <div className="mb-3">
-        <div className="relative min-w-0 w-full">
-          <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+      <div className="flex gap-2 items-stretch mb-3">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <input
             type="text"
             placeholder="Search by name…"
             value={localQ}
             onChange={(e) => setLocalQ(e.target.value)}
-            className="input-field !pl-12 w-full bg-card/50"
+            className="input-field !pl-10 w-full bg-card/50"
           />
         </div>
+        <button
+          type="button"
+          onClick={() => void pagedListQuery.refetch()}
+          disabled={!listQueryEnabled || pagedListQuery.isFetching}
+          className="btn-secondary shrink-0 px-3 flex items-center justify-center min-w-[2.75rem]"
+          title="Refresh"
+          aria-label="Refresh list"
+        >
+          <RefreshCw className={cn("w-4 h-4", pagedListQuery.isFetching && "animate-spin")} />
+        </button>
       </div>
 
       {currentData && currentData.total > 0 && !isError && (

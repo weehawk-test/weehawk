@@ -65,7 +65,32 @@ export interface PaginatedSecretsDto {
 export class DockerSecretsService {
   private readonly logger = new Logger(DockerSecretsService.name);
 
+  /** Avoid hammering SSH for every RSC refresh; invalidated on mutations. */
+  private static readonly REMOTE_LIST_CACHE_TTL_MS = 4000;
+
+  private readonly remoteListCache = new Map<
+    string,
+    { expiresAt: number; rows: unknown[] }
+  >();
+  private readonly remoteListInflight = new Map<string, Promise<unknown[]>>();
+
   constructor(private readonly remoteServersService: RemoteServersService) {}
+
+  private listCacheKey(
+    remoteServerId: number,
+    projectUserId: number | null,
+  ): string {
+    return `${remoteServerId}:${projectUserId ?? 'anon'}`;
+  }
+
+  private invalidateRemoteListCache(
+    remoteServerId: number,
+    projectUserId: number | null,
+  ): void {
+    this.remoteListCache.delete(
+      this.listCacheKey(remoteServerId, projectUserId),
+    );
+  }
 
   async create(
     remoteServerId: number,
@@ -79,6 +104,7 @@ export class DockerSecretsService {
       name,
       value,
     );
+    this.invalidateRemoteListCache(remoteServerId, projectUserId);
   }
 
   async bulkImportFromEnvText(
@@ -101,27 +127,58 @@ export class DockerSecretsService {
     const parts: string[] = [`${created.length} created`];
     if (skipped.length) parts.push(`${skipped.length} already existed (skipped)`);
     if (failed.length) parts.push(`${failed.length} failed`);
-    return {
+    const out = {
       message: parts.join(', ') + '.',
       created,
       failed,
       skipped,
     };
+    this.invalidateRemoteListCache(remoteServerId, projectUserId);
+    return out;
+  }
+
+  private async fetchRemoteSecretLsRows(
+    remoteServerId: number,
+    projectUserId: number | null,
+  ): Promise<unknown[]> {
+    const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+      remoteServerId,
+      projectUserId,
+      `docker secret ls --format '{{json .}}'`,
+    );
+    const stdout = r.stdout.trim();
+    if (!stdout) return [];
+    return stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
   }
 
   async findAll(remoteServerId: number, projectUserId: number | null) {
+    const key = this.listCacheKey(remoteServerId, projectUserId);
+    const now = Date.now();
+    const hit = this.remoteListCache.get(key);
+    if (hit && hit.expiresAt > now) {
+      return hit.rows;
+    }
+
+    if (!this.remoteListInflight.has(key)) {
+      const p = this.fetchRemoteSecretLsRows(remoteServerId, projectUserId)
+        .then((rows) => {
+          this.remoteListCache.set(key, {
+            expiresAt: Date.now() + DockerSecretsService.REMOTE_LIST_CACHE_TTL_MS,
+            rows,
+          });
+          return rows;
+        })
+        .finally(() => {
+          this.remoteListInflight.delete(key);
+        });
+      this.remoteListInflight.set(key, p);
+    }
+
     try {
-      const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
-        remoteServerId,
-        projectUserId,
-        `docker secret ls --format '{{json .}}'`,
-      );
-      const stdout = r.stdout.trim();
-      if (!stdout) return [];
-      return stdout
-        .split('\n')
-        .filter(Boolean)
-        .map((line) => JSON.parse(line));
+      return await this.remoteListInflight.get(key)!;
     } catch (e) {
       this.logger.error(
         `Could not list secrets on remote #${remoteServerId}.`,
@@ -187,6 +244,7 @@ export class DockerSecretsService {
       projectUserId,
       name,
     );
+    this.invalidateRemoteListCache(remoteServerId, projectUserId);
     return { success: true };
   }
 
@@ -200,6 +258,7 @@ export class DockerSecretsService {
       projectUserId,
       secretName,
     );
+    this.invalidateRemoteListCache(remoteServerId, projectUserId);
     return { success: true };
   }
 }
