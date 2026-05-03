@@ -22,7 +22,12 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
 import { NavRow } from "./sidebar-nav-row";
-import { buildMainNavSections, buildDockerNavItems } from "./main-nav-sections";
+import {
+  buildMainNavSections,
+  buildDockerNavItems,
+  isOrgMainNavItemVisible,
+} from "./main-nav-sections";
+import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
 import {
   orgFullHrefIsActive,
   isOrgManagementSectionActive,
@@ -285,15 +290,18 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                     </p>
                   )}
                   <div className="space-y-px">
-                    <NavRow
-                      collapsed={railMode}
-                      href={prefixOrgHref(orgBase, "/remote-server")}
-                      label="Servers"
-                      active={orgPersonalNavIsActive(pathname, orgBase, "/remote-server")}
-                      icon={Server}
-                      activeLayoutId={ORG_ACTIVE}
-                      onNavigate={closeMobile}
-                    />
+                    {(org.isOwner ||
+                      org.workspacePermissions[ORG_WORKSPACE_PERMISSIONS.REMOTE_SERVER]) && (
+                      <NavRow
+                        collapsed={railMode}
+                        href={prefixOrgHref(orgBase, "/remote-server")}
+                        label="Servers"
+                        active={orgPersonalNavIsActive(pathname, orgBase, "/remote-server")}
+                        icon={Server}
+                        activeLayoutId={ORG_ACTIVE}
+                        onNavigate={closeMobile}
+                      />
+                    )}
                   </div>
                 </div>
                 <div className="mb-1.5">
@@ -320,53 +328,59 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
               </>
             ) : (
               <>
-                {mainNavSections.map((section, sectionIndex) => (
-                  <div
-                    key={section.label}
-                    className={cn(
-                      "mb-1.5",
-                      railMode && sectionIndex > 0 && "mt-1.5",
-                      railMode && sectionIndex === 0 && "mt-4",
-                    )}
-                  >
-                    {!railMode && (
-                      <p
-                        className={cn(
-                          "mb-0.5 px-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/80",
-                          sectionIndex === 0 ? "mt-4" : "mt-3",
-                        )}
-                      >
-                        {section.label}
-                      </p>
-                    )}
-                    <div className="space-y-px">
-                      {section.items.map((item) => {
-                        const orgManagementEntryHref = `${orgBase.replace(/\/$/, "")}/overview`;
-                        const isOrgSettings = item.href === "/organizations";
-                        const href = isOrgSettings ? orgManagementEntryHref : prefixOrgHref(orgBase, item.href);
-                        const active = item.external
-                          ? false
-                          : isOrgSettings
-                            ? isOrgManagementSectionActive(pathname, orgBase)
-                            : orgPersonalNavIsActive(pathname, orgBase, item.href);
-                        return (
-                          <NavRow
-                            key={item.href}
-                            collapsed={railMode}
-                            href={href}
-                            label={isOrgSettings ? "Management" : item.label}
-                            active={active}
-                            icon={isOrgSettings ? Settings : item.icon}
-                            activeLayoutId={ORG_ACTIVE}
-                            external={item.external}
-                            showUnreadDot={item.href === "/news" && newsUnread}
-                            onNavigate={closeMobile}
-                          />
-                        );
-                      })}
+                {mainNavSections.map((section, sectionIndex) => {
+                  const visibleItems = section.items.filter((item) =>
+                    isOrgMainNavItemVisible(org, item),
+                  );
+                  if (visibleItems.length === 0) return null;
+                  return (
+                    <div
+                      key={section.label}
+                      className={cn(
+                        "mb-1.5",
+                        railMode && sectionIndex > 0 && "mt-1.5",
+                        railMode && sectionIndex === 0 && "mt-4",
+                      )}
+                    >
+                      {!railMode && (
+                        <p
+                          className={cn(
+                            "mb-0.5 px-4 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/80",
+                            sectionIndex === 0 ? "mt-4" : "mt-3",
+                          )}
+                        >
+                          {section.label}
+                        </p>
+                      )}
+                      <div className="space-y-px">
+                        {visibleItems.map((item) => {
+                          const orgManagementEntryHref = `${orgBase.replace(/\/$/, "")}/overview`;
+                          const isOrgSettings = item.href === "/organizations";
+                          const href = isOrgSettings ? orgManagementEntryHref : prefixOrgHref(orgBase, item.href);
+                          const active = item.external
+                            ? false
+                            : isOrgSettings
+                              ? isOrgManagementSectionActive(pathname, orgBase)
+                              : orgPersonalNavIsActive(pathname, orgBase, item.href);
+                          return (
+                            <NavRow
+                              key={item.href}
+                              collapsed={railMode}
+                              href={href}
+                              label={isOrgSettings ? "Management" : item.label}
+                              active={active}
+                              icon={isOrgSettings ? Settings : item.icon}
+                              activeLayoutId={ORG_ACTIVE}
+                              external={item.external}
+                              showUnreadDot={item.href === "/news" && newsUnread}
+                              onNavigate={closeMobile}
+                            />
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {dockerNavDynamic.length > 0 ? (
                   <div className="mb-1.5">

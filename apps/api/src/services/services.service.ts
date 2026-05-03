@@ -54,6 +54,7 @@ import {
 } from '../remote-servers/remote-servers.service';
 import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 import { ProjectTenantScopedRepository } from '../common/tenant-scoped.service';
+import { ProjectsService } from '../projects/projects.service';
 
 @Injectable()
 export class ServicesService {
@@ -77,6 +78,7 @@ export class ServicesService {
     private readonly gitService: GitService,
     private readonly traefikService: TraefikService,
     private readonly remoteServersService: RemoteServersService,
+    private readonly projectsService: ProjectsService,
   ) {
     this.scopedServices = new ProjectTenantScopedRepository<Service>(
       this.serviceRepository,
@@ -148,16 +150,8 @@ export class ServicesService {
     userId: number,
   ): Promise<number> {
     const trimmed = String(identifier).trim();
-    let project = await this.projectRepository.findOne({
-      where: { publicId: trimmed, userId },
-    });
-    if (!project && isLikelyNumericId(trimmed)) {
-      const id = Number.parseInt(trimmed, 10);
-      if (Number.isSafeInteger(id) && id >= 1) {
-        project = await this.projectRepository.findOneBy({ id, userId });
-      }
-    }
-    if (!project) throw new NotFoundException('Project not found');
+    const project =
+      await this.projectsService.resolveProjectByIdentifier(trimmed, userId);
     const ensured = await this.ensureProjectPublicId(project);
     return ensured.id;
   }
@@ -168,18 +162,25 @@ export class ServicesService {
   ): Promise<number> {
     const trimmed = String(identifier).trim();
     let service = await this._internal_systemFindOneService({
-      where: { publicId: trimmed, project: { userId } },
+      where: { publicId: trimmed },
       relations: ['project'],
     });
     if (!service && isLikelyNumericId(trimmed)) {
       const id = Number.parseInt(trimmed, 10);
       if (Number.isSafeInteger(id) && id >= 1) {
-        service = await this.scopedServices.findScoped(id, userId, {
-          relations: ['project'],
-        });
+        try {
+          service = await this.scopedServices.findScoped(id, userId, {
+            relations: ['project'],
+          });
+        } catch {
+          service = null;
+        }
       }
     }
-    if (!service) throw new NotFoundException('Service not found');
+    if (!service?.project?.publicId) {
+      throw new NotFoundException('Service not found');
+    }
+    await this.projectsService.findOne(service.project.publicId, userId);
     const ensured = await this.ensureServicePublicId(service);
     return ensured.id;
   }
@@ -210,14 +211,7 @@ export class ServicesService {
     projectId: number,
     userId: number,
   ): Promise<Project> {
-    const project = await this.projectRepository.findOneBy({
-      id: projectId,
-      userId,
-    });
-    if (!project) {
-      throw new NotFoundException('Project not found');
-    }
-    return this.ensureProjectPublicId(project);
+    return this.projectsService.findByInternalIdForUser(projectId, userId);
   }
 
   async create(createServiceDto: CreateServiceDto, userId: number) {
@@ -241,10 +235,18 @@ export class ServicesService {
     }
 
     if (remoteServerId != null) {
-      await this.assertDeployRemoteServer(remoteServerId, project.userId);
+      await this.assertDeployRemoteServer(
+        remoteServerId,
+        project.userId,
+        project.organizationId ?? null,
+      );
     }
     if (buildRemoteServerId != null) {
-      await this.assertBuildRemoteServer(buildRemoteServerId, project.userId);
+      await this.assertBuildRemoteServer(
+        buildRemoteServerId,
+        project.userId,
+        project.organizationId ?? null,
+      );
     }
 
     const uniqueAppName = `${appName}-${randomBytes(2).toString('hex')}`;
@@ -2389,6 +2391,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         remoteFilePath: string;
       };
     },
+    organizationInternalId: number | null,
   ): Promise<{ success: boolean; output: string }> {
     if (!r.success || !r.archiveBasename) {
       return { success: r.success, output: r.output };
@@ -2400,7 +2403,10 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         output: `${r.output}\nS3 destination is not configured.`,
       };
     }
-    const key = `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    const key =
+      organizationInternalId != null
+        ? `weehawk/backups/o${organizationInternalId}/${contextId}/${r.archiveBasename}`
+        : `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
     const ra = r.remoteArtifact;
     if (!ra) {
       return {
@@ -2413,6 +2419,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         contentType: r.archiveBasename.toLowerCase().endsWith('.gz')
           ? 'application/gzip'
           : 'application/octet-stream',
+        organizationInternalId,
       });
       await this.remoteServersService.curlPresignedPutFromRemoteFile(
         ra.remoteServerId,
@@ -2456,7 +2463,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     action: RunServiceBackupDto['action'];
     output: string;
   }> {
-    await this.getScopedServiceForUser(serviceId, userId);
+    const service = await this.getScopedServiceForUser(serviceId, userId);
     const contextId = `manual-service-${serviceId}-${Date.now()}`;
     const profileName = dto.backupS3ProfileName?.trim();
     if (!profileName) {
@@ -2464,7 +2471,11 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
 
     try {
-      await this.s3Service.assertProfileExists(profileName, userId);
+      await this.s3Service.assertProfileExists(
+        profileName,
+        userId,
+        service.project.organizationId ?? null,
+      );
 
       if (dto.action === 'volume_backup') {
         const volumeSource = dto.volumeSource?.trim();
@@ -2490,6 +2501,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           contextId,
           profileName,
           r,
+          service.project.organizationId ?? null,
         );
         return {
           ok: final.success,
@@ -2514,6 +2526,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
           contextId,
           profileName,
           r,
+          service.project.organizationId ?? null,
         );
         return {
           ok: final.success,
@@ -2695,7 +2708,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     dto: ImportServiceBackupFromS3Dto,
     userId: number,
   ): Promise<{ ok: boolean; output: string }> {
-    await this.getScopedServiceForUser(serviceId, userId);
+    const service = await this.getScopedServiceForUser(serviceId, userId);
     const profile = dto.backupS3ProfileName.trim();
     const key = dto.s3Key.trim();
     if (!profile || !key) {
@@ -2731,6 +2744,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         userId,
         profile,
         key,
+        undefined,
+        undefined,
+        service.project.organizationId ?? null,
       );
       await this.remoteServersService.curlPresignedDownloadToRemotePath(
         ssh.remoteServerId,
@@ -2895,6 +2911,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   private async assertDeployRemoteServer(
     remoteId: number,
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): Promise<void> {
     const rs = await this._internal_systemFindOneRemoteServerBy({ id: remoteId });
     if (!rs) {
@@ -2910,12 +2927,17 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         'That SSH host is the local machine (loopback). It can only be used for image builds — pick a real remote deploy server to run containers.',
       );
     }
-    this.assertRemoteServerBelongsToProjectOwner(rs, projectUserId);
+    this.assertRemoteServerBelongsToProjectOwner(
+      rs,
+      projectUserId,
+      projectOrganizationId,
+    );
   }
 
   private async assertBuildRemoteServer(
     remoteId: number,
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): Promise<void> {
     const rs = await this._internal_systemFindOneRemoteServerBy({ id: remoteId });
     if (!rs) {
@@ -2926,17 +2948,35 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         'Only hosts marked as build servers can be used as the dedicated image-build target.',
       );
     }
-    this.assertRemoteServerBelongsToProjectOwner(rs, projectUserId);
+    this.assertRemoteServerBelongsToProjectOwner(
+      rs,
+      projectUserId,
+      projectOrganizationId,
+    );
   }
 
   /** Same rules as {@link RemoteServersService.assertRemoteServerMatchesProject} but user-facing BadRequest for form/API. */
   private assertRemoteServerBelongsToProjectOwner(
     rs: RemoteServer,
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): void {
+    if (projectOrganizationId != null) {
+      if (rs.organizationId !== projectOrganizationId) {
+        throw new BadRequestException(
+          'That remote server is not in this organization. Pick a server from the same org workspace.',
+        );
+      }
+      return;
+    }
     if (projectUserId == null || projectUserId < 1) {
       throw new BadRequestException(
         'Project owner is missing; cannot validate remote server ownership.',
+      );
+    }
+    if (rs.organizationId != null) {
+      throw new BadRequestException(
+        'Organization remote servers cannot be attached to a personal project.',
       );
     }
     if (rs.userId !== projectUserId) {
@@ -3056,7 +3096,12 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   async remove(id: number, userId: number) {
     const service = await this.getScopedServiceForUser(id, userId);
     await this.deleteAutoDeployExternalHooksIfAny(service);
-    await this.webhooksService.removeAllForService(userId, id);
+    await this.webhooksService.removeAllForService(
+      userId,
+      id,
+      service.project.userId,
+      service.project.organizationId ?? null,
+    );
     await this.executorService.stopAndRemove(id);
     await this.removeManagedSecretsForService(service);
     await this._internal_systemRemoveService(service);
@@ -3074,6 +3119,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         await this.assertDeployRemoteServer(
           updateServiceDto.remoteServerId,
           service.project?.userId ?? null,
+          service.project?.organizationId ?? null,
         );
       }
     }
@@ -3091,6 +3137,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         await this.assertBuildRemoteServer(
           updateServiceDto.buildRemoteServerId,
           service.project?.userId ?? null,
+          service.project?.organizationId ?? null,
         );
       }
     }
@@ -4039,6 +4086,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     const webhooks = await this.webhooksService.findWebhooksForService(
       service.id,
       service.project.userId,
+      service.project.organizationId ?? null,
     );
     for (const w of webhooks) {
       if (w.remoteServerId != null && w.remoteTriggerUrl) {

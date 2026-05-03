@@ -12,6 +12,7 @@ import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { workspaceRoute } from "@/lib/workspace-paths";
 
 function renderHighlightedScript(script: string) {
   const lines = (script || "").split("\n");
@@ -29,16 +30,26 @@ type Props = {
   initialWebhook: WebhookDetail;
   initialChannels: NotificationChannel[];
   initialRemoteServers: RemoteServerRow[];
+  organizationPublicId?: string | null;
 };
 
 export function EditWebhookClient({
   initialWebhook,
   initialChannels,
   initialRemoteServers,
+  organizationPublicId = null,
 }: Props) {
   const router = useRouter();
   const { toast } = useToast();
-  const updateMutation = useUpdateWebhook();
+  const updateMutation = useUpdateWebhook(organizationPublicId);
+  const webhooksHref = useMemo(
+    () => workspaceRoute(organizationPublicId, "/webhooks"),
+    [organizationPublicId],
+  );
+  const domainsHref = useMemo(
+    () => workspaceRoute(organizationPublicId, "/domains"),
+    [organizationPublicId],
+  );
 
   const [name, setName] = useState(initialWebhook.name);
   const [description, setDescription] = useState(initialWebhook.description ?? "");
@@ -143,7 +154,7 @@ export function EditWebhookClient({
       },
       {
         onSuccess: (updated) =>
-          router.push(`/webhooks?provisioning=${encodeURIComponent(String(updated.id))}`),
+          router.push(`${webhooksHref}?provisioning=${encodeURIComponent(String(updated.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not update webhook", description: e.message, variant: "destructive" }),
       },
@@ -174,7 +185,7 @@ export function EditWebhookClient({
 
   const closeModal = () => {
     if (updateMutation.isPending) return;
-    router.push("/webhooks");
+    router.push(webhooksHref);
   };
 
   return createPortal(
@@ -186,7 +197,7 @@ export function EditWebhookClient({
         <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
           <div className="mb-6 flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-foreground">Edit webhook</h1>
-            <Link href="/webhooks" aria-label="Close">
+            <Link href={webhooksHref} aria-label="Close">
               <button
                 type="button"
                 aria-label="Close"
@@ -263,7 +274,7 @@ export function EditWebhookClient({
               {!remoteServerId ? (
                 <p className="text-[11px] text-muted-foreground mb-3 leading-snug">
                   Set this webhook&apos;s deploy server above, then add hostnames on{" "}
-                  <Link href="/domains" className="text-primary hover:underline">
+                  <Link href={domainsHref} className="text-primary hover:underline">
                     Domains
                   </Link>
                   .
@@ -271,7 +282,7 @@ export function EditWebhookClient({
               ) : parentDomainSelectOptions.length === 0 ? (
                 <p className="text-[11px] text-muted-foreground mb-3 leading-snug">
                   Add hostnames on{" "}
-                  <Link href="/domains" className="text-primary hover:underline">
+                  <Link href={domainsHref} className="text-primary hover:underline">
                     Domains
                   </Link>{" "}
                   first.
@@ -379,7 +390,7 @@ echo "Webhook done"`}
               )}
             </div>
             <div className="flex justify-end gap-3 pt-2">
-              <Link href="/webhooks">
+              <Link href={webhooksHref}>
                 <button type="button" className="btn-secondary">
                   Cancel
                 </button>

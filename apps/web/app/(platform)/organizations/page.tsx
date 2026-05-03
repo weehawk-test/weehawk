@@ -83,6 +83,7 @@ export default async function OrganizationsPage() {
                 dateLabel={formatDateUTC(org.createdAt)}
                 dateTitle={`${formatDateUTC(org.createdAt)} (UTC)`}
                 isOwner={org.isOwner}
+                memberCount={org.memberCount}
               />
             </div>
           ))}

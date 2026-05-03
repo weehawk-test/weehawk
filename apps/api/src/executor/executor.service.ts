@@ -290,10 +290,13 @@ fi
     const base = await this.getBaseProcessEnvForService(service);
     const ids = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = service.project?.userId ?? null;
+    const projectOrganizationId: number | null =
+      service.project?.organizationId ?? null;
     return this.remoteServersService.mergeDockerHostEnvForDeployIds(
       base,
       ids.remoteServerId,
       projectUserId,
+      projectOrganizationId,
     );
   }
 
@@ -335,6 +338,8 @@ fi
       service.id,
     );
     const projectUserId: number | null = service.project?.userId ?? null;
+    const projectOrganizationId: number | null =
+      service.project?.organizationId ?? null;
     const rawConfig = (service.dockerConfig || '').trim();
     if (!rawConfig) {
       if (service.composeType === composeType.DATABASES) {
@@ -418,8 +423,6 @@ fi
               service.id,
             );
             const buildBase = await this.getBaseProcessEnvForService(service);
-            const projectUserId: number | null =
-              service.project?.userId ?? null;
             const buildEnv =
               await this.remoteServersService.mergeDockerHostEnvForBuildIds(
                 buildBase,
@@ -429,6 +432,7 @@ fi
                   buildOnLocalDockerHost: sshIds.buildOnLocalDockerHost,
                 },
                 projectUserId,
+                projectOrganizationId,
               );
             const useRemoteDockerBuild = Boolean(pickDockerSshEnv(buildEnv));
             const buildRemoteServerId =
@@ -547,6 +551,7 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
                       tag: imageTag,
                     },
                     projectUserId,
+                    projectOrganizationId,
                   );
                 buildLogPrefix = buildResult.output
                   ? `${buildResult.output}\n`
@@ -583,6 +588,7 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
                       auth: pushAuth,
                     },
                     projectUserId,
+                    projectOrganizationId,
                   );
                 if (pushResult.output) {
                   const pushChunk = pushResult.output + '\n';
@@ -762,6 +768,7 @@ fi
                     auth: pushAuth,
                   },
                   null,
+                  projectOrganizationId,
                 );
               if (pushResult.output) {
                 const pushChunk = pushResult.output + '\n';

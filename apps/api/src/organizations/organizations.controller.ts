@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Patch,
   Post,
   Req,
   UnauthorizedException,
@@ -24,6 +25,9 @@ import { AcceptOrganizationInviteDto } from './dto/accept-organization-invite.dt
 import { OrgMembershipGuard } from './guards/org-membership.guard';
 import { OrgMemberContextParam } from './decorators/organization-member-context.decorator';
 import { OrganizationInviteService } from './organization-invite.service';
+import { SetOrganizationMemberRoleDto } from './dto/set-organization-member-role.dto';
+import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { SetOrgMemberWorkspacePermissionsDto } from './dto/set-org-member-workspace-permissions.dto';
 
 @ApiTags('Organizations')
 @ApiBearerAuth()
@@ -92,17 +96,67 @@ export class OrganizationsController {
     return this.organizationsService.listMembers(ctx);
   }
 
+  @Patch(':publicId/members/permissions')
+  @UseGuards(OrgMembershipGuard)
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Update workspace area permissions for a non-owner member (organization owners only)',
+  })
+  setMemberWorkspacePermissions(
+    @OrgMemberContextParam() ctx: OrganizationMemberContext,
+    @Body() dto: SetOrgMemberWorkspacePermissionsDto,
+  ) {
+    return this.organizationsService.setMemberWorkspacePermissions(
+      ctx,
+      dto.email,
+      dto.permissions,
+    );
+  }
+
   @Delete(':publicId/membership')
   @UseGuards(OrgMembershipGuard)
   @ApiOperation({
     summary:
-      'Leave organization (removes your membership; owners cannot leave)',
+      'Leave organization. If you are the only owner and others remain, one member is promoted to owner; if you are alone, the org is dissolved. Multiple owners may leave without promoting others.',
   })
   leaveOrganization(
     @OrgMemberContextParam() ctx: OrganizationMemberContext,
     @Req() req: { user?: { userId: number } },
   ) {
     return this.organizationsService.leaveOrganization(ctx, this.uid(req));
+  }
+
+  @Patch(':publicId/ownership')
+  @UseGuards(OrgMembershipGuard)
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary:
+      'Set a member’s role to owner or member (any organization owner; cannot remove the last owner)',
+  })
+  setMemberRole(
+    @OrgMemberContextParam() ctx: OrganizationMemberContext,
+    @Body() dto: SetOrganizationMemberRoleDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.organizationsService.setMemberRole(
+      ctx,
+      this.uid(req),
+      dto.email,
+      dto.role,
+    );
   }
 
   @Post(':publicId/members')
@@ -116,7 +170,7 @@ export class OrganizationsController {
   )
   @ApiOperation({
     summary:
-      'Send invitation email (owner only; invitee must already have a Weehawk account)',
+      'Send invitation email (organization owners only; invitee must already have a Weehawk account)',
   })
   addMember(
     @OrgMemberContextParam() ctx: OrganizationMemberContext,
@@ -139,6 +193,25 @@ export class OrganizationsController {
     return this.organizationsService.listProjectsForOrg(ctx);
   }
 
+  @Patch(':publicId')
+  @UseGuards(OrgMembershipGuard)
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary: 'Update organization (organization owners only; e.g. display name)',
+  })
+  updateOrganization(
+    @OrgMemberContextParam() ctx: OrganizationMemberContext,
+    @Body() dto: UpdateOrganizationDto,
+  ) {
+    return this.organizationsService.updateOrganization(ctx, dto);
+  }
+
   @Get(':publicId')
   @UseGuards(OrgMembershipGuard)
   @ApiOperation({
@@ -148,9 +221,6 @@ export class OrganizationsController {
     @OrgMemberContextParam() ctx: OrganizationMemberContext,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.organizationsService.memberContextToPublicDto(
-      ctx,
-      this.uid(req),
-    );
+    return this.organizationsService.getOnePublicForMember(ctx);
   }
 }

@@ -88,4 +88,13 @@ export class CreateRemoteServerDto {
   @IsString()
   @MaxLength(DOMAINS_JSON_MAX)
   domainsJson?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'When set, the server belongs to this organization (you must be a member). Omit for a personal account server.',
+  })
+  @IsOptional()
+  @IsString()
+  organizationPublicId?: string;
 }

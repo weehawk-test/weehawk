@@ -18,7 +18,10 @@ async function getInitialProfiles(): Promise<S3ProfilePublic[]> {
   return res.json();
 }
 
-export default async function S3Page() {
+type S3PageProps = { organizationPublicId?: string };
+
+export default async function S3Page(props: S3PageProps = {}) {
+  const { organizationPublicId } = props;
   let initialProfiles: S3ProfilePublic[] = [];
   let initialError: string | null = null;
   try {
@@ -26,5 +29,11 @@ export default async function S3Page() {
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
   }
-  return <S3Client initialProfiles={initialProfiles} initialError={initialError} />;
+  return (
+    <S3Client
+      initialProfiles={initialProfiles}
+      initialError={initialError}
+      organizationPublicId={organizationPublicId}
+    />
+  );
 }

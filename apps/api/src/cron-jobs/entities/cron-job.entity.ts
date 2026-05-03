@@ -22,6 +22,9 @@ export class CronJob {
   @Column({ name: 'user_id', type: 'int' })
   userId!: number;
 
+  @Column({ name: 'organization_id', type: 'int', nullable: true })
+  organizationId!: number | null;
+
   @Column({ type: 'text', nullable: true })
   description: string | null = null;
 

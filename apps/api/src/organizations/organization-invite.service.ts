@@ -50,9 +50,9 @@ export class OrganizationInviteService {
     actingUserId: number,
     rawEmail: string,
   ): Promise<{ message: string }> {
-    if (ctx.ownerId !== actingUserId) {
+    if (!ctx.actingIsOwner) {
       throw new ForbiddenException(
-        'Only the organization owner can invite members.',
+        'Only an organization owner can invite members.',
       );
     }
     const email = String(rawEmail ?? '')

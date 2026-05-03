@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2, PlugZap, Save, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
 import { fetchRemoteServers, type RemoteServerRow } from "@/lib/remote-servers-api";
 import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
 import {
@@ -17,11 +18,13 @@ import {
 
 type Props = {
   profile: S3ProfilePublic;
+  organizationPublicId?: string | null;
 };
 
-export function EditS3ProfileClient({ profile }: Props) {
+export function EditS3ProfileClient({ profile, organizationPublicId = null }: Props) {
   const router = useRouter();
   const { toast } = useToast();
+  const { accessToken } = useAuth();
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [s3VerifyRemoteId, setS3VerifyRemoteId] = useState<number | null>(null);
@@ -36,8 +39,12 @@ export function EditS3ProfileClient({ profile }: Props) {
   });
 
   useEffect(() => {
+    if (!accessToken) return;
     let cancelled = false;
-    void fetchRemoteServers("")
+    void fetchRemoteServers(
+      accessToken,
+      organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
+    )
       .then((rows) => {
         if (!cancelled) setDeployServersForTest(rows.filter((r) => r.serverRole === "deploy"));
       })
@@ -47,7 +54,7 @@ export function EditS3ProfileClient({ profile }: Props) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accessToken, organizationPublicId]);
 
   const canSubmit = useMemo(
     () =>

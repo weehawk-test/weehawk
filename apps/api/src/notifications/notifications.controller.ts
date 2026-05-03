@@ -44,8 +44,14 @@ export class NotificationsController {
   }
 
   @Get('channels')
-  listChannels(@Req() req: AuthedReq) {
-    return this.notificationsService.listChannels(this.userId(req));
+  listChannels(
+    @Req() req: AuthedReq,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    return this.notificationsService.listChannels(
+      this.userId(req),
+      organizationPublicId,
+    );
   }
 
   @Get('channels/paged')
@@ -55,6 +61,7 @@ export class NotificationsController {
       q.page,
       q.pageSize,
       q.q,
+      q.organizationPublicId,
     );
   }
 
@@ -62,10 +69,12 @@ export class NotificationsController {
   async bulkDeleteChannels(
     @Req() req: AuthedReq,
     @Body() dto: BulkDeleteChannelsDto,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     return this.notificationsService.bulkDeleteChannels(
       this.userId(req),
       dto.ids,
+      organizationPublicId,
     );
   }
 
@@ -82,18 +91,40 @@ export class NotificationsController {
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Body() dto: UpdateNotificationChannelDto,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
-    return this.notificationsService.updateChannel(this.userId(req), id, dto);
+    return this.notificationsService.updateChannel(
+      this.userId(req),
+      id,
+      dto,
+      organizationPublicId,
+    );
   }
 
   @Delete('channels/:id')
-  async deleteChannel(@Req() req: AuthedReq, @Param('id') id: string) {
-    await this.notificationsService.deleteChannel(this.userId(req), id);
+  async deleteChannel(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    await this.notificationsService.deleteChannel(
+      this.userId(req),
+      id,
+      organizationPublicId,
+    );
     return { ok: true };
   }
 
   @Post('channels/:id/test')
-  testChannel(@Req() req: AuthedReq, @Param('id') id: string) {
-    return this.notificationsService.testChannel(this.userId(req), id);
+  testChannel(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    return this.notificationsService.testChannel(
+      this.userId(req),
+      id,
+      organizationPublicId,
+    );
   }
 }

@@ -11,11 +11,13 @@ import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { AlignLeft, ChevronsUpDown, Loader2, Type, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { workspaceRoute } from "@/lib/workspace-paths";
 
 type Props = {
   initialCronJob: CronJobDetail;
   initialChannels: NotificationChannel[];
   initialRemoteServers: RemoteServerRow[];
+  organizationPublicId?: string | null;
 };
 
 type CronPreset =
@@ -52,10 +54,19 @@ function cronPresetFromExpression(expr: string): CronPreset {
   return "custom";
 }
 
-export function EditCronJobClient({ initialCronJob, initialChannels, initialRemoteServers }: Props) {
+export function EditCronJobClient({
+  initialCronJob,
+  initialChannels,
+  initialRemoteServers,
+  organizationPublicId = null,
+}: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const updateMutation = useUpdateCronJob();
+  const cronJobsHref = useMemo(
+    () => workspaceRoute(organizationPublicId, "/cron-jobs"),
+    [organizationPublicId],
+  );
 
   const [name, setName] = useState(initialCronJob.name);
   const [description, setDescription] = useState(initialCronJob.description ?? "");
@@ -124,7 +135,7 @@ export function EditCronJobClient({ initialCronJob, initialChannels, initialRemo
       },
       {
         onSuccess: (updated) =>
-          router.push(`/cron-jobs?provisioning=${encodeURIComponent(String(updated.id))}`),
+          router.push(`${cronJobsHref}?provisioning=${encodeURIComponent(String(updated.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not update cron job", description: e.message, variant: "destructive" }),
       },
@@ -155,7 +166,7 @@ export function EditCronJobClient({ initialCronJob, initialChannels, initialRemo
 
   const closeModal = () => {
     if (updateMutation.isPending) return;
-    router.push("/cron-jobs");
+    router.push(cronJobsHref);
   };
 
   return createPortal(
@@ -167,7 +178,7 @@ export function EditCronJobClient({ initialCronJob, initialChannels, initialRemo
         <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
           <div className="mb-6 flex items-center justify-between gap-3">
             <h1 className="text-2xl font-bold text-foreground">Edit cron job</h1>
-            <Link href="/cron-jobs" aria-label="Close">
+            <Link href={cronJobsHref} aria-label="Close">
               <button
                 type="button"
                 aria-label="Close"
@@ -361,7 +372,7 @@ echo "Cron job done"`}
               )}
             </div>
             <div className="flex justify-end gap-3 pt-2">
-              <Link href="/cron-jobs">
+              <Link href={cronJobsHref}>
                 <button type="button" className="btn-secondary">
                   Cancel
                 </button>

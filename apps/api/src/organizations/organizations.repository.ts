@@ -3,6 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { Organization } from './entities/organization.entity';
 import { OrganizationMembership } from './entities/organization-membership.entity';
+import {
+  ORGANIZATION_MEMBER_ROLE,
+  type OrganizationMemberRole,
+} from './organization-member-role';
 
 @Injectable()
 export class OrganizationsRepository {
@@ -51,6 +55,48 @@ export class OrganizationsRepository {
       where: { organizationId },
       order: { createdAt: 'ASC' },
     });
+  }
+
+  async countMembershipsForOrganization(organizationId: number): Promise<number> {
+    return this.memberships.count({ where: { organizationId } });
+  }
+
+  async countOwnersForOrganization(organizationId: number): Promise<number> {
+    return this.memberships.count({
+      where: { organizationId, role: ORGANIZATION_MEMBER_ROLE.OWNER },
+    });
+  }
+
+  async updateMembershipRole(
+    userId: number,
+    organizationId: number,
+    role: OrganizationMemberRole,
+  ): Promise<number> {
+    const r = await this.memberships.update(
+      { userId, organizationId },
+      { role },
+    );
+    return r.affected ?? 0;
+  }
+
+  async updateMembershipPermissions(
+    userId: number,
+    organizationId: number,
+    permissions: Record<string, boolean> | null,
+  ): Promise<number> {
+    const r = await this.memberships.update(
+      { userId, organizationId },
+      { permissions },
+    );
+    return r.affected ?? 0;
+  }
+
+  async listOwnerUserIds(organizationId: number): Promise<number[]> {
+    const rows = await this.memberships.find({
+      where: { organizationId, role: ORGANIZATION_MEMBER_ROLE.OWNER },
+      select: ['userId'],
+    });
+    return rows.map((row) => row.userId);
   }
 
   async listOrganizationsForUser(userId: number): Promise<Organization[]> {

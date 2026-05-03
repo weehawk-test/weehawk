@@ -22,3 +22,8 @@ export function useOrgWorkspace(): OrganizationPublic {
   }
   return v;
 }
+
+/** Same context as {@link useOrgWorkspace} but returns null on personal account routes. */
+export function useOptionalOrgWorkspace(): OrganizationPublic | null {
+  return useContext(OrgWorkspaceContext);
+}

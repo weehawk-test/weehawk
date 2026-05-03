@@ -26,7 +26,6 @@ import {
   isValidEmailShape,
 } from "@/lib/traefik-acme-email";
 
-const REMOTE_SERVERS_QK = ["remote-servers"] as const;
 const TRAEFIK_SETTINGS_QK = ["traefik", "settings"] as const;
 
 let rowIdSeq = 0;
@@ -115,10 +114,12 @@ function ServerDomainsCard({
   server,
   accessToken,
   domainsEnabled,
+  remoteServersQueryKey,
 }: {
   server: RemoteServerRow;
   accessToken: string;
   domainsEnabled: boolean;
+  remoteServersQueryKey: readonly unknown[];
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -148,7 +149,7 @@ function ServerDomainsCard({
     mutationFn: async (domainsJson: string | null) =>
       updateRemoteServerApi(accessToken, server.publicId?.trim() || String(server.id), { domainsJson }),
     onSuccess: async (row) => {
-      await qc.invalidateQueries({ queryKey: REMOTE_SERVERS_QK });
+      await qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       const nextHosts = domainsJsonToHosts(row.domainsJson);
       skipNextBaselineSync.current = true;
       setRows(hostsToRows(nextHosts));
@@ -298,13 +299,20 @@ function ServerDomainsCard({
 export function DeployDomainsClient({
   initialRemoteServers,
   initialTraefikSettings,
+  organizationPublicId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
   initialTraefikSettings?: TraefikSettingsPayload | null;
+  organizationPublicId?: string | null;
 }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const orgKey = organizationPublicId?.trim() || "personal";
+  const remoteServersQueryKey = ["remote-servers", orgKey] as const;
+  const remoteServerHref = organizationPublicId?.trim()
+    ? `/organizations/${encodeURIComponent(organizationPublicId.trim())}/remote-server`
+    : "/remote-server";
   const hasInitialRemoteServers = initialRemoteServers !== undefined;
   const hasInitialTraefik = initialTraefikSettings !== undefined;
 
@@ -318,8 +326,12 @@ export function DeployDomainsClient({
   });
 
   const q = useQuery({
-    queryKey: REMOTE_SERVERS_QK,
-    queryFn: () => fetchRemoteServers(accessToken ?? ""),
+    queryKey: remoteServersQueryKey,
+    queryFn: () =>
+      fetchRemoteServers(
+        accessToken ?? "",
+        organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
+      ),
     enabled: Boolean(accessToken),
     initialData: initialRemoteServers,
     staleTime: 10_000,
@@ -345,7 +357,7 @@ export function DeployDomainsClient({
       await qc.invalidateQueries({ queryKey: TRAEFIK_SETTINGS_QK });
       // Provision script depends on ACME email; force refresh across pages.
       await qc.invalidateQueries({ queryKey: ["provision-script"] });
-      await qc.invalidateQueries({ queryKey: REMOTE_SERVERS_QK });
+      await qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       setAcmeEmailDirty(false);
       toast({ title: "Email saved" });
     },
@@ -412,7 +424,7 @@ export function DeployDomainsClient({
         <h1 className="text-2xl font-bold tracking-tight">Domains</h1>
         <p className="text-sm text-muted-foreground max-w-2xl">
           Save your certificate email, then list site addresses per server.{" "}
-          <Link href="/remote-server" className="text-primary hover:underline">
+          <Link href={remoteServerHref} className="text-primary hover:underline">
             Servers
           </Link>
         </p>
@@ -499,7 +511,7 @@ export function DeployDomainsClient({
           <p className="text-sm text-foreground">
             <span className="text-muted-foreground">No deploy servers.</span>{" "}
             <Link
-              href="/remote-server"
+              href={remoteServerHref}
               className="font-medium text-primary underline-offset-2 hover:underline"
             >
               Add one
@@ -514,6 +526,7 @@ export function DeployDomainsClient({
               server={s}
               accessToken={accessToken}
               domainsEnabled={domainsUnlocked}
+              remoteServersQueryKey={remoteServersQueryKey}
             />
           ))}
         </div>

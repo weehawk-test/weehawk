@@ -35,6 +35,11 @@ import { fetchTraefikSettings, type TraefikSettingsPayload } from "@/lib/traefik
 import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import {
+  orgMemberAllowsRemoteServerDockerManager,
+  orgMemberAllowsRemoteServerTerminal,
+} from "@/lib/org-workspace-permissions";
 /** When Host is a dotted public IPv4, it is stored as `publicIpv4` (e.g. Magic traefik.me). Hostnames are SSH-only. */
 function parseDottedPublicIpv4(hostOrIp: string): string | null {
   const t = hostOrIp.trim();
@@ -85,21 +90,40 @@ function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): str
 export function RemoteServerSettingsClient({
   initialRemoteServers,
   initialTraefikSettings,
+  organizationPublicId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
   initialTraefikSettings?: TraefikSettingsPayload | null;
+  /** When set (org workspace), list/create servers scoped to this organization. */
+  organizationPublicId?: string | null;
 }) {
   const { accessToken, user } = useAuth();
   const { toast } = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
-  const remoteServersQueryKey = ["remote-servers"] as const;
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const orgKey = organizationPublicId?.trim() || "personal";
+  const inOrgRemoteServerPage = Boolean(organizationPublicId?.trim());
+  const allowOrgTerminal =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null &&
+      orgMemberAllowsRemoteServerTerminal(orgWorkspace.workspacePermissions));
+  const allowOrgDocker =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null &&
+      orgMemberAllowsRemoteServerDockerManager(orgWorkspace.workspacePermissions));
+  const showConnectionTests = allowOrgTerminal || allowOrgDocker;
+  const remoteServersQueryKey = ["remote-servers", orgKey] as const;
   const traefikSettingsQueryKey = ["traefik", "settings"] as const;
   const hasInitialRemoteServers = initialRemoteServers !== undefined;
   const hasInitialTraefik = initialTraefikSettings !== undefined;
   const list = useQuery({
     queryKey: remoteServersQueryKey,
-    queryFn: () => fetchRemoteServers(accessToken ?? ""),
+    queryFn: () =>
+      fetchRemoteServers(
+        accessToken ?? "",
+        organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
+      ),
     enabled: Boolean(accessToken),
     initialData: initialRemoteServers,
     // Keep SSR-first paint, but always refresh from API so Domains edits appear without manual refresh.
@@ -207,6 +231,9 @@ export function RemoteServerSettingsClient({
         privateKey: form.privateKey.trim(),
         serverRole: form.serverRole,
         ...(pip ? { publicIpv4: pip } : {}),
+        ...(organizationPublicId?.trim()
+          ? { organizationPublicId: organizationPublicId.trim() }
+          : {}),
       });
     },
     onSuccess: (created) => {
@@ -587,9 +614,13 @@ export function RemoteServerSettingsClient({
                       </p>
                     </div>
                     <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
-                      {row.hasPrivateKey ? (
+                      {row.hasPrivateKey && allowOrgDocker ? (
                         <Link
-                          href={`/docker-manager/${remoteServerRouteId(row)}/images`}
+                          href={`/docker-manager/${remoteServerRouteId(row)}/images${
+                            organizationPublicId?.trim()
+                              ? `?organizationPublicId=${encodeURIComponent(organizationPublicId.trim())}`
+                              : ""
+                          }`}
                           scroll={false}
                           className="btn-secondary col-span-2 inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs sm:col-span-1 sm:min-h-0 sm:w-auto sm:py-1.5"
                           title="Open Docker console for this host (full Docker UI)"
@@ -600,7 +631,13 @@ export function RemoteServerSettingsClient({
                       ) : (
                         <span
                           className="btn-secondary col-span-2 inline-flex min-h-10 cursor-not-allowed items-center justify-center gap-1 px-2.5 py-2 text-xs opacity-40 sm:col-span-1 sm:min-h-0 sm:w-auto sm:py-1.5"
-                          title="Configure a private key first"
+                          title={
+                            !row.hasPrivateKey
+                              ? "Configure a private key first"
+                              : inOrgRemoteServerPage
+                                ? "Docker Manager is disabled for your role in this organization"
+                                : "Docker Manager unavailable"
+                          }
                         >
                           <Container className="size-3.5 shrink-0" />
                           <span className="truncate">Docker Manager</span>
@@ -608,22 +645,30 @@ export function RemoteServerSettingsClient({
                       )}
                       <button
                         type="button"
-                        disabled={!row.hasPrivateKey}
+                        disabled={!row.hasPrivateKey || !showConnectionTests}
                         onClick={() => setTestModalRow(row)}
                         className="btn-secondary inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs disabled:opacity-40 sm:min-h-0 sm:py-1.5"
-                        title="Open test options"
+                        title={
+                          !showConnectionTests && inOrgRemoteServerPage
+                            ? "Connection tests are disabled for your role"
+                            : "Open test options"
+                        }
                       >
                         <FlaskConical className="size-3.5 shrink-0" />
                         Test
                       </button>
                       <button
                         type="button"
-                        disabled={!row.hasPrivateKey}
+                        disabled={!row.hasPrivateKey || !allowOrgTerminal}
                         onClick={() => {
                           setTerminalModalRow(row);
                         }}
                         className="btn-secondary inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs disabled:opacity-40 sm:min-h-0 sm:py-1.5"
-                        title="Open remote SSH terminal"
+                        title={
+                          !allowOrgTerminal && inOrgRemoteServerPage
+                            ? "Remote terminal is disabled for your role"
+                            : "Open remote SSH terminal"
+                        }
                       >
                         <Terminal className="size-3.5 shrink-0" />
                         Terminal
@@ -1025,7 +1070,9 @@ export function RemoteServerSettingsClient({
                 <div className="space-y-2">
                   <button
                     type="button"
-                    disabled={testSshMut.isPending || testMut.isPending}
+                    disabled={
+                      !allowOrgTerminal || testSshMut.isPending || testMut.isPending
+                    }
                     onClick={() => testSshMut.mutate(remoteServerRouteId(testModalRow))}
                     className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
                     title="SSH only: ssh2 + shell (echo + uname). Does not use Docker."
@@ -1035,7 +1082,7 @@ export function RemoteServerSettingsClient({
                   </button>
                   <button
                     type="button"
-                    disabled={testMut.isPending || testSshMut.isPending}
+                    disabled={!allowOrgDocker || testMut.isPending || testSshMut.isPending}
                     onClick={() => testMut.mutate(remoteServerRouteId(testModalRow))}
                     className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
                     title="Remote Docker API via Dockerode over SSH (same path as the Docker Manager)"

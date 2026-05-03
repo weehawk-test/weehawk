@@ -30,6 +30,7 @@ import {
 } from "./projects-api";
 import { getServerApiBase } from "./server-api";
 import { getServerApiKey } from "./server-api-key";
+import { parseWorkspacePermissions } from "./org-workspace-permissions";
 
 const SERVICE_RUNTIME_SSR_TIMEOUT_MS = 1_200;
 
@@ -46,8 +47,13 @@ function apiBase(): string {
 }
 
 /** Server-only: forwards the browser Cookie header to the API (no client Network tab). */
-export async function fetchWebhookSSR(id: string): Promise<WebhookDetail | null> {
-  const res = await fetch(`${apiBase()}/api/webhooks/${encodeURIComponent(id)}`, {
+export async function fetchWebhookSSR(
+  id: string,
+  organizationPublicId?: string | null,
+): Promise<WebhookDetail | null> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${apiBase()}/api/webhooks/${encodeURIComponent(id)}${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -67,8 +73,12 @@ export async function fetchWebhookSSR(id: string): Promise<WebhookDetail | null>
   };
 }
 
-export async function fetchWebhooksSSR(): Promise<WebhookListItem[]> {
-  const res = await fetch(`${apiBase()}/api/webhooks`, {
+export async function fetchWebhooksSSR(
+  organizationPublicId?: string | null,
+): Promise<WebhookListItem[]> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${apiBase()}/api/webhooks${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -86,8 +96,13 @@ export async function fetchWebhooksSSR(): Promise<WebhookListItem[]> {
   }));
 }
 
-export async function fetchCronJobSSR(id: string): Promise<CronJobDetail | null> {
-  const res = await fetch(`${apiBase()}/api/cron-jobs/${encodeURIComponent(id)}`, {
+export async function fetchCronJobSSR(
+  id: string,
+  organizationPublicId?: string | null,
+): Promise<CronJobDetail | null> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${apiBase()}/api/cron-jobs/${encodeURIComponent(id)}${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -103,8 +118,12 @@ export async function fetchCronJobSSR(id: string): Promise<CronJobDetail | null>
   };
 }
 
-export async function fetchCronJobsSSR(): Promise<CronJobListItem[]> {
-  const res = await fetch(`${apiBase()}/api/cron-jobs`, {
+export async function fetchCronJobsSSR(
+  organizationPublicId?: string | null,
+): Promise<CronJobListItem[]> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${apiBase()}/api/cron-jobs${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -118,8 +137,16 @@ export async function fetchCronJobsSSR(): Promise<CronJobListItem[]> {
   }));
 }
 
-export async function fetchProjectSSR(id: string): Promise<Project | null> {
-  const res = await fetch(`${apiBase()}/api/projects/${encodeURIComponent(id)}`, {
+export async function fetchProjectSSR(
+  id: string,
+  organizationPublicId?: string | null,
+): Promise<Project | null> {
+  const org = organizationPublicId?.trim();
+  const q =
+    org != null && org !== ""
+      ? `?organizationPublicId=${encodeURIComponent(org)}`
+      : "";
+  const res = await fetch(`${apiBase()}/api/projects/${encodeURIComponent(id)}${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -214,8 +241,12 @@ export async function fetchServiceRuntimeSSR(
   }
 }
 
-export async function fetchNotificationChannelsSSR(): Promise<NotificationChannel[]> {
-  const res = await fetch(`${apiBase()}/api/notifications/channels`, {
+export async function fetchNotificationChannelsSSR(
+  organizationPublicId?: string | null,
+): Promise<NotificationChannel[]> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${apiBase()}/api/notifications/channels${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -227,6 +258,7 @@ export async function fetchNotificationChannelsPagedSSR(
   page: number,
   pageSize: number,
   q: string,
+  organizationPublicId?: string | null,
 ): Promise<PaginatedNotificationChannelsResponse> {
   const params = new URLSearchParams({
     page: String(Math.max(1, page)),
@@ -234,6 +266,8 @@ export async function fetchNotificationChannelsPagedSSR(
   });
   const trimmed = q.trim();
   if (trimmed) params.set("q", trimmed);
+  const org = organizationPublicId?.trim();
+  if (org) params.set("organizationPublicId", org);
   const res = await fetch(`${apiBase()}/api/notifications/channels/paged?${params.toString()}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
@@ -245,8 +279,12 @@ export async function fetchNotificationChannelsPagedSSR(
   return JSON.parse(text) as PaginatedNotificationChannelsResponse;
 }
 
-export async function fetchS3ProfilesSSR(): Promise<S3ProfilePublic[]> {
-  const res = await fetch(`${apiBase()}/api/s3/profiles`, {
+export async function fetchS3ProfilesSSR(
+  organizationPublicId?: string | null,
+): Promise<S3ProfilePublic[]> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${apiBase()}/api/s3/profiles${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -256,8 +294,14 @@ export async function fetchS3ProfilesSSR(): Promise<S3ProfilePublic[]> {
   return data as S3ProfilePublic[];
 }
 
-export async function fetchRemoteServersSSR(): Promise<RemoteServerRow[]> {
-  const res = await fetch(`${apiBase()}/api/remote-servers`, {
+export async function fetchRemoteServersSSR(
+  organizationPublicId?: string | null,
+): Promise<RemoteServerRow[]> {
+  const q =
+    organizationPublicId != null && String(organizationPublicId).trim() !== ""
+      ? `?organizationPublicId=${encodeURIComponent(String(organizationPublicId).trim())}`
+      : "";
+  const res = await fetch(`${apiBase()}/api/remote-servers${q}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -326,11 +370,16 @@ export async function fetchOrganizationsListSSR(): Promise<OrganizationPublic[]>
     if (created instanceof Date) createdAt = created.toISOString();
     else if (typeof created === "string") createdAt = created;
     else createdAt = new Date().toISOString();
+    const mc = row.memberCount;
+    const memberCount =
+      typeof mc === "number" && Number.isFinite(mc) ? Math.max(1, Math.floor(mc)) : 1;
     return {
       publicId: String(row.publicId ?? ""),
       name: String(row.name ?? ""),
       isOwner: row.isOwner === true,
       createdAt,
+      memberCount,
+      workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
     };
   });
 }
@@ -360,6 +409,7 @@ export async function fetchOrganizationMembersSSR(
       lastName: String(row.lastName ?? ""),
       isOwner: row.isOwner === true,
       joinedAt,
+      workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
     };
   });
 }
@@ -412,11 +462,16 @@ export async function fetchOrganizationSSR(
   if (created instanceof Date) createdAt = created.toISOString();
   else if (typeof created === "string") createdAt = created;
   else createdAt = new Date().toISOString();
+  const mc = row.memberCount;
+  const memberCount =
+    typeof mc === "number" && Number.isFinite(mc) ? Math.max(1, Math.floor(mc)) : 1;
   return {
     publicId: String(row.publicId ?? ""),
     name: String(row.name ?? ""),
     isOwner: row.isOwner === true,
     createdAt,
+    memberCount,
+    workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
   };
 }
 
@@ -424,9 +479,12 @@ export async function fetchOrganizationSSR(
 export async function fetchS3BucketObjectsSSR(
   profileId: string,
   prefix = "",
+  organizationPublicId?: string | null,
 ): Promise<S3BucketListResponse | null> {
   const q = new URLSearchParams();
   if (prefix) q.set("prefix", prefix);
+  const org = organizationPublicId?.trim();
+  if (org) q.set("organizationPublicId", org);
   const qs = q.toString();
   const res = await fetch(
     `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileId)}/objects${qs ? `?${qs}` : ""}`,
@@ -440,8 +498,11 @@ export async function fetchS3BucketObjectsSSR(
 export async function fetchS3PrefixSummarySSR(
   profileId: string,
   folderPrefix: string,
+  organizationPublicId?: string | null,
 ): Promise<S3PrefixSummaryResponse | null> {
   const q = new URLSearchParams({ prefix: folderPrefix });
+  const org = organizationPublicId?.trim();
+  if (org) q.set("organizationPublicId", org);
   const res = await fetch(
     `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileId)}/prefix-summary?${q.toString()}`,
     { headers: await cookieHeaders(), cache: "no-store" },

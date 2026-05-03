@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
+import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 import { NotificationService } from '../notifications/notification.service';
 import {
   buildRemoteEnvAndWrappedShInstallScript,
@@ -21,7 +25,7 @@ import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
 import { generatePublicId } from '../common/public-id';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
+import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
 
 export type CronJobListRow = {
   id: number;
@@ -45,19 +49,48 @@ export type CronJobDetailRow = CronJobListRow & {
 @Injectable()
 export class CronJobsService {
   private readonly logger = new Logger(CronJobsService.name);
-  private readonly scopedCronJobs: UserIdTenantScopedRepository<CronJob>;
+  private readonly scopedCronJobs: RemoteServerTenantScopedRepository<CronJob>;
 
   constructor(
     @InjectRepository(CronJob)
     private readonly cronJobRepo: Repository<CronJob>,
+    @InjectRepository(OrganizationMembership)
+    private readonly membershipRepo: Repository<OrganizationMembership>,
+    private readonly organizationsRepository: OrganizationsRepository,
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
     private readonly remoteServersService: RemoteServersService,
   ) {
-    this.scopedCronJobs = new UserIdTenantScopedRepository<CronJob>(
+    this.scopedCronJobs = new RemoteServerTenantScopedRepository<CronJob>(
       this.cronJobRepo,
+      this.membershipRepo,
       'Cron job',
     );
+  }
+
+  private async workspaceOrgId(
+    userId: number,
+    organizationPublicId?: string | null,
+  ): Promise<number | null> {
+    return resolveOrganizationInternalIdForMember(
+      this.organizationsRepository,
+      userId,
+      organizationPublicId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS },
+    );
+  }
+
+  private assertCronWorkspace(
+    job: CronJob,
+    organizationPublicId: string | null | undefined,
+    expectedOrgId: number | null,
+  ): void {
+    const raw = organizationPublicId?.trim();
+    if (!raw) return;
+    const rowOrg = job.organizationId ?? null;
+    if (rowOrg !== expectedOrgId) {
+      throw new NotFoundException('Cron job not found');
+    }
   }
 
   private runRemoteSyncInBackground(
@@ -245,9 +278,14 @@ export class CronJobsService {
   async readLastRunLog(
     userId: number,
     idOrPublicId: string | number,
-    opts?: { lines?: number },
+    opts?: { lines?: number; organizationPublicId?: string | null },
   ): Promise<{ log: string; source: string }> {
+    const expectedOrg = await this.workspaceOrgId(
+      userId,
+      opts?.organizationPublicId,
+    );
     const job = await this.resolveEntity(userId, idOrPublicId);
+    this.assertCronWorkspace(job, opts?.organizationPublicId, expectedOrg);
     if (job.remoteServerId == null) {
       return { log: '', source: 'not-applicable' };
     }
@@ -365,8 +403,12 @@ fi
   private async assertNotificationChannel(
     userId: number,
     channelId: number,
+    organizationPublicId?: string | null,
   ): Promise<void> {
-    const rows = await this.notificationsService.listChannels(userId);
+    const rows = await this.notificationsService.listChannels(
+      userId,
+      organizationPublicId,
+    );
     if (!rows.some((c) => c.id === channelId)) {
       throw new BadRequestException('Notification channel not found.');
     }
@@ -427,8 +469,13 @@ fi
     dto: CreateCronJobDto,
   ): Promise<CronJobDetailRow> {
     this.validateCreate(dto);
+    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId);
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
-      await this.assertNotificationChannel(userId, dto.notifyChannelId);
+      await this.assertNotificationChannel(
+        userId,
+        dto.notifyChannelId,
+        dto.organizationPublicId,
+      );
     }
     await this.remoteServersService.assertDeployServerById(
       dto.remoteServerId,
@@ -438,6 +485,7 @@ fi
     const job = this.cronJobRepo.create({
       publicId: generatePublicId('crn'),
       userId,
+      organizationId: orgId,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
       isActive: true,
@@ -458,18 +506,30 @@ fi
     return await this.toDetailRow(saved);
   }
 
-  async list(userId: number): Promise<CronJobListRow[]> {
-    const list = await this.scopedCronJobs.listScoped(userId, {
-      order: { createdAt: 'DESC' },
-    });
+  async list(
+    userId: number,
+    organizationPublicId?: string | null,
+  ): Promise<CronJobListRow[]> {
+    const orgId = await this.workspaceOrgId(userId, organizationPublicId);
+    const list =
+      orgId != null
+        ? await this.scopedCronJobs.listForOrganization(userId, orgId, {
+            order: { createdAt: 'DESC' },
+          })
+        : await this.scopedCronJobs.listPersonal(userId, {
+            order: { createdAt: 'DESC' },
+          });
     return Promise.all(list.map((w) => this.toListRow(w)));
   }
 
   async findOne(
     userId: number,
     idOrPublicId: string | number,
+    organizationPublicId?: string | null,
   ): Promise<CronJobDetailRow> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const job = await this.resolveEntity(userId, idOrPublicId);
+    this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
     return await this.toDetailRow(job);
   }
 
@@ -477,8 +537,11 @@ fi
     userId: number,
     idOrPublicId: string | number,
     dto: UpdateCronJobDto,
+    organizationPublicId?: string | null,
   ): Promise<CronJobDetailRow> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const job = await this.resolveEntity(userId, idOrPublicId);
+    this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
     const previousJob = this.cronJobRepo.create({ ...job });
 
     if (dto.name !== undefined) job.name = dto.name.trim();
@@ -514,7 +577,11 @@ fi
 
     if (job.notifyChannelId && job.notifyMessage) {
       job.notifyOnTrigger = true;
-      await this.assertNotificationChannel(userId, job.notifyChannelId);
+      await this.assertNotificationChannel(
+        userId,
+        job.notifyChannelId,
+        organizationPublicId,
+      );
     } else if (!job.notifyChannelId && !job.notifyMessage) {
       job.notifyOnTrigger = false;
     } else {
@@ -547,8 +614,14 @@ fi
     return await this.toDetailRow(saved);
   }
 
-  async remove(userId: number, idOrPublicId: string | number): Promise<void> {
+  async remove(
+    userId: number,
+    idOrPublicId: string | number,
+    organizationPublicId?: string | null,
+  ): Promise<void> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const existing = await this.resolveEntity(userId, idOrPublicId);
+    this.assertCronWorkspace(existing, organizationPublicId, expectedOrg);
     await this.removeCrontabEntry(existing);
     await this.scopedCronJobs.deleteScoped(existing.id, userId);
   }
@@ -596,13 +669,16 @@ fi
   async triggerNow(
     userId: number,
     idOrPublicId: string | number,
+    organizationPublicId?: string | null,
   ): Promise<{
     ok: boolean;
     success: boolean;
     action: string;
     output: string;
   }> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const job = await this.resolveEntity(userId, idOrPublicId);
+    this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
     if (!job.isActive) {
       throw new BadRequestException('Cron job is inactive.');
     }

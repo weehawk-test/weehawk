@@ -1,6 +1,9 @@
+import { notFound } from "next/navigation";
 import ProjectsClient from "../../../projects/ProjectsClient";
-import { fetchProjectsSSR } from "@/lib/server-fetch";
+import { fetchOrganizationSSR, fetchProjectsSSR } from "@/lib/server-fetch";
 import type { ProjectsPageResponse } from "@/lib/projects-api";
+import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
+import { redirectOrgWorkspaceAccessDenied } from "@/lib/org-workspace-access-denied";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +16,11 @@ type PageProps = {
 export default async function OrganizationProjectsPage({ params, searchParams }: PageProps) {
   const { publicId: raw } = await params;
   const publicId = raw.trim();
+  const org = await fetchOrganizationSSR(publicId);
+  if (!org) notFound();
+  if (!org.workspacePermissions[ORG_WORKSPACE_PERMISSIONS.PROJECTS]) {
+    redirectOrgWorkspaceAccessDenied(publicId, ORG_WORKSPACE_PERMISSIONS.PROJECTS);
+  }
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";

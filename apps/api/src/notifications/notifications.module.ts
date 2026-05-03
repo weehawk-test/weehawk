@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
+import { OrganizationsModule } from '../organizations/organizations.module';
 import { NotificationChannel } from './entities/notification-channel.entity';
 import { NotificationService } from './notification.service';
 import { NotificationsController } from './notifications.controller';
@@ -16,7 +18,8 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([NotificationChannel]),
+    TypeOrmModule.forFeature([NotificationChannel, OrganizationMembership]),
+    OrganizationsModule,
     RemoteServersModule,
   ],
   controllers: [NotificationsController],

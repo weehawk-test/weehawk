@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import type { OrgWorkspacePermissionKey } from "@/lib/org-workspace-permissions";
 import {
   Webhook,
   FolderKanban,
@@ -18,6 +19,8 @@ import {
   Newspaper,
   Building2,
 } from "lucide-react";
+import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
+import type { OrganizationPublic } from "@/lib/organizations-types";
 
 export type MainNavItem = {
   href: string;
@@ -25,6 +28,8 @@ export type MainNavItem = {
   icon: LucideIcon;
   /** Opens in a new tab (e.g. docs). */
   external?: boolean;
+  /** In an organization workspace, hide when this permission is false (owners always see all). */
+  orgPermission?: OrgWorkspacePermissionKey;
 };
 
 export type MainNavSection = {
@@ -32,36 +37,69 @@ export type MainNavSection = {
   items: MainNavItem[];
 };
 
+export function isOrgMainNavItemVisible(org: OrganizationPublic, item: MainNavItem): boolean {
+  if (org.isOwner) return true;
+  if (item.orgPermission != null) {
+    return org.workspacePermissions[item.orgPermission];
+  }
+  return true;
+}
+
 export function buildMainNavSections(): MainNavSection[] {
   return [
     {
       label: "General",
       items: [
-        { href: "/", label: "Projects", icon: FolderKanban },
-        { href: "/remote-server", label: "Servers", icon: Server },
-        { href: "/domains", label: "Domains", icon: Globe },
+        { href: "/", label: "Projects", icon: FolderKanban, orgPermission: ORG_WORKSPACE_PERMISSIONS.PROJECTS },
+        {
+          href: "/remote-server",
+          label: "Servers",
+          icon: Server,
+          orgPermission: ORG_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+        },
+        {
+          href: "/domains",
+          label: "Domains",
+          icon: Globe,
+          orgPermission: ORG_WORKSPACE_PERMISSIONS.DOMAINS,
+        },
       ],
     },
     {
       label: "Integrations",
       items: [
-        { href: "/webhooks", label: "Webhooks", icon: Webhook },
-        { href: "/cron-jobs", label: "Cron Jobs", icon: Clock3 },
-        { href: "/notifications", label: "Notifications", icon: Bell },
-        { href: "/s3", label: "S3 Destinations", icon: HardDrive },
+        { href: "/webhooks", label: "Webhooks", icon: Webhook, orgPermission: ORG_WORKSPACE_PERMISSIONS.WEBHOOKS },
+        {
+          href: "/cron-jobs",
+          label: "Cron Jobs",
+          icon: Clock3,
+          orgPermission: ORG_WORKSPACE_PERMISSIONS.CRON_JOBS,
+        },
+        {
+          href: "/notifications",
+          label: "Notifications",
+          icon: Bell,
+          orgPermission: ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS,
+        },
+        { href: "/s3", label: "S3 Destinations", icon: HardDrive, orgPermission: ORG_WORKSPACE_PERMISSIONS.S3 },
       ],
     },
     {
       label: "Registry & Git",
       items: [
-        { href: "/registry", label: "Registry", icon: ShieldCheck },
-        { href: "/git", label: "Git", icon: GitBranch },
+        { href: "/registry", label: "Registry", icon: ShieldCheck, orgPermission: ORG_WORKSPACE_PERMISSIONS.REGISTRY },
+        { href: "/git", label: "Git", icon: GitBranch, orgPermission: ORG_WORKSPACE_PERMISSIONS.GIT },
       ],
     },
     {
       label: "More",
       items: [
-        { href: "/organizations", label: "Organizations", icon: Building2 },
+        {
+          href: "/organizations",
+          label: "Organizations",
+          icon: Building2,
+          orgPermission: ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
+        },
         { href: "/news", label: "News", icon: Newspaper },
       ],
     },

@@ -7,14 +7,23 @@ import { fetchRemoteServersSSR } from "@/lib/server-fetch";
 
 export default async function Page({
   searchParams,
+  organizationPublicId: orgPublicIdProp,
 }: {
   searchParams: Promise<{ page?: string; q?: string; server?: string }>;
+  /** Set when rendering under `/organizations/:id/secrets` (mirror page). */
+  organizationPublicId?: string;
 }) {
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
 
-  const remoteServers = await fetchRemoteServersSSR();
+  const orgPid = orgPublicIdProp?.trim();
+  const secretsBase = orgPid ? `/organizations/${encodeURIComponent(orgPid)}/secrets` : "/secrets";
+  const remoteServerHref = orgPid
+    ? `/organizations/${encodeURIComponent(orgPid)}/remote-server`
+    : "/remote-server";
+
+  const remoteServers = await fetchRemoteServersSSR(orgPid ?? undefined);
   const deployServers = filterSshDeployServers(remoteServers);
   const serverParam = typeof sp.server === "string" ? parseInt(sp.server, 10) : NaN;
   const explicitId = Number.isInteger(serverParam) && serverParam > 0 ? serverParam : null;
@@ -34,7 +43,7 @@ export default async function Page({
         {invalidExplicit ? (
           <p className="text-sm text-destructive">
             No SSH deploy server with id <span className="font-mono">{explicitId}</span>. Pick a host below or from{" "}
-            <Link href="/remote-server" className="underline">
+            <Link href={remoteServerHref} className="underline">
               Remote servers
             </Link>
             .
@@ -51,7 +60,7 @@ export default async function Page({
             {deployServers.map((s) => (
               <Link
                 key={s.id}
-                href={`/secrets?server=${s.id}`}
+                href={`${secretsBase}?server=${s.id}`}
                 className="rounded-lg border border-border px-3 py-1.5 text-sm text-primary hover:underline"
               >
                 #{s.id} {s.name?.trim() || s.host}
@@ -60,7 +69,7 @@ export default async function Page({
           </div>
         )}
         {!invalidExplicit && (
-          <Link href="/remote-server" className="text-primary hover:underline text-sm font-medium inline-block">
+          <Link href={remoteServerHref} className="text-primary hover:underline text-sm font-medium inline-block">
             Remote servers →
           </Link>
         )}
@@ -76,7 +85,7 @@ export default async function Page({
           {deployServers.map((s) => (
             <Link
               key={s.id}
-              href={`/secrets?server=${s.id}${page !== 1 ? `&page=${page}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
+              href={`${secretsBase}?server=${s.id}${page !== 1 ? `&page=${page}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
               className={
                 s.id === selectedId
                   ? "rounded-lg border border-primary bg-primary/10 px-3 py-1 font-medium text-primary"

@@ -58,6 +58,7 @@ export function mapApiProjectToProject(raw: unknown): Project {
   else if (typeof created === "string") createdAt = created;
   else createdAt = new Date().toISOString();
 
+  const orgPub = row.organizationPublicId;
   return {
     id: String(row.id ?? ""),
     publicId:
@@ -68,6 +69,8 @@ export function mapApiProjectToProject(raw: unknown): Project {
     description: typeof row.description === "string" ? row.description : "",
     createdAt,
     serviceCount: explicitCount ?? services.length,
+    organizationPublicId:
+      typeof orgPub === "string" && orgPub.trim() !== "" ? orgPub.trim() : undefined,
   };
 }
 

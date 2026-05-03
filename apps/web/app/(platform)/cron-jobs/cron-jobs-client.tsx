@@ -42,7 +42,18 @@ function formatDateUTC(dateInput: string): string {
   });
 }
 
-export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[] }) {
+export function CronJobsClient({
+  initialJobs,
+  organizationPublicId: organizationPublicIdProp,
+}: {
+  initialJobs: CronJobListItem[];
+  organizationPublicId?: string;
+}) {
+  const organizationPublicId = organizationPublicIdProp?.trim() || undefined;
+  const cronJobsBasePath =
+    organizationPublicId != null && organizationPublicId !== ""
+      ? `/organizations/${encodeURIComponent(organizationPublicId)}/cron-jobs`
+      : "/cron-jobs";
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -51,8 +62,8 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
   useLayoutEffect(() => {
     setJobs(reconcileAndFilterPendingDeletions("cron-jobs", initialJobs, (j) => [j.id, j.publicId]));
   }, [initialJobs]);
-  const deleteCronJob = useDeleteCronJob();
-  const updateCronJob = useUpdateCronJob();
+  const deleteCronJob = useDeleteCronJob(organizationPublicId);
+  const updateCronJob = useUpdateCronJob(organizationPublicId);
   const { toast } = useToast();
   const confirm = useConfirm();
   const { accessToken } = useAuth();
@@ -195,7 +206,12 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
       setLoadingLogCronJobId(cronJob.id);
     }
     try {
-      const out = await fetchCronJobLastRunLog(accessToken, cronJobRouteId(cronJob), 2000);
+      const out = await fetchCronJobLastRunLog(
+        accessToken,
+        cronJobRouteId(cronJob),
+        2000,
+        organizationPublicId,
+      );
       const normalized = out.log.trim();
       if (out.source === "not-applicable") {
         setLogTextByCronJobId((prev) => ({
@@ -238,7 +254,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
     setLogTextByCronJobId((prev) => ({ ...prev, [cronJob.id]: "" }));
     setRunLogLoadingCronJobId(cronJob.id);
     try {
-      await triggerCronJobNow(accessToken, cronJobRouteId(cronJob));
+      await triggerCronJobNow(accessToken, cronJobRouteId(cronJob), organizationPublicId);
       await sleep(900);
       await loadCronJobLog(cronJob, {
         silent: true,
@@ -267,7 +283,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
       void loadCronJobLog(cronJob, { silent: true, keepModalState: true });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [openLogCronJobId, accessToken, jobs]);
+  }, [openLogCronJobId, accessToken, jobs, organizationPublicId]);
 
   return (
     <>
@@ -276,7 +292,10 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
           <h1 className="text-3xl font-bold text-foreground mb-2">Cron Jobs</h1>
           <p className="text-muted-foreground">Manage scheduled automation jobs.</p>
         </div>
-        <Link href="/cron-jobs/create" className="btn-primary flex items-center justify-center gap-2">
+        <Link
+          href={`${cronJobsBasePath}/create`}
+          className="btn-primary flex items-center justify-center gap-2"
+        >
           <Plus className="w-5 h-5" /> New cron job
         </Link>
       </div>
@@ -329,7 +348,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
             {search ? "No cron jobs match your search." : "Create your first cron job trigger."}
           </p>
           {!search && (
-            <Link href="/cron-jobs/create" className="btn-primary flex items-center gap-2">
+            <Link href={`${cronJobsBasePath}/create`} className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> New cron job
             </Link>
           )}
@@ -495,7 +514,7 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
                         Edit <Pencil className="w-3 h-3" />
                       </span>
                     ) : (
-                      <Link href={`/cron-jobs/${cronJobRouteId(j)}/edit`}>
+                      <Link href={`${cronJobsBasePath}/${cronJobRouteId(j)}/edit`}>
                         <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                           Edit <Pencil className="w-3 h-3" />
                         </span>

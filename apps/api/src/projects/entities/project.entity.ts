@@ -12,7 +12,7 @@ import { Service } from 'src/services/entities/service.entity';
 import { generatePublicId } from '../../common/public-id';
 
 @Entity('projects')
-@Index(['userId', 'name'], { unique: true })
+@Index(['userId', 'organizationId', 'name'])
 export class Project {
   @PrimaryGeneratedColumn()
   id!: number;

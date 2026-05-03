@@ -8,12 +8,19 @@ import { RemoteServerProvisionService } from './remote-server-provision.service'
 import { RemoteTerminalGateway } from './remote-terminal.gateway';
 import { TraefikModule } from '../traefik/traefik.module';
 import { AuthModule } from '../auth/auth.module';
+import { OrganizationsModule } from '../organizations/organizations.module';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([RemoteServer, RemoteServerProvisionJob]),
+    TypeOrmModule.forFeature([
+      RemoteServer,
+      RemoteServerProvisionJob,
+      OrganizationMembership,
+    ]),
     TraefikModule,
     AuthModule,
+    OrganizationsModule,
   ],
   controllers: [RemoteServersController],
   providers: [

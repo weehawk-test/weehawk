@@ -61,7 +61,10 @@ export class RemoteServerProvisionService {
     remoteServerId: number,
     userId: number,
   ): Promise<{ jobId: string }> {
-    await this.remoteServersService.findOne(remoteServerId, userId);
+    await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
+      remoteServerId,
+      userId,
+    );
     const row = this.jobRepo.create({
       remoteServerId,
       userId,
@@ -77,7 +80,10 @@ export class RemoteServerProvisionService {
     remoteServerId: number,
     userId: number,
   ): Promise<{ jobId: string }> {
-    await this.remoteServersService.findOne(remoteServerId, userId);
+    await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
+      remoteServerId,
+      userId,
+    );
     const row = this.jobRepo.create({
       remoteServerId,
       userId,
@@ -93,7 +99,10 @@ export class RemoteServerProvisionService {
     remoteServerId: number,
     userId: number,
   ): Promise<{ jobId: string }> {
-    await this.remoteServersService.findOne(remoteServerId, userId);
+    await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
+      remoteServerId,
+      userId,
+    );
     const row = this.jobRepo.create({
       remoteServerId,
       userId,

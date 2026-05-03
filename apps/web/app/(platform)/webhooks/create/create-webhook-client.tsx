@@ -17,10 +17,12 @@ import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { workspaceRoute } from "@/lib/workspace-paths";
 
 type Props = {
   initialChannels: NotificationChannel[];
   initialRemoteServers: RemoteServerRow[];
+  organizationPublicId?: string | null;
 };
 
 function renderHighlightedScript(script: string): ReactNode[] {
@@ -35,10 +37,22 @@ function renderHighlightedScript(script: string): ReactNode[] {
   });
 }
 
-export function CreateWebhookClient({ initialChannels, initialRemoteServers }: Props) {
+export function CreateWebhookClient({
+  initialChannels,
+  initialRemoteServers,
+  organizationPublicId = null,
+}: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const createMutation = useCreateWebhook();
+  const webhooksHref = useMemo(
+    () => workspaceRoute(organizationPublicId, "/webhooks"),
+    [organizationPublicId],
+  );
+  const domainsHref = useMemo(
+    () => workspaceRoute(organizationPublicId, "/domains"),
+    [organizationPublicId],
+  );
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [remoteServerId, setRemoteServerId] = useState("");
@@ -118,12 +132,16 @@ export function CreateWebhookClient({ initialChannels, initialRemoteServers }: P
         bashScript: bashScript.trim(),
         remoteServerId: parsedRemoteServerId,
         hooksPublicHost: host,
+        ...(organizationPublicId?.trim()
+          ? { organizationPublicId: organizationPublicId.trim() }
+          : {}),
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId: Number(notifyChannelId), notifyMessage: notifyMessage.trim() }
           : {}),
       },
       {
-        onSuccess: (created) => router.push(`/webhooks?provisioning=${encodeURIComponent(String(created.id))}`),
+        onSuccess: (created) =>
+          router.push(`${webhooksHref}?provisioning=${encodeURIComponent(String(created.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not create webhook", description: e.message, variant: "destructive" }),
       },
@@ -152,7 +170,7 @@ export function CreateWebhookClient({ initialChannels, initialRemoteServers }: P
 
   const closeModal = () => {
     if (createMutation.isPending) return;
-    router.push("/webhooks");
+    router.push(webhooksHref);
   };
 
   return createPortal(
@@ -162,7 +180,7 @@ export function CreateWebhookClient({ initialChannels, initialRemoteServers }: P
           <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
             <div className="mb-6 flex items-center justify-between gap-3">
               <h1 className="text-2xl font-bold text-foreground">Create webhook</h1>
-              <Link href="/webhooks" aria-label="Close">
+              <Link href={webhooksHref} aria-label="Close">
                 <button
                   type="button"
                   aria-label="Close"
@@ -243,7 +261,7 @@ export function CreateWebhookClient({ initialChannels, initialRemoteServers }: P
                   {!remoteServerId ? (
                     <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
                       Set this webhook&apos;s deploy server above, then add hostnames on{" "}
-                      <Link href="/domains" className="text-primary hover:underline">
+                      <Link href={domainsHref} className="text-primary hover:underline">
                         Domains
                       </Link>
                       .
@@ -251,7 +269,7 @@ export function CreateWebhookClient({ initialChannels, initialRemoteServers }: P
                   ) : serverHostnames.length === 0 ? (
                     <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
                       Add hostnames on{" "}
-                      <Link href="/domains" className="text-primary hover:underline">
+                      <Link href={domainsHref} className="text-primary hover:underline">
                         Domains
                       </Link>{" "}
                       first.
@@ -353,7 +371,7 @@ echo "Webhook done"`}
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
-                <Link href="/webhooks">
+                <Link href={webhooksHref}>
                   <button type="button" className="btn-secondary" disabled={createMutation.isPending}>
                     Cancel
                   </button>

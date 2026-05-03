@@ -53,13 +53,21 @@ export class WebhooksController {
     @Req() req: AuthedReq,
     @Query('includeHidden', new DefaultValuePipe(false), ParseBoolPipe)
     includeHidden: boolean,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
-    return this.webhooksService.list(this.uid(req), { includeHidden });
+    return this.webhooksService.list(this.uid(req), {
+      includeHidden,
+      organizationPublicId,
+    });
   }
 
   @Get(':id')
-  findOne(@Req() req: AuthedReq, @Param('id') id: string) {
-    return this.webhooksService.findOne(this.uid(req), id);
+  findOne(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    return this.webhooksService.findOne(this.uid(req), id, organizationPublicId);
   }
 
   @Get(':id/last-log')
@@ -67,10 +75,12 @@ export class WebhooksController {
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Query('lines', new DefaultValuePipe(200)) lines: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     const n = Number(lines);
     return this.webhooksService.readLastRunLog(this.uid(req), id, {
       lines: Number.isFinite(n) ? n : 200,
+      organizationPublicId,
     });
   }
 
@@ -79,13 +89,23 @@ export class WebhooksController {
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Body() dto: UpdateWebhookDto,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
-    return this.webhooksService.update(this.uid(req), id, dto);
+    return this.webhooksService.update(
+      this.uid(req),
+      id,
+      dto,
+      organizationPublicId,
+    );
   }
 
   @Delete(':id')
-  async remove(@Req() req: AuthedReq, @Param('id') id: string) {
-    await this.webhooksService.remove(this.uid(req), id);
+  async remove(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    await this.webhooksService.remove(this.uid(req), id, organizationPublicId);
     return { ok: true };
   }
 }

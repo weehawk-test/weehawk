@@ -26,6 +26,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
 
 /** Keep in sync with `WEEHAWK_REMOTE_DEPLOYMENTS_BASE` in apps/api remote-servers.service. */
 const REMOTE_DEPLOYMENTS_DIR = "/opt/weehawk-deployments";
@@ -117,11 +118,22 @@ function serviceRouteId(service: Pick<Service, "id" | "publicId">): string {
   return pub && pub.length > 0 ? pub : String(service.id);
 }
 
-export function ServiceRemoteHostPanel({ service }: { service: Service }) {
+export function ServiceRemoteHostPanel({
+  service,
+  organizationPublicId: organizationPublicIdProp,
+}: {
+  service: Service;
+  /** From the service's project when opened under `/projects/...` (org workspace context is null there). */
+  organizationPublicId?: string | null;
+}) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const updateService = useUpdateService();
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const organizationPublicId =
+    organizationPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
+  const remoteServersQueryKey = ["remote-servers", organizationPublicId || "personal"] as const;
   const isApplication = service.type === "application";
 
   /** Pre-built image deploy skips `docker build`; build host is ignored by the server. */
@@ -131,14 +143,22 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
   );
 
   const q = useQuery({
-    queryKey: ["remote-servers"],
-    queryFn: () => fetchRemoteServers(accessToken ?? ""),
+    queryKey: remoteServersQueryKey,
+    queryFn: () =>
+      fetchRemoteServers(
+        accessToken ?? "",
+        organizationPublicId ? organizationPublicId : undefined,
+      ),
     enabled: Boolean(accessToken),
   });
 
   const webhooksQ = useQuery({
-    queryKey: ["webhooks", { includeHidden: true }],
-    queryFn: () => fetchWebhooks(accessToken!, { includeHidden: true }),
+    queryKey: ["webhooks", organizationPublicId ?? "personal", { includeHidden: true }],
+    queryFn: () =>
+      fetchWebhooks(accessToken!, {
+        includeHidden: true,
+        organizationPublicId,
+      }),
     enabled: Boolean(accessToken),
   });
 
@@ -415,6 +435,7 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
             remoteServerId: deployServerIdNum,
             hooksPublicHost: parentHost,
             hiddenFromWebhooksList: true,
+            ...(organizationPublicId ? { organizationPublicId } : {}),
           });
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
           await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -434,9 +455,14 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
       ) {
         const parentHost = webhookPublicHost.trim();
         try {
-          const outer = await updateWebhook(accessToken, webhookRouteId(webhookRowForBaseline), {
-            hooksPublicHost: parentHost,
-          });
+          const outer = await updateWebhook(
+            accessToken,
+            webhookRouteId(webhookRowForBaseline),
+            {
+              hooksPublicHost: parentHost,
+            },
+            organizationPublicId,
+          );
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
           await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
         } catch (whErr) {
@@ -508,10 +534,11 @@ export function ServiceRemoteHostPanel({ service }: { service: Service }) {
         remoteServerId: deployServerIdNum,
         hooksPublicHost: parentHost,
         hiddenFromWebhooksList: true,
+        ...(organizationPublicId ? { organizationPublicId } : {}),
       });
       let deleteProblem = "";
       try {
-        await deleteWebhook(accessToken, oldId);
+        await deleteWebhook(accessToken, oldId, organizationPublicId);
       } catch (delErr) {
         deleteProblem = (delErr as Error).message;
       }

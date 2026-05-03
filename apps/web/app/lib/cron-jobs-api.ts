@@ -34,6 +34,7 @@ export type CreateCronJobBody = {
   bashScript: string;
   notifyChannelId?: number;
   notifyMessage?: string;
+  organizationPublicId?: string;
 };
 
 export type UpdateCronJobBody = {
@@ -61,8 +62,13 @@ function authHeaders(_accessToken: string): HeadersInit {
   return { Accept: "application/json" };
 }
 
-export async function fetchCronJobs(accessToken: string): Promise<CronJobListItem[]> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs`, {
+export async function fetchCronJobs(
+  accessToken: string,
+  organizationPublicId?: string | null,
+): Promise<CronJobListItem[]> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/cron-jobs${q}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
   });
@@ -76,8 +82,14 @@ export async function fetchCronJobs(accessToken: string): Promise<CronJobListIte
   }));
 }
 
-export async function fetchCronJob(accessToken: string, id: string | number): Promise<CronJobDetail> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
+export async function fetchCronJob(
+  accessToken: string,
+  id: string | number,
+  organizationPublicId?: string | null,
+): Promise<CronJobDetail> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}${q}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
   });
@@ -122,8 +134,11 @@ export async function updateCronJob(
   accessToken: string,
   id: string | number,
   body: UpdateCronJobBody,
+  organizationPublicId?: string | null,
 ): Promise<CronJobDetail> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}${q}`, {
     method: "PATCH",
     headers: {
       ...authHeaders(accessToken),
@@ -144,8 +159,14 @@ export async function updateCronJob(
   };
 }
 
-export async function deleteCronJob(accessToken: string, id: string | number): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}`, {
+export async function deleteCronJob(
+  accessToken: string,
+  id: string | number,
+  organizationPublicId?: string | null,
+): Promise<void> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}${q}`, {
     method: "DELETE",
     headers: authHeaders(accessToken),
     credentials: "include",
@@ -156,12 +177,18 @@ export async function deleteCronJob(accessToken: string, id: string | number): P
 export async function triggerCronJobNow(
   accessToken: string,
   id: string | number,
+  organizationPublicId?: string | null,
 ): Promise<{ ok: boolean; success: boolean; action: string; output: string }> {
-  const res = await fetch(`${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}/run`, {
-    method: "POST",
-    headers: authHeaders(accessToken),
-    credentials: "include",
-  });
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(
+    `${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}/run${q}`,
+    {
+      method: "POST",
+      headers: authHeaders(accessToken),
+      credentials: "include",
+    },
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return (await res.json()) as { ok: boolean; success: boolean; action: string; output: string };
 }
@@ -170,8 +197,12 @@ export async function fetchCronJobLastRunLog(
   accessToken: string,
   id: string | number,
   lines = 200,
+  organizationPublicId?: string | null,
 ): Promise<{ log: string; source: string }> {
-  const qs = new URLSearchParams({ lines: String(lines) }).toString();
+  const params = new URLSearchParams({ lines: String(lines) });
+  const org = organizationPublicId?.trim();
+  if (org) params.set("organizationPublicId", org);
+  const qs = params.toString();
   const res = await fetch(
     `${API_BASE}/api/cron-jobs/${encodeURIComponent(String(id))}/last-run-log?${qs}`,
     {

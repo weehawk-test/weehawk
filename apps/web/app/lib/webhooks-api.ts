@@ -61,6 +61,7 @@ export type CreateWebhookBody = {
   remoteTriggerUrlScheme?: WebhookRemoteTriggerUrlScheme;
   /** When true, omitted from the main /webhooks list (service auto webhooks). */
   hiddenFromWebhooksList?: boolean;
+  organizationPublicId?: string;
 };
 
 export type UpdateWebhookBody = {
@@ -98,12 +99,13 @@ export function publicWebhookTriggerUrl(secretToken: string): string {
 
 export async function fetchWebhooks(
   accessToken: string,
-  options?: { includeHidden?: boolean },
+  options?: { includeHidden?: boolean; organizationPublicId?: string | null },
 ): Promise<WebhookListItem[]> {
-  const qs =
-    options?.includeHidden === true
-      ? `?${new URLSearchParams({ includeHidden: "true" }).toString()}`
-      : "";
+  const params = new URLSearchParams();
+  if (options?.includeHidden === true) params.set("includeHidden", "true");
+  const org = options?.organizationPublicId?.trim();
+  if (org) params.set("organizationPublicId", org);
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/webhooks${qs}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
@@ -122,8 +124,14 @@ export async function fetchWebhooks(
   }));
 }
 
-export async function fetchWebhook(accessToken: string, id: string | number): Promise<WebhookDetail> {
-  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
+export async function fetchWebhook(
+  accessToken: string,
+  id: string | number,
+  organizationPublicId?: string | null,
+): Promise<WebhookDetail> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}${q}`, {
     headers: authHeaders(accessToken),
     credentials: "include",
   });
@@ -176,8 +184,11 @@ export async function updateWebhook(
   accessToken: string,
   id: string | number,
   body: UpdateWebhookBody,
+  organizationPublicId?: string | null,
 ): Promise<WebhookDetail> {
-  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}${q}`, {
     method: "PATCH",
     headers: {
       ...authHeaders(accessToken),
@@ -202,8 +213,14 @@ export async function updateWebhook(
   };
 }
 
-export async function deleteWebhook(accessToken: string, id: string | number): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}`, {
+export async function deleteWebhook(
+  accessToken: string,
+  id: string | number,
+  organizationPublicId?: string | null,
+): Promise<void> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}${q}`, {
     method: "DELETE",
     headers: authHeaders(accessToken),
     credentials: "include",
@@ -215,8 +232,11 @@ export async function fetchWebhookLastRunLog(
   accessToken: string,
   id: string | number,
   lines = 200,
+  organizationPublicId?: string | null,
 ): Promise<{ log: string; source: string }> {
   const params = new URLSearchParams({ lines: String(lines) });
+  const org = organizationPublicId?.trim();
+  if (org) params.set("organizationPublicId", org);
   const res = await fetch(
     `${API_BASE}/api/webhooks/${encodeURIComponent(String(id))}/last-log?${params.toString()}`,
     {

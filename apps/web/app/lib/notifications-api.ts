@@ -38,12 +38,22 @@ async function errorBody(res: Response): Promise<string> {
   return text || res.statusText;
 }
 
+function orgQuery(organizationPublicId?: string | null): string {
+  const o = organizationPublicId?.trim();
+  return o ? `?organizationPublicId=${encodeURIComponent(o)}` : "";
+}
+
 export async function fetchNotificationChannels(
   accessToken: string,
+  organizationPublicId?: string | null,
 ): Promise<NotificationChannel[]> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels`, {
-    method: "GET",
-  });
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/notifications/channels${orgQuery(organizationPublicId)}`,
+    {
+      method: "GET",
+    },
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
@@ -53,6 +63,7 @@ export async function fetchNotificationChannelsPaged(
   page: number,
   pageSize: number,
   q: string,
+  organizationPublicId?: string | null,
 ): Promise<PaginatedNotificationChannelsResponse> {
   const params = new URLSearchParams({
     page: String(page),
@@ -60,6 +71,8 @@ export async function fetchNotificationChannelsPaged(
   });
   const t = q.trim();
   if (t) params.set("q", t);
+  const org = organizationPublicId?.trim();
+  if (org) params.set("organizationPublicId", org);
   const res = await authFetch(
     accessToken,
     `${API_BASE}/api/notifications/channels/paged?${params.toString()}`,
@@ -71,12 +84,20 @@ export async function fetchNotificationChannelsPaged(
   return res.json();
 }
 
-export async function bulkDeleteNotificationChannels(accessToken: string, ids: string[]): Promise<{ removed: number }> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/bulk-delete`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids }),
-  });
+export async function bulkDeleteNotificationChannels(
+  accessToken: string,
+  ids: string[],
+  organizationPublicId?: string | null,
+): Promise<{ removed: number }> {
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/notifications/channels/bulk-delete${orgQuery(organizationPublicId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    },
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
@@ -89,6 +110,7 @@ export async function createNotificationChannel(
     config: Record<string, unknown>;
     /** When omitted, channel is saved without a deploy host until you edit or PATCH. */
     remoteServerId?: number;
+    organizationPublicId?: string;
   },
 ): Promise<NotificationChannel> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels`, {
@@ -108,12 +130,17 @@ export async function updateNotificationChannel(
     config: Record<string, unknown>;
     remoteServerId: number;
   }>,
+  organizationPublicId?: string | null,
 ): Promise<NotificationChannel> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/notifications/channels/${id}${orgQuery(organizationPublicId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
@@ -121,21 +148,31 @@ export async function updateNotificationChannel(
 export async function deleteNotificationChannel(
   accessToken: string,
   id: number | string,
+  organizationPublicId?: string | null,
 ): Promise<void> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/${id}`, {
-    method: "DELETE",
-  });
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/notifications/channels/${id}${orgQuery(organizationPublicId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!res.ok) throw new Error(await errorBody(res));
 }
 
 export async function testNotificationChannel(
   accessToken: string,
   channelId: number | string,
+  organizationPublicId?: string | null,
 ): Promise<{ success: boolean; message: string }> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels/${channelId}/test`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/notifications/channels/${channelId}/test${orgQuery(organizationPublicId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }

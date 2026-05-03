@@ -6,6 +6,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { HardDrive, Plus, Search, Trash2, Loader2, PlugZap, Save, X, Pencil, Clock, FolderOpen } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
@@ -81,11 +82,14 @@ const S3_PROVIDER_PRESETS: S3ProviderPreset[] = [
 export function S3Client({
   initialProfiles,
   initialError,
+  organizationPublicId = null,
 }: {
   initialProfiles: S3ProfilePublic[];
   initialError: string | null;
+  organizationPublicId?: string | null;
 }) {
   const { toast } = useToast();
+  const { accessToken } = useAuth();
   const confirm = useConfirm();
   const [profiles, setProfiles] = useState<S3ProfilePublic[]>(initialProfiles);
   const [loading, setLoading] = useState(false);
@@ -119,9 +123,12 @@ export function S3Client({
   }, [initialError, toast]);
 
   useEffect(() => {
-    if (!isAddOpen) return;
+    if (!isAddOpen || !accessToken) return;
     let cancelled = false;
-    void fetchRemoteServers("")
+    void fetchRemoteServers(
+      accessToken,
+      organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
+    )
       .then((rows) => {
         if (!cancelled) {
           setDeployServersForTest(rows.filter((r) => r.serverRole === "deploy"));
@@ -133,7 +140,7 @@ export function S3Client({
     return () => {
       cancelled = true;
     };
-  }, [isAddOpen]);
+  }, [isAddOpen, accessToken, organizationPublicId]);
 
   const canSubmit = useMemo(() => {
     const base =

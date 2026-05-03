@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
+import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 import { NotificationChannel } from './entities/notification-channel.entity';
 import { NotificationChannelType } from './entities/notification-channel-type.enum';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
@@ -17,7 +21,7 @@ import { ProviderSendResult } from './providers/provider.types';
 import { withRetry } from './utils/with-retry';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { generatePublicId } from '../common/public-id';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
+import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
 
 export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
 
@@ -44,18 +48,47 @@ export type NotificationChannelRuntimeConfig = {
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
-  private readonly scopedChannels: UserIdTenantScopedRepository<NotificationChannel>;
+  private readonly scopedChannels: RemoteServerTenantScopedRepository<NotificationChannel>;
 
   constructor(
     @InjectRepository(NotificationChannel)
     private readonly channelRepo: Repository<NotificationChannel>,
+    @InjectRepository(OrganizationMembership)
+    private readonly membershipRepo: Repository<OrganizationMembership>,
+    private readonly organizationsRepository: OrganizationsRepository,
     private readonly providerRegistry: ProviderRegistryService,
     private readonly remoteServersService: RemoteServersService,
   ) {
-    this.scopedChannels = new UserIdTenantScopedRepository<NotificationChannel>(
+    this.scopedChannels = new RemoteServerTenantScopedRepository<NotificationChannel>(
       this.channelRepo,
+      this.membershipRepo,
       'Channel',
     );
+  }
+
+  private async workspaceOrgId(
+    userId: number,
+    organizationPublicId?: string | null,
+  ): Promise<number | null> {
+    return resolveOrganizationInternalIdForMember(
+      this.organizationsRepository,
+      userId,
+      organizationPublicId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS },
+    );
+  }
+
+  private assertChannelWorkspace(
+    ch: NotificationChannel,
+    organizationPublicId: string | null | undefined,
+    expectedOrgId: number | null,
+  ): void {
+    const raw = organizationPublicId?.trim();
+    if (!raw) return;
+    const rowOrg = ch.organizationId ?? null;
+    if (rowOrg !== expectedOrgId) {
+      throw new NotFoundException('Channel not found');
+    }
   }
 
   private async ensureChannelPublicId(
@@ -179,10 +212,19 @@ export class NotificationService {
     };
   }
 
-  async listChannels(userId: number): Promise<NotificationChannelRow[]> {
-    const list = await this.scopedChannels.listScoped(userId, {
-      order: { createdAt: 'DESC' },
-    });
+  async listChannels(
+    userId: number,
+    organizationPublicId?: string | null,
+  ): Promise<NotificationChannelRow[]> {
+    const orgId = await this.workspaceOrgId(userId, organizationPublicId);
+    const list =
+      orgId != null
+        ? await this.scopedChannels.listForOrganization(userId, orgId, {
+            order: { createdAt: 'DESC' },
+          })
+        : await this.scopedChannels.listPersonal(userId, {
+            order: { createdAt: 'DESC' },
+          });
     const rows: NotificationChannelRow[] = [];
     for (const channel of list) {
       const ch = await this.ensureChannelPublicId(channel);
@@ -198,18 +240,25 @@ export class NotificationService {
     page: number,
     _pageSize: number,
     q?: string,
+    organizationPublicId?: string | null,
   ): Promise<{
     items: NotificationChannelRow[];
     total: number;
     page: number;
     pageSize: number;
   }> {
+    const orgId = await this.workspaceOrgId(userId, organizationPublicId);
     const take = 10;
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * take;
-    const qb = this.channelRepo
-      .createQueryBuilder('c')
-      .where('c.userId = :userId', { userId });
+    const qb = this.channelRepo.createQueryBuilder('c');
+    if (orgId != null) {
+      qb.where('c.organization_id = :orgId', { orgId });
+    } else {
+      qb.where('c.user_id = :userId AND c.organization_id IS NULL', {
+        userId,
+      });
+    }
     const term = (q ?? '').trim();
     if (term) {
       qb.andWhere('(c.name ILIKE :term OR c.type::text ILIKE :term)', {
@@ -237,6 +286,7 @@ export class NotificationService {
     userId: number,
     dto: CreateNotificationChannelDto,
   ): Promise<NotificationChannelRow> {
+    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId);
     const provider = this.providerRegistry.get(
       dto.type as NotificationChannelType,
     );
@@ -247,6 +297,7 @@ export class NotificationService {
     }
     const ch = this.channelRepo.create({
       userId,
+      organizationId: orgId,
       name: dto.name.trim(),
       type: dto.type as NotificationChannelType,
       config,
@@ -261,9 +312,12 @@ export class NotificationService {
     userId: number,
     id: string,
     dto: UpdateNotificationChannelDto,
+    organizationPublicId?: string | null,
   ): Promise<NotificationChannelRow> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
+    this.assertChannelWorkspace(ch, organizationPublicId, expectedOrg);
     if (dto.name !== undefined) ch.name = dto.name.trim();
     if (dto.config !== undefined) {
       const provider = this.providerRegistry.get(ch.type);
@@ -286,23 +340,32 @@ export class NotificationService {
     return this.toChannelRow(saved, preview);
   }
 
-  async deleteChannel(userId: number, id: string): Promise<void> {
+  async deleteChannel(
+    userId: number,
+    id: string,
+    organizationPublicId?: string | null,
+  ): Promise<void> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
+    this.assertChannelWorkspace(ch, organizationPublicId, expectedOrg);
     await this.scopedChannels.deleteScoped(ch.id, userId);
   }
 
   async bulkDeleteChannels(
     userId: number,
     ids: string[],
+    organizationPublicId?: string | null,
   ): Promise<{ removed: number }> {
     if (ids.length === 0) return { removed: 0 };
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     let removed = 0;
     for (const rawId of ids) {
       const id = String(rawId ?? '').trim();
       if (!id) continue;
       const ch = await this.findChannelForUser(userId, id);
       if (!ch) continue;
+      this.assertChannelWorkspace(ch, organizationPublicId, expectedOrg);
       await this.scopedChannels.deleteScoped(ch.id, userId);
       removed += 1;
     }
@@ -315,9 +378,12 @@ export class NotificationService {
   async testChannel(
     userId: number,
     channelId: string,
+    organizationPublicId?: string | null,
   ): Promise<{ success: boolean; message: string }> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const channel = await this.findChannelForUser(userId, channelId);
     if (!channel) throw new NotFoundException('Channel not found');
+    this.assertChannelWorkspace(channel, organizationPublicId, expectedOrg);
 
     const text = formatNotificationPlainText('Test', NOTIFICATION_TEST_MESSAGE);
     const result = await this.sendWithRetry(channel, text);

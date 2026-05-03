@@ -47,13 +47,20 @@ export class CronJobsController {
   }
 
   @Get()
-  list(@Req() req: AuthedReq) {
-    return this.cronJobsService.list(this.uid(req));
+  list(
+    @Req() req: AuthedReq,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    return this.cronJobsService.list(this.uid(req), organizationPublicId);
   }
 
   @Get(':id')
-  findOne(@Req() req: AuthedReq, @Param('id') id: string) {
-    return this.cronJobsService.findOne(this.uid(req), id);
+  findOne(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    return this.cronJobsService.findOne(this.uid(req), id, organizationPublicId);
   }
 
   @Patch(':id')
@@ -61,13 +68,27 @@ export class CronJobsController {
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Body() dto: UpdateCronJobDto,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
-    return this.cronJobsService.update(this.uid(req), id, dto);
+    return this.cronJobsService.update(
+      this.uid(req),
+      id,
+      dto,
+      organizationPublicId,
+    );
   }
 
   @Post(':id/run')
-  runNow(@Req() req: AuthedReq, @Param('id') id: string) {
-    return this.cronJobsService.triggerNow(this.uid(req), id);
+  runNow(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    return this.cronJobsService.triggerNow(
+      this.uid(req),
+      id,
+      organizationPublicId,
+    );
   }
 
   @Get(':id/last-run-log')
@@ -75,16 +96,22 @@ export class CronJobsController {
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Query('lines') lines?: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     const parsed = lines == null ? undefined : Number(lines);
     return this.cronJobsService.readLastRunLog(this.uid(req), id, {
       lines: Number.isFinite(parsed) ? parsed : undefined,
+      organizationPublicId,
     });
   }
 
   @Delete(':id')
-  async remove(@Req() req: AuthedReq, @Param('id') id: string) {
-    await this.cronJobsService.remove(this.uid(req), id);
+  async remove(
+    @Req() req: AuthedReq,
+    @Param('id') id: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    await this.cronJobsService.remove(this.uid(req), id, organizationPublicId);
     return { ok: true };
   }
 }

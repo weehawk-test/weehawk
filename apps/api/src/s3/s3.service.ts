@@ -23,7 +23,11 @@ import { pipeline } from 'stream/promises';
 import type { Readable } from 'stream';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
+import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
 import { TestS3ConnectionDto } from './dto/test-s3-connection.dto';
 import { S3Profile } from './entities/s3-profile.entity';
@@ -34,7 +38,7 @@ import {
   encryptPrivateKey,
 } from '../remote-servers/ssh-key-crypto';
 import { generatePublicId } from '../common/public-id';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
+import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
 
 const MAX_PROFILES = 50;
 
@@ -82,18 +86,55 @@ function createS3Client(input: NormalizedS3Credentials): S3Client {
 @Injectable()
 export class S3Service implements OnModuleInit {
   private readonly logger = new Logger(S3Service.name);
-  private readonly scopedProfiles: UserIdTenantScopedRepository<S3Profile>;
+  private readonly scopedProfiles: RemoteServerTenantScopedRepository<S3Profile>;
 
   constructor(
     @InjectRepository(S3Profile)
     private readonly profileRepo: Repository<S3Profile>,
+    @InjectRepository(OrganizationMembership)
+    private readonly membershipRepo: Repository<OrganizationMembership>,
+    private readonly organizationsRepository: OrganizationsRepository,
     private readonly configService: ConfigService,
     private readonly remoteServersService: RemoteServersService,
   ) {
-    this.scopedProfiles = new UserIdTenantScopedRepository<S3Profile>(
+    this.scopedProfiles = new RemoteServerTenantScopedRepository<S3Profile>(
       this.profileRepo,
+      this.membershipRepo,
       'S3 profile',
     );
+  }
+
+  private async workspaceOrgId(
+    userId: number,
+    organizationPublicId?: string | null,
+  ): Promise<number | null> {
+    return resolveOrganizationInternalIdForMember(
+      this.organizationsRepository,
+      userId,
+      organizationPublicId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.S3 },
+    );
+  }
+
+  private async resolveExpectedOrgId(
+    userId: number,
+    organizationPublicId?: string | null,
+    organizationInternalId?: number | null,
+  ): Promise<number | null> {
+    if (organizationInternalId !== undefined) {
+      return organizationInternalId;
+    }
+    return this.workspaceOrgId(userId, organizationPublicId);
+  }
+
+  private assertS3ProfileWorkspace(
+    row: S3Profile,
+    expectedOrgId: number | null,
+  ): void {
+    const rowOrg = row.organizationId ?? null;
+    if (rowOrg !== expectedOrgId) {
+      throw new NotFoundException('S3 profile not found');
+    }
   }
 
   // SYSTEM-LEVEL BYPASS: Required for [startup migration without request user context].
@@ -104,8 +145,25 @@ export class S3Service implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    await this.backfillS3WorkspaceKeys();
     await this.migrateFromLegacyJsonIfNeeded();
     await this.migrateExistingPlaintextSecrets();
+  }
+
+  private async backfillS3WorkspaceKeys(): Promise<void> {
+    try {
+      const rows = await this.profileRepo
+        .createQueryBuilder('p')
+        .where('p.workspace_key IS NULL OR p.workspace_key = :e', { e: '' })
+        .getMany();
+      for (const row of rows) {
+        const org = row.organizationId ?? null;
+        row.workspaceKey = org != null ? `o:${org}` : `u:${row.userId}`;
+        await this._internal_system_saveProfile(row);
+      }
+    } catch {
+      /* schema not ready */
+    }
   }
 
   private async migrateExistingPlaintextSecrets(): Promise<void> {
@@ -176,16 +234,24 @@ export class S3Service implements OnModuleInit {
   private async findProfileOrThrow(
     userId: number,
     identifier: string,
+    organizationPublicId?: string | null,
+    organizationInternalId?: number | null,
   ): Promise<S3Profile> {
     const safe = identifier?.trim();
     if (!safe)
       throw new BadRequestException('S3 profile identifier is required.');
+    const expectedOrg = await this.resolveExpectedOrgId(
+      userId,
+      organizationPublicId,
+      organizationInternalId,
+    );
     try {
       const byPublicId = await this.scopedProfiles.findScopedBy(
         'publicId',
         safe,
         userId,
       );
+      this.assertS3ProfileWorkspace(byPublicId, expectedOrg);
       return this.ensureProfilePublicId(byPublicId);
     } catch {
       const byName = await this.scopedProfiles.findScopedBy(
@@ -193,6 +259,7 @@ export class S3Service implements OnModuleInit {
         safe,
         userId,
       );
+      this.assertS3ProfileWorkspace(byName, expectedOrg);
       return this.ensureProfilePublicId(byName);
     }
   }
@@ -206,15 +273,40 @@ export class S3Service implements OnModuleInit {
   private async findProfileByPublicIdOrThrow(
     userId: number,
     publicId: string,
+    organizationPublicId?: string | null,
+    organizationInternalId?: number | null,
   ): Promise<S3Profile> {
     const safe = publicId?.trim();
     if (!safe) throw new BadRequestException('S3 profile id is required.');
+    const expectedOrg = await this.resolveExpectedOrgId(
+      userId,
+      organizationPublicId,
+      organizationInternalId,
+    );
     const row = await this.scopedProfiles.findScopedBy(
       'publicId',
       safe,
       userId,
     );
+    this.assertS3ProfileWorkspace(row, expectedOrg);
     return this.ensureProfilePublicId(row);
+  }
+
+  private async findProfileByNameInWorkspace(
+    userId: number,
+    name: string,
+    orgInternalId: number | null,
+  ): Promise<S3Profile | null> {
+    const safe = name?.trim();
+    if (!safe) return null;
+    if (orgInternalId != null) {
+      return this.profileRepo.findOne({
+        where: { name: safe, organizationId: orgInternalId },
+      });
+    }
+    return this.profileRepo.findOne({
+      where: { name: safe, userId, organizationId: IsNull() },
+    });
   }
 
   private async migrateFromLegacyJsonIfNeeded(): Promise<void> {
@@ -267,6 +359,9 @@ export class S3Service implements OnModuleInit {
         continue;
       }
       const row = this.profileRepo.create({
+        userId: 1,
+        organizationId: null,
+        workspaceKey: 'u:1',
         name,
         endpoint,
         region,
@@ -366,12 +461,21 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  async listProfiles(userId: number) {
-    const rows = await this.profileRepo.find({
-      where: { userId },
-      order: { updatedAt: 'DESC' },
-      take: MAX_PROFILES,
-    });
+  async listProfiles(
+    userId: number,
+    organizationPublicId?: string | null,
+  ) {
+    const orgId = await this.workspaceOrgId(userId, organizationPublicId);
+    const rows =
+      orgId != null
+        ? await this.scopedProfiles.listForOrganization(userId, orgId, {
+            order: { updatedAt: 'DESC' },
+            take: MAX_PROFILES,
+          })
+        : await this.scopedProfiles.listPersonal(userId, {
+            order: { updatedAt: 'DESC' },
+            take: MAX_PROFILES,
+          });
     const rowsWithPublicId = await Promise.all(
       rows.map((p) => this.ensureProfilePublicId(p)),
     );
@@ -379,13 +483,13 @@ export class S3Service implements OnModuleInit {
   }
 
   async saveProfile(userId: number, dto: UpsertS3ProfileDto) {
+    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId);
     const base = this.normalizeProfileFields(dto);
-    let row: S3Profile | null = null;
-    try {
-      row = await this.scopedProfiles.findScopedBy('name', base.name, userId);
-    } catch {
-      row = null;
-    }
+    let row: S3Profile | null = await this.findProfileByNameInWorkspace(
+      userId,
+      base.name,
+      orgId,
+    );
     const secretAccessKey = this.resolveSecretForSave(dto, row);
     const n: NormalizedS3Credentials = { ...base, secretAccessKey };
     if (row) {
@@ -398,6 +502,7 @@ export class S3Service implements OnModuleInit {
     } else {
       row = this.profileRepo.create({
         userId,
+        organizationId: orgId,
         name: n.name,
         endpoint: n.endpoint,
         region: n.region,
@@ -409,19 +514,23 @@ export class S3Service implements OnModuleInit {
     }
     await this.scopedProfiles.saveScoped(row, userId);
 
-    const all = await this.profileRepo.find({
-      where: { userId },
-      order: { updatedAt: 'DESC' },
-    });
+    const all =
+      orgId != null
+        ? await this.profileRepo.find({
+            where: { organizationId: orgId },
+            order: { updatedAt: 'DESC' },
+          })
+        : await this.profileRepo.find({
+            where: { userId, organizationId: IsNull() },
+            order: { updatedAt: 'DESC' },
+          });
     if (all.length > MAX_PROFILES) {
       await this.profileRepo.remove(all.slice(MAX_PROFILES));
     }
 
-    const saved = await this.scopedProfiles.findScopedBy(
-      'name',
-      n.name,
-      userId,
-    );
+    const saved =
+      (await this.findProfileByNameInWorkspace(userId, n.name, orgId)) ??
+      row;
     const ensured = await this.ensureProfilePublicId(saved);
     return {
       success: true,
@@ -429,8 +538,16 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  async deleteProfile(userId: number, publicId: string) {
-    const row = await this.findProfileByPublicIdOrThrow(userId, publicId);
+  async deleteProfile(
+    userId: number,
+    publicId: string,
+    organizationPublicId?: string | null,
+  ) {
+    const row = await this.findProfileByPublicIdOrThrow(
+      userId,
+      publicId,
+      organizationPublicId,
+    );
     await this.scopedProfiles.deleteScoped(row.id, userId);
     return { success: true, publicId: row.publicId };
   }
@@ -502,21 +619,25 @@ export class S3Service implements OnModuleInit {
     };
   }
 
-  async assertProfileExists(identifier: string, userId: number): Promise<void> {
+  async assertProfileExists(
+    identifier: string,
+    userId: number,
+    organizationInternalId: number | null,
+  ): Promise<void> {
     const safe = identifier?.trim();
     if (!safe) {
       throw new BadRequestException('S3 profile name is required.');
     }
     try {
-      await this.scopedProfiles.findScopedBy('publicId', safe, userId);
+      await this.findProfileOrThrow(
+        userId,
+        safe,
+        undefined,
+        organizationInternalId,
+      );
       return;
     } catch {
-      try {
-        await this.scopedProfiles.findScopedBy('name', safe, userId);
-        return;
-      } catch {
-        throw new BadRequestException(`S3 profile "${safe}" not found.`);
-      }
+      throw new BadRequestException(`S3 profile "${safe}" not found.`);
     }
   }
 
@@ -550,6 +671,7 @@ export class S3Service implements OnModuleInit {
     profileName: string,
     prefixRaw: string | undefined,
     continuationToken: string | undefined,
+    organizationPublicId?: string | null,
   ): Promise<{
     bucket: string;
     prefix: string;
@@ -563,7 +685,11 @@ export class S3Service implements OnModuleInit {
     isTruncated: boolean;
     continuationToken?: string;
   }> {
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const normalizedPrefix = this.normalizeListPrefix(prefixRaw);
     const client = createS3Client(input);
@@ -630,8 +756,13 @@ export class S3Service implements OnModuleInit {
     userId: number,
     profileName: string,
     objectKey: string,
+    organizationPublicId?: string | null,
   ): Promise<{ success: boolean; key: string }> {
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
@@ -663,6 +794,7 @@ export class S3Service implements OnModuleInit {
     userId: number,
     profileName: string,
     keys: string[],
+    organizationPublicId?: string | null,
   ): Promise<{
     deleted: string[];
     errors: { key: string; message: string }[];
@@ -682,7 +814,11 @@ export class S3Service implements OnModuleInit {
         sanitized.push(k);
       }
     }
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const client = createS3Client(input);
     try {
@@ -741,6 +877,7 @@ export class S3Service implements OnModuleInit {
     userId: number,
     profileName: string,
     prefixRaw: string,
+    organizationPublicId?: string | null,
   ): Promise<{
     objectCount: number;
     totalSize: number;
@@ -749,7 +886,11 @@ export class S3Service implements OnModuleInit {
   }> {
     const PREFIX_SUMMARY_MAX_PAGES = 200;
     const prefix = this.normalizeFolderPrefix(prefixRaw);
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const client = createS3Client(input);
     let objectCount = 0;
@@ -812,13 +953,18 @@ export class S3Service implements OnModuleInit {
     userId: number,
     profileName: string,
     prefixRaw: string,
+    organizationPublicId?: string | null,
   ): Promise<{
     deletedCount: number;
     errors: { key: string; message: string }[];
   }> {
     const MAX_LIST = 1_000_000;
     const prefix = this.normalizeFolderPrefix(prefixRaw);
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const client = createS3Client(input);
     const errors: { key: string; message: string }[] = [];
@@ -902,13 +1048,18 @@ export class S3Service implements OnModuleInit {
     userId: number,
     profileName: string,
     objectKey: string,
+    organizationPublicId?: string | null,
   ): Promise<{
     stream: Readable;
     contentType: string;
     contentLength?: number;
     filename: string;
   }> {
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
@@ -958,8 +1109,13 @@ export class S3Service implements OnModuleInit {
     profileName: string,
     localAbsolutePath: string,
     objectKey: string,
+    organizationPublicId?: string | null,
   ): Promise<{ bucket: string; key: string }> {
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const client = createS3Client(input);
@@ -1015,6 +1171,7 @@ export class S3Service implements OnModuleInit {
     objectKey: string,
     body: Buffer,
     contentType: string,
+    organizationPublicId?: string | null,
   ): Promise<{ bucket: string; key: string }> {
     const maxBytes = S3Service.S3_UPLOAD_VIA_API_MAX_BYTES;
     const buf = body ?? Buffer.alloc(0);
@@ -1023,7 +1180,11 @@ export class S3Service implements OnModuleInit {
         `Upload exceeds maximum size (${Math.floor(maxBytes / (1024 * 1024))} MiB).`,
       );
     }
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const ct =
@@ -1063,12 +1224,17 @@ export class S3Service implements OnModuleInit {
     userId: number,
     profileName: string,
     objectKey: string,
+    organizationPublicId?: string | null,
   ): Promise<{ bucket: string; key: string }> {
     let key = this.assertSafeObjectKey(objectKey);
     if (!key.endsWith('/')) {
       key = `${key}/`;
     }
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const client = createS3Client(input);
     try {
@@ -1105,7 +1271,12 @@ export class S3Service implements OnModuleInit {
     userId: number,
     profileName: string,
     objectKey: string,
-    opts?: { contentType?: string; expiresInSeconds?: number },
+    opts?: {
+      contentType?: string;
+      expiresInSeconds?: number;
+      organizationPublicId?: string | null;
+      organizationInternalId?: number | null;
+    },
   ): Promise<{
     url: string;
     bucket: string;
@@ -1113,7 +1284,12 @@ export class S3Service implements OnModuleInit {
     expiresIn: number;
     contentType: string;
   }> {
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      opts?.organizationPublicId,
+      opts?.organizationInternalId,
+    );
     const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const expiresIn = Math.min(
@@ -1160,8 +1336,15 @@ export class S3Service implements OnModuleInit {
     profileName: string,
     objectKey: string,
     expiresInSeconds?: number,
+    organizationPublicId?: string | null,
+    organizationInternalId?: number | null,
   ): Promise<{ url: string; bucket: string; key: string; expiresIn: number }> {
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+      organizationInternalId,
+    );
     const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const expiresIn = Math.min(
@@ -1200,8 +1383,13 @@ export class S3Service implements OnModuleInit {
     profileName: string,
     objectKey: string,
     destAbsolutePath: string,
+    organizationPublicId?: string | null,
   ): Promise<void> {
-    const row = await this.findProfileOrThrow(userId, profileName);
+    const row = await this.findProfileOrThrow(
+      userId,
+      profileName,
+      organizationPublicId,
+    );
     const input = this.rowToCredentials(row);
     const key = this.assertSafeObjectKey(objectKey);
     const resolvedPath = path.resolve(destAbsolutePath);

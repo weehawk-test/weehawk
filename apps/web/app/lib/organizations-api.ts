@@ -7,7 +7,10 @@ import type {
   OrganizationMemberPublic,
   OrganizationProjectListItem,
   OrganizationPublic,
+  UpdateOrganizationInput,
 } from "./organizations-types";
+import type { OrgWorkspacePermissionKey } from "./org-workspace-permissions";
+import { parseWorkspacePermissions } from "./org-workspace-permissions";
 
 export type {
   CreateOrganizationInput,
@@ -15,6 +18,7 @@ export type {
   OrganizationMemberPublic,
   OrganizationProjectListItem,
   OrganizationPublic,
+  UpdateOrganizationInput,
 } from "./organizations-types";
 
 function nestErrorMessage(text: string, fallback: string): string {
@@ -57,11 +61,16 @@ function mapOrg(raw: unknown): OrganizationPublic {
   if (created instanceof Date) createdAt = created.toISOString();
   else if (typeof created === "string") createdAt = created;
   else createdAt = new Date().toISOString();
+  const mc = row.memberCount;
+  const memberCount =
+    typeof mc === "number" && Number.isFinite(mc) ? Math.max(1, Math.floor(mc)) : 1;
   return {
     publicId: String(row.publicId ?? ""),
     name: String(row.name ?? ""),
     isOwner: row.isOwner === true,
     createdAt,
+    memberCount,
+    workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
   };
 }
 
@@ -74,6 +83,24 @@ export async function fetchOrganizations(): Promise<OrganizationPublic[]> {
   const data = JSON.parse(text) as unknown;
   if (!Array.isArray(data)) return [];
   return data.map(mapOrg);
+}
+
+/** Organization owners may update the display name. */
+export async function updateOrganization(
+  organizationPublicId: string,
+  body: UpdateOrganizationInput,
+): Promise<OrganizationPublic> {
+  const id = organizationPublicId.trim();
+  if (!id) throw new Error("Organization id required");
+  const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapOrg(JSON.parse(text) as unknown);
 }
 
 export async function fetchOrganization(publicId: string): Promise<OrganizationPublic | null> {
@@ -101,6 +128,31 @@ function mapMember(raw: unknown): OrganizationMemberPublic {
       row.joinedAt instanceof Date
         ? row.joinedAt.toISOString()
         : String(row.joinedAt ?? new Date().toISOString()),
+    workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
+  };
+}
+
+export async function setMemberWorkspacePermissions(
+  organizationPublicId: string,
+  email: string,
+  permissions: Partial<Record<OrgWorkspacePermissionKey, boolean>>,
+): Promise<{ message: string }> {
+  const id = organizationPublicId.trim();
+  if (!id) throw new Error("Organization id required");
+  const res = await apiFetch(
+    `/api/organizations/${encodeURIComponent(id)}/members/permissions`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ email: email.trim().toLowerCase(), permissions }),
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as unknown as { message?: string };
+  return {
+    message: typeof data.message === "string" ? data.message : "Permissions updated.",
   };
 }
 
@@ -157,6 +209,28 @@ export async function fetchOrganizationProjects(
   return data.map(mapOrgProject);
 }
 
+/** Organization owners may promote a member to owner or demote an owner to member (API enforces at least one owner). */
+export async function setOrganizationMemberRole(
+  organizationPublicId: string,
+  email: string,
+  role: "owner" | "member",
+): Promise<{ message: string }> {
+  const id = organizationPublicId.trim();
+  if (!id) throw new Error("Organization id required");
+  const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/ownership`, {
+    method: "PATCH",
+    body: JSON.stringify({ email: email.trim().toLowerCase(), role }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as unknown as { message?: string };
+  return {
+    message: typeof data.message === "string" ? data.message : "Role updated.",
+  };
+}
+
 /** Sends invitation email; invitee accepts via link while signed in as that email. */
 export async function inviteOrganizationMember(
   organizationPublicId: string,
@@ -200,7 +274,7 @@ export async function acceptOrganizationInvite(token: string): Promise<Organizat
   return mapInviteAccept(JSON.parse(text) as unknown);
 }
 
-/** Leave organization (non-owners only). */
+/** Leave organization (members and owners; API transfers ownership or dissolves the org when needed). */
 export async function leaveOrganization(organizationPublicId: string): Promise<{ message: string }> {
   const id = organizationPublicId.trim();
   if (!id) throw new Error("Organization id required");

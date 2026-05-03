@@ -751,6 +751,16 @@ function CreateServiceModal({
   );
 }
 
+function serviceDetailHref(
+  projectRouteId: string,
+  serviceKey: string,
+  organizationPublicId?: string,
+) {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  return `/projects/${projectRouteId}/services/${serviceKey}${q}`;
+}
+
 export default function ProjectsIdClient({
   projectId,
   initialProject,
@@ -758,6 +768,7 @@ export default function ProjectsIdClient({
   initialProjectError,
   urlPage,
   urlQ,
+  organizationPublicId,
 }: {
   projectId: string;
   initialProject?: Project | null;
@@ -765,6 +776,7 @@ export default function ProjectsIdClient({
   initialProjectError?: string | null;
   urlPage: number;
   urlQ: string;
+  organizationPublicId?: string;
 }) {
   const router = useRouter();
   const qc = useQueryClient();
@@ -1135,7 +1147,11 @@ export default function ProjectsIdClient({
                           </div>
 
                           <Link
-                            href={`/projects/${projectRouteId}/services/${serviceQueryKeyId(service)}`}
+                            href={serviceDetailHref(
+                              projectRouteId,
+                              serviceQueryKeyId(service),
+                              organizationPublicId,
+                            )}
                             prefetch
                             className="ml-auto inline-flex items-center gap-0.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"
                           >

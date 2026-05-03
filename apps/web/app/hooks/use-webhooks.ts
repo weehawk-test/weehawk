@@ -24,7 +24,7 @@ function webhookQueryEnabled(id: string | number): boolean {
 export function useWebhooks() {
   const { accessToken } = useAuth();
   return useQuery({
-    queryKey: ["webhooks"],
+    queryKey: ["webhooks", "personal"],
     queryFn: () => fetchWebhooks(accessToken!),
     select: (rows) =>
       reconcileAndFilterPendingDeletions("webhooks", rows, (item) => [item.id, item.publicId]),
@@ -46,35 +46,44 @@ export function useCreateWebhook() {
   const { accessToken } = useAuth();
   return useMutation({
     mutationFn: (body: CreateWebhookBody) => createWebhook(accessToken!, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["webhooks"] });
+    onSuccess: (_data, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["webhooks", "personal"] });
+      const org = vars.organizationPublicId?.trim();
+      if (org) queryClient.invalidateQueries({ queryKey: ["webhooks", org] });
     },
   });
 }
 
-export function useUpdateWebhook() {
+export function useUpdateWebhook(organizationPublicId?: string | null) {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
+  const orgKey = organizationPublicId?.trim();
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string | number } & UpdateWebhookBody) =>
-      updateWebhook(accessToken!, id, body),
+      updateWebhook(accessToken!, id, body, organizationPublicId),
     onSuccess: (updated, v) => {
-      queryClient.invalidateQueries({ queryKey: ["webhooks"] });
+      queryClient.invalidateQueries({ queryKey: ["webhooks", "personal"] });
+      if (orgKey) queryClient.invalidateQueries({ queryKey: ["webhooks", orgKey] });
       queryClient.invalidateQueries({ queryKey: ["webhooks", v.id] });
       queryClient.invalidateQueries({ queryKey: ["webhooks", webhookRouteId(updated)] });
     },
   });
 }
 
-export function useDeleteWebhook() {
+export function useDeleteWebhook(organizationPublicId?: string | null) {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
+  const orgKey = organizationPublicId?.trim() || "personal";
   return useMutation({
-    mutationFn: (id: string | number) => deleteWebhook(accessToken!, id),
+    mutationFn: (id: string | number) =>
+      deleteWebhook(accessToken!, id, organizationPublicId),
     onMutate: async (id) => {
       const matchId = String(id);
       const pendingIds = new Set<string>([matchId]);
-      const previousWebhooks = queryClient.getQueryData<WebhookListItem[]>(["webhooks"]);
+      const previousWebhooks = queryClient.getQueryData<WebhookListItem[]>([
+        "webhooks",
+        orgKey,
+      ]);
       if (Array.isArray(previousWebhooks)) {
         const filtered = previousWebhooks.filter((item) => {
           const matches = String(item.id) === matchId || String(item.publicId ?? "") === matchId;
@@ -84,7 +93,7 @@ export function useDeleteWebhook() {
           }
           return !matches;
         });
-        queryClient.setQueryData(["webhooks"], filtered);
+        queryClient.setQueryData(["webhooks", orgKey], filtered);
       }
       markPendingDeletion("webhooks", ...Array.from(pendingIds));
       return { previousWebhooks, pendingIds: Array.from(pendingIds) };
@@ -92,11 +101,11 @@ export function useDeleteWebhook() {
     onError: (_error, _id, context) => {
       clearPendingDeletion("webhooks", ...(context?.pendingIds ?? []));
       if (context?.previousWebhooks) {
-        queryClient.setQueryData(["webhooks"], context.previousWebhooks);
+        queryClient.setQueryData(["webhooks", orgKey], context.previousWebhooks);
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["webhooks"] });
+      queryClient.invalidateQueries({ queryKey: ["webhooks", orgKey] });
     },
   });
 }

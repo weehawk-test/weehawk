@@ -30,4 +30,13 @@ export class PagedLogsQueryDto {
   @IsString()
   @MaxLength(200)
   q?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'When set, list channels in this organization workspace (membership required).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  organizationPublicId?: string;
 }

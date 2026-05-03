@@ -82,4 +82,13 @@ export class CreateWebhookDto {
   @IsOptional()
   @IsBoolean()
   hiddenFromWebhooksList?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'When set, the webhook is owned by the organization workspace (shared with members), not the personal account.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  organizationPublicId?: string;
 }

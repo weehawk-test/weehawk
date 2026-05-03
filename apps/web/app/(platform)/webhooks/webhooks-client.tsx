@@ -29,7 +29,18 @@ function formatDateUTC(dateInput: string): string {
   });
 }
 
-export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookListItem[] }) {
+export function WebhooksClient({
+  initialWebhooks,
+  organizationPublicId = undefined,
+}: {
+  initialWebhooks: WebhookListItem[];
+  organizationPublicId?: string;
+}) {
+  const orgTrim = organizationPublicId?.trim();
+  const webhooksBasePath =
+    orgTrim != null && orgTrim !== ""
+      ? `/organizations/${encodeURIComponent(orgTrim)}/webhooks`
+      : "/webhooks";
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -40,7 +51,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
       reconcileAndFilterPendingDeletions("webhooks", initialWebhooks, (w) => [w.id, w.publicId]),
     );
   }, [initialWebhooks]);
-  const deleteWebhook = useDeleteWebhook();
+  const deleteWebhook = useDeleteWebhook(organizationPublicId);
   const { toast } = useToast();
   const confirm = useConfirm();
   const { accessToken } = useAuth();
@@ -178,7 +189,12 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
       setLoadingLogWebhookId(webhook.id);
     }
     try {
-      const out = await fetchWebhookLastRunLog(accessToken, webhookRouteId(webhook), 2000);
+      const out = await fetchWebhookLastRunLog(
+        accessToken,
+        webhookRouteId(webhook),
+        2000,
+        organizationPublicId,
+      );
       const normalized = out.log.trim();
       if (out.source === "executor-redeploy") {
         setLogTextByWebhookId((prev) => ({
@@ -285,7 +301,10 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
           <h1 className="text-3xl font-bold text-foreground mb-2">Webhooks</h1>
           <p className="text-muted-foreground">Manage inbound webhooks and actions.</p>
         </div>
-        <Link href="/webhooks/create" className="btn-primary flex items-center justify-center gap-2">
+        <Link
+          href={`${webhooksBasePath}/create`}
+          className="btn-primary flex items-center justify-center gap-2"
+        >
           <Plus className="w-5 h-5" /> New webhook
         </Link>
       </div>
@@ -338,7 +357,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
             {search ? "No webhooks match your search." : "Create your first webhook trigger to run actions."}
           </p>
           {!search && (
-            <Link href="/webhooks/create" className="btn-primary flex items-center gap-2">
+            <Link href={`${webhooksBasePath}/create`} className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> New webhook
             </Link>
           )}
@@ -454,7 +473,7 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
                         Edit <Pencil className="w-3 h-3" />
                       </span>
                     ) : (
-                      <Link href={`/webhooks/${webhookRouteId(w)}/edit`}>
+                      <Link href={`${webhooksBasePath}/${webhookRouteId(w)}/edit`}>
                         <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                           Edit <Pencil className="w-3 h-3" />
                         </span>

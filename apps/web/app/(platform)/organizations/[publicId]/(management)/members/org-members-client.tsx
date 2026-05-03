@@ -1,11 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, UserPlus } from "lucide-react";
 import type { OrganizationMemberPublic } from "@/lib/organizations-types";
-import { inviteOrganizationMember } from "@/lib/organizations-api";
+import { inviteOrganizationMember, setOrganizationMemberRole } from "@/lib/organizations-api";
 import { useOrgWorkspace } from "../../org-workspace-context";
+import { useConfirm } from "@/components/confirm/ConfirmProvider";
+import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
@@ -27,13 +29,20 @@ export function OrgMembersClient({
 }) {
   const org = useOrgWorkspace();
   const router = useRouter();
+  const { toast } = useToast();
+  const confirm = useConfirm();
   const [members, setMembers] = useState(initialMembers);
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [roleUpdatingEmail, setRoleUpdatingEmail] = useState<string | null>(null);
 
   const canInvite = org.isOwner;
+
+  useEffect(() => {
+    setMembers(initialMembers);
+  }, [initialMembers]);
 
   const resetInviteForm = () => {
     setEmail("");
@@ -59,6 +68,46 @@ export function OrgMembersClient({
       setError(err instanceof Error ? err.message : "Could not send invitation");
     } finally {
       setAdding(false);
+    }
+  };
+
+  const onRoleChange = async (member: OrganizationMemberPublic, nextRole: "member" | "owner") => {
+    if (!canInvite || roleUpdatingEmail) return;
+    const isOwner = member.isOwner;
+    if ((isOwner && nextRole === "owner") || (!isOwner && nextRole === "member")) return;
+
+    const label = `${member.firstName} ${member.lastName}`.trim() || member.email;
+
+    if (nextRole === "owner") {
+      const ok = await confirm({
+        title: "Add organization owner?",
+        description: `${label} will have the same admin access as other owners (invites, member roles).`,
+        confirmLabel: "Make owner",
+      });
+      if (!ok) return;
+    } else {
+      const ok = await confirm({
+        title: "Remove owner role?",
+        description: `${label} will become a regular member. There must always be at least one owner.`,
+        confirmLabel: "Make member",
+        variant: "destructive",
+      });
+      if (!ok) return;
+    }
+
+    setRoleUpdatingEmail(member.email);
+    try {
+      const { message } = await setOrganizationMemberRole(organizationPublicId, member.email, nextRole);
+      toast({ title: "Role updated", description: message });
+      router.refresh();
+    } catch (err) {
+      toast({
+        title: "Could not update role",
+        description: err instanceof Error ? err.message : "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setRoleUpdatingEmail(null);
     }
   };
 
@@ -127,7 +176,7 @@ export function OrgMembersClient({
       </div>
       {!canInvite ? (
         <p className="text-sm text-muted-foreground">
-          Only the organization owner can invite new members. Contact the owner if you need access for someone else.
+          Only organization owners can invite new members. Contact an owner if you need access for someone else.
         </p>
       ) : null}
 
@@ -139,7 +188,7 @@ export function OrgMembersClient({
               <tr>
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Email</th>
-                <th className="px-4 py-3">Role</th>
+                <th className="px-4 py-3 min-w-[8.5rem]">Role</th>
                 <th className="hidden px-4 py-3 sm:table-cell">Joined</th>
               </tr>
             </thead>
@@ -151,13 +200,39 @@ export function OrgMembersClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{m.email}</td>
                   <td className="px-4 py-3">
-                    {m.isOwner ? (
+                    {canInvite ? (
+                      <select
+                        key={`${m.email}-${m.isOwner}`}
+                        className="input-field w-full max-w-[11rem] py-1.5 text-xs"
+                        aria-label={`Role for ${m.email}`}
+                        value={m.isOwner ? "owner" : "member"}
+                        disabled={
+                          roleUpdatingEmail === m.email ||
+                          Boolean(roleUpdatingEmail && roleUpdatingEmail !== m.email)
+                        }
+                        title={
+                          m.isOwner
+                            ? "Change to Member to step down (another owner must remain)."
+                            : undefined
+                        }
+                        onChange={(ev) => {
+                          const v = ev.target.value as "member" | "owner";
+                          void onRoleChange(m, v);
+                        }}
+                      >
+                        <option value="member">Member</option>
+                        <option value="owner">Owner</option>
+                      </select>
+                    ) : m.isOwner ? (
                       <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
                         Owner
                       </span>
                     ) : (
                       <span className="text-muted-foreground">Member</span>
                     )}
+                    {roleUpdatingEmail === m.email ? (
+                      <Loader2 className="ml-2 inline size-4 animate-spin text-muted-foreground align-middle" aria-hidden />
+                    ) : null}
                   </td>
                   <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
                     {new Date(m.joinedAt).toLocaleDateString(undefined, { dateStyle: "medium" })}

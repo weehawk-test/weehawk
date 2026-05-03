@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
 import {
   createNotificationChannel,
   bulkDeleteNotificationChannels,
@@ -391,6 +392,7 @@ export function NotificationsChannelsClient({
   initialMode,
   initialRouteChannel,
   notificationsBasePath,
+  organizationPublicId: organizationPublicIdProp,
 }: {
   initialData: PaginatedNotificationChannelsResponse | null;
   initialError: string | null;
@@ -400,6 +402,8 @@ export function NotificationsChannelsClient({
   initialRouteChannel?: NotificationChannel | null;
   /** List root, e.g. `/notifications` or `/organizations/:id/notifications`. */
   notificationsBasePath?: string;
+  /** When set (e.g. SSR org mirror), scopes API calls to this organization. */
+  organizationPublicId?: string;
 }) {
   const pathname = usePathname();
   const listBase = useMemo(
@@ -413,6 +417,10 @@ export function NotificationsChannelsClient({
   );
   const router = useRouter();
   const { accessToken } = useAuth();
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const organizationPublicId =
+    organizationPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
+  const remoteServersQueryKey = ["remote-servers", organizationPublicId || "personal"] as const;
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -443,8 +451,12 @@ export function NotificationsChannelsClient({
   }, [channelsLocalQ, channelsQ, pathname, router]);
 
   const remoteServersQuery = useQuery({
-    queryKey: ["remote-servers", "list"],
-    queryFn: () => fetchRemoteServers(accessToken!),
+    queryKey: remoteServersQueryKey,
+    queryFn: () =>
+      fetchRemoteServers(
+        accessToken!,
+        organizationPublicId ? organizationPublicId : undefined,
+      ),
     enabled: Boolean(accessToken),
     staleTime: 120_000,
   });
@@ -454,13 +466,21 @@ export function NotificationsChannelsClient({
   );
 
   const channelsPagedQuery = useQuery({
-    queryKey: ["notifications", "channels", "paged", channelsPage, channelsQ],
+    queryKey: [
+      "notifications",
+      "channels",
+      "paged",
+      organizationPublicId ?? "personal",
+      channelsPage,
+      channelsQ,
+    ],
     queryFn: () =>
       fetchNotificationChannelsPaged(
         accessToken!,
         channelsPage,
         CHANNELS_PAGE_SIZE,
         channelsQ,
+        organizationPublicId,
       ),
     enabled: Boolean(accessToken),
     initialData:
@@ -613,12 +633,13 @@ export function NotificationsChannelsClient({
         type: form.type.trim(),
         config: platformPayload(),
         remoteServerId: addTestRemoteId,
+        ...(organizationPublicId ? { organizationPublicId } : {}),
       });
       try {
-        return await testNotificationChannel(accessToken!, tempChannel.id);
+        return await testNotificationChannel(accessToken!, tempChannel.id, organizationPublicId);
       } finally {
         try {
-          await deleteNotificationChannel(accessToken!, tempChannel.id);
+          await deleteNotificationChannel(accessToken!, tempChannel.id, organizationPublicId);
         } catch {}
       }
     },
@@ -634,6 +655,7 @@ export function NotificationsChannelsClient({
         name: form.name.trim(),
         type: form.type.trim(),
         config: platformPayload(),
+        ...(organizationPublicId ? { organizationPublicId } : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -647,7 +669,8 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not add channel", description: e.message, variant: "destructive" }),
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteNotificationChannel(accessToken!, id),
+    mutationFn: (id: string) =>
+      deleteNotificationChannel(accessToken!, id, organizationPublicId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
@@ -656,7 +679,8 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Could not remove", description: e.message, variant: "destructive" }),
   });
   const bulkDeleteChannelsMutation = useMutation({
-    mutationFn: (ids: string[]) => bulkDeleteNotificationChannels(accessToken!, ids),
+    mutationFn: (ids: string[]) =>
+      bulkDeleteNotificationChannels(accessToken!, ids, organizationPublicId),
     onSuccess: () => {
       channelsBulk.clear();
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -677,9 +701,9 @@ export function NotificationsChannelsClient({
     }) => {
       if (!accessToken) throw new Error("Not signed in.");
       if (remoteServerId !== previousRemoteId) {
-        await updateNotificationChannel(accessToken, channelId, { remoteServerId });
+        await updateNotificationChannel(accessToken, channelId, { remoteServerId }, organizationPublicId);
       }
-      return testNotificationChannel(accessToken, channelId);
+      return testNotificationChannel(accessToken, channelId, organizationPublicId);
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -700,10 +724,15 @@ export function NotificationsChannelsClient({
       if (editDeployServerId === "") {
         throw new Error("Select a host for Run test from.");
       }
-      return updateNotificationChannel(accessToken!, editChannel.id, {
-        name: editName.trim(),
-        remoteServerId: editDeployServerId as number,
-      });
+      return updateNotificationChannel(
+        accessToken!,
+        editChannel.id,
+        {
+          name: editName.trim(),
+          remoteServerId: editDeployServerId as number,
+        },
+        organizationPublicId,
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });

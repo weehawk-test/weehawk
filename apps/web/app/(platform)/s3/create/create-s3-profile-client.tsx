@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2, PlugZap, Save, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
 import { fetchRemoteServers, type RemoteServerRow } from "@/lib/remote-servers-api";
 import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
 import { saveS3ProfileApi, testS3ConnectionApi, type S3ProfilePayload } from "@/lib/s3-api";
@@ -26,9 +27,14 @@ const S3_PROVIDER_PRESETS: S3ProviderPreset[] = [
   { id: "backblaze-b2", label: "Backblaze B2 (S3)", endpoint: "https://s3.us-west-000.backblazeb2.com", region: "us-west-000" },
 ];
 
-export function CreateS3ProfileClient() {
+export function CreateS3ProfileClient({
+  organizationPublicId = null,
+}: {
+  organizationPublicId?: string | null;
+} = {}) {
   const router = useRouter();
   const { toast } = useToast();
+  const { accessToken } = useAuth();
   const [provider, setProvider] = useState("custom");
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -44,8 +50,12 @@ export function CreateS3ProfileClient() {
   });
 
   useEffect(() => {
+    if (!accessToken) return;
     let cancelled = false;
-    void fetchRemoteServers("")
+    void fetchRemoteServers(
+      accessToken,
+      organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
+    )
       .then((rows) => {
         if (!cancelled) setDeployServersForTest(rows.filter((r) => r.serverRole === "deploy"));
       })
@@ -55,7 +65,7 @@ export function CreateS3ProfileClient() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [accessToken, organizationPublicId]);
 
   const canSubmit = useMemo(
     () =>

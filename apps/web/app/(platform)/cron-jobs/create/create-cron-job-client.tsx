@@ -16,10 +16,12 @@ import type { RemoteServerRow } from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { workspaceRoute } from "@/lib/workspace-paths";
 
 type Props = {
   initialChannels: NotificationChannel[];
   initialRemoteServers: RemoteServerRow[];
+  organizationPublicId?: string | null;
 };
 
 type CronPreset =
@@ -44,10 +46,18 @@ function renderHighlightedScript(script: string): ReactNode[] {
   });
 }
 
-export function CreateCronJobClient({ initialChannels, initialRemoteServers }: Props) {
+export function CreateCronJobClient({
+  initialChannels,
+  initialRemoteServers,
+  organizationPublicId = null,
+}: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const createMutation = useCreateCronJob();
+  const cronJobsHref = useMemo(
+    () => workspaceRoute(organizationPublicId, "/cron-jobs"),
+    [organizationPublicId],
+  );
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -108,7 +118,8 @@ export function CreateCronJobClient({ initialChannels, initialRemoteServers }: P
           : {}),
       },
       {
-        onSuccess: (j) => router.push(`/cron-jobs?provisioning=${encodeURIComponent(String(j.id))}`),
+        onSuccess: (j) =>
+          router.push(`${cronJobsHref}?provisioning=${encodeURIComponent(String(j.id))}`),
         onError: (e: Error) =>
           toast({ title: "Could not create cron job", description: e.message, variant: "destructive" }),
       },
@@ -137,7 +148,7 @@ export function CreateCronJobClient({ initialChannels, initialRemoteServers }: P
 
   const closeModal = () => {
     if (createMutation.isPending) return;
-    router.push("/cron-jobs");
+    router.push(cronJobsHref);
   };
 
   return createPortal(
@@ -147,7 +158,7 @@ export function CreateCronJobClient({ initialChannels, initialRemoteServers }: P
           <div className="glass-panel p-6 md:p-8 rounded-2xl relative overflow-hidden">
             <div className="mb-6 flex items-center justify-between gap-3">
               <h1 className="text-2xl font-bold text-foreground">Create cron job</h1>
-              <Link href="/cron-jobs" aria-label="Close">
+              <Link href={cronJobsHref} aria-label="Close">
                 <button
                   type="button"
                   aria-label="Close"
@@ -361,7 +372,7 @@ echo "Cron job done"`}
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
-                <Link href="/cron-jobs">
+                <Link href={cronJobsHref}>
                   <button type="button" className="btn-secondary">
                     Cancel
                   </button>

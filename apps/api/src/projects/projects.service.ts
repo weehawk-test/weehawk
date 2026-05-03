@@ -5,13 +5,14 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Brackets, IsNull, Repository } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 import { OrganizationsService } from '../organizations/organizations.service';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 
 @Injectable()
 export class ProjectsService {
@@ -53,26 +54,27 @@ export class ProjectsService {
       const ctx = await this.organizationsService.requireMemberContext(
         rawOrg,
         userId,
+        {
+          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+        },
       );
       organizationId = ctx.internalId;
     }
 
-    let existing: Project | null = null;
-    try {
-      existing = await this.scopedProjects.findScopedBy(
-        'name',
-        createProjectDto.name,
-        userId,
-      );
-    } catch {
-      existing = null;
-    }
-    if (existing) {
+    const nameTrim = createProjectDto.name.trim();
+    const dupWhere =
+      organizationId === null
+        ? { userId, name: nameTrim, organizationId: IsNull() }
+        : { organizationId, name: nameTrim };
+    const existingDup = await this.projectRepository.findOne({
+      where: dupWhere,
+    });
+    if (existingDup) {
       throw new ConflictException('Project name already exists');
     }
 
     const project = this.projectRepository.create({
-      name: createProjectDto.name,
+      name: nameTrim,
       description: createProjectDto.description,
       userId,
       publicId: generatePublicId('prj'),
@@ -93,7 +95,8 @@ export class ProjectsService {
 
     const countQb = this.projectRepository
       .createQueryBuilder('project')
-      .where('project.userId = :userId', { userId });
+      .where('project.userId = :userId', { userId })
+      .andWhere('project.organizationId IS NULL');
     if (trimmed) {
       countQb.andWhere(
         "(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, '')) LIKE :q)",
@@ -105,6 +108,7 @@ export class ProjectsService {
     const dataQb = this.projectRepository
       .createQueryBuilder('project')
       .where('project.userId = :userId', { userId })
+      .andWhere('project.organizationId IS NULL')
       .loadRelationCountAndMap('project.serviceCount', 'project.services');
 
     if (trimmed) {
@@ -179,6 +183,38 @@ export class ProjectsService {
     };
   }
 
+  /**
+   * Resolves a numeric DB id for users who can access the project (owner of a personal project or org member).
+   */
+  async findByInternalIdForUser(
+    projectId: number,
+    userId: number,
+  ): Promise<Project> {
+    if (!Number.isFinite(projectId) || projectId < 1) {
+      throw new BadRequestException('Invalid project id');
+    }
+    const id = Math.trunc(projectId);
+    const project = await this.projectRepository
+      .createQueryBuilder('project')
+      .where('project.id = :id', { id })
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where(
+            '(project.userId = :uid AND project.organizationId IS NULL)',
+            { uid: userId },
+          ).orWhere(
+            'project.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+            { uid: userId },
+          );
+        }),
+      )
+      .getOne();
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+    return this.ensureProjectPublicId(project);
+  }
+
   async resolveProjectByIdentifier(
     identifier: string,
     userId: number,
@@ -191,9 +227,25 @@ export class ProjectsService {
         'Numeric project id is not allowed. Use publicId.',
       );
     }
-    const project = await this.scopedProjects.findScopedBy('publicId', trimmed, userId, {
-      relations: ['services'],
-    });
+    const project = await this.projectRepository
+      .createQueryBuilder('project')
+      .leftJoinAndSelect('project.services', 'services')
+      .where('project.publicId = :pid', { pid: trimmed })
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where(
+            '(project.userId = :uid AND project.organizationId IS NULL)',
+            { uid: userId },
+          ).orWhere(
+            'project.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+            { uid: userId },
+          );
+        }),
+      )
+      .getOne();
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
     return this.ensureProjectPublicId(project);
   }
 
@@ -201,18 +253,67 @@ export class ProjectsService {
     return this.resolveProjectByIdentifier(idOrPublicId, userId);
   }
 
+  private async assertProjectFitsRoute(
+    project: Project,
+    userId: number,
+    organizationPublicId: string | null | undefined,
+  ): Promise<void> {
+    const orgRaw =
+      organizationPublicId != null &&
+      String(organizationPublicId).trim() !== ''
+        ? String(organizationPublicId).trim()
+        : null;
+    if (orgRaw) {
+      const ctx = await this.organizationsService.requireMemberContext(
+        orgRaw,
+        userId,
+        {
+          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+        },
+      );
+      if (project.organizationId !== ctx.internalId) {
+        throw new NotFoundException('Project not found');
+      }
+    } else if (project.organizationId != null) {
+      throw new NotFoundException('Project not found');
+    }
+  }
+
+  async findOneWithRoute(
+    idOrPublicId: string,
+    userId: number,
+    organizationPublicId?: string | null,
+  ) {
+    const project = await this.findOne(idOrPublicId, userId);
+    await this.assertProjectFitsRoute(project, userId, organizationPublicId);
+    return project;
+  }
+
   async update(
     idOrPublicId: string,
     updateProjectDto: UpdateProjectDto,
     userId: number,
+    organizationPublicId?: string | null,
   ) {
-    const project = await this.findOne(idOrPublicId, userId);
+    const project = await this.findOneWithRoute(
+      idOrPublicId,
+      userId,
+      organizationPublicId,
+    );
     const updated = this.projectRepository.merge(project, updateProjectDto);
-    return await this.scopedProjects.saveScoped(updated, userId);
+    return await this._internal_system_saveProject(updated);
   }
 
-  async remove(idOrPublicId: string, userId: number) {
-    const project = await this.findOne(idOrPublicId, userId);
+  async remove(
+    idOrPublicId: string,
+    userId: number,
+    organizationPublicId?: string | null,
+  ) {
+    const project = await this.findOneWithRoute(
+      idOrPublicId,
+      userId,
+      organizationPublicId,
+    );
     const services = project.services ?? [];
     if (services.length > 0) {
       throw new ConflictException(

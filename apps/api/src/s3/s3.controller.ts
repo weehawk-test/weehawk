@@ -40,8 +40,11 @@ export class S3Controller {
 
   @Get('profiles')
   @ApiOperation({ summary: 'List saved S3-compatible destination profiles' })
-  async listProfiles(@Req() req: { user?: { userId: number } }) {
-    return this.s3Service.listProfiles(this.uid(req));
+  async listProfiles(
+    @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    return this.s3Service.listProfiles(this.uid(req), organizationPublicId);
   }
 
   @Post('profiles')
@@ -58,8 +61,13 @@ export class S3Controller {
   async deleteProfile(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
-    return this.s3Service.deleteProfile(this.uid(req), publicId);
+    return this.s3Service.deleteProfile(
+      this.uid(req),
+      publicId,
+      organizationPublicId,
+    );
   }
 
   @Post('test-connection')
@@ -85,12 +93,14 @@ export class S3Controller {
     @Param('publicId') publicId: string,
     @Query('prefix') prefix?: string,
     @Query('continuationToken') continuationToken?: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     return this.s3Service.listBucketObjects(
       this.uid(req),
       publicId,
       prefix,
       continuationToken,
+      organizationPublicId,
     );
   }
 
@@ -103,11 +113,17 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Query('prefix') prefix: string | undefined,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!prefix?.trim()) {
       throw new BadRequestException('prefix query parameter is required.');
     }
-    return this.s3Service.summarizePrefix(this.uid(req), publicId, prefix);
+    return this.s3Service.summarizePrefix(
+      this.uid(req),
+      publicId,
+      prefix,
+      organizationPublicId,
+    );
   }
 
   @Post('profiles/:publicId/objects/presign-put')
@@ -120,6 +136,7 @@ export class S3Controller {
     @Param('publicId') publicId: string,
     @Body()
     body: { key?: string; contentType?: string; expiresInSeconds?: number },
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
@@ -131,6 +148,7 @@ export class S3Controller {
       {
         contentType: body.contentType,
         expiresInSeconds: body.expiresInSeconds,
+        organizationPublicId,
       },
     );
   }
@@ -151,6 +169,7 @@ export class S3Controller {
     @Query('key') key: string | undefined,
     @Query('contentType') contentTypeRaw: string | undefined,
     @UploadedFile() file: Express.Multer.File | undefined,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
@@ -174,6 +193,7 @@ export class S3Controller {
       key.trim(),
       buffer,
       ct,
+      organizationPublicId,
     );
   }
 
@@ -187,11 +207,13 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: MkdirS3FolderDto,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     return this.s3Service.putFolderMarker(
       this.uid(req),
       publicId,
       body.key.trim(),
+      organizationPublicId,
     );
   }
 
@@ -205,6 +227,7 @@ export class S3Controller {
     @Param('publicId') publicId: string,
     @Query('key') key: string | undefined,
     @Query('expiresInSeconds') expiresInSecondsRaw?: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
@@ -218,6 +241,7 @@ export class S3Controller {
       publicId,
       key.trim(),
       expiresInSeconds,
+      organizationPublicId,
     );
   }
 
@@ -228,6 +252,7 @@ export class S3Controller {
     @Param('publicId') publicId: string,
     @Query('key') key: string | undefined,
     @Res({ passthrough: true }) res: Response,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ): Promise<StreamableFile> {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
@@ -236,6 +261,7 @@ export class S3Controller {
       this.uid(req),
       publicId,
       key.trim(),
+      organizationPublicId,
     );
     const enc = encodeURIComponent(r.filename).replace(/'/g, '%27');
     res.setHeader('Content-Type', r.contentType);
@@ -252,11 +278,17 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { key?: string },
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
-    return this.s3Service.deleteObject(this.uid(req), publicId, body.key);
+    return this.s3Service.deleteObject(
+      this.uid(req),
+      publicId,
+      body.key,
+      organizationPublicId,
+    );
   }
 
   @Post('profiles/:publicId/objects/delete')
@@ -268,11 +300,17 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { key?: string },
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
-    return this.s3Service.deleteObject(this.uid(req), publicId, body.key);
+    return this.s3Service.deleteObject(
+      this.uid(req),
+      publicId,
+      body.key,
+      organizationPublicId,
+    );
   }
 
   @Post('profiles/:publicId/objects/delete-batch')
@@ -283,6 +321,7 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { keys?: string[] },
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!body?.keys?.length) {
       throw new BadRequestException('keys array is required.');
@@ -291,6 +330,7 @@ export class S3Controller {
       this.uid(req),
       publicId,
       body.keys,
+      organizationPublicId,
     );
   }
 
@@ -302,6 +342,7 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { prefix?: string },
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     if (!body?.prefix?.trim()) {
       throw new BadRequestException('prefix is required in body.');
@@ -310,6 +351,7 @@ export class S3Controller {
       this.uid(req),
       publicId,
       body.prefix,
+      organizationPublicId,
     );
   }
 }

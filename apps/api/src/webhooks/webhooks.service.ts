@@ -12,7 +12,11 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import * as net from 'net';
-import { Like, Repository } from 'typeorm';
+import { IsNull, Like, Repository } from 'typeorm';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
+import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 import { NotificationService } from '../notifications/notification.service';
 import { ExecutorService } from '../executor/executor.service';
 import { ServicesService } from '../services/services.service';
@@ -39,7 +43,7 @@ import {
   onHostWebhookBundleEnvLines,
 } from '../common/on-host-redeploy-script';
 import { generatePublicId } from '../common/public-id';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
+import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
 
 export type WebhookListRow = {
   id: number;
@@ -69,11 +73,14 @@ export type WebhookDetailRow = WebhookListRow & {
 @Injectable()
 export class WebhooksService implements OnApplicationBootstrap {
   private readonly logger = new Logger(WebhooksService.name);
-  private readonly scopedWebhooks: UserIdTenantScopedRepository<Webhook>;
+  private readonly scopedWebhooks: RemoteServerTenantScopedRepository<Webhook>;
 
   constructor(
     @InjectRepository(Webhook)
     private readonly webhookRepo: Repository<Webhook>,
+    @InjectRepository(OrganizationMembership)
+    private readonly membershipRepo: Repository<OrganizationMembership>,
+    private readonly organizationsRepository: OrganizationsRepository,
     @Inject(forwardRef(() => ServicesService))
     private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
@@ -81,10 +88,40 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly remoteServersService: RemoteServersService,
     private readonly configService: ConfigService,
   ) {
-    this.scopedWebhooks = new UserIdTenantScopedRepository<Webhook>(
+    this.scopedWebhooks = new RemoteServerTenantScopedRepository<Webhook>(
       this.webhookRepo,
+      this.membershipRepo,
       'Webhook',
     );
+  }
+
+  private async workspaceOrgId(
+    userId: number,
+    organizationPublicId: string | null | undefined,
+  ): Promise<number | null> {
+    return resolveOrganizationInternalIdForMember(
+      this.organizationsRepository,
+      userId,
+      organizationPublicId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS },
+    );
+  }
+
+  /**
+   * When the client passes `organizationPublicId`, the resource must belong to that workspace
+   * (or personal when omitted / empty after trim).
+   */
+  private assertWebhookWorkspace(
+    w: Webhook,
+    organizationPublicId: string | null | undefined,
+    expectedOrgId: number | null,
+  ): void {
+    const raw = organizationPublicId?.trim();
+    if (!raw) return;
+    const rowOrg = w.organizationId ?? null;
+    if (rowOrg !== expectedOrgId) {
+      throw new NotFoundException('Webhook not found');
+    }
   }
 
   private runRemoteSyncInBackground(
@@ -382,8 +419,12 @@ export class WebhooksService implements OnApplicationBootstrap {
   private async assertNotificationChannel(
     userId: number,
     channelId: number,
+    organizationPublicId?: string | null,
   ): Promise<void> {
-    const rows = await this.notificationsService.listChannels(userId);
+    const rows = await this.notificationsService.listChannels(
+      userId,
+      organizationPublicId,
+    );
     if (!rows.some((c) => c.id === channelId)) {
       throw new BadRequestException('Notification channel not found.');
     }
@@ -547,6 +588,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     dto: CreateWebhookDto,
   ): Promise<WebhookDetailRow> {
     this.validateCreate(dto);
+    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId);
     if (dto.remoteServerId != null) {
       await this.remoteServersService.assertDeployServerById(
         dto.remoteServerId,
@@ -554,7 +596,11 @@ export class WebhooksService implements OnApplicationBootstrap {
       );
     }
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
-      await this.assertNotificationChannel(userId, dto.notifyChannelId);
+      await this.assertNotificationChannel(
+        userId,
+        dto.notifyChannelId,
+        dto.organizationPublicId,
+      );
     }
     const serviceIdOrPublicId = dto.serviceId?.trim();
     let resolvedServiceId: number | null = null;
@@ -566,6 +612,18 @@ export class WebhooksService implements OnApplicationBootstrap {
         );
       } catch {
         throw new BadRequestException('Service not found.');
+      }
+    }
+    if (resolvedServiceId != null) {
+      const svc = await this.servicesService.getScopedServiceForUser(
+        resolvedServiceId,
+        userId,
+      );
+      const pOrg = svc.project?.organizationId ?? null;
+      if (pOrg !== orgId) {
+        throw new BadRequestException(
+          'Service does not belong to this workspace.',
+        );
       }
     }
 
@@ -594,6 +652,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     const w = this.webhookRepo.create({
       publicId: generatePublicId('whk'),
       userId,
+      organizationId: orgId,
       secretToken,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
@@ -678,18 +737,23 @@ export class WebhooksService implements OnApplicationBootstrap {
 
   async list(
     userId: number,
-    opts?: { includeHidden?: boolean },
+    opts?: { includeHidden?: boolean; organizationPublicId?: string | null },
   ): Promise<WebhookListRow[]> {
     const includeHidden = opts?.includeHidden === true;
-    const list = includeHidden
-      ? await this._internal_system_findWebhooks({
-          where: { userId },
-          order: { createdAt: 'DESC' },
-        })
-      : await this._internal_system_findWebhooks({
-          where: { userId, hiddenFromWebhooksList: false },
-          order: { createdAt: 'DESC' },
-        });
+    const orgId = await this.workspaceOrgId(userId, opts?.organizationPublicId);
+    const baseWhere = includeHidden
+      ? {}
+      : { hiddenFromWebhooksList: false };
+    const list =
+      orgId != null
+        ? await this.scopedWebhooks.listForOrganization(userId, orgId, {
+            where: baseWhere,
+            order: { createdAt: 'DESC' },
+          })
+        : await this.scopedWebhooks.listPersonal(userId, {
+            where: baseWhere,
+            order: { createdAt: 'DESC' },
+          });
     return await Promise.all(list.map((w) => this.toListRow(userId, w)));
   }
 
@@ -699,20 +763,32 @@ export class WebhooksService implements OnApplicationBootstrap {
    */
   async findWebhooksForService(
     serviceId: number,
-    userId: number,
+    projectUserId: number,
+    projectOrganizationId: number | null,
   ): Promise<WebhookListRow[]> {
+    const where =
+      projectOrganizationId != null
+        ? { serviceId, organizationId: projectOrganizationId }
+        : {
+            serviceId,
+            userId: projectUserId,
+            organizationId: IsNull(),
+          };
     const rows = await this._internal_system_findWebhooks({
-      where: { serviceId, userId },
+      where,
       order: { createdAt: 'DESC' },
     });
-    return await Promise.all(rows.map((w) => this.toListRow(userId, w)));
+    return await Promise.all(rows.map((w) => this.toListRow(projectUserId, w)));
   }
 
   async findOne(
     userId: number,
     idOrPublicId: string | number,
+    organizationPublicId?: string | null,
   ): Promise<WebhookDetailRow> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const w = await this.resolveEntity(userId, idOrPublicId);
+    this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
     return await this.toDetailRow(w, remoteTriggerUrl);
   }
@@ -720,9 +796,14 @@ export class WebhooksService implements OnApplicationBootstrap {
   async readLastRunLog(
     userId: number,
     idOrPublicId: string | number,
-    opts?: { lines?: number },
+    opts?: { lines?: number; organizationPublicId?: string | null },
   ): Promise<{ log: string; source: string }> {
+    const expectedOrg = await this.workspaceOrgId(
+      userId,
+      opts?.organizationPublicId,
+    );
     const w = await this.resolveEntity(userId, idOrPublicId);
+    this.assertWebhookWorkspace(w, opts?.organizationPublicId, expectedOrg);
     if (!w.bashScript?.trim() || w.remoteServerId == null) {
       return { log: '', source: 'not-applicable' };
     }
@@ -742,8 +823,11 @@ export class WebhooksService implements OnApplicationBootstrap {
     userId: number,
     idOrPublicId: string | number,
     dto: UpdateWebhookDto,
+    organizationPublicId?: string | null,
   ): Promise<WebhookDetailRow> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const w = await this.resolveEntity(userId, idOrPublicId);
+    this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
 
     const beforeRemote = w.remoteServerId;
     const beforeBash = w.bashScript;
@@ -788,7 +872,11 @@ export class WebhooksService implements OnApplicationBootstrap {
     w.remoteTriggerUrlScheme = 'https';
     if (w.notifyChannelId && w.notifyMessage) {
       w.notifyOnTrigger = true;
-      await this.assertNotificationChannel(userId, w.notifyChannelId);
+      await this.assertNotificationChannel(
+        userId,
+        w.notifyChannelId,
+        organizationPublicId,
+      );
     } else if (!w.notifyChannelId && !w.notifyMessage) {
       w.notifyOnTrigger = false;
     } else {
@@ -883,8 +971,14 @@ export class WebhooksService implements OnApplicationBootstrap {
     return await this.toDetailRow(saved, remoteTriggerUrl);
   }
 
-  async remove(userId: number, idOrPublicId: string | number): Promise<void> {
+  async remove(
+    userId: number,
+    idOrPublicId: string | number,
+    organizationPublicId?: string | null,
+  ): Promise<void> {
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
     const w = await this.resolveEntity(userId, idOrPublicId);
+    this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
     const remoteId = w.remoteServerId;
     if (w.remoteServerId != null && w.bashScript?.trim()) {
       await this.remoteServersService
@@ -899,13 +993,24 @@ export class WebhooksService implements OnApplicationBootstrap {
    * Deletes all webhooks tied to a service (DB rows, remote agent scripts, Swarm sync).
    * Called when a service is removed so tokens and scripts do not linger.
    */
-  async removeAllForService(userId: number, serviceId: number): Promise<void> {
-    const rows = await this._internal_system_findWebhooks({
-      where: { serviceId, userId },
-    });
+  async removeAllForService(
+    actingUserId: number,
+    serviceId: number,
+    projectUserId: number,
+    projectOrganizationId: number | null,
+  ): Promise<void> {
+    const where =
+      projectOrganizationId != null
+        ? { serviceId, organizationId: projectOrganizationId }
+        : {
+            serviceId,
+            userId: projectUserId,
+            organizationId: IsNull(),
+          };
+    const rows = await this._internal_system_findWebhooks({ where });
     for (const w of rows) {
       const ensured = await this.ensurePublicId(w);
-      await this.remove(userId, ensured.publicId);
+      await this.remove(actingUserId, ensured.publicId);
     }
   }
 

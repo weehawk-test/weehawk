@@ -50,8 +50,20 @@ export class RemoteServersController {
 
   @Get()
   @ApiOperation({ summary: 'List SSH / Docker remote hosts' })
-  list(@Req() req: { user?: { userId: number } }) {
-    return this.remoteServersService.findAll(this.uid(req));
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'When set, list remote servers for this organization (membership required). Omit for personal-account servers only.',
+  })
+  list(
+    @Query('organizationPublicId') organizationPublicId: string | undefined,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.remoteServersService.findAll(
+      this.uid(req),
+      organizationPublicId,
+    );
   }
 
   @Get('provision-jobs/:jobId')

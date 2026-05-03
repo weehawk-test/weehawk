@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { OrganizationsService } from '../organizations/organizations.service';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 
 @ApiTags('Projects')
 @ApiBearerAuth()
@@ -78,6 +79,9 @@ export class ProjectsController {
       const ctx = await this.organizationsService.requireMemberContext(
         orgRaw,
         this.uid(req),
+        {
+          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+        },
       );
       return this.projectsService.findAllPaginatedForOrganization(
         ctx.internalId,
@@ -96,33 +100,63 @@ export class ProjectsController {
 
   @Get(':publicId')
   @ApiOperation({ summary: 'Get project details and its services' })
-  findOne(
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'When calling from an organization workspace, pass the org publicId so org projects resolve; omit for personal-only projects',
+  })
+  async findOne(
     @Param('publicId') publicId: string,
+    @Query('organizationPublicId') organizationPublicId: string | undefined,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.findOne(publicId, this.uid(req));
+    const project = await this.projectsService.findOneWithRoute(
+      publicId,
+      this.uid(req),
+      organizationPublicId,
+    );
+    let organizationPublicIdOut: string | undefined;
+    if (project.organizationId != null) {
+      const op = await this.organizationsService.getPublicIdByInternalId(
+        project.organizationId,
+      );
+      organizationPublicIdOut = op ?? undefined;
+    }
+    return Object.assign(project, {
+      organizationPublicId: organizationPublicIdOut,
+    });
   }
 
   @Patch(':publicId')
   @ApiOperation({ summary: 'update project' })
+  @ApiQuery({ name: 'organizationPublicId', required: false })
   update(
     @Param('publicId') publicId: string,
     @Body() updateProjectDto: UpdateProjectDto,
+    @Query('organizationPublicId') organizationPublicId: string | undefined,
     @Req() req: { user?: { userId: number } },
   ) {
     return this.projectsService.update(
       publicId,
       updateProjectDto,
       this.uid(req),
+      organizationPublicId,
     );
   }
 
   @Delete(':publicId')
   @ApiOperation({ summary: 'delete project' })
+  @ApiQuery({ name: 'organizationPublicId', required: false })
   remove(
     @Param('publicId') publicId: string,
+    @Query('organizationPublicId') organizationPublicId: string | undefined,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.remove(publicId, this.uid(req));
+    return this.projectsService.remove(
+      publicId,
+      this.uid(req),
+      organizationPublicId,
+    );
   }
 }

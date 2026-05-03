@@ -65,7 +65,10 @@ import {
   assertPublicRemoteIpv4Literal,
   assertPublicRemoteSshHost,
 } from './remote-ssh-host-policy';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
+import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
+import { OrganizationsService } from '../organizations/organizations.service';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 
 /**
  * Bash-safe `export VAR='…'` lines so `docker stack deploy` can substitute `${VAR}` in the compose
@@ -257,16 +260,20 @@ export class RemoteServersService {
 
   /** Observed host key from last verifier run (trust-on-first-use), keyed by remote server id. */
   private readonly pendingSshHostKeyByServerId = new Map<number, string>();
-  private readonly scopedRemoteServers: UserIdTenantScopedRepository<RemoteServer>;
+  private readonly scopedRemoteServers: RemoteServerTenantScopedRepository<RemoteServer>;
 
   constructor(
     @InjectRepository(RemoteServer)
     private readonly remoteServerRepository: Repository<RemoteServer>,
+    @InjectRepository(OrganizationMembership)
+    private readonly organizationMembershipRepository: Repository<OrganizationMembership>,
     private readonly configService: ConfigService,
     private readonly traefikService: TraefikService,
+    private readonly organizationsService: OrganizationsService,
   ) {
-    this.scopedRemoteServers = new UserIdTenantScopedRepository<RemoteServer>(
+    this.scopedRemoteServers = new RemoteServerTenantScopedRepository<RemoteServer>(
       this.remoteServerRepository,
+      this.organizationMembershipRepository,
       'Remote server',
     );
   }
@@ -290,36 +297,63 @@ export class RemoteServersService {
   }
 
   /**
-   * Ensures a remote host used at deploy/build time belongs to the same account as the project.
+   * Ensures a remote host used at deploy/build time fits the project: personal projects only use
+   * personal servers (same `userId`); org projects only use servers in that organization.
    */
   assertRemoteServerMatchesProject(
     rs: RemoteServer | null | undefined,
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): void {
     if (!rs) {
       throw new NotFoundException('Remote server not found');
     }
-    if (projectUserId != null && rs.userId !== projectUserId) {
-      throw new NotFoundException('Remote server not found');
+    if (projectOrganizationId != null) {
+      if (rs.organizationId !== projectOrganizationId) {
+        throw new NotFoundException('Remote server not found');
+      }
+      return;
     }
-    return;
+    if (projectUserId != null) {
+      if (rs.organizationId != null || rs.userId !== projectUserId) {
+        throw new NotFoundException('Remote server not found');
+      }
+    }
   }
 
   private async resolveProjectUserId(service: Service): Promise<number | null> {
-    if (service.project?.userId != null) return service.project.userId;
+    const scope = await this.resolveProjectScope(service);
+    return scope.userId;
+  }
+
+  /** Owner user id + org internal id (null = personal project) for deploy/build SSH scoping. */
+  private async resolveProjectScope(service: Service): Promise<{
+    userId: number | null;
+    organizationId: number | null;
+  }> {
+    const p = service.project;
+    if (p?.userId != null) {
+      return {
+        userId: p.userId,
+        organizationId: p.organizationId ?? null,
+      };
+    }
     const projectId =
       typeof (service as Service & { projectId?: number }).projectId ===
       'number'
         ? (service as Service & { projectId?: number }).projectId
         : (service.project as { id?: number } | undefined)?.id;
-    if (!projectId) return null;
+    if (!projectId) return { userId: null, organizationId: null };
     const project = await this.remoteServerRepository.manager
       .getRepository(Project)
       .findOne({
         where: { id: projectId },
-        select: { userId: true },
+        select: { userId: true, organizationId: true },
       });
-    return project?.userId ?? null;
+    return {
+      userId: project?.userId ?? null,
+      organizationId: project?.organizationId ?? null,
+    };
   }
 
   private getEncryptionSecret(): string {
@@ -433,9 +467,10 @@ export class RemoteServersService {
       this.pendingSshHostKeyByServerId.delete(remoteServerId);
       return;
     }
-    await this.scopedRemoteServers.updateScoped(remoteServerId, row.userId, {
-      sshHostKeySha256: fp,
-    });
+    await this.remoteServerRepository.update(
+      { id: remoteServerId },
+      { sshHostKeySha256: fp },
+    );
     this.pendingSshHostKeyByServerId.delete(remoteServerId);
   }
 
@@ -2746,7 +2781,8 @@ done
     if (id == null) {
       return base;
     }
-    const projectUserId = await this.resolveProjectUserId(service);
+    const { userId: projectUserId, organizationId: projectOrganizationId } =
+      await this.resolveProjectScope(service);
     const rs = await this.resolveRemoteServerForProjectContextOrNull(
       id,
       projectUserId,
@@ -2754,6 +2790,11 @@ done
     if (!rs) {
       return base;
     }
+    this.assertRemoteServerMatchesProject(
+      rs,
+      projectUserId,
+      projectOrganizationId,
+    );
     if (rs.serverRole === 'build') {
       throw new BadRequestException(
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
@@ -2776,6 +2817,7 @@ done
     service: Service,
     base: NodeJS.ProcessEnv,
   ): Promise<NodeJS.ProcessEnv> {
+    const scope = await this.resolveProjectScope(service);
     return this.mergeDockerHostEnvForBuildIds(
       base,
       {
@@ -2785,7 +2827,8 @@ done
           service.remoteServerId ?? service.remoteServer?.id ?? null,
         buildOnLocalDockerHost: service.buildOnLocalDockerHost === true,
       },
-      await this.resolveProjectUserId(service),
+      scope.userId,
+      scope.organizationId,
     );
   }
 
@@ -2798,6 +2841,7 @@ done
       buildOnLocalDockerHost?: boolean;
     },
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): Promise<NodeJS.ProcessEnv> {
     const toCheck = new Set<number>();
     if (ids.remoteServerId != null) toCheck.add(ids.remoteServerId);
@@ -2807,7 +2851,11 @@ done
         rid,
         projectUserId,
       );
-      this.assertRemoteServerMatchesProject(row, projectUserId);
+      this.assertRemoteServerMatchesProject(
+        row,
+        projectUserId,
+        projectOrganizationId,
+      );
     }
     const id = ids.buildRemoteServerId ?? ids.remoteServerId;
     if (id == null) {
@@ -2832,6 +2880,7 @@ done
     base: NodeJS.ProcessEnv,
     remoteServerId: number | null,
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): Promise<NodeJS.ProcessEnv> {
     if (remoteServerId == null) {
       return base;
@@ -2843,7 +2892,11 @@ done
     if (!rs) {
       return base;
     }
-    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    this.assertRemoteServerMatchesProject(
+      rs,
+      projectUserId,
+      projectOrganizationId,
+    );
     if (rs.serverRole === 'build') {
       throw new BadRequestException(
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
@@ -2858,10 +2911,28 @@ done
     return { ...base, ...extra };
   }
 
-  async findAll(userId: number): Promise<RemoteServerSafe[]> {
-    const rows = await this.scopedRemoteServers.listScoped(userId, {
-      order: { name: 'ASC' },
-    });
+  async findAll(
+    userId: number,
+    organizationPublicId?: string | null,
+  ): Promise<RemoteServerSafe[]> {
+    const raw = organizationPublicId != null ? String(organizationPublicId).trim() : '';
+    let rows: RemoteServer[];
+    if (raw) {
+      const ctx = await this.organizationsService.requireMemberContext(
+        raw,
+        userId,
+        { requireOrgServersAccess: true },
+      );
+      rows = await this.scopedRemoteServers.listForOrganization(
+        userId,
+        ctx.internalId,
+        { order: { name: 'ASC' } },
+      );
+    } else {
+      rows = await this.scopedRemoteServers.listPersonal(userId, {
+        order: { name: 'ASC' },
+      });
+    }
     return Promise.all(
       rows.map((r) => this.ensurePublicId(r).then((row) => this.toSafe(row))),
     );
@@ -2914,7 +2985,6 @@ done
             id,
             'project ownership may be unavailable for system-driven deploy assertions',
           );
-    this.assertRemoteServerMatchesProject(rs, projectUserId);
     if (rs.serverRole !== 'deploy') {
       throw new BadRequestException(
         `Remote server "${rs.name}" is build-only. Choose a deploy server (not a build host).`,
@@ -2948,7 +3018,9 @@ done
             remoteServerId,
             'presigned probe can be run from non-user system contexts',
           );
-    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    if (projectUserId != null) {
+      await this.assertOrgServerManageIfNeeded(rs, projectUserId);
+    }
     const pem = await this.resolvePrivateKeyPem(rs);
     const token = randomBytes(8).toString('hex');
     const urlFile = `/tmp/weehawk-s3-probe-url-${token}`;
@@ -2975,6 +3047,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<{ server: RemoteServer; privateKeyPem: string }> {
     const server = await this.findEntityOrFail(id, userId);
+    await this.assertOrgServerManageIfNeeded(server, userId);
     const privateKeyPem = await this.resolvePrivateKeyPem(server);
     return { server, privateKeyPem };
   }
@@ -2998,6 +3071,7 @@ curl -fsS -o /dev/null "$U"
       };
     }
     const rs = await this.findEntityOrFail(remoteServerId, userId);
+    await this.assertOrgServerManageIfNeeded(rs, userId);
     const pem = await this.resolvePrivateKeyPem(rs);
     const tag = `WHNK_MSG_${randomBytes(16).toString('hex')}`;
     const exportsBlock = cred.map((line) => `export ${line}`).join('\n');
@@ -3028,6 +3102,7 @@ curl -fsS -o /dev/null "$U"
     connect: ConnectConfig;
   }> {
     const rs = await this.resolveRemoteServerForUser(id, userId);
+    await this.assertOrgServerTerminalIfNeeded(rs, userId);
     return this._internal_getSshTerminalContext(rs);
   }
 
@@ -3042,12 +3117,70 @@ curl -fsS -o /dev/null "$U"
     };
   }
 
+  private async withOrgServerAccessCheck(
+    rs: RemoteServer,
+    userId: number,
+  ): Promise<RemoteServer> {
+    const ensured = await this.ensurePublicId(rs);
+    if (ensured.organizationId != null) {
+      await this.organizationsService.assertMemberCanAccessOrgServerRow(
+        userId,
+        ensured.organizationId,
+      );
+    }
+    return ensured;
+  }
+
+  private async assertOrgServerManageIfNeeded(
+    rs: RemoteServer,
+    userId: number,
+  ): Promise<void> {
+    if (rs.organizationId == null) return;
+    await this.organizationsService.assertMemberCanManageOrgRemoteServers(
+      userId,
+      rs.organizationId,
+    );
+  }
+
+  private async assertOrgServerTerminalIfNeeded(
+    rs: RemoteServer,
+    userId: number,
+  ): Promise<void> {
+    if (rs.organizationId == null) return;
+    await this.organizationsService.assertMemberCanUseOrgRemoteTerminal(
+      userId,
+      rs.organizationId,
+    );
+  }
+
+  private async assertOrgServerDockerIfNeeded(
+    rs: RemoteServer,
+    userId: number,
+  ): Promise<void> {
+    if (rs.organizationId == null) return;
+    await this.organizationsService.assertMemberCanUseOrgRemoteDockerManager(
+      userId,
+      rs.organizationId,
+    );
+  }
+
+  /**
+   * Row-level access + manage remote_server (provision / install queues).
+   */
+  async assertRemoteServerProvisionEnqueueAllowed(
+    remoteServerId: number,
+    userId: number,
+  ): Promise<void> {
+    const rs = await this.findEntityOrFail(remoteServerId, userId);
+    await this.assertOrgServerManageIfNeeded(rs, userId);
+  }
+
   private async findEntityOrFail(
     id: number | string,
     userId: number,
   ): Promise<RemoteServer> {
     const rs = await this.scopedRemoteServers.findScoped(Number(id), userId);
-    return this.ensurePublicId(rs);
+    return this.withOrgServerAccessCheck(rs, userId);
   }
 
   private async resolveRemoteServerForUser(
@@ -3098,7 +3231,7 @@ curl -fsS -o /dev/null "$U"
       raw,
       userId,
     );
-    return this.ensurePublicId(rs);
+    return this.withOrgServerAccessCheck(rs, userId);
   }
 
   async create(
@@ -3116,9 +3249,23 @@ curl -fsS -o /dev/null "$U"
     const serverRole: 'deploy' | 'build' =
       dto.serverRole === 'build' ? 'build' : 'deploy';
 
+    let organizationId: number | null = null;
+    const rawOrg = dto.organizationPublicId?.trim();
+    if (rawOrg) {
+      const ctx = await this.organizationsService.requireMemberContext(
+        rawOrg,
+        userId,
+        {
+          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+        },
+      );
+      organizationId = ctx.internalId;
+    }
+
     const entity = this.remoteServerRepository.create({
       publicId: generatePublicId('rsv'),
       userId,
+      organizationId,
       name: dto.name.trim(),
       host: hostTrimmed,
       port: dto.port ?? 22,
@@ -3135,12 +3282,38 @@ curl -fsS -o /dev/null "$U"
     return this.toSafe(saved);
   }
 
+  private isDomainsJsonOnlyUpdate(dto: UpdateRemoteServerDto): boolean {
+    const keys: (keyof UpdateRemoteServerDto)[] = [
+      'name',
+      'host',
+      'port',
+      'sshUser',
+      'serverRole',
+      'privateKey',
+      'publicIpv4',
+      'domainsJson',
+      'organizationPublicId',
+    ];
+    const active = keys.filter((k) => dto[k] !== undefined);
+    return active.length === 1 && active[0] === 'domainsJson';
+  }
+
   async update(
     id: number,
     dto: UpdateRemoteServerDto,
     userId: number,
   ): Promise<RemoteServerSafe> {
     const existing = await this.findEntityOrFail(id, userId);
+    if (existing.organizationId != null) {
+      if (this.isDomainsJsonOnlyUpdate(dto)) {
+        await this.organizationsService.assertMemberCanEditOrgServerDomainsJson(
+          userId,
+          existing.organizationId,
+        );
+      } else {
+        await this.assertOrgServerManageIfNeeded(existing, userId);
+      }
+    }
     let privateKeyEncrypted: string | null | undefined =
       existing.privateKeyEncrypted;
 
@@ -3285,7 +3458,8 @@ curl -fsS -o /dev/null "$U"
   }
 
   async remove(id: number, userId: number): Promise<void> {
-    await this.findEntityOrFail(id, userId);
+    const rs = await this.findEntityOrFail(id, userId);
+    await this.assertOrgServerManageIfNeeded(rs, userId);
     const repo = this.remoteServerRepository.manager.getRepository(Service);
     const nDeploy = await repo.count({ where: { remoteServer: { id } } });
     const nBuild = await repo.count({ where: { buildRemoteServer: { id } } });
@@ -3304,6 +3478,7 @@ curl -fsS -o /dev/null "$U"
     fn: (docker: Dockerode) => Promise<T>,
   ): Promise<T> {
     const rs = await this.findEntityOrFail(id, userId);
+    await this.assertOrgServerDockerIfNeeded(rs, userId);
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
@@ -3421,6 +3596,7 @@ curl -fsS -o /dev/null "$U"
     remoteServerId: number,
     params: { contextPath: string; dockerfilePosix: string; tag: string },
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): Promise<{ output: string }> {
     const rs =
       projectUserId != null
@@ -3429,7 +3605,14 @@ curl -fsS -o /dev/null "$U"
             remoteServerId,
             'dockerode build may run from projectless system automation',
           );
-    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    this.assertRemoteServerMatchesProject(
+      rs,
+      projectUserId,
+      projectOrganizationId,
+    );
+    if (projectUserId != null) {
+      await this.assertOrgServerDockerIfNeeded(rs, projectUserId);
+    }
     const pem = await this.resolvePrivateKeyPem(rs);
     const docker = this.createDockerodeForRemote(rs, pem);
     try {
@@ -3503,6 +3686,7 @@ curl -fsS -o /dev/null "$U"
       } | null;
     },
     projectUserId: number | null,
+    projectOrganizationId: number | null,
   ): Promise<{ output: string }> {
     const rs =
       projectUserId != null
@@ -3511,7 +3695,14 @@ curl -fsS -o /dev/null "$U"
             remoteServerId,
             'dockerode push may run from projectless system automation',
           );
-    this.assertRemoteServerMatchesProject(rs, projectUserId);
+    this.assertRemoteServerMatchesProject(
+      rs,
+      projectUserId,
+      projectOrganizationId,
+    );
+    if (projectUserId != null) {
+      await this.assertOrgServerDockerIfNeeded(rs, projectUserId);
+    }
     const pem = await this.resolvePrivateKeyPem(rs);
     const docker = this.createDockerodeForRemote(rs, pem);
     try {
@@ -3716,6 +3907,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<{ success: boolean; output: string }> {
     const rs = await this.findEntityOrFail(id, userId);
+    await this.assertOrgServerDockerIfNeeded(rs, userId);
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
@@ -3747,6 +3939,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<{ success: boolean; output: string }> {
     const rs = await this.findEntityOrFail(id, userId);
+    await this.assertOrgServerTerminalIfNeeded(rs, userId);
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const p = this.getSshConnectParams(rs, pem);
@@ -3777,6 +3970,7 @@ curl -fsS -o /dev/null "$U"
       throw new BadRequestException('Command is required.');
     }
     const rs = await this.findEntityOrFail(id, userId);
+    await this.assertOrgServerTerminalIfNeeded(rs, userId);
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const r = await this.execSshBashScriptCollectOutput(

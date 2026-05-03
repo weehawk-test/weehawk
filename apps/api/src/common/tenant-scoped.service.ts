@@ -1,11 +1,15 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import type {
-  ObjectLiteral,
-  FindManyOptions,
-  FindOneOptions,
-  Repository,
+import {
+  Brackets,
+  IsNull,
+  type ObjectLiteral,
+  type FindManyOptions,
+  type FindOneOptions,
+  type Repository,
+  type WhereExpressionBuilder,
 } from 'typeorm';
 import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 
 function requireScopedUserId(userId: number): number {
   if (!Number.isFinite(userId) || userId < 1) {
@@ -162,7 +166,11 @@ export class ProjectTenantScopedRepository<
       .select('e.id', 'id')
       .where('e.id = :id', { id })
       .andWhere(
-        `e."${this.projectIdColumn}" IN (SELECT p."id" FROM "projects" p WHERE p."user_id" = :userId)`,
+        `e."${this.projectIdColumn}" IN (SELECT p.id FROM projects p WHERE
+          (p.user_id = :userId AND p.organization_id IS NULL)
+          OR (p.organization_id IN (
+            SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :userId
+          )))`,
         { userId: uid },
       )
       .getRawOne<{ id?: number }>();
@@ -193,7 +201,11 @@ export class ProjectTenantScopedRepository<
       .set(patch)
       .where('"id" = :id', { id })
       .andWhere(
-        `"${this.projectIdColumn}" IN (SELECT p."id" FROM "projects" p WHERE p."user_id" = :userId)`,
+        `"${this.projectIdColumn}" IN (SELECT p.id FROM projects p WHERE
+          (p.user_id = :userId AND p.organization_id IS NULL)
+          OR (p.organization_id IN (
+            SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :userId
+          )))`,
         { userId: uid },
       )
       .execute();
@@ -209,7 +221,11 @@ export class ProjectTenantScopedRepository<
       .delete()
       .where('"id" = :id', { id })
       .andWhere(
-        `"${this.projectIdColumn}" IN (SELECT p."id" FROM "projects" p WHERE p."user_id" = :userId)`,
+        `"${this.projectIdColumn}" IN (SELECT p.id FROM projects p WHERE
+          (p.user_id = :userId AND p.organization_id IS NULL)
+          OR (p.organization_id IN (
+            SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :userId
+          )))`,
         { userId: uid },
       )
       .execute();
@@ -233,5 +249,211 @@ export class ProjectTenantScopedRepository<
     throw new BadRequestException(
       'saveScoped is not supported for project-scoped repositories; set project ownership explicitly and use internal repository save.',
     );
+  }
+}
+
+/**
+ * Remote servers: personal rows (`userId` + `organizationId IS NULL`) or org rows visible to
+ * {@link OrganizationMembership} for that org. Updates/deletes allow any org member, not only `userId`.
+ */
+export class RemoteServerTenantScopedRepository<
+  TEntity extends ObjectLiteral & {
+    id?: number;
+    userId: number;
+    organizationId: number | null;
+  },
+> extends TenantScopedRepository<TEntity> {
+  constructor(
+    private readonly repo: Repository<TEntity>,
+    private readonly membershipRepo: Repository<OrganizationMembership>,
+    private readonly entityLabel: string,
+  ) {
+    super();
+  }
+
+  private accessBracket(
+    qb: WhereExpressionBuilder,
+    uid: number,
+    alias: string,
+  ): void {
+    qb.where(
+      `(${alias}.userId = :uid AND ${alias}.organizationId IS NULL)`,
+      { uid },
+    ).orWhere(
+      `${alias}.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)`,
+      { uid },
+    );
+  }
+
+  async findScoped(
+    id: number,
+    userId: number,
+    options?: FindOneOptions<TEntity>,
+  ): Promise<TEntity> {
+    const uid = requireScopedUserId(userId);
+    const owned = await this.repo
+      .createQueryBuilder('e')
+      .select('e.id', 'id')
+      .where('e.id = :id', { id })
+      .andWhere(
+        new Brackets((qb) => {
+          this.accessBracket(qb, uid, 'e');
+        }),
+      )
+      .getRawOne<{ id?: number }>();
+    if (!owned?.id) {
+      throw new NotFoundException(`${this.entityLabel} #${id} not found`);
+    }
+    const row = await this.repo.findOne({
+      ...(options ?? {}),
+      where: {
+        ...(options?.where as ObjectLiteral | undefined),
+        id: owned.id,
+      } as any,
+    });
+    if (!row)
+      throw new NotFoundException(`${this.entityLabel} #${id} not found`);
+    return row;
+  }
+
+  async listPersonal(
+    userId: number,
+    options?: Omit<FindManyOptions<TEntity>, 'where'> & {
+      where?: ObjectLiteral;
+    },
+  ): Promise<TEntity[]> {
+    const uid = requireScopedUserId(userId);
+    return this.repo.find({
+      ...(options ?? {}),
+      where: {
+        ...(options?.where as ObjectLiteral | undefined),
+        userId: uid,
+        organizationId: IsNull(),
+      } as any,
+    });
+  }
+
+  async listForOrganization(
+    userId: number,
+    organizationInternalId: number,
+    options?: Omit<FindManyOptions<TEntity>, 'where'> & {
+      where?: ObjectLiteral;
+    },
+  ): Promise<TEntity[]> {
+    const uid = requireScopedUserId(userId);
+    const member = await this.membershipRepo.findOne({
+      where: { userId: uid, organizationId: organizationInternalId },
+    });
+    if (!member) {
+      throw new NotFoundException('Organization not found');
+    }
+    return this.repo.find({
+      ...(options ?? {}),
+      where: {
+        ...(options?.where as ObjectLiteral | undefined),
+        organizationId: organizationInternalId,
+      } as any,
+    });
+  }
+
+  async updateScoped(
+    id: number,
+    userId: number,
+    patch: QueryDeepPartialEntity<TEntity>,
+  ): Promise<void> {
+    const uid = requireScopedUserId(userId);
+    const res = await this.repo
+      .createQueryBuilder()
+      .update()
+      .set(patch)
+      .where('id = :id', { id })
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where('(user_id = :uid AND organization_id IS NULL)', {
+            uid,
+          }).orWhere(
+            'organization_id IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+            { uid },
+          );
+        }),
+      )
+      .execute();
+    if ((res.affected ?? 0) < 1) {
+      throw new NotFoundException(`${this.entityLabel} #${id} not found`);
+    }
+  }
+
+  async deleteScoped(id: number, userId: number): Promise<void> {
+    const uid = requireScopedUserId(userId);
+    const res = await this.repo
+      .createQueryBuilder()
+      .delete()
+      .from(this.repo.metadata.target)
+      .where('id = :id', { id })
+      .andWhere(
+        new Brackets((qb) => {
+          qb.where('(user_id = :uid AND organization_id IS NULL)', {
+            uid,
+          }).orWhere(
+            'organization_id IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+            { uid },
+          );
+        }),
+      )
+      .execute();
+    if ((res.affected ?? 0) < 1) {
+      throw new NotFoundException(`${this.entityLabel} #${id} not found`);
+    }
+  }
+
+  async findScopedBy<K extends keyof TEntity>(
+    field: K,
+    value: TEntity[K],
+    userId: number,
+    options?: FindOneOptions<TEntity>,
+  ): Promise<TEntity> {
+    const uid = requireScopedUserId(userId);
+    const col = String(field);
+    const row = await this.repo
+      .createQueryBuilder('e')
+      .where(`e.${col} = :v`, { v: value })
+      .andWhere(
+        new Brackets((qb) => {
+          this.accessBracket(qb, uid, 'e');
+        }),
+      )
+      .getOne();
+    if (!row) {
+      throw new NotFoundException(`${this.entityLabel} not found`);
+    }
+    return row;
+  }
+
+  async saveScoped(entity: TEntity, userId: number): Promise<TEntity> {
+    const uid = requireScopedUserId(userId);
+    const e = entity as TEntity & {
+      id?: number;
+      userId?: number;
+      organizationId?: number | null;
+    };
+    const existingId =
+      e.id != null && Number.isFinite(Number(e.id)) && Number(e.id) >= 1
+        ? Math.trunc(Number(e.id))
+        : null;
+    if (existingId != null) {
+      await this.findScoped(existingId, uid);
+      return this.repo.save(entity);
+    }
+    const orgId = e.organizationId ?? null;
+    if (orgId != null) {
+      const member = await this.membershipRepo.findOne({
+        where: { userId: uid, organizationId: orgId },
+      });
+      if (!member) {
+        throw new NotFoundException(`${this.entityLabel}: organization not found`);
+      }
+    }
+    e.userId = uid;
+    return this.repo.save(entity);
   }
 }

@@ -1,6 +1,7 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { fetchOrganizationMembersSSR, fetchOrganizationSSR } from "@/lib/server-fetch";
 import { OrgManagementTabs } from "@/components/org/org-management-tabs";
+import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
 
 export default async function OrganizationManagementLayout({
   children,
@@ -13,6 +14,12 @@ export default async function OrganizationManagementLayout({
   const publicId = raw.trim();
   const org = await fetchOrganizationSSR(publicId);
   if (!org) notFound();
+  if (
+    !org.isOwner &&
+    !org.workspacePermissions[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT]
+  ) {
+    redirect(`/organizations/${encodeURIComponent(org.publicId)}/projects`);
+  }
 
   const members = await fetchOrganizationMembersSSR(org.publicId);
   const base = `/organizations/${encodeURIComponent(org.publicId)}`;

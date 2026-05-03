@@ -1381,7 +1381,10 @@ export default function ServiceDetails({
               transition={{ duration: 0.2 }}
               className="space-y-4"
             >
-              <ServiceRemoteHostPanel service={service} />
+              <ServiceRemoteHostPanel
+                service={service}
+                organizationPublicId={project?.organizationPublicId?.trim() || null}
+              />
             </motion.div>
           )}
 
@@ -1498,6 +1501,7 @@ export default function ServiceDetails({
                 isDatabaseService={isDatabaseService}
                 s3ImportSsr={s3ImportSsr}
                 initialS3Profiles={initialS3Profiles}
+                organizationPublicId={project?.organizationPublicId?.trim() || null}
               />
             </motion.div>
           )}
@@ -1780,12 +1784,14 @@ function ServiceBackupPanel({
   isDatabaseService,
   s3ImportSsr,
   initialS3Profiles,
+  organizationPublicId: s3OrganizationPublicIdProp,
 }: {
   serviceId: string;
   service: Service | null;
   isDatabaseService: boolean;
   s3ImportSsr?: ServiceS3ImportSsr | null;
   initialS3Profiles?: S3ProfilePublic[];
+  organizationPublicId?: string | null;
 }) {
   const { toast } = useToast();
   const router = useRouter();
@@ -1821,9 +1827,10 @@ function ServiceBackupPanel({
   const volumeBackupName = selectedVolume ? String(selectedVolume.hostVolumeName ?? selectedVolume.source).trim() : "";
 
   const [backupS3ProfileName, setBackupS3ProfileName] = useState("");
+  const s3OrganizationPublicId = s3OrganizationPublicIdProp?.trim() || null;
   const s3ProfilesQuery = useQuery({
-    queryKey: ["s3-profiles"],
-    queryFn: listS3ProfilesApi,
+    queryKey: ["s3-profiles", s3OrganizationPublicId ?? "personal"],
+    queryFn: () => listS3ProfilesApi(s3OrganizationPublicId),
     ...(initialS3Profiles !== undefined
       ? { initialData: initialS3Profiles, refetchOnMount: false }
       : {}),

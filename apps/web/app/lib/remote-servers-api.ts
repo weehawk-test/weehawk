@@ -34,8 +34,17 @@ function nestErrorMessage(text: string, fallback: string): string {
   return text.trim() || fallback;
 }
 
-export async function fetchRemoteServers(accessToken: string): Promise<RemoteServerRow[]> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers`, { method: "GET" });
+export async function fetchRemoteServers(
+  accessToken: string,
+  organizationPublicId?: string | null,
+): Promise<RemoteServerRow[]> {
+  const q =
+    organizationPublicId != null && String(organizationPublicId).trim() !== ""
+      ? `?organizationPublicId=${encodeURIComponent(String(organizationPublicId).trim())}`
+      : "";
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers${q}`, {
+    method: "GET",
+  });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -109,6 +118,7 @@ export async function createRemoteServerApi(
     serverRole?: RemoteServerRole;
     publicIpv4?: string;
     domainsJson?: string;
+    organizationPublicId?: string;
   },
 ): Promise<RemoteServerRow> {
   const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers`, {

@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpsertS3ProfileDto {
   @ApiProperty({ example: 'prod-backups' })
@@ -46,4 +46,12 @@ export class UpsertS3ProfileDto {
   @IsBoolean()
   @IsOptional()
   forcePathStyle?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Organization workspace (profiles shared with org members).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  organizationPublicId?: string;
 }
