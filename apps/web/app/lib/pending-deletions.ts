@@ -1,4 +1,4 @@
-type PendingDeletionEntity = "services" | "webhooks" | "cron-jobs";
+type PendingDeletionEntity = "services" | "webhooks" | "cron-jobs" | "docker-secrets";
 
 const KEY_PREFIX = "weehawk.pending-deletions.";
 
@@ -125,6 +125,11 @@ export function filterPendingDeletions<T>(
       return !n || !pending.has(n);
     }),
   );
+}
+
+/** Client-side: current pending IDs for an entity (localStorage / cookie). */
+export function readPendingDeletionSet(entity: PendingDeletionEntity): Set<string> {
+  return readPending(entity);
 }
 
 export function reconcileAndFilterPendingDeletions<T>(

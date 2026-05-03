@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -30,7 +30,7 @@ import {
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
-import { markPendingDeletion } from "@/lib/pending-deletions";
+import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -48,6 +48,9 @@ export function CronJobsClient({ initialJobs }: { initialJobs: CronJobListItem[]
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [jobs, setJobs] = useState<CronJobListItem[]>(initialJobs);
+  useLayoutEffect(() => {
+    setJobs(reconcileAndFilterPendingDeletions("cron-jobs", initialJobs, (j) => [j.id, j.publicId]));
+  }, [initialJobs]);
   const deleteCronJob = useDeleteCronJob();
   const updateCronJob = useUpdateCronJob();
   const { toast } = useToast();

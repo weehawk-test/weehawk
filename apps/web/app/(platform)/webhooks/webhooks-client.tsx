@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -17,9 +17,7 @@ import {
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
-import {
-  markPendingDeletion,
-} from "@/lib/pending-deletions";
+import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -37,6 +35,11 @@ export function WebhooksClient({ initialWebhooks }: { initialWebhooks: WebhookLi
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [webhooks, setWebhooks] = useState<WebhookListItem[]>(initialWebhooks);
+  useLayoutEffect(() => {
+    setWebhooks(
+      reconcileAndFilterPendingDeletions("webhooks", initialWebhooks, (w) => [w.id, w.publicId]),
+    );
+  }, [initialWebhooks]);
   const deleteWebhook = useDeleteWebhook();
   const { toast } = useToast();
   const confirm = useConfirm();

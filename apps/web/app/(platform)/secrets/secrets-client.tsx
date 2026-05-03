@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
@@ -40,7 +40,12 @@ import { ListPagination } from "@/components/docker/ListPagination";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
 import { deleteDockerSecretApi, type DockerSecretsRemoteServerId } from "@/lib/docker-secrets-api";
 import { formatSecretDate } from "@/lib/format-secret-date";
-import type { PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
+import { DOCKER_LIST_PAGE_SIZE, type PaginatedSecretsResponse } from "@/lib/docker-paged-fetch";
+import {
+  dockerSecretPendingId,
+  reconcileSecretsPageWithPendingDeletions,
+} from "@/lib/docker-secrets-pending";
+import { clearPendingDeletion, markPendingDeletion } from "@/lib/pending-deletions";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -52,17 +57,113 @@ import {
 } from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { UseMutationResult } from "@tanstack/react-query";
+
+function nameMatchesQuery(name: string, q: string): boolean {
+  const t = q.trim().toLowerCase();
+  if (!t) return true;
+  return name.toLowerCase().includes(t);
+}
+
+function optimisticAddSecret(
+  prev: PaginatedSecretsResponse | null,
+  name: string,
+  q: string,
+  pageSize: number,
+): PaginatedSecretsResponse | null {
+  const trimmed = name.trim();
+  const createdAt = new Date().toISOString();
+  const item: DockerSecretListItem = { id: `optimistic:${trimmed}`, name: trimmed, createdAt };
+
+  if (!prev) {
+    return {
+      items: [item],
+      total: 1,
+      totalAll: 1,
+      page: 1,
+      pageSize,
+    };
+  }
+
+  if (!nameMatchesQuery(trimmed, q)) {
+    return {
+      ...prev,
+      total: prev.total + 1,
+      totalAll: prev.totalAll + 1,
+    };
+  }
+
+  if (prev.page !== 1) {
+    return {
+      ...prev,
+      total: prev.total + 1,
+      totalAll: prev.totalAll + 1,
+    };
+  }
+
+  if (prev.items.some((s) => s.name === trimmed)) {
+    return prev;
+  }
+
+  const newItems = [item, ...prev.items];
+  if (newItems.length > pageSize) {
+    newItems.pop();
+  }
+  return {
+    ...prev,
+    items: newItems,
+    total: prev.total + 1,
+    totalAll: prev.totalAll + 1,
+  };
+}
+
+function optimisticRemoveByName(prev: PaginatedSecretsResponse | null, name: string): PaginatedSecretsResponse | null {
+  if (!prev) return prev;
+  const filtered = prev.items.filter((s) => s.name !== name);
+  const onPage = filtered.length < prev.items.length;
+  if (!onPage) {
+    return {
+      ...prev,
+      total: Math.max(0, prev.total - 1),
+      totalAll: Math.max(0, prev.totalAll - 1),
+    };
+  }
+  return {
+    ...prev,
+    items: filtered,
+    total: Math.max(0, prev.total - 1),
+    totalAll: Math.max(0, prev.totalAll - 1),
+  };
+}
+
+function rollbackOptimisticCreate(prev: PaginatedSecretsResponse | null, name: string): PaginatedSecretsResponse | null {
+  if (!prev) return prev;
+  const trimmed = name.trim();
+  const items = prev.items.filter((s) => !(s.name === trimmed && s.id.startsWith("optimistic:")));
+  return {
+    ...prev,
+    items,
+    total: Math.max(0, prev.total - 1),
+    totalAll: Math.max(0, prev.totalAll - 1),
+  };
+}
+
+type CreateSecretMutation = UseMutationResult<unknown, Error, CreateDockerSecretInput, unknown>;
+type ReplaceSecretMutation = UseMutationResult<unknown, Error, ReplaceDockerSecretInput, unknown>;
 
 function CreateSecretModal({
-  remoteServerId,
+  create,
+  onOptimisticCreate,
+  onRollbackCreate,
   onClose,
 }: {
-  remoteServerId: DockerSecretsRemoteServerId;
+  create: CreateSecretMutation;
+  onOptimisticCreate: (name: string) => void;
+  onRollbackCreate: (name: string) => void;
   onClose: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
   const router = useRouter();
-  const create = useCreateDockerSecret(remoteServerId);
   const { toast } = useToast();
   const {
     register,
@@ -73,13 +174,16 @@ function CreateSecretModal({
   });
 
   const onSubmit = (data: CreateDockerSecretInput) => {
+    const trimmed = data.name.trim();
+    onOptimisticCreate(trimmed);
+    onClose();
     create.mutate(data, {
       onSuccess: () => {
-        toast({ title: "Secret created", description: `Docker secret "${data.name}" was created in Swarm.` });
+        toast({ title: "Secret created", description: `Docker secret "${trimmed}" was created in Swarm.` });
         router.refresh();
-        onClose();
       },
       onError: (e: Error) => {
+        onRollbackCreate(trimmed);
         toast({ title: "Failed", description: e.message, variant: "destructive" });
       },
     });
@@ -114,7 +218,7 @@ function CreateSecretModal({
           <h2 className="text-2xl font-bold">New Docker secret</h2>
         </div>
         <p className="text-muted-foreground text-sm mb-6">
-          Creates a secret on remote server #{remoteServerId} (Swarm manager over SSH). The value is sent once and cannot be read back from Docker.
+          Creates a secret on the selected Swarm manager over SSH. The value is sent once and cannot be read back from Docker.
         </p>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 relative z-10">
@@ -145,14 +249,8 @@ function CreateSecretModal({
             <button type="button" onClick={onClose} className="btn-secondary">
               Cancel
             </button>
-            <button type="submit" disabled={create.isPending} className="btn-primary flex items-center gap-2">
-              {create.isPending ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" /> Creating…
-                </>
-              ) : (
-                "Create secret"
-              )}
+            <button type="submit" className="btn-primary flex items-center gap-2">
+              Create secret
             </button>
           </div>
         </form>
@@ -163,16 +261,15 @@ function CreateSecretModal({
 }
 
 function EditSecretModal({
-  remoteServerId,
+  replace,
   secret,
   onClose,
 }: {
-  remoteServerId: DockerSecretsRemoteServerId;
+  replace: ReplaceSecretMutation;
   secret: DockerSecretListItem;
   onClose: () => void;
 }) {
   const router = useRouter();
-  const replace = useReplaceDockerSecret(remoteServerId);
   const { toast } = useToast();
   const {
     register,
@@ -184,16 +281,17 @@ function EditSecretModal({
   });
 
   const onSubmit = (data: ReplaceDockerSecretInput) => {
+    const name = data.name.trim();
+    toast({
+      title: "Secret updated",
+      description: `Secret "${name}" was replaced (removed and recreated with the new value).`,
+    });
+    onClose();
     replace.mutate(
       { name: data.name, value: data.value },
       {
         onSuccess: () => {
-          toast({
-            title: "Secret updated",
-            description: `Secret "${data.name}" was replaced (removed and recreated with the new value).`,
-          });
-          router.refresh();
-          onClose();
+          void router.refresh();
         },
         onError: (e: Error) => {
           toast({ title: "Failed", description: e.message, variant: "destructive" });
@@ -240,14 +338,8 @@ function EditSecretModal({
             <button type="button" onClick={onClose} className="btn-secondary">
               Cancel
             </button>
-            <button type="submit" disabled={replace.isPending} className="btn-primary flex items-center gap-2">
-              {replace.isPending ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" /> Replacing…
-                </>
-              ) : (
-                "Replace secret"
-              )}
+            <button type="submit" className="btn-primary flex items-center gap-2">
+              Replace secret
             </button>
           </div>
         </form>
@@ -318,24 +410,28 @@ function BulkImportPanel({
 }
 
 function SecretRow({
-  remoteServerId,
   secret,
   onEdit,
   onForceDelete,
   selected,
   onToggleSelect,
+  deleteMutate,
+  deletingName,
+  onOptimisticDelete,
 }: {
-  remoteServerId: DockerSecretsRemoteServerId;
   secret: DockerSecretListItem;
   onEdit: (s: DockerSecretListItem) => void;
   onForceDelete: (s: DockerSecretListItem) => void;
   selected: boolean;
   onToggleSelect: () => void;
+  deleteMutate: ReturnType<typeof useDeleteDockerSecret>["mutate"];
+  deletingName: string | null;
+  onOptimisticDelete: (name: string) => void;
 }) {
   const router = useRouter();
-  const deleteSecret = useDeleteDockerSecret(remoteServerId);
   const { toast } = useToast();
   const confirm = useConfirm();
+  const rowDeleting = deletingName === secret.name;
 
   const handleDelete = async () => {
     const ok = await confirm({
@@ -345,12 +441,16 @@ function SecretRow({
       variant: "destructive",
     });
     if (!ok) return;
-    deleteSecret.mutate(secret.name, {
+    toast({ title: "Secret deleted", description: secret.name });
+    onOptimisticDelete(secret.name);
+    deleteMutate(secret.name, {
       onSuccess: () => {
-        toast({ title: "Secret deleted", description: secret.name });
-        router.refresh();
+        void router.refresh();
       },
-      onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+      onError: (e: Error) => {
+        void router.refresh();
+        toast({ title: "Failed", description: e.message, variant: "destructive" });
+      },
     });
   };
 
@@ -388,7 +488,7 @@ function SecretRow({
           <button
             type="button"
             onClick={() => onForceDelete(secret)}
-            disabled={deleteSecret.isPending}
+            disabled={rowDeleting}
             className="p-1.5 rounded-md hover:bg-amber-500/15 text-muted-foreground hover:text-amber-500 transition-colors"
             title="Force delete"
           >
@@ -397,7 +497,7 @@ function SecretRow({
           <button
             type="button"
             onClick={handleDelete}
-            disabled={deleteSecret.isPending}
+            disabled={rowDeleting}
             className="p-1.5 rounded-md hover:bg-destructive/20 text-destructive transition-colors"
             title="Delete"
           >
@@ -425,17 +525,39 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
   const [bulkPending, setBulkPending] = useState(false);
   const [forceDialog, setForceDialog] = useState<DockerSecretListItem | null>(null);
   const [forcePending, setForcePending] = useState(false);
+  const createMutation = useCreateDockerSecret(remoteServerId);
+  const replaceMutation = useReplaceDockerSecret(remoteServerId);
+  const deleteMutation = useDeleteDockerSecret(remoteServerId);
+  const deletingName =
+    deleteMutation.isPending && typeof deleteMutation.variables === "string" ? deleteMutation.variables : null;
   const listUrlPersistent = useMemo(() => ({ server: String(remoteServerId) }), [remoteServerId]);
-  const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ, listUrlPersistent);
+  const { q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ, listUrlPersistent);
   const { toast } = useToast();
   const confirm = useConfirm();
   const [liveData, setLiveData] = useState<PaginatedSecretsResponse | null>(data);
   const [liveError, setLiveError] = useState<string | null>(error);
 
+  const onOptimisticCreate = useCallback((name: string) => {
+    setLiveData((prev) => optimisticAddSecret(prev, name, q, DOCKER_LIST_PAGE_SIZE));
+    setLiveError(null);
+  }, [q]);
+
+  const onRollbackCreate = useCallback((name: string) => {
+    setLiveData((prev) => rollbackOptimisticCreate(prev, name));
+  }, []);
+
+  const onOptimisticDelete = useCallback((name: string) => {
+    setLiveData((prev) => optimisticRemoveByName(prev, name));
+  }, []);
+
   useEffect(() => {
-    setLiveData(data);
     setLiveError(error);
-  }, [data, error, urlPage, urlQ]);
+    if (data == null) {
+      setLiveData(null);
+      return;
+    }
+    setLiveData(reconcileSecretsPageWithPendingDeletions(data, remoteServerId));
+  }, [data, error, urlPage, urlQ, remoteServerId]);
 
   const currentData = liveData;
   const items = currentData?.items ?? [];
@@ -460,34 +582,54 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
     });
     if (!confirmed) return;
     setBulkPending(true);
+    markPendingDeletion(
+      "docker-secrets",
+      ...names.map((n) => dockerSecretPendingId(remoteServerId, n)),
+    );
+    setLiveData((prev) => names.reduce((acc, n) => optimisticRemoveByName(acc, n), prev));
+    bulk.clear();
+    toast({
+      title: "Secrets deleted",
+      description: `${names.length} secret(s) removed.`,
+    });
     const results = await Promise.allSettled(names.map((n) => deleteDockerSecretApi(remoteServerId, n)));
+    names.forEach((n, i) => {
+      if (results[i]?.status === "rejected") {
+        clearPendingDeletion("docker-secrets", dockerSecretPendingId(remoteServerId, n));
+      }
+    });
     setBulkPending(false);
     const removed = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - removed;
-    bulk.clear();
-    router.refresh();
-    toast({
-      title: "Bulk delete finished",
-      description: `${removed} removed${fail ? `, ${fail} failed` : ""}.`,
-      variant: fail ? "destructive" : "default",
-    });
+    void router.refresh();
+    if (fail > 0) {
+      toast({
+        title: "Some deletes failed",
+        description: `${removed} removed, ${fail} failed.`,
+        variant: "destructive",
+      });
+    }
   };
 
   const runForceDelete = async () => {
     if (!forceDialog) return;
+    const name = forceDialog.name;
+    markPendingDeletion("docker-secrets", dockerSecretPendingId(remoteServerId, name));
+    onOptimisticDelete(name);
+    setForceDialog(null);
+    toast({ title: "Secret deleted (force)", description: name });
     setForcePending(true);
     try {
-      await deleteDockerSecretApi(remoteServerId, forceDialog.name, true);
-      toast({ title: "Secret deleted (force)", description: forceDialog.name });
-      setForceDialog(null);
-      router.refresh();
+      await deleteDockerSecretApi(remoteServerId, name, true);
+      void router.refresh();
     } catch (e) {
+      clearPendingDeletion("docker-secrets", dockerSecretPendingId(remoteServerId, name));
+      void router.refresh();
       toast({
         title: "Failed",
         description: e instanceof Error ? e.message : String(e),
         variant: "destructive",
       });
-      setForceDialog(null);
     } finally {
       setForcePending(false);
     }
@@ -496,9 +638,16 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
   return (
     <>
       <AnimatePresence>
-        {showCreate && <CreateSecretModal remoteServerId={remoteServerId} onClose={() => setShowCreate(false)} />}
+        {showCreate && (
+          <CreateSecretModal
+            create={createMutation}
+            onOptimisticCreate={onOptimisticCreate}
+            onRollbackCreate={onRollbackCreate}
+            onClose={() => setShowCreate(false)}
+          />
+        )}
         {editing && (
-          <EditSecretModal remoteServerId={remoteServerId} secret={editing} onClose={() => setEditing(null)} />
+          <EditSecretModal replace={replaceMutation} secret={editing} onClose={() => setEditing(null)} />
         )}
       </AnimatePresence>
 
@@ -612,12 +761,14 @@ export function DockerSecretsClient({ remoteServerId, data, error, urlPage, urlQ
               {items.map((secret) => (
                 <SecretRow
                   key={`${secret.id}-${secret.name}`}
-                  remoteServerId={remoteServerId}
                   secret={secret}
                   onEdit={setEditing}
                   onForceDelete={setForceDialog}
                   selected={bulk.selected.has(secret.name)}
                   onToggleSelect={() => bulk.toggle(secret.name)}
+                  deleteMutate={deleteMutation.mutate}
+                  deletingName={deletingName}
+                  onOptimisticDelete={onOptimisticDelete}
                 />
               ))}
             </tbody>

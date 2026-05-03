@@ -10,6 +10,8 @@ import {
   type DockerSecretsRemoteServerId,
 } from "@/lib/docker-secrets-api";
 import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
+import { clearPendingDeletion, markPendingDeletion } from "@/lib/pending-deletions";
+import { dockerSecretPendingId } from "@/lib/docker-secrets-pending";
 
 function secretsRemoteEnabled(id: DockerSecretsRemoteServerId | null): id is DockerSecretsRemoteServerId {
   if (id == null) return false;
@@ -93,6 +95,15 @@ export function useDeleteDockerSecret(remoteServerId: DockerSecretsRemoteServerI
     mutationFn: (name: string) => {
       if (remoteServerId == null) throw new Error("remoteServerId is required");
       return deleteDockerSecretApi(remoteServerId, name);
+    },
+    onMutate: (name) => {
+      if (remoteServerId == null) return {};
+      const pendingId = dockerSecretPendingId(remoteServerId, name);
+      markPendingDeletion("docker-secrets", pendingId);
+      return { pendingId };
+    },
+    onError: (_err, _name, ctx) => {
+      if (ctx?.pendingId) clearPendingDeletion("docker-secrets", ctx.pendingId);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["docker-secrets"] });
