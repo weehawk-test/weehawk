@@ -18,12 +18,12 @@ export function OrgWorkspaceProvider({
 export function useOrgWorkspace(): OrganizationPublic {
   const v = useContext(OrgWorkspaceContext);
   if (!v) {
-    throw new Error("useOrgWorkspace must be used inside an organization layout");
+    throw new Error("useOrgWorkspace must be used inside OrgWorkspaceProvider");
   }
   return v;
 }
 
-/** Same context as {@link useOrgWorkspace} but returns null on personal account routes. */
+/** Returns null on routes outside the org workspace shell (e.g. profile, docker console). */
 export function useOptionalOrgWorkspace(): OrganizationPublic | null {
   return useContext(OrgWorkspaceContext);
 }

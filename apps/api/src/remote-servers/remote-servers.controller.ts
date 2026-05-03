@@ -22,6 +22,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
+import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
 import { RemoteServersService } from './remote-servers.service';
 import { RemoteServerProvisionService } from './remote-server-provision.service';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
@@ -52,17 +53,16 @@ export class RemoteServersController {
   @ApiOperation({ summary: 'List SSH / Docker remote hosts' })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: false,
-    description:
-      'When set, list remote servers for this organization (membership required). Omit for personal-account servers only.',
+    required: true,
+    description: 'List remote servers for this organization (membership required).',
   })
   list(
-    @Query('organizationPublicId') organizationPublicId: string | undefined,
+    @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
     return this.remoteServersService.findAll(
       this.uid(req),
-      organizationPublicId,
+      parseOrganizationPublicIdParam(organizationPublicId),
     );
   }
 
@@ -89,7 +89,14 @@ export class RemoteServersController {
     description: 'deploy (default) or build',
     enum: ['deploy', 'build'],
   })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: true,
+    description:
+      'Organization workspace; ACME email in the script comes from that org’s Traefik settings.',
+  })
   getProvisionScript(
+    @Query('organizationPublicId') organizationPublicId: string,
     @Query('role') role?: string,
     @Req() req?: { user?: { userId: number } },
   ) {
@@ -97,6 +104,7 @@ export class RemoteServersController {
     return this.remoteServerProvisionService.getProvisionScriptPreview(
       r,
       this.uid(req),
+      organizationPublicId,
     );
   }
 

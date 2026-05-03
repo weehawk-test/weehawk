@@ -17,7 +17,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { createProjectSchema, CreateProjectInput } from "@/lib/schema";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsProjectAdd,
   orgMemberAllowsProjectDelete,
@@ -170,10 +170,7 @@ export default function ProjectsClient({
   const [showCreate, setShowCreate] = useState(false);
   const [serverError, setServerError] = useState<string | null>(initialError ?? null);
 
-  const projectDetailBasePath =
-    organizationPublicId?.trim() != null && organizationPublicId.trim() !== ""
-      ? `/organizations/${encodeURIComponent(organizationPublicId.trim())}/projects`
-      : "/projects";
+  const projectDetailBasePath = "/projects";
 
   const inOrgProjects =
     organizationPublicId != null && String(organizationPublicId).trim() !== "";

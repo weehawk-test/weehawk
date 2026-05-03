@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, UserPlus } from "lucide-react";
 import type { OrganizationMemberPublic } from "@/lib/organizations-types";
 import { inviteOrganizationMember, setOrganizationMemberRole } from "@/lib/organizations-api";
-import { useOrgWorkspace } from "../../org-workspace-context";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import { orgMemberAllowsOrgManagementMembers } from "@/lib/org-workspace-permissions";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";

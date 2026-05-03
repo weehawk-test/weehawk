@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Brackets, IsNull, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -13,6 +13,7 @@ import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
 
 @Injectable()
 export class ProjectsService {
@@ -48,30 +49,25 @@ export class ProjectsService {
   }
 
   async create(createProjectDto: CreateProjectDto, userId: number) {
-    let organizationId: number | null = null;
-    const rawOrg = createProjectDto.organizationPublicId?.trim();
-    if (rawOrg) {
-      const ctx = await this.organizationsService.requireMemberContext(
-        rawOrg,
-        userId,
-        {
-          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
-        },
-      );
-      organizationId = ctx.internalId;
-      await this.organizationsService.assertMemberCanAddOrgProject(
-        userId,
-        organizationId,
-      );
-    }
+    const orgRaw = parseOrganizationPublicIdParam(
+      createProjectDto.organizationPublicId,
+    );
+    const ctx = await this.organizationsService.requireMemberContext(
+      orgRaw,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+      },
+    );
+    const organizationId = ctx.internalId;
+    await this.organizationsService.assertMemberCanAddOrgProject(
+      userId,
+      organizationId,
+    );
 
     const nameTrim = createProjectDto.name.trim();
-    const dupWhere =
-      organizationId === null
-        ? { userId, name: nameTrim, organizationId: IsNull() }
-        : { organizationId, name: nameTrim };
     const existingDup = await this.projectRepository.findOne({
-      where: dupWhere,
+      where: { organizationId, name: nameTrim },
     });
     if (existingDup) {
       throw new ConflictException('Project name already exists');
@@ -85,55 +81,6 @@ export class ProjectsService {
       organizationId,
     });
     return await this.scopedProjects.saveScoped(project, userId);
-  }
-
-  async findAllPaginated(
-    page: number,
-    limit: number,
-    q: string | undefined,
-    userId: number,
-  ) {
-    const safePage = Math.max(1, Math.floor(page) || 1);
-    const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 9));
-    const trimmed = (q ?? '').trim().toLowerCase();
-
-    const countQb = this.projectRepository
-      .createQueryBuilder('project')
-      .where('project.userId = :userId', { userId })
-      .andWhere('project.organizationId IS NULL');
-    if (trimmed) {
-      countQb.andWhere(
-        "(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, '')) LIKE :q)",
-        { q: `%${trimmed}%` },
-      );
-    }
-    const total = await countQb.getCount();
-
-    const dataQb = this.projectRepository
-      .createQueryBuilder('project')
-      .where('project.userId = :userId', { userId })
-      .andWhere('project.organizationId IS NULL')
-      .loadRelationCountAndMap('project.serviceCount', 'project.services');
-
-    if (trimmed) {
-      dataQb.andWhere(
-        "(LOWER(project.name) LIKE :q OR LOWER(COALESCE(project.description, '')) LIKE :q)",
-        { q: `%${trimmed}%` },
-      );
-    }
-
-    const data = await dataQb
-      .orderBy('project.createdAt', 'DESC')
-      .skip((safePage - 1) * safeLimit)
-      .take(safeLimit)
-      .getMany();
-
-    return {
-      data: await this.ensureProjectPublicIds(data),
-      total,
-      page: safePage,
-      limit: safeLimit,
-    };
   }
 
   async findAllPaginatedForOrganization(
@@ -187,9 +134,7 @@ export class ProjectsService {
     };
   }
 
-  /**
-   * Resolves a numeric DB id for users who can access the project (owner of a personal project or org member).
-   */
+  /** Resolves a numeric DB id for users who are members of the project's organization. */
   async findByInternalIdForUser(
     projectId: number,
     userId: number,
@@ -202,15 +147,8 @@ export class ProjectsService {
       .createQueryBuilder('project')
       .where('project.id = :id', { id })
       .andWhere(
-        new Brackets((qb) => {
-          qb.where(
-            '(project.userId = :uid AND project.organizationId IS NULL)',
-            { uid: userId },
-          ).orWhere(
-            'project.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
-            { uid: userId },
-          );
-        }),
+        'project.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+        { uid: userId },
       )
       .getOne();
     if (!project) {
@@ -236,15 +174,8 @@ export class ProjectsService {
       .leftJoinAndSelect('project.services', 'services')
       .where('project.publicId = :pid', { pid: trimmed })
       .andWhere(
-        new Brackets((qb) => {
-          qb.where(
-            '(project.userId = :uid AND project.organizationId IS NULL)',
-            { uid: userId },
-          ).orWhere(
-            'project.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
-            { uid: userId },
-          );
-        }),
+        'project.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+        { uid: userId },
       )
       .getOne();
     if (!project) {
@@ -262,23 +193,15 @@ export class ProjectsService {
     userId: number,
     organizationPublicId: string | null | undefined,
   ): Promise<void> {
-    const orgRaw =
-      organizationPublicId != null &&
-      String(organizationPublicId).trim() !== ''
-        ? String(organizationPublicId).trim()
-        : null;
-    if (orgRaw) {
-      const ctx = await this.organizationsService.requireMemberContext(
-        orgRaw,
-        userId,
-        {
-          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
-        },
-      );
-      if (project.organizationId !== ctx.internalId) {
-        throw new NotFoundException('Project not found');
-      }
-    } else if (project.organizationId != null) {
+    const orgRaw = parseOrganizationPublicIdParam(organizationPublicId);
+    const ctx = await this.organizationsService.requireMemberContext(
+      orgRaw,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+      },
+    );
+    if (project.organizationId !== ctx.internalId) {
       throw new NotFoundException('Project not found');
     }
   }
@@ -291,10 +214,7 @@ export class ProjectsService {
   ) {
     const project = await this.findOne(idOrPublicId, userId);
     await this.assertProjectFitsRoute(project, userId, organizationPublicId);
-    if (
-      options?.requireOrgProjectView === true &&
-      project.organizationId != null
-    ) {
+    if (options?.requireOrgProjectView === true) {
       await this.organizationsService.assertMemberCanViewOrgProject(
         userId,
         project.organizationId,
@@ -329,12 +249,10 @@ export class ProjectsService {
       userId,
       organizationPublicId,
     );
-    if (project.organizationId != null) {
-      await this.organizationsService.assertMemberCanDeleteOrgProject(
-        userId,
-        project.organizationId,
-      );
-    }
+    await this.organizationsService.assertMemberCanDeleteOrgProject(
+      userId,
+      project.organizationId,
+    );
     const services = project.services ?? [];
     if (services.length > 0) {
       throw new ConflictException(

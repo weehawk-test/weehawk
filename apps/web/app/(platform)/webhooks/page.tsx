@@ -1,5 +1,8 @@
 import { fetchWebhooksSSR } from "@/lib/server-fetch";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { WebhooksClient } from "./webhooks-client";
+
+export const dynamic = "force-dynamic";
 
 export async function WebhooksPageInner({
   organizationPublicId,
@@ -16,5 +19,6 @@ export async function WebhooksPageInner({
 }
 
 export default async function Page() {
-  return WebhooksPageInner({});
+  const orgPid = await getServerActiveOrganizationPublicId();
+  return WebhooksPageInner({ organizationPublicId: orgPid ?? undefined });
 }

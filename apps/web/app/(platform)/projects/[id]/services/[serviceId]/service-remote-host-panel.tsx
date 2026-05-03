@@ -26,7 +26,8 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 
 /** Keep in sync with `WEEHAWK_REMOTE_DEPLOYMENTS_BASE` in apps/api remote-servers.service. */
 const REMOTE_DEPLOYMENTS_DIR = "/opt/weehawk-deployments";
@@ -133,7 +134,8 @@ export function ServiceRemoteHostPanel({
   const orgWorkspace = useOptionalOrgWorkspace();
   const organizationPublicId =
     organizationPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
-  const remoteServersQueryKey = ["remote-servers", organizationPublicId || "personal"] as const;
+  const remoteOrgSegment = orgScopedQuerySegment(organizationPublicId);
+  const remoteServersQueryKey = ["remote-servers", remoteOrgSegment] as const;
   const isApplication = service.type === "application";
 
   /** Pre-built image deploy skips `docker build`; build host is ignored by the server. */
@@ -152,14 +154,15 @@ export function ServiceRemoteHostPanel({
     enabled: Boolean(accessToken),
   });
 
+  const orgForWebhooks = organizationPublicId?.trim() ?? "";
   const webhooksQ = useQuery({
-    queryKey: ["webhooks", organizationPublicId ?? "personal", { includeHidden: true }],
+    queryKey: ["webhooks", orgForWebhooks, { includeHidden: true }],
     queryFn: () =>
       fetchWebhooks(accessToken!, {
         includeHidden: true,
-        organizationPublicId,
+        organizationPublicId: orgForWebhooks,
       }),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && Boolean(orgForWebhooks),
   });
 
   const [value, setValue] = useState<string>(() =>
@@ -423,6 +426,15 @@ export function ServiceRemoteHostPanel({
 
       let extra = "";
       if (wantRedeployWebhookChain && accessToken && deployServerIdNum != null) {
+        if (!orgForWebhooks) {
+          toast({
+            title: "Organization required",
+            description:
+              "On-host redeploy webhooks are scoped to an organization. Use an organization project to enable this.",
+            variant: "destructive",
+          });
+          return;
+        }
         const parentHost = webhookPublicHost.trim();
         try {
           await syncRemoteDeploymentMirrorApi(serviceRouteId(service));
@@ -435,7 +447,7 @@ export function ServiceRemoteHostPanel({
             remoteServerId: deployServerIdNum,
             hooksPublicHost: parentHost,
             hiddenFromWebhooksList: true,
-            ...(organizationPublicId ? { organizationPublicId } : {}),
+            organizationPublicId: orgForWebhooks,
           });
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
           await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -455,13 +467,21 @@ export function ServiceRemoteHostPanel({
       ) {
         const parentHost = webhookPublicHost.trim();
         try {
+          if (!orgForWebhooks) {
+            toast({
+              title: "Organization required",
+              description: "Webhook updates require an organization workspace.",
+              variant: "destructive",
+            });
+            return;
+          }
           const outer = await updateWebhook(
             accessToken,
             webhookRouteId(webhookRowForBaseline),
             {
               hooksPublicHost: parentHost,
             },
-            organizationPublicId,
+            orgForWebhooks,
           );
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
           await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -495,6 +515,14 @@ export function ServiceRemoteHostPanel({
 
   const regenerateRedeployWebhook = async () => {
     if (!accessToken) return;
+    if (!orgForWebhooks) {
+      toast({
+        title: "Organization required",
+        description: "Redeploy webhooks require an organization workspace.",
+        variant: "destructive",
+      });
+      return;
+    }
     const hit = redeployWebhookRow;
     if (!hit) {
       toast({
@@ -534,11 +562,11 @@ export function ServiceRemoteHostPanel({
         remoteServerId: deployServerIdNum,
         hooksPublicHost: parentHost,
         hiddenFromWebhooksList: true,
-        ...(organizationPublicId ? { organizationPublicId } : {}),
+        organizationPublicId: orgForWebhooks,
       });
       let deleteProblem = "";
       try {
-        await deleteWebhook(accessToken, oldId, organizationPublicId);
+        await deleteWebhook(accessToken, oldId, orgForWebhooks);
       } catch (delErr) {
         deleteProblem = (delErr as Error).message;
       }

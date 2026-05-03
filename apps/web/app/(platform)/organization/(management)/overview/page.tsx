@@ -2,17 +2,14 @@ import Link from "next/link";
 import { FolderKanban, Users } from "lucide-react";
 import { fetchOrganizationProjectsSSR, fetchOrganizationSSR } from "@/lib/server-fetch";
 import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
-import { requireOrgManagementTab } from "@/lib/org-management-page-guard";
+import { requireOrgManagementTabForActiveOrg } from "@/lib/org-management-page-guard";
+import { ORGANIZATION_MANAGEMENT_BASE } from "@/lib/org-nav-utils";
 
-type PageProps = {
-  params: Promise<{ publicId: string }>;
-};
-
-export default async function OrganizationOverviewPage({ params }: PageProps) {
-  const { publicId: raw } = await params;
-  const publicId = raw.trim();
-  await requireOrgManagementTab(publicId, ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW);
-  const base = `/organizations/${encodeURIComponent(publicId)}`;
+export default async function OrganizationOverviewPage() {
+  const publicId = await requireOrgManagementTabForActiveOrg(
+    ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW,
+  );
+  const base = ORGANIZATION_MANAGEMENT_BASE;
   const [org, projects] = await Promise.all([
     fetchOrganizationSSR(publicId),
     fetchOrganizationProjectsSSR(publicId),
@@ -22,13 +19,13 @@ export default async function OrganizationOverviewPage({ params }: PageProps) {
   return (
     <div className="space-y-8">
       <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-        Manage membership, audit, access roles, and settings from the tabs above. Technical work (projects, servers,
-        integrations) uses the same sidebar as your personal account, scoped to this organization where supported.
+        Manage membership, audit, access roles, and settings from the tabs above. Projects, servers, and integrations
+        use the main sidebar and are scoped to this organization.
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Link
-          href={`${base}/projects`}
+          href="/projects"
           className="group rounded-2xl border border-border/80 bg-card/30 p-5 transition-colors hover:border-primary/40 hover:bg-card/50"
         >
           <div className="flex items-center gap-3">
@@ -59,14 +56,6 @@ export default async function OrganizationOverviewPage({ params }: PageProps) {
           <p className="mt-3 text-xs text-muted-foreground">Invite people and manage who can access this workspace.</p>
         </Link>
       </div>
-
-      <p className="text-sm text-muted-foreground">
-        Personal resources are unchanged — switch back from the sidebar via{" "}
-        <Link href="/" className="font-medium text-primary hover:underline">
-          Personal account
-        </Link>
-        .
-      </p>
     </div>
   );
 }

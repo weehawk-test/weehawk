@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TraefikSettings } from './entities/traefik-settings.entity';
@@ -8,45 +12,73 @@ import {
   WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH,
   WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
 } from './traefik.constants';
+import { OrganizationsService } from '../organizations/organizations.service';
 
 @Injectable()
 export class TraefikService {
   constructor(
     @InjectRepository(TraefikSettings)
     private readonly repo: Repository<TraefikSettings>,
+    private readonly organizationsService: OrganizationsService,
   ) {}
 
-  // SYSTEM-LEVEL BYPASS: Required for tenant-keyed Traefik settings row reads.
   private async _internal_system_findOneTraefik(
     options: Parameters<Repository<TraefikSettings>['findOne']>[0],
   ): Promise<TraefikSettings | null> {
     return this.repo.findOne(options);
   }
 
-  // SYSTEM-LEVEL BYPASS: Required for tenant-keyed Traefik settings row writes.
   private async _internal_system_saveTraefik(
     row: TraefikSettings,
   ): Promise<TraefikSettings> {
     return this.repo.save(row);
   }
 
-  private requireTraefikUserId(userId: unknown): number {
-    const n = typeof userId === 'number' ? userId : Number(userId);
-    if (!Number.isFinite(n) || n < 1) {
-      throw new InternalServerErrorException(
-        'Traefik settings require a valid user id (signed-in account).',
+  /**
+   * Resolves the internal organization id used for Traefik / ACME rows.
+   * Prefer an explicit org on the resource (project / remote server); otherwise first org the user belongs to.
+   */
+  async resolveOrganizationInternalIdForTraefik(
+    organizationInternalId: number | null | undefined,
+    userId: number,
+  ): Promise<number> {
+    const uid =
+      typeof userId === 'number' && Number.isFinite(userId) && userId >= 1
+        ? Math.trunc(userId)
+        : 0;
+    if (uid < 1) {
+      throw new InternalServerErrorException('Valid user id required for Traefik tenant.');
+    }
+    if (
+      organizationInternalId != null &&
+      Number.isFinite(organizationInternalId) &&
+      organizationInternalId >= 1
+    ) {
+      return Math.trunc(organizationInternalId);
+    }
+    const first =
+      await this.organizationsService.getFirstOrganizationInternalIdForUser(uid);
+    if (first == null) {
+      throw new BadRequestException(
+        'No organization is available for Traefik settings. Create or join an organization first.',
       );
     }
-    return Math.trunc(n);
+    return first;
   }
 
-  async getSettings(userId: number): Promise<TraefikSettings> {
-    const uid = this.requireTraefikUserId(userId);
-    let row = await this._internal_system_findOneTraefik({ where: { userId: uid } });
+  async getSettingsForOrganization(
+    organizationInternalId: number,
+  ): Promise<TraefikSettings> {
+    const oid = Math.trunc(organizationInternalId);
+    if (oid < 1) {
+      throw new BadRequestException('Invalid organization for Traefik settings.');
+    }
+    let row = await this._internal_system_findOneTraefik({
+      where: { organizationId: oid },
+    });
     if (!row) {
       row = this.repo.create({
-        id: uid,
-        userId: uid,
+        organizationId: oid,
         acmeEmail: 'admin@example.com',
         platformDomain: null,
         acmeStorageHostPath: '/var/www/weehawk/traefik/data/acme.json',
@@ -68,11 +100,11 @@ export class TraefikService {
     return row;
   }
 
-  async updateSettings(
-    userId: number,
+  async updateSettingsForOrganization(
+    organizationInternalId: number,
     dto: UpdateTraefikSettingsDto,
   ): Promise<TraefikSettings> {
-    const current = await this.getSettings(userId);
+    const current = await this.getSettingsForOrganization(organizationInternalId);
     if (dto.acmeEmail !== undefined) current.acmeEmail = dto.acmeEmail.trim();
     if (dto.platformDomain !== undefined) {
       const t = dto.platformDomain.trim();
@@ -259,8 +291,8 @@ providers:
 `;
   }
 
-  async getResponsePayload(userId: number) {
-    const s = await this.getSettings(userId);
+  async getResponsePayloadForOrganization(organizationInternalId: number) {
+    const s = await this.getSettingsForOrganization(organizationInternalId);
     return {
       ...this.toPlain(s),
       generatedStackCompose: this.buildStackComposeYaml(s),
@@ -272,6 +304,7 @@ providers:
   private toPlain(s: TraefikSettings) {
     return {
       id: s.id,
+      organizationId: s.organizationId,
       acmeEmail: s.acmeEmail,
       platformDomain: s.platformDomain,
       acmeStorageHostPath: s.acmeStorageHostPath,

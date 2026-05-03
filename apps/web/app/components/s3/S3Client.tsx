@@ -16,12 +16,13 @@ import {
   saveS3ProfileApi,
   s3ProfileRouteId,
   testS3ConnectionApi,
+  type S3ProfileFormState,
   type S3ProfilePayload,
   type S3ProfilePublic,
 } from "@/lib/s3-api";
 import { fetchRemoteServers, type RemoteServerRow } from "@/lib/remote-servers-api";
 import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsS3Add,
   orgMemberAllowsS3Browse,
@@ -95,10 +96,7 @@ export function S3Client({
   organizationPublicId?: string | null;
 }) {
   const orgTrim = organizationPublicId?.trim();
-  const s3BasePath =
-    orgTrim != null && orgTrim !== ""
-      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
-      : "/s3";
+  const s3BasePath = "/s3";
   const inOrgS3 = orgTrim != null && orgTrim !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
   const allowS3Browse =
@@ -123,7 +121,7 @@ export function S3Client({
   const [deployServersForTest, setDeployServersForTest] = useState<RemoteServerRow[]>([]);
   const [deletingName, setDeletingName] = useState<string | null>(null);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
-  const [form, setForm] = useState<Omit<S3ProfilePayload, "forcePathStyle">>({
+  const [form, setForm] = useState<S3ProfileFormState>({
     name: "",
     endpoint: "",
     region: "us-east-1",
@@ -163,6 +161,7 @@ export function S3Client({
   }, [isAddOpen, accessToken, organizationPublicId]);
 
   const canSubmit = useMemo(() => {
+    if (!orgTrim) return false;
     const base =
       form.name.trim() &&
       form.endpoint.trim() &&
@@ -172,7 +171,7 @@ export function S3Client({
     if (!base) return false;
     if (!(form.secretAccessKey ?? "").trim()) return false;
     return true;
-  }, [form]);
+  }, [form, orgTrim]);
 
   const filtered = profiles.filter((p) => {
     const q = search.toLowerCase().trim();
@@ -187,6 +186,10 @@ export function S3Client({
   const profilesBulk = useBulkSelection(profileKeys);
 
   const loadProfiles = async () => {
+    if (!orgTrim) {
+      setProfiles([]);
+      return;
+    }
     setLoading(true);
     try {
       const list = await listS3ProfilesApi(organizationPublicId);
@@ -228,10 +231,10 @@ export function S3Client({
     }));
   };
 
-  const payloadForApi = useMemo((): S3ProfilePayload => {
+  const payloadForApi = useMemo((): S3ProfilePayload | null => {
+    if (!orgTrim) return null;
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
     const secret = (form.secretAccessKey ?? "").trim();
-    const o = organizationPublicId?.trim();
     return {
       name: form.name.trim(),
       endpoint: form.endpoint.trim(),
@@ -240,12 +243,12 @@ export function S3Client({
       accessKeyId: form.accessKeyId.trim(),
       secretAccessKey: secret,
       forcePathStyle,
-      ...(o ? { organizationPublicId: o } : {}),
+      organizationPublicId: orgTrim,
     };
-  }, [form, organizationPublicId]);
+  }, [form, orgTrim]);
 
   const onTest = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !payloadForApi) return;
     if (s3VerifyRemoteId == null) {
       toast({
         title: "Choose a deploy host",
@@ -273,7 +276,7 @@ export function S3Client({
   };
 
   const onSave = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !payloadForApi) return;
     setSaving(true);
     try {
       const res = await saveS3ProfileApi(payloadForApi);

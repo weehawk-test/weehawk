@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 type Theme = "light" | "dark";
 
@@ -14,6 +22,14 @@ const THEME_STORAGE_KEY = "weehawk-theme";
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+function readThemeFromClientStorage(fallback: Theme): Theme {
+  if (typeof window === "undefined") return fallback;
+  const stored = (localStorage.getItem(THEME_STORAGE_KEY) ?? "").trim();
+  if (stored === "light") return "light";
+  if (stored === "dark") return "dark";
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
 function persistTheme(theme: Theme) {
   localStorage.setItem(THEME_STORAGE_KEY, theme);
   document.cookie = `${THEME_STORAGE_KEY}=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`;
@@ -24,17 +40,6 @@ function applyThemeClass(theme: Theme) {
   root.classList.toggle("dark", theme === "dark");
 }
 
-function applyThemeWithoutMotion(theme: Theme) {
-  const root = document.documentElement;
-  root.classList.add("theme-switching");
-  applyThemeClass(theme);
-  // Force style recalculation while transitions are disabled.
-  void root.offsetHeight;
-  window.setTimeout(() => {
-    root.classList.remove("theme-switching");
-  }, 120);
-}
-
 export function ThemeProvider({
   children,
   initialTheme = "dark",
@@ -42,28 +47,20 @@ export function ThemeProvider({
   children: ReactNode;
   initialTheme?: Theme;
 }) {
-  const [theme, setThemeState] = useState<Theme>(initialTheme);
+  const [theme, setThemeState] = useState<Theme>(() => readThemeFromClientStorage(initialTheme));
 
+  /** Sync `<html>` + cookie on mount (state already matches from lazy `useState`). */
   useEffect(() => {
-    const stored = (localStorage.getItem(THEME_STORAGE_KEY) ?? "").trim();
-    const nextTheme: Theme =
-      stored === "light"
-        ? "light"
-        : stored === "dark"
-          ? "dark"
-          : document.documentElement.classList.contains("dark")
-            ? "dark"
-            : "light";
-    if (nextTheme !== theme) setThemeState(nextTheme);
-    applyThemeWithoutMotion(nextTheme);
-    persistTheme(nextTheme);
-  }, [theme]);
+    applyThemeClass(theme);
+    persistTheme(theme);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only: `theme` is the first-render value from lazy `useState`
+  }, []);
 
-  const setTheme = (nextTheme: Theme) => {
+  const setTheme = useCallback((nextTheme: Theme) => {
     setThemeState(nextTheme);
     persistTheme(nextTheme);
-    applyThemeWithoutMotion(nextTheme);
-  };
+    applyThemeClass(nextTheme);
+  }, []);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
@@ -71,7 +68,7 @@ export function ThemeProvider({
       resolvedTheme: theme,
       setTheme,
     }),
-    [theme],
+    [theme, setTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

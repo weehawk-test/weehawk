@@ -22,6 +22,8 @@ import { RedisService } from './common/redis/redis.service';
 import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
 import { DevThrottlerGuard } from './common/dev-throttler.guard';
 import { existsSync } from 'fs';
+import { DataSource, type DataSourceOptions } from 'typeorm';
+import { runOrgScopeSchemaBackfill } from './database/org-scope-backfill';
 
 const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
   existsSync(filePath),
@@ -75,6 +77,15 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
           synchronize,
           dropSchema,
         };
+      },
+      dataSourceFactory: async (options: DataSourceOptions) => {
+        const pre = new DataSource({ ...options, synchronize: false });
+        await pre.initialize();
+        await runOrgScopeSchemaBackfill(pre);
+        await pre.destroy();
+        const ds = new DataSource(options);
+        await ds.initialize();
+        return ds;
       },
     }),
     ProjectsModule,

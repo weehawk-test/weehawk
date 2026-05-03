@@ -23,6 +23,7 @@ import { Webhook } from '../webhooks/entities/webhook.entity';
 import { CronJob } from '../cron-jobs/entities/cron-job.entity';
 import { NotificationChannel } from '../notifications/entities/notification-channel.entity';
 import { S3Profile } from '../s3/entities/s3-profile.entity';
+import { TraefikSettings } from '../traefik/entities/traefik-settings.entity';
 import { generatePublicId } from '../common/public-id';
 import type { ResolveOrganizationWorkspaceOptions } from '../common/organization-workspace-scope';
 import {
@@ -121,6 +122,26 @@ export class OrganizationsService implements OnModuleInit {
     await this.repo.saveOrganization(orgRow);
   }
 
+  /**
+   * Call before removing a user’s owner role in `organizationInternalId` (leave, dissolve, or demote).
+   * Ensures they will still be owner of at least one organization afterward.
+   */
+  private async assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (m?.role !== ORGANIZATION_MEMBER_ROLE.OWNER) {
+      return;
+    }
+    const owned = await this.repo.countOrganizationsWhereUserIsOwner(userId);
+    if (owned <= 1) {
+      throw new ConflictException(
+        "You can't leave your only owned organization. Create another one first, or transfer ownership to another member.",
+      );
+    }
+  }
+
   private sanitizeCreateName(dto: CreateOrganizationDto): string {
     const name = dto.name.trim().replace(/\s+/g, ' ');
     if (!name) throw new BadRequestException('Organization name is required');
@@ -188,7 +209,39 @@ export class OrganizationsService implements OnModuleInit {
     return this.toPublicDto(saved, true, memberCount, membership);
   }
 
+  /**
+   * Ensures the user belongs to at least one organization (as owner of a new one if needed).
+   * Used after registration/login so accounts never stay without an organization.
+   */
+  async ensureAtLeastOneOwnedOrganizationForUser(userId: number): Promise<void> {
+    const n = await this.repo.countMembershipsForUser(userId);
+    if (n > 0) return;
+    const userRow = await this.users.findOne({ where: { id: userId } });
+    if (!userRow) return;
+    await this.create(userId, {
+      name: this.defaultOrganizationNameForNewUser(userRow),
+    });
+  }
+
+  /**
+   * Default org uses the same label users see on their account (e.g. "Adam D"), not "…'s organization".
+   */
+  private defaultOrganizationNameForNewUser(user: User): string {
+    const parts = [user.firstName?.trim(), user.lastName?.trim()].filter(
+      (p) => p && p.length > 0,
+    );
+    if (parts.length > 0) {
+      return parts.join(' ').trim().slice(0, 200);
+    }
+    const local = user.email?.split('@')[0]?.trim();
+    if (local && local.length > 0) {
+      return local.slice(0, 200);
+    }
+    return 'My organization';
+  }
+
   async listMine(userId: number): Promise<OrganizationPublicDto[]> {
+    await this.ensureAtLeastOneOwnedOrganizationForUser(userId);
     const rows = await this.repo.listOrganizationsForUser(userId);
     return Promise.all(
       rows.map(async (o) => {
@@ -198,6 +251,14 @@ export class OrganizationsService implements OnModuleInit {
         return this.toPublicDto(o, isOwner, memberCount, m);
       }),
     );
+  }
+
+  /** Stable tenant fallback when a resource has no `organization_id` (legacy rows). */
+  async getFirstOrganizationInternalIdForUser(
+    userId: number,
+  ): Promise<number | null> {
+    const rows = await this.repo.listOrganizationsForUser(userId);
+    return rows[0]?.id ?? null;
   }
 
   async updateOrganization(
@@ -551,27 +612,64 @@ export class OrganizationsService implements OnModuleInit {
   }
 
   /**
-   * Clears org scope on tenant rows, removes memberships, deletes the org row.
-   * Used when the last member (owner) leaves.
+   * Moves all org-scoped tenant rows to `transferToOrganizationId`, then deletes memberships and the org.
+   * Used when the sole member (owner) leaves and must keep resources under another org they own.
    */
-  private async dissolveOrganization(organizationId: number): Promise<void> {
+  private async dissolveOrganization(
+    organizationId: number,
+    transferToOrganizationId: number,
+  ): Promise<void> {
     await this.dataSource.transaction(async (em) => {
-      await em.update(Project, { organizationId }, { organizationId: null });
-      await em.update(RemoteServer, { organizationId }, { organizationId: null });
-      await em.update(Webhook, { organizationId }, { organizationId: null });
-      await em.update(CronJob, { organizationId }, { organizationId: null });
-      await em.update(NotificationChannel, { organizationId }, { organizationId: null });
+      await em.update(Project, { organizationId }, { organizationId: transferToOrganizationId });
+      await em.update(
+        RemoteServer,
+        { organizationId },
+        { organizationId: transferToOrganizationId },
+      );
+      await em.update(Webhook, { organizationId }, { organizationId: transferToOrganizationId });
+      await em.update(CronJob, { organizationId }, { organizationId: transferToOrganizationId });
+      await em.update(
+        NotificationChannel,
+        { organizationId },
+        { organizationId: transferToOrganizationId },
+      );
 
       const s3Rows = await em.find(S3Profile, { where: { organizationId } });
       for (const row of s3Rows) {
+        let name = row.name;
+        const dup = await em.findOne(S3Profile, {
+          where: { organizationId: transferToOrganizationId, name },
+        });
+        if (dup) {
+          name = `${row.name} (migrated)`;
+        }
         await em.update(
           S3Profile,
           { id: row.id },
           {
-            organizationId: null,
-            workspaceKey: `u:${row.userId}`,
+            organizationId: transferToOrganizationId,
+            workspaceKey: `o:${transferToOrganizationId}`,
+            name,
           },
         );
+      }
+
+      const dissolvingTraefik = await em.findOne(TraefikSettings, {
+        where: { organizationId },
+      });
+      if (dissolvingTraefik) {
+        const targetTraefik = await em.findOne(TraefikSettings, {
+          where: { organizationId: transferToOrganizationId },
+        });
+        if (targetTraefik) {
+          await em.delete(TraefikSettings, { id: dissolvingTraefik.id });
+        } else {
+          await em.update(
+            TraefikSettings,
+            { organizationId },
+            { organizationId: transferToOrganizationId },
+          );
+        }
       }
 
       await em.delete(OrganizationMembership, { organizationId });
@@ -591,16 +689,30 @@ export class OrganizationsService implements OnModuleInit {
       return { message: 'You left the organization.' };
     }
 
+    await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
+      userId,
+      ctx.internalId,
+    );
+
     const links = await this.repo.listMembershipsForOrganization(ctx.internalId);
     if (links.length === 0) {
       throw new NotFoundException('Organization not found');
     }
 
     if (links.length === 1) {
-      await this.dissolveOrganization(ctx.internalId);
+      const transferTo = await this.repo.findFirstOtherOwnedOrganizationInternalId(
+        userId,
+        ctx.internalId,
+      );
+      if (transferTo == null) {
+        throw new ConflictException(
+          'Cannot close this organization: no other organization you own was found to receive its resources.',
+        );
+      }
+      await this.dissolveOrganization(ctx.internalId, transferTo);
       return {
         message:
-          'You left and the organization was closed because you were the only member. Its resources were moved to personal workspaces.',
+          'You left and the organization was closed because you were the only member. Its resources were moved to another organization you own.',
       };
     }
 
@@ -704,6 +816,10 @@ export class OrganizationsService implements OnModuleInit {
           'Cannot remove the last owner. Promote another member to owner first.',
         );
       }
+      await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
+        target.id,
+        ctx.internalId,
+      );
     }
 
     const n = await this.repo.updateMembershipRole(

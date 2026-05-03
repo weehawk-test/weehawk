@@ -21,23 +21,25 @@ function webhookQueryEnabled(id: string | number): boolean {
   return typeof id === "string" ? id.trim().length > 0 : Number.isFinite(id);
 }
 
-export function useWebhooks() {
+export function useWebhooks(organizationPublicId: string | null | undefined) {
   const { accessToken } = useAuth();
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useQuery({
-    queryKey: ["webhooks", "personal"],
-    queryFn: () => fetchWebhooks(accessToken!),
+    queryKey: ["webhooks", orgKey],
+    queryFn: () => fetchWebhooks(accessToken!, { organizationPublicId: orgKey }),
     select: (rows) =>
       reconcileAndFilterPendingDeletions("webhooks", rows, (item) => [item.id, item.publicId]),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && Boolean(orgKey),
   });
 }
 
-export function useWebhook(id: string | number) {
+export function useWebhook(id: string | number, organizationPublicId: string | null | undefined) {
   const { accessToken } = useAuth();
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useQuery({
-    queryKey: ["webhooks", id],
-    queryFn: () => fetchWebhook(accessToken!, id),
-    enabled: Boolean(accessToken) && webhookQueryEnabled(id),
+    queryKey: ["webhooks", orgKey, id],
+    queryFn: () => fetchWebhook(accessToken!, id, orgKey),
+    enabled: Boolean(accessToken) && webhookQueryEnabled(id) && Boolean(orgKey),
   });
 }
 
@@ -47,7 +49,6 @@ export function useCreateWebhook() {
   return useMutation({
     mutationFn: (body: CreateWebhookBody) => createWebhook(accessToken!, body),
     onSuccess: (_data, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["webhooks", "personal"] });
       const org = vars.organizationPublicId?.trim();
       if (org) queryClient.invalidateQueries({ queryKey: ["webhooks", org] });
     },
@@ -57,14 +58,13 @@ export function useCreateWebhook() {
 export function useUpdateWebhook(organizationPublicId?: string | null) {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
-  const orgKey = organizationPublicId?.trim();
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string | number } & UpdateWebhookBody) =>
       updateWebhook(accessToken!, id, body, organizationPublicId),
     onSuccess: (updated, v) => {
-      queryClient.invalidateQueries({ queryKey: ["webhooks", "personal"] });
       if (orgKey) queryClient.invalidateQueries({ queryKey: ["webhooks", orgKey] });
-      queryClient.invalidateQueries({ queryKey: ["webhooks", v.id] });
+      queryClient.invalidateQueries({ queryKey: ["webhooks", orgKey, v.id] });
       queryClient.invalidateQueries({ queryKey: ["webhooks", webhookRouteId(updated)] });
     },
   });
@@ -73,10 +73,12 @@ export function useUpdateWebhook(organizationPublicId?: string | null) {
 export function useDeleteWebhook(organizationPublicId?: string | null) {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
-  const orgKey = organizationPublicId?.trim() || "personal";
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useMutation({
-    mutationFn: (id: string | number) =>
-      deleteWebhook(accessToken!, id, organizationPublicId),
+    mutationFn: (id: string | number) => {
+      if (!orgKey) throw new Error("organizationPublicId is required");
+      return deleteWebhook(accessToken!, id, organizationPublicId);
+    },
     onMutate: async (id) => {
       const matchId = String(id);
       const pendingIds = new Set<string>([matchId]);

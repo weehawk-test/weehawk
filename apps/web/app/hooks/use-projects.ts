@@ -42,6 +42,7 @@ export function useProjectsPage(
   return useQuery({
     queryKey: ["projects", "list", ownerKey, orgKey, page, trimmed],
     queryFn: () => fetchProjectsPage(page, undefined, trimmed, organizationPublicId),
+    enabled: Boolean(user?.userId && orgKey),
     initialData:
       hasSsrInitial && user?.userId != null ? initialPageData : undefined,
     initialDataUpdatedAt:
@@ -71,7 +72,7 @@ export function useProject(
   return useQuery({
     queryKey: projectQueryKey(user?.userId, id, orgKey || undefined),
     queryFn: () => fetchProject(id, orgKey || undefined),
-    enabled: !!id && !skip,
+    enabled: Boolean(id) && !skip && (hasInitial || Boolean(orgKey)),
     initialData: options?.initialData,
     initialDataUpdatedAt: hasInitial ? Date.now() : undefined,
     staleTime: hasInitial ? Infinity : 10_000,

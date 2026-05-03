@@ -47,11 +47,12 @@ export class UpsertS3ProfileDto {
   @IsOptional()
   forcePathStyle?: boolean;
 
-  @ApiPropertyOptional({
-    description: 'Organization workspace (profiles shared with org members).',
+  @ApiProperty({
+    description:
+      'Organization workspace (required). S3 profiles are scoped to the organization.',
   })
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(48)
-  organizationPublicId?: string;
+  organizationPublicId!: string;
 }

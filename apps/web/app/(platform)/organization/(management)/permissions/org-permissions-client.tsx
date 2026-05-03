@@ -28,7 +28,7 @@ import {
   orgMemberAllowsOrgManagementPermissions,
   type OrgWorkspacePermissionKey,
 } from "@/lib/org-workspace-permissions";
-import { useOrgWorkspace } from "../../org-workspace-context";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import { useToast } from "@/hooks/use-toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 

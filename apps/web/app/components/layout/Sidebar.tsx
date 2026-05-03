@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Server, LogOut, UserCog, ChevronDown, X } from "lucide-react";
+import { ChevronRight, PanelLeft, Server, LogOut, UserCog, ChevronDown, X, Settings } from "lucide-react";
 import { LayoutGroup } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
@@ -19,7 +19,11 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NavRow } from "./sidebar-nav-row";
 import { buildMainNavSections, buildDockerNavItems } from "./main-nav-sections";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { fetchOrganizations } from "@/lib/organizations-api";
+import type { OrganizationPublic } from "@/lib/organizations-types";
+import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
+import { firstOrgManagementPathSegment } from "@/lib/org-workspace-permissions";
+import { isOrgManagementSectionActive, ORGANIZATION_MANAGEMENT_BASE } from "@/lib/org-nav-utils";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import {
@@ -28,6 +32,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ProfileThemeMenuItems } from "./profile-theme-menu-items";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 
 export function Sidebar() {
   const { collapsed, toggle, isMobileNav, mobileNavOpen, closeMobileNav } = useSidebarLayout();
@@ -53,6 +59,7 @@ export function Sidebar() {
 
   const mainNavSections = useMemo(() => buildMainNavSections(), []);
   const [newsUnread, setNewsUnread] = useState(false);
+  const [myOrganizations, setMyOrganizations] = useState<OrganizationPublic[]>([]);
 
   useEffect(() => {
     if (!user?.userId) {
@@ -92,6 +99,24 @@ export function Sidebar() {
   }, [user?.userId]);
 
   useEffect(() => {
+    if (!user?.userId) {
+      queueMicrotask(() => setMyOrganizations([]));
+      return;
+    }
+    let cancelled = false;
+    void fetchOrganizations()
+      .then((list) => {
+        if (!cancelled) setMyOrganizations(list);
+      })
+      .catch(() => {
+        if (!cancelled) setMyOrganizations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.userId]);
+
+  useEffect(() => {
     closeMobileNav();
   }, [location, closeMobileNav]);
 
@@ -127,8 +152,8 @@ export function Sidebar() {
     if (href === "/remote-server") {
       return location === "/remote-server" || location.startsWith("/remote-server/");
     }
-    if (href === "/organizations") {
-      return location === "/organizations" || location.startsWith("/organizations/");
+    if (href === "/organization") {
+      return isOrgManagementSectionActive(location, "");
     }
     if (href.includes("/secrets")) {
       if (location === href || location.startsWith(`${href}/`)) return true;
@@ -170,33 +195,25 @@ export function Sidebar() {
             <Link
               href={isConsoleServerSidebar ? consoleLogoHref : "/"}
               scroll={false}
-              className="flex min-w-0 flex-1 items-start gap-3 rounded-xl -mx-1 px-1 py-0.5 outline-none ring-offset-background transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              className="relative size-10 shrink-0 self-center overflow-hidden rounded-xl border border-primary/20 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5"
             >
-              <div className="relative size-10 shrink-0 overflow-hidden rounded-xl border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
-                <Image
-                  src="/weehawk-logo.svg"
-                  alt=""
-                  width={40}
-                  height={40}
-                  className="logo-adaptive size-10 scale-90 object-contain p-0.5"
-                  priority
-                />
-              </div>
-              <div className="min-w-0 flex-1 pt-0.5">
-                <span className="block truncate text-lg font-bold tracking-tight leading-none text-foreground">Weehawk</span>
-                <span className="mt-1 block font-mono text-[10px] tracking-widest text-muted-foreground">
-                  Personal
-                </span>
-              </div>
+              <Image
+                src="/weehawk-logo.svg"
+                alt=""
+                width={40}
+                height={40}
+                className="logo-adaptive size-10 scale-90 object-contain p-0.5"
+                priority
+              />
             </Link>
-            <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
-              <ThemeToggle />
+            <WorkspaceSwitcher className="min-w-0 flex-1" onNavigate={closeMobileNav} />
+            <div className="flex shrink-0 items-center gap-0.5">
               {isMobileNav ? (
                 <button
                   type="button"
                   onClick={closeMobileNav}
                   aria-label="Close menu"
-                  className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/80 shrink-0"
+                  className="rounded-lg p-1.5 text-foreground hover:bg-accent/80 shrink-0"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -205,9 +222,9 @@ export function Sidebar() {
                   type="button"
                   onClick={toggle}
                   aria-label="Collapse sidebar"
-                  className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/80 shrink-0"
+                  className="rounded-lg p-1.5 text-foreground hover:bg-accent/80 shrink-0"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  <PanelLeft className="w-4 h-4" />
                 </button>
               )}
             </div>
@@ -234,17 +251,16 @@ export function Sidebar() {
                 </Link>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={8}>
-                Personal
+                {displayName}
               </TooltipContent>
             </Tooltip>
-            <ThemeToggle iconOnly />
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   onClick={toggle}
                   aria-label="Expand sidebar"
-                  className="rounded-lg p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent/80"
+                  className="rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -324,9 +340,31 @@ export function Sidebar() {
                     </p>
                   )}
                   <div className="space-y-px">
-                    {section.items.map((item) => {
+                    {section.items.flatMap((item) => {
+                      if (item.orgManagementEntry) {
+                        const primary = pickDefaultWorkspaceOrganization(myOrganizations);
+                        if (!primary) return [];
+                        const mgmtSeg = firstOrgManagementPathSegment(
+                          primary.workspacePermissions,
+                          primary.isOwner,
+                        );
+                        const href = `${ORGANIZATION_MANAGEMENT_BASE}/${mgmtSeg}`;
+                        const active = isOrgManagementSectionActive(location, "");
+                        return [
+                          <NavRow
+                            key={`${item.href}-personal-mgmt`}
+                            collapsed={railMode}
+                            href={href}
+                            label="Management"
+                            active={active}
+                            icon={Settings}
+                            activeLayoutId={activeLayoutId}
+                            showUnreadDot={false}
+                          />,
+                        ];
+                      }
                       const active = item.external ? false : isActive(item.href);
-                      return (
+                      return [
                         <NavRow
                           key={item.href}
                           collapsed={railMode}
@@ -337,8 +375,8 @@ export function Sidebar() {
                           activeLayoutId={activeLayoutId}
                           external={item.external}
                           showUnreadDot={item.href === "/news" && newsUnread}
-                        />
-                      );
+                        />,
+                      ];
                     })}
                   </div>
                 </div>
@@ -409,7 +447,7 @@ export function Sidebar() {
             "pb-[max(0.625rem,env(safe-area-inset-bottom,0px))] pl-[max(0.625rem,env(safe-area-inset-left,0px))] pr-[max(0.625rem,env(safe-area-inset-right,0px))]",
         )}
       >
-        <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+        <DropdownMenu modal={false} open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
           <DropdownMenuTrigger asChild>
             {railMode ? (
               <button
@@ -454,7 +492,7 @@ export function Sidebar() {
                 </div>
                 <ChevronDown
                   className={cn(
-                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                    "h-4 w-4 shrink-0 text-foreground transition-transform duration-200",
                     profileMenuOpen && "rotate-180",
                   )}
                   aria-hidden
@@ -479,6 +517,7 @@ export function Sidebar() {
               <UserCog className="w-4 h-4" />
               Edit profile
             </DropdownMenuItem>
+            <ProfileThemeMenuItems />
             <DropdownMenuItem
               onSelect={() => void handleLogout()}
               className="text-red-600 dark:text-red-400 focus:text-red-700 dark:focus:text-red-300 focus:bg-red-500/10"

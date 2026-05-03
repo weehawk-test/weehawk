@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Loader2, Type, X } from "lucide-react";
 import { createOrganization } from "@/lib/organizations-api";
+import { setActiveOrganizationPublicBrowserCookie } from "@/lib/active-org-cookie";
 
 export function CreateOrganizationClient() {
   const router = useRouter();
@@ -14,7 +15,7 @@ export function CreateOrganizationClient() {
 
   const closeModal = () => {
     if (saving) return;
-    router.push("/organizations");
+    router.push("/");
   };
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -25,7 +26,8 @@ export function CreateOrganizationClient() {
       const org = await createOrganization({
         name: name.trim(),
       });
-      router.replace(`/organizations/${encodeURIComponent(org.publicId)}/projects`);
+      setActiveOrganizationPublicBrowserCookie(org.publicId);
+      router.replace("/projects");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create organization");
     } finally {

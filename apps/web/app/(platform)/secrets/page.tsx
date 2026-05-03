@@ -10,7 +10,6 @@ export default async function Page({
   organizationPublicId: orgPublicIdProp,
 }: {
   searchParams: Promise<{ page?: string; q?: string; server?: string }>;
-  /** Set when rendering under `/organizations/:id/secrets` (mirror page). */
   organizationPublicId?: string;
 }) {
   const sp = await searchParams;
@@ -18,10 +17,8 @@ export default async function Page({
   const q = typeof sp.q === "string" ? sp.q : "";
 
   const orgPid = orgPublicIdProp?.trim();
-  const secretsBase = orgPid ? `/organizations/${encodeURIComponent(orgPid)}/secrets` : "/secrets";
-  const remoteServerHref = orgPid
-    ? `/organizations/${encodeURIComponent(orgPid)}/remote-server`
-    : "/remote-server";
+  const secretsBase = "/secrets";
+  const remoteServerHref = "/remote-server";
 
   const remoteServers = await fetchRemoteServersSSR(orgPid ?? undefined);
   const deployServers = filterSshDeployServers(remoteServers);

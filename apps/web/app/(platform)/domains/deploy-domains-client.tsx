@@ -25,13 +25,12 @@ import {
   isLetsEncryptEmailConfigured,
   isValidEmailShape,
 } from "@/lib/traefik-acme-email";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import {
   orgMemberAllowsDomainsAddSites,
   orgMemberAllowsDomainsCertificateEmail,
 } from "@/lib/org-workspace-permissions";
-
-const TRAEFIK_SETTINGS_QK = ["traefik", "settings"] as const;
 
 let rowIdSeq = 0;
 function newRowId(): number {
@@ -305,17 +304,29 @@ export function DeployDomainsClient({
   initialRemoteServers,
   initialTraefikSettings,
   organizationPublicId = null,
+  initialRemoteServersOrganizationId = null,
+  initialTraefikOrganizationId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
   initialTraefikSettings?: TraefikSettingsPayload | null;
   organizationPublicId?: string | null;
+  /** Must match the org used for SSR `initialRemoteServers` so TanStack Query does not reuse the wrong list. */
+  initialRemoteServersOrganizationId?: string | null;
+  /** Must match the org used for SSR Traefik fetch. */
+  initialTraefikOrganizationId?: string | null;
 }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const orgWorkspace = useOptionalOrgWorkspace();
-  const inOrgDomains =
-    organizationPublicId != null && String(organizationPublicId).trim() !== "";
+  const trimmedOrg = organizationPublicId?.trim() ?? "";
+  const trimmedSsrOrg = initialRemoteServersOrganizationId?.trim() ?? "";
+  const trimmedSsrTraefikOrg = initialTraefikOrganizationId?.trim() ?? "";
+  const useSsrRemoteInitial =
+    initialRemoteServers !== undefined && trimmedOrg === trimmedSsrOrg;
+  const useSsrTraefikInitial =
+    initialTraefikSettings != null && trimmedOrg === trimmedSsrTraefikOrg;
+  const inOrgDomains = trimmedOrg !== "";
   const allowOrgCertEmail =
     !inOrgDomains ||
     (orgWorkspace != null &&
@@ -323,19 +334,17 @@ export function DeployDomainsClient({
   const allowOrgAddSites =
     !inOrgDomains ||
     (orgWorkspace != null && orgMemberAllowsDomainsAddSites(orgWorkspace.workspacePermissions));
-  const orgKey = organizationPublicId?.trim() || "personal";
-  const remoteServersQueryKey = ["remote-servers", orgKey] as const;
-  const remoteServerHref = organizationPublicId?.trim()
-    ? `/organizations/${encodeURIComponent(organizationPublicId.trim())}/remote-server`
-    : "/remote-server";
-  const hasInitialRemoteServers = initialRemoteServers !== undefined;
-  const hasInitialTraefik = initialTraefikSettings !== undefined;
+  const orgScopeSegment = orgScopedQuerySegment(trimmedOrg);
+  const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
+  const traefikSettingsQueryKey = ["traefik", "settings", orgScopeSegment] as const;
+  const remoteServerHref = "/remote-server";
 
   const traefikQ = useQuery({
-    queryKey: TRAEFIK_SETTINGS_QK,
-    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken),
-    initialData: initialTraefikSettings ?? undefined,
+    queryKey: traefikSettingsQueryKey,
+    queryFn: () => fetchTraefikSettings(accessToken ?? "", trimmedOrg),
+    enabled: Boolean(accessToken && trimmedOrg),
+    initialData: useSsrTraefikInitial ? (initialTraefikSettings ?? undefined) : undefined,
+    initialDataUpdatedAt: useSsrTraefikInitial ? Date.now() : undefined,
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -343,12 +352,10 @@ export function DeployDomainsClient({
   const q = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () =>
-      fetchRemoteServers(
-        accessToken ?? "",
-        organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
-      ),
+      fetchRemoteServers(accessToken ?? "", trimmedOrg !== "" ? trimmedOrg : undefined),
     enabled: Boolean(accessToken),
-    initialData: initialRemoteServers,
+    initialData: useSsrRemoteInitial ? initialRemoteServers : undefined,
+    initialDataUpdatedAt: useSsrRemoteInitial ? Date.now() : undefined,
     staleTime: 10_000,
     refetchOnMount: true,
   });
@@ -365,15 +372,11 @@ export function DeployDomainsClient({
   }, [traefikQ.data, acmeEmailDirty]);
 
   const emailMutation = useMutation({
-    mutationFn: (args: { email: string; organizationPublicId?: string | null }) =>
-      updateTraefikSettings(
-        accessToken ?? "",
-        { acmeEmail: args.email.trim() },
-        args.organizationPublicId,
-      ),
+    mutationFn: (args: { email: string; organizationPublicId: string }) =>
+      updateTraefikSettings(accessToken ?? "", { acmeEmail: args.email.trim() }, args.organizationPublicId),
     onSuccess: async (updated) => {
-      qc.setQueryData(TRAEFIK_SETTINGS_QK, updated);
-      await qc.invalidateQueries({ queryKey: TRAEFIK_SETTINGS_QK });
+      qc.setQueryData(traefikSettingsQueryKey, updated);
+      await qc.invalidateQueries({ queryKey: traefikSettingsQueryKey });
       // Provision script depends on ACME email; force refresh across pages.
       await qc.invalidateQueries({ queryKey: ["provision-script"] });
       await qc.invalidateQueries({ queryKey: remoteServersQueryKey });
@@ -401,7 +404,7 @@ export function DeployDomainsClient({
     }
     emailMutation.mutate({
       email: t,
-      organizationPublicId: organizationPublicId?.trim() || undefined,
+      organizationPublicId: trimmedOrg,
     });
   };
 
@@ -451,6 +454,12 @@ export function DeployDomainsClient({
             Servers
           </Link>
         </p>
+        {inOrgDomains && orgWorkspace ? (
+          <p className="text-xs text-muted-foreground max-w-2xl">
+            Site addresses and certificate email apply to{" "}
+            <span className="font-medium text-foreground">{orgWorkspace.name}</span> only.
+          </p>
+        ) : null}
       </header>
 
       <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20">

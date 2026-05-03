@@ -1,14 +1,16 @@
 import { AppLayout } from "@/components/layout/AppLayout";
-import { cookies } from "next/headers";
+import { OrgWorkspaceShell } from "./org-workspace/org-workspace-shell";
+import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { isPlatformPathExemptFromOrgWorkspaceShell } from "@/lib/platform-shell-path";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
+import { fetchOrganizationSSR } from "@/lib/server-fetch";
+
+const PATHNAME_HEADER = "x-weehawk-pathname";
 
 /**
- * Keeps Sidebar + main shell mounted across client navigations. The sidebar scroll
- * position is preserved; the main column scrolls back to the top on each route change
- * (scroll lives on `main`, not the document). Previously each page wrapped itself in
- * AppLayout, which remounted the shell on every route change.
- *
- * This layout is a Client Component so Turbopack can instantiate `AppLayout` reliably
- * (avoids "module factory is not available" when a Server layout imported only client UI).
+ * Org workspace uses flat URLs (`/projects`, …) + active-org cookie; legacy `/organizations/:id/*`
+ * is redirected in middleware. Exempt routes keep the personal shell only.
  */
 export default async function PlatformLayout({
   children,
@@ -18,12 +20,35 @@ export default async function PlatformLayout({
   const cookieStore = await cookies();
   const initialSidebarCollapsed = cookieStore.get("weehawk-sidebar-collapsed")?.value === "1";
   const initialMobileNavOpen = cookieStore.get("weehawk-sidebar-mobile-open")?.value === "1";
+
+  const h = await headers();
+  const pathname = h.get(PATHNAME_HEADER) ?? "";
+  if (isPlatformPathExemptFromOrgWorkspaceShell(pathname)) {
+    return (
+      <AppLayout
+        initialSidebarCollapsed={initialSidebarCollapsed}
+        initialMobileNavOpen={initialMobileNavOpen}
+      >
+        {children}
+      </AppLayout>
+    );
+  }
+
+  const orgId = await getServerActiveOrganizationPublicId();
+  if (!orgId) {
+    redirect("/organizations/create");
+  }
+  const org = await fetchOrganizationSSR(orgId);
+  if (!org) {
+    redirect("/organizations/create");
+  }
+
   return (
     <AppLayout
       initialSidebarCollapsed={initialSidebarCollapsed}
       initialMobileNavOpen={initialMobileNavOpen}
     >
-      {children}
+      <OrgWorkspaceShell org={org}>{children}</OrgWorkspaceShell>
     </AppLayout>
   );
 }

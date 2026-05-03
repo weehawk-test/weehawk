@@ -18,7 +18,7 @@ import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
 import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsWebhooksAdd,
   orgMemberAllowsWebhooksDelete,
@@ -45,10 +45,7 @@ export function WebhooksClient({
   organizationPublicId?: string;
 }) {
   const orgTrim = organizationPublicId?.trim();
-  const webhooksBasePath =
-    orgTrim != null && orgTrim !== ""
-      ? `/organizations/${encodeURIComponent(orgTrim)}/webhooks`
-      : "/webhooks";
+  const webhooksBasePath = "/webhooks";
   const inOrgWebhooks = orgTrim != null && orgTrim !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
   const allowWebhooksAdd =
@@ -204,6 +201,16 @@ export function WebhooksClient({
   ) => {
     if (provisioningWebhookIds.includes(webhook.id)) return;
     if (!accessToken) return;
+    if (!orgTrim) {
+      if (!opts?.silent) {
+        toast({
+          title: "Organization required",
+          description: "Select an organization to load webhook logs.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     if (inOrgWebhooks && !allowWebhooksLogs) {
       if (!opts?.silent) {
         toast({

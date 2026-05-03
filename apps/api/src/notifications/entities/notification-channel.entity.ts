@@ -21,8 +21,8 @@ export class NotificationChannel {
   @Column({ name: 'user_id', type: 'int' })
   userId!: number;
 
-  @Column({ name: 'organization_id', type: 'int', nullable: true })
-  organizationId!: number | null;
+  @Column({ name: 'organization_id', type: 'int' })
+  organizationId!: number;
 
   @Column({ type: 'varchar', length: 200 })
   name!: string;

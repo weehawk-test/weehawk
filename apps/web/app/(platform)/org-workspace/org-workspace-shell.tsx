@@ -18,7 +18,7 @@ export function OrgWorkspaceShell({
   const [mobileOrgNavOpen, setMobileOrgNavOpen] = useState(false);
 
   return (
-    <OrgWorkspaceProvider org={org}>
+    <OrgWorkspaceProvider key={org.publicId} org={org}>
       <OrganizationSidebar
         org={org}
         mobileOpen={mobileOrgNavOpen}

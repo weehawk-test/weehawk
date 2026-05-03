@@ -1,13 +1,11 @@
 /**
- * Builds routes for the org workspace shell vs personal account.
- * @param organizationPublicId — omit or empty for `/…` personal paths.
+ * Workspace URLs are flat (`/projects`, …); active organization is the cookie / SSR context.
+ * @param _organizationPublicId — ignored for routing; callers may still pass for API/query use.
  */
 export function workspaceRoute(
-  organizationPublicId: string | null | undefined,
+  _organizationPublicId: string | null | undefined,
   path: string,
 ): string {
   const normalized = path.startsWith("/") ? path : `/${path}`;
-  const t = organizationPublicId?.trim();
-  if (!t) return normalized;
-  return `/organizations/${encodeURIComponent(t)}${normalized}`;
+  return normalized;
 }

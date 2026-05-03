@@ -12,12 +12,14 @@ import { Oauth2Controller } from './oauth2.controller';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { TokenModule } from '../token/token.module';
 import { EmailModule } from '../email/email.module';
+import { OrganizationsModule } from '../organizations/organizations.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     EmailModule,
+    OrganizationsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

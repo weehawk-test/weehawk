@@ -297,27 +297,20 @@ export class RemoteServersService {
   }
 
   /**
-   * Ensures a remote host used at deploy/build time fits the project: personal projects only use
-   * personal servers (same `userId`); org projects only use servers in that organization.
+   * Ensures a remote host used at deploy/build time belongs to the project's organization.
    */
   assertRemoteServerMatchesProject(
     rs: RemoteServer | null | undefined,
-    projectUserId: number | null,
     projectOrganizationId: number | null,
   ): void {
     if (!rs) {
       throw new NotFoundException('Remote server not found');
     }
-    if (projectOrganizationId != null) {
-      if (rs.organizationId !== projectOrganizationId) {
-        throw new NotFoundException('Remote server not found');
-      }
+    if (projectOrganizationId == null) {
       return;
     }
-    if (projectUserId != null) {
-      if (rs.organizationId != null || rs.userId !== projectUserId) {
-        throw new NotFoundException('Remote server not found');
-      }
+    if (rs.organizationId !== projectOrganizationId) {
+      throw new NotFoundException('Remote server not found');
     }
   }
 
@@ -326,7 +319,6 @@ export class RemoteServersService {
     return scope.userId;
   }
 
-  /** Owner user id + org internal id (null = personal project) for deploy/build SSH scoping. */
   private async resolveProjectScope(service: Service): Promise<{
     userId: number | null;
     organizationId: number | null;
@@ -335,7 +327,7 @@ export class RemoteServersService {
     if (p?.userId != null) {
       return {
         userId: p.userId,
-        organizationId: p.organizationId ?? null,
+        organizationId: p.organizationId,
       };
     }
     const projectId =
@@ -1486,9 +1478,26 @@ rm -rf ${inDirQ}
     const mountDockerSock =
       'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock';
 
+    const serverRow = await this.remoteServerRepository.findOne({
+      where: { id: remoteServerId },
+    });
+    if (!serverRow) {
+      throw new InternalServerErrorException(
+        'Remote server not found for webhook agent provisioning.',
+      );
+    }
+    const userForTraefikTenant =
+      projectUserId != null && projectUserId >= 1
+        ? projectUserId
+        : serverRow.userId;
     const traefikSettings =
-      rule && projectUserId != null && projectUserId >= 1
-        ? await this.traefikService.getSettings(projectUserId)
+      rule && userForTraefikTenant >= 1
+        ? await this.traefikService.getSettingsForOrganization(
+            await this.traefikService.resolveOrganizationInternalIdForTraefik(
+              serverRow.organizationId,
+              userForTraefikTenant,
+            ),
+          )
         : null;
     const certResolverName = (
       traefikSettings?.certResolverName || 'letsencrypt'
@@ -2790,11 +2799,7 @@ done
     if (!rs) {
       return base;
     }
-    this.assertRemoteServerMatchesProject(
-      rs,
-      projectUserId,
-      projectOrganizationId,
-    );
+    this.assertRemoteServerMatchesProject(rs, projectOrganizationId);
     if (rs.serverRole === 'build') {
       throw new BadRequestException(
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
@@ -2851,11 +2856,7 @@ done
         rid,
         projectUserId,
       );
-      this.assertRemoteServerMatchesProject(
-        row,
-        projectUserId,
-        projectOrganizationId,
-      );
+      this.assertRemoteServerMatchesProject(row, projectOrganizationId);
     }
     const id = ids.buildRemoteServerId ?? ids.remoteServerId;
     if (id == null) {
@@ -2892,11 +2893,7 @@ done
     if (!rs) {
       return base;
     }
-    this.assertRemoteServerMatchesProject(
-      rs,
-      projectUserId,
-      projectOrganizationId,
-    );
+    this.assertRemoteServerMatchesProject(rs, projectOrganizationId);
     if (rs.serverRole === 'build') {
       throw new BadRequestException(
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
@@ -2913,26 +2910,18 @@ done
 
   async findAll(
     userId: number,
-    organizationPublicId?: string | null,
+    organizationPublicId: string,
   ): Promise<RemoteServerSafe[]> {
-    const raw = organizationPublicId != null ? String(organizationPublicId).trim() : '';
-    let rows: RemoteServer[];
-    if (raw) {
-      const ctx = await this.organizationsService.requireMemberContext(
-        raw,
-        userId,
-        { requireOrgServersAccess: true },
-      );
-      rows = await this.scopedRemoteServers.listForOrganization(
-        userId,
-        ctx.internalId,
-        { order: { name: 'ASC' } },
-      );
-    } else {
-      rows = await this.scopedRemoteServers.listPersonal(userId, {
-        order: { name: 'ASC' },
-      });
-    }
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireOrgServersAccess: true },
+    );
+    const rows = await this.scopedRemoteServers.listForOrganization(
+      userId,
+      ctx.internalId,
+      { order: { name: 'ASC' } },
+    );
     return Promise.all(
       rows.map((r) => this.ensurePublicId(r).then((row) => this.toSafe(row))),
     );
@@ -3122,12 +3111,10 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<RemoteServer> {
     const ensured = await this.ensurePublicId(rs);
-    if (ensured.organizationId != null) {
-      await this.organizationsService.assertMemberCanAccessOrgServerRow(
-        userId,
-        ensured.organizationId,
-      );
-    }
+    await this.organizationsService.assertMemberCanAccessOrgServerRow(
+      userId,
+      ensured.organizationId,
+    );
     return ensured;
   }
 
@@ -3135,7 +3122,6 @@ curl -fsS -o /dev/null "$U"
     rs: RemoteServer,
     userId: number,
   ): Promise<void> {
-    if (rs.organizationId == null) return;
     await this.organizationsService.assertMemberCanEditOrgRemoteServerRow(
       userId,
       rs.organizationId,
@@ -3146,7 +3132,6 @@ curl -fsS -o /dev/null "$U"
     rs: RemoteServer,
     userId: number,
   ): Promise<void> {
-    if (rs.organizationId == null) return;
     await this.organizationsService.assertMemberCanDeleteOrgRemoteServer(
       userId,
       rs.organizationId,
@@ -3157,7 +3142,6 @@ curl -fsS -o /dev/null "$U"
     rs: RemoteServer,
     userId: number,
   ): Promise<void> {
-    if (rs.organizationId == null) return;
     await this.organizationsService.assertMemberCanInstallMaintainOrgRemoteServers(
       userId,
       rs.organizationId,
@@ -3168,7 +3152,6 @@ curl -fsS -o /dev/null "$U"
     rs: RemoteServer,
     userId: number,
   ): Promise<void> {
-    if (rs.organizationId == null) return;
     await this.organizationsService.assertMemberCanUseOrgRemoteTerminal(
       userId,
       rs.organizationId,
@@ -3179,7 +3162,6 @@ curl -fsS -o /dev/null "$U"
     rs: RemoteServer,
     userId: number,
   ): Promise<void> {
-    if (rs.organizationId == null) return;
     await this.organizationsService.assertMemberCanUseOrgRemoteDockerManager(
       userId,
       rs.organizationId,
@@ -3271,22 +3253,19 @@ curl -fsS -o /dev/null "$U"
     const serverRole: 'deploy' | 'build' =
       dto.serverRole === 'build' ? 'build' : 'deploy';
 
-    let organizationId: number | null = null;
-    const rawOrg = dto.organizationPublicId?.trim();
-    if (rawOrg) {
-      const ctx = await this.organizationsService.requireMemberContext(
-        rawOrg,
-        userId,
-        {
-          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
-        },
-      );
-      organizationId = ctx.internalId;
-      await this.organizationsService.assertMemberCanAddOrgRemoteServer(
-        userId,
-        organizationId,
-      );
-    }
+    const rawOrg = dto.organizationPublicId.trim();
+    const ctx = await this.organizationsService.requireMemberContext(
+      rawOrg,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+      },
+    );
+    const organizationId = ctx.internalId;
+    await this.organizationsService.assertMemberCanAddOrgRemoteServer(
+      userId,
+      organizationId,
+    );
 
     const entity = this.remoteServerRepository.create({
       publicId: generatePublicId('rsv'),
@@ -3330,15 +3309,13 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<RemoteServerSafe> {
     const existing = await this.findEntityOrFail(id, userId);
-    if (existing.organizationId != null) {
-      if (this.isDomainsJsonOnlyUpdate(dto)) {
-        await this.organizationsService.assertMemberCanEditOrgServerDomainsJson(
-          userId,
-          existing.organizationId,
-        );
-      } else {
-        await this.assertOrgServerEditIfNeeded(existing, userId);
-      }
+    if (this.isDomainsJsonOnlyUpdate(dto)) {
+      await this.organizationsService.assertMemberCanEditOrgServerDomainsJson(
+        userId,
+        existing.organizationId,
+      );
+    } else {
+      await this.assertOrgServerEditIfNeeded(existing, userId);
     }
     let privateKeyEncrypted: string | null | undefined =
       existing.privateKeyEncrypted;
@@ -3631,11 +3608,7 @@ curl -fsS -o /dev/null "$U"
             remoteServerId,
             'dockerode build may run from projectless system automation',
           );
-    this.assertRemoteServerMatchesProject(
-      rs,
-      projectUserId,
-      projectOrganizationId,
-    );
+    this.assertRemoteServerMatchesProject(rs, projectOrganizationId);
     if (projectUserId != null) {
       await this.assertOrgServerDockerIfNeeded(rs, projectUserId);
     }
@@ -3721,11 +3694,7 @@ curl -fsS -o /dev/null "$U"
             remoteServerId,
             'dockerode push may run from projectless system automation',
           );
-    this.assertRemoteServerMatchesProject(
-      rs,
-      projectUserId,
-      projectOrganizationId,
-    );
+    this.assertRemoteServerMatchesProject(rs, projectOrganizationId);
     if (projectUserId != null) {
       await this.assertOrgServerDockerIfNeeded(rs, projectUserId);
     }

@@ -31,7 +31,7 @@ import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
 import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsCronJobsAdd,
   orgMemberAllowsCronJobsDelete,
@@ -58,10 +58,7 @@ export function CronJobsClient({
   organizationPublicId?: string;
 }) {
   const organizationPublicId = organizationPublicIdProp?.trim() || undefined;
-  const cronJobsBasePath =
-    organizationPublicId != null && organizationPublicId !== ""
-      ? `/organizations/${encodeURIComponent(organizationPublicId)}/cron-jobs`
-      : "/cron-jobs";
+  const cronJobsBasePath = "/cron-jobs";
   const inOrgCron =
     organizationPublicId != null && organizationPublicId !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
@@ -230,6 +227,16 @@ export function CronJobsClient({
   ) => {
     if (provisioningCronJobIds.includes(cronJob.id)) return;
     if (!accessToken) return;
+    if (!organizationPublicId?.trim()) {
+      if (!opts?.silent) {
+        toast({
+          title: "Organization required",
+          description: "Select an organization to load cron job logs.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     if (inOrgCron && !allowCronLogs) {
       if (!opts?.silent) {
         toast({

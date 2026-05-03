@@ -82,7 +82,7 @@ function PlatformShell({ children }: { children: ReactNode }) {
                   Weehawk
                 </p>
                 <p className="mt-0.5 font-mono text-[10px] tracking-[0.2em] text-muted-foreground">
-                  Personal
+                  Menu
                 </p>
               </div>
             </button>

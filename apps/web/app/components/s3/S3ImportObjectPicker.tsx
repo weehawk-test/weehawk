@@ -80,6 +80,8 @@ type Props = {
   ssr?: S3ImportObjectPickerSsr | null;
   /** From SSR — avoids client GET /s3/profiles when opening the dialog */
   initialProfiles?: S3ProfilePublic[];
+  /** Required for client-side profile list when `initialProfiles` is not provided. */
+  organizationPublicId?: string | null;
 };
 
 export function S3ImportObjectPicker({
@@ -93,11 +95,13 @@ export function S3ImportObjectPicker({
   importPickerMode,
   ssr,
   initialProfiles,
+  organizationPublicId,
 }: Props) {
   const { toast } = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const orgTrim = organizationPublicId?.trim() ?? "";
 
   const urlMode = importPickerMode !== undefined;
 
@@ -134,8 +138,17 @@ export function S3ImportObjectPicker({
       setProfiles(initialProfiles);
       return;
     }
+    const org = organizationPublicId?.trim();
+    if (!org) {
+      toast({
+        title: "Organization required",
+        description: "Select an organization to list S3 profiles.",
+        variant: "destructive",
+      });
+      return;
+    }
     let cancelled = false;
-    listS3ProfilesApi()
+    listS3ProfilesApi(org)
       .then((list) => {
         if (!cancelled) setProfiles(list);
       })
@@ -151,7 +164,7 @@ export function S3ImportObjectPicker({
     return () => {
       cancelled = true;
     };
-  }, [open, initialProfiles, toast]);
+  }, [open, initialProfiles, organizationPublicId, toast]);
 
   useEffect(() => {
     if (!open || urlMode) return;
@@ -180,12 +193,23 @@ export function S3ImportObjectPicker({
 
   const loadFirst = useCallback(async () => {
     if (!profileName.trim()) return;
+    if (!orgTrim) {
+      toast({
+        title: "Organization required",
+        description: "Select an organization to browse S3 objects.",
+        variant: "destructive",
+      });
+      return;
+    }
     setLoading(true);
     setNextToken(undefined);
     try {
       const selected = profiles.find((p) => p.name === profileName);
       if (!selected) return;
-      const r = await listS3BucketObjectsApi(s3ProfileRouteId(selected), { prefix: internalPrefix });
+      const r = await listS3BucketObjectsApi(s3ProfileRouteId(selected), {
+        prefix: internalPrefix,
+        organizationPublicId: orgTrim,
+      });
       setFolders(r.folders);
       setObjects(r.objects);
       setNextToken(r.isTruncated ? r.continuationToken : undefined);
@@ -197,7 +221,7 @@ export function S3ImportObjectPicker({
     } finally {
       setLoading(false);
     }
-  }, [profileName, internalPrefix, profiles, toast]);
+  }, [profileName, internalPrefix, profiles, toast, orgTrim]);
 
   useEffect(() => {
     if (urlMode || !open || !profileName.trim()) return;
@@ -230,6 +254,7 @@ export function S3ImportObjectPicker({
       const r = await listS3BucketObjectsApi(profileId, {
         prefix,
         continuationToken: nextToken,
+        organizationPublicId: orgTrim,
       });
       setObjects((prev) => [...prev, ...r.objects]);
       setNextToken(r.isTruncated ? r.continuationToken : undefined);

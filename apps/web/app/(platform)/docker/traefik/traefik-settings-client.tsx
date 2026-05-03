@@ -11,16 +11,21 @@ import {
   type TraefikSettingsPayload,
 } from "@/lib/traefik-api";
 import { useToast } from "@/hooks/use-toast";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 
 export function TraefikSettingsClient() {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const org = useOptionalOrgWorkspace();
+  const orgPub = org?.publicId?.trim() ?? "";
+  const orgKey = orgPub || "none";
+  const traefikQk = ["traefik", "settings", orgKey] as const;
 
   const q = useQuery({
-    queryKey: ["traefik", "settings"],
-    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    queryKey: traefikQk,
+    queryFn: () => fetchTraefikSettings(accessToken ?? "", orgPub),
+    enabled: Boolean(accessToken && orgPub),
   });
 
   const [acmeEmail, setAcmeEmail] = useState("");
@@ -36,9 +41,9 @@ export function TraefikSettingsClient() {
 
   const mut = useMutation({
     mutationFn: (patch: { acmeEmail: string; platformDomain: string }) =>
-      updateTraefikSettings(accessToken ?? "", patch),
+      updateTraefikSettings(accessToken ?? "", patch, orgPub),
     onSuccess: (data) => {
-      qc.setQueryData(["traefik", "settings"], data);
+      qc.setQueryData(traefikQk, data);
       setAcmeEmail(data.acmeEmail);
       setPlatformDomain(data.platformDomain ?? "");
       setDirty(false);
@@ -53,6 +58,14 @@ export function TraefikSettingsClient() {
     return (
       <div className="flex items-center justify-center py-24 text-muted-foreground">
         <Loader2 className="size-6 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!orgPub) {
+    return (
+      <div className="rounded-xl border border-border/80 bg-card/40 p-6 text-sm text-muted-foreground">
+        Open Traefik settings from an organization workspace (active org in the sidebar).
       </div>
     );
   }

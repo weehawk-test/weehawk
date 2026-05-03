@@ -1,15 +1,41 @@
 import { redirect } from "next/navigation";
+import ProjectsClient from "./ProjectsClient";
+import { fetchProjectsSSR } from "@/lib/server-fetch";
+import type { ProjectsPageResponse } from "@/lib/projects-api";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 
-/** List lives at `/`; keep `/projects` as a permanent alias (bookmarks & old links). */
-export default async function ProjectsAliasPage({
+export const dynamic = "force-dynamic";
+
+export default async function ProjectsPage({
   searchParams,
 }: {
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
   const sp = await searchParams;
-  const params = new URLSearchParams();
-  if (sp.page) params.set("page", sp.page);
-  if (sp.q) params.set("q", sp.q);
-  const qs = params.toString();
-  redirect(qs ? `/?${qs}` : "/");
+  const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
+  const q = typeof sp.q === "string" ? sp.q : "";
+  const orgPid = await getServerActiveOrganizationPublicId();
+  if (!orgPid?.trim()) {
+    redirect("/organizations");
+  }
+
+  let initialPageData: ProjectsPageResponse | undefined;
+  let initialError: string | null = null;
+
+  try {
+    initialPageData = await fetchProjectsSSR(page, q, orgPid);
+  } catch (e) {
+    initialError = e instanceof Error ? e.message : "Unknown error";
+  }
+
+  return (
+    <ProjectsClient
+      urlPage={page}
+      urlQ={q}
+      initialPageData={initialPageData}
+      initialError={initialError}
+      organizationPublicId={orgPid}
+      initialPageOrganizationId={orgPid}
+    />
+  );
 }

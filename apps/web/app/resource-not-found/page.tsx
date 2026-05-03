@@ -16,10 +16,8 @@ export default async function ResourceNotFoundPage({ searchParams }: Props) {
 
   if (isOrgWorkspaceDenied) {
     const projectsDenied = denied === ORG_WORKSPACE_PERMISSIONS.PROJECTS;
-    const backHref = projectsDenied
-      ? "/organizations"
-      : `/organizations/${encodeURIComponent(orgPublicId)}/projects`;
-    const backLabel = projectsDenied ? "Organizations" : "Organization projects";
+    const backHref = projectsDenied ? "/" : "/projects";
+    const backLabel = projectsDenied ? "Home" : "Projects";
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 text-center">
         <ShieldAlert className="mb-6 size-20 text-amber-600/80 dark:text-amber-400/80" aria-hidden />

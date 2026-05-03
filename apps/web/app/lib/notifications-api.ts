@@ -40,12 +40,13 @@ async function errorBody(res: Response): Promise<string> {
 
 function orgQuery(organizationPublicId?: string | null): string {
   const o = organizationPublicId?.trim();
-  return o ? `?organizationPublicId=${encodeURIComponent(o)}` : "";
+  if (!o) throw new Error("organizationPublicId is required");
+  return `?organizationPublicId=${encodeURIComponent(o)}`;
 }
 
 export async function fetchNotificationChannels(
   accessToken: string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ): Promise<NotificationChannel[]> {
   const res = await authFetch(
     accessToken,
@@ -63,7 +64,7 @@ export async function fetchNotificationChannelsPaged(
   page: number,
   pageSize: number,
   q: string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ): Promise<PaginatedNotificationChannelsResponse> {
   const params = new URLSearchParams({
     page: String(page),
@@ -72,7 +73,8 @@ export async function fetchNotificationChannelsPaged(
   const t = q.trim();
   if (t) params.set("q", t);
   const org = organizationPublicId?.trim();
-  if (org) params.set("organizationPublicId", org);
+  if (!org) throw new Error("organizationPublicId is required");
+  params.set("organizationPublicId", org);
   const res = await authFetch(
     accessToken,
     `${API_BASE}/api/notifications/channels/paged?${params.toString()}`,
@@ -87,7 +89,7 @@ export async function fetchNotificationChannelsPaged(
 export async function bulkDeleteNotificationChannels(
   accessToken: string,
   ids: string[],
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ): Promise<{ removed: number }> {
   const res = await authFetch(
     accessToken,
@@ -110,7 +112,7 @@ export async function createNotificationChannel(
     config: Record<string, unknown>;
     /** When omitted, channel is saved without a deploy host until you edit or PATCH. */
     remoteServerId?: number;
-    organizationPublicId?: string;
+    organizationPublicId: string;
   },
 ): Promise<NotificationChannel> {
   const res = await authFetch(accessToken, `${API_BASE}/api/notifications/channels`, {
@@ -130,7 +132,7 @@ export async function updateNotificationChannel(
     config: Record<string, unknown>;
     remoteServerId: number;
   }>,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ): Promise<NotificationChannel> {
   const res = await authFetch(
     accessToken,
@@ -148,7 +150,7 @@ export async function updateNotificationChannel(
 export async function deleteNotificationChannel(
   accessToken: string,
   id: number | string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ): Promise<void> {
   const res = await authFetch(
     accessToken,
@@ -163,7 +165,7 @@ export async function deleteNotificationChannel(
 export async function testNotificationChannel(
   accessToken: string,
   channelId: number | string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ): Promise<{ success: boolean; message: string }> {
   const res = await authFetch(
     accessToken,

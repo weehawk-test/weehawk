@@ -35,7 +35,8 @@ import { fetchTraefikSettings, type TraefikSettingsPayload } from "@/lib/traefik
 import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import {
   orgMemberAllowsRemoteServerAdd,
   orgMemberAllowsRemoteServerDelete,
@@ -96,19 +97,30 @@ export function RemoteServerSettingsClient({
   initialRemoteServers,
   initialTraefikSettings,
   organizationPublicId = null,
+  initialRemoteServersOrganizationId = null,
+  initialTraefikOrganizationId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
   initialTraefikSettings?: TraefikSettingsPayload | null;
   /** When set (org workspace), list/create servers scoped to this organization. */
   organizationPublicId?: string | null;
+  initialRemoteServersOrganizationId?: string | null;
+  initialTraefikOrganizationId?: string | null;
 }) {
   const { accessToken, user } = useAuth();
   const { toast } = useToast();
   const confirm = useConfirm();
   const qc = useQueryClient();
   const orgWorkspace = useOptionalOrgWorkspace();
-  const orgKey = organizationPublicId?.trim() || "personal";
-  const inOrgRemoteServerPage = Boolean(organizationPublicId?.trim());
+  const trimmedOrg = organizationPublicId?.trim() ?? "";
+  const orgScopeSegment = orgScopedQuerySegment(trimmedOrg);
+  const trimmedSsrServersOrg = initialRemoteServersOrganizationId?.trim() ?? "";
+  const useSsrRemoteInitial =
+    initialRemoteServers !== undefined && trimmedOrg === trimmedSsrServersOrg;
+  const trimmedSsrTraefikOrg = initialTraefikOrganizationId?.trim() ?? "";
+  const useSsrTraefikInitial =
+    initialTraefikSettings != null && trimmedOrg === trimmedSsrTraefikOrg;
+  const inOrgRemoteServerPage = Boolean(trimmedOrg);
   const allowOrgTerminal =
     !inOrgRemoteServerPage ||
     (orgWorkspace != null &&
@@ -135,30 +147,25 @@ export function RemoteServerSettingsClient({
       orgMemberAllowsRemoteServerInstallMaintenance(orgWorkspace.workspacePermissions));
   const showConnectionTests =
     allowOrgTest && (allowOrgTerminal || allowOrgDocker);
-  const remoteServersQueryKey = ["remote-servers", orgKey] as const;
-  const traefikSettingsQueryKey = ["traefik", "settings"] as const;
-  const hasInitialRemoteServers = initialRemoteServers !== undefined;
-  const hasInitialTraefik = initialTraefikSettings !== undefined;
+  const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
+  const traefikSettingsQueryKey = ["traefik", "settings", orgScopeSegment] as const;
   const list = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () =>
-      fetchRemoteServers(
-        accessToken ?? "",
-        organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
-      ),
+      fetchRemoteServers(accessToken ?? "", trimmedOrg !== "" ? trimmedOrg : undefined),
     enabled: Boolean(accessToken),
-    initialData: initialRemoteServers,
-    // Keep SSR-first paint, but always refresh from API so Domains edits appear without manual refresh.
+    initialData: useSsrRemoteInitial ? initialRemoteServers : undefined,
+    initialDataUpdatedAt: useSsrRemoteInitial ? Date.now() : undefined,
     staleTime: 10_000,
     refetchOnMount: true,
   });
 
   const traefikSettingsQ = useQuery({
     queryKey: traefikSettingsQueryKey,
-    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken),
-    initialData: initialTraefikSettings ?? undefined,
-    // Always refresh on mount so Domains edits appear immediately on navigation.
+    queryFn: () => fetchTraefikSettings(accessToken ?? "", trimmedOrg),
+    enabled: Boolean(accessToken && trimmedOrg),
+    initialData: useSsrTraefikInitial ? (initialTraefikSettings ?? undefined) : undefined,
+    initialDataUpdatedAt: useSsrTraefikInitial ? Date.now() : undefined,
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -747,6 +754,7 @@ export function RemoteServerSettingsClient({
                     accessToken={accessToken}
                     row={row}
                     installMaintenanceAllowed={allowOrgInstallMaintenance}
+                    organizationPublicIdForProvision={trimmedOrg}
                   />
                 </>
               </div>

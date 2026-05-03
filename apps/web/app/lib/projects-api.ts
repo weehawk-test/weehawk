@@ -59,6 +59,9 @@ export function mapApiProjectToProject(raw: unknown): Project {
   else createdAt = new Date().toISOString();
 
   const orgPub = row.organizationPublicId;
+  if (typeof orgPub !== "string" || orgPub.trim() === "") {
+    throw new Error("Project response missing organizationPublicId");
+  }
   return {
     id: String(row.id ?? ""),
     publicId:
@@ -69,8 +72,7 @@ export function mapApiProjectToProject(raw: unknown): Project {
     description: typeof row.description === "string" ? row.description : "",
     createdAt,
     serviceCount: explicitCount ?? services.length,
-    organizationPublicId:
-      typeof orgPub === "string" && orgPub.trim() !== "" ? orgPub.trim() : undefined,
+    organizationPublicId: orgPub.trim(),
   };
 }
 
@@ -107,7 +109,8 @@ export async function fetchProjectsPage(
   const trimmed = q.trim();
   if (trimmed) params.set("q", trimmed);
   const org = organizationPublicId?.trim();
-  if (org) params.set("organizationPublicId", org);
+  if (!org) throw new Error("organizationPublicId is required");
+  params.set("organizationPublicId", org);
   const res = await apiFetch(`/api/projects?${params.toString()}`);
   const text = await res.text();
   if (!res.ok) {
@@ -121,7 +124,8 @@ export async function fetchProject(
   organizationPublicId?: string | null,
 ): Promise<Project> {
   const org = organizationPublicId?.trim();
-  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  if (!org) throw new Error("organizationPublicId is required");
+  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
   const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`);
   const text = await res.text();
   if (!res.ok) {
@@ -131,13 +135,14 @@ export async function fetchProject(
 }
 
 export async function createProjectApi(body: CreateProjectInput): Promise<Project> {
-  const org = body.organizationPublicId?.trim();
+  const org = body.organizationPublicId.trim();
+  if (!org) throw new Error("organizationPublicId is required");
   const res = await apiFetch("/api/projects", {
     method: "POST",
     body: JSON.stringify({
       name: body.name,
       description: body.description?.trim() ? body.description.trim() : undefined,
-      ...(org ? { organizationPublicId: org } : {}),
+      organizationPublicId: org,
     }),
   });
   const text = await res.text();
@@ -149,13 +154,17 @@ export async function createProjectApi(body: CreateProjectInput): Promise<Projec
 
 export async function updateProjectApi(
   id: string,
+  organizationPublicId: string | null | undefined,
   patch: Partial<Pick<Project, "name" | "description">>,
 ): Promise<Project> {
+  const org = organizationPublicId?.trim();
+  if (!org) throw new Error("organizationPublicId is required");
+  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
   const body: Record<string, unknown> = {};
   if (patch.name !== undefined) body.name = patch.name;
   if (patch.description !== undefined) body.description = patch.description;
 
-  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -171,7 +180,8 @@ export async function deleteProjectApi(
   organizationPublicId?: string | null,
 ): Promise<void> {
   const org = organizationPublicId?.trim();
-  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  if (!org) throw new Error("organizationPublicId is required");
+  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
   const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`, { method: "DELETE" });
   const text = await res.text();
   if (!res.ok) {

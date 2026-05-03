@@ -1,7 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   Brackets,
-  IsNull,
   type ObjectLiteral,
   type FindManyOptions,
   type FindOneOptions,
@@ -167,10 +166,9 @@ export class ProjectTenantScopedRepository<
       .where('e.id = :id', { id })
       .andWhere(
         `e."${this.projectIdColumn}" IN (SELECT p.id FROM projects p WHERE
-          (p.user_id = :userId AND p.organization_id IS NULL)
-          OR (p.organization_id IN (
+          p.organization_id IN (
             SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :userId
-          )))`,
+          ))`,
         { userId: uid },
       )
       .getRawOne<{ id?: number }>();
@@ -202,10 +200,9 @@ export class ProjectTenantScopedRepository<
       .where('"id" = :id', { id })
       .andWhere(
         `"${this.projectIdColumn}" IN (SELECT p.id FROM projects p WHERE
-          (p.user_id = :userId AND p.organization_id IS NULL)
-          OR (p.organization_id IN (
+          p.organization_id IN (
             SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :userId
-          )))`,
+          ))`,
         { userId: uid },
       )
       .execute();
@@ -222,10 +219,9 @@ export class ProjectTenantScopedRepository<
       .where('"id" = :id', { id })
       .andWhere(
         `"${this.projectIdColumn}" IN (SELECT p.id FROM projects p WHERE
-          (p.user_id = :userId AND p.organization_id IS NULL)
-          OR (p.organization_id IN (
+          p.organization_id IN (
             SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :userId
-          )))`,
+          ))`,
         { userId: uid },
       )
       .execute();
@@ -253,14 +249,13 @@ export class ProjectTenantScopedRepository<
 }
 
 /**
- * Remote servers: personal rows (`userId` + `organizationId IS NULL`) or org rows visible to
- * {@link OrganizationMembership} for that org. Updates/deletes allow any org member, not only `userId`.
+ * Remote servers and other org-scoped rows: visible to {@link OrganizationMembership} for that org.
  */
 export class RemoteServerTenantScopedRepository<
   TEntity extends ObjectLiteral & {
     id?: number;
     userId: number;
-    organizationId: number | null;
+    organizationId: number;
   },
 > extends TenantScopedRepository<TEntity> {
   constructor(
@@ -277,9 +272,6 @@ export class RemoteServerTenantScopedRepository<
     alias: string,
   ): void {
     qb.where(
-      `(${alias}.userId = :uid AND ${alias}.organizationId IS NULL)`,
-      { uid },
-    ).orWhere(
       `${alias}.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)`,
       { uid },
     );
@@ -314,23 +306,6 @@ export class RemoteServerTenantScopedRepository<
     if (!row)
       throw new NotFoundException(`${this.entityLabel} #${id} not found`);
     return row;
-  }
-
-  async listPersonal(
-    userId: number,
-    options?: Omit<FindManyOptions<TEntity>, 'where'> & {
-      where?: ObjectLiteral;
-    },
-  ): Promise<TEntity[]> {
-    const uid = requireScopedUserId(userId);
-    return this.repo.find({
-      ...(options ?? {}),
-      where: {
-        ...(options?.where as ObjectLiteral | undefined),
-        userId: uid,
-        organizationId: IsNull(),
-      } as any,
-    });
   }
 
   async listForOrganization(
@@ -368,14 +343,8 @@ export class RemoteServerTenantScopedRepository<
       .set(patch)
       .where('id = :id', { id })
       .andWhere(
-        new Brackets((qb) => {
-          qb.where('(user_id = :uid AND organization_id IS NULL)', {
-            uid,
-          }).orWhere(
-            'organization_id IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
-            { uid },
-          );
-        }),
+        'organization_id IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+        { uid },
       )
       .execute();
     if ((res.affected ?? 0) < 1) {
@@ -391,14 +360,8 @@ export class RemoteServerTenantScopedRepository<
       .from(this.repo.metadata.target)
       .where('id = :id', { id })
       .andWhere(
-        new Brackets((qb) => {
-          qb.where('(user_id = :uid AND organization_id IS NULL)', {
-            uid,
-          }).orWhere(
-            'organization_id IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
-            { uid },
-          );
-        }),
+        'organization_id IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+        { uid },
       )
       .execute();
     if ((res.affected ?? 0) < 1) {
@@ -434,7 +397,7 @@ export class RemoteServerTenantScopedRepository<
     const e = entity as TEntity & {
       id?: number;
       userId?: number;
-      organizationId?: number | null;
+      organizationId?: number;
     };
     const existingId =
       e.id != null && Number.isFinite(Number(e.id)) && Number(e.id) >= 1
@@ -444,14 +407,17 @@ export class RemoteServerTenantScopedRepository<
       await this.findScoped(existingId, uid);
       return this.repo.save(entity);
     }
-    const orgId = e.organizationId ?? null;
-    if (orgId != null) {
-      const member = await this.membershipRepo.findOne({
-        where: { userId: uid, organizationId: orgId },
-      });
-      if (!member) {
-        throw new NotFoundException(`${this.entityLabel}: organization not found`);
-      }
+    const orgId = e.organizationId;
+    if (!Number.isFinite(orgId) || orgId < 1) {
+      throw new BadRequestException(
+        `${this.entityLabel}: organizationId is required`,
+      );
+    }
+    const member = await this.membershipRepo.findOne({
+      where: { userId: uid, organizationId: orgId },
+    });
+    if (!member) {
+      throw new NotFoundException(`${this.entityLabel}: organization not found`);
     }
     e.userId = uid;
     return this.repo.save(entity);

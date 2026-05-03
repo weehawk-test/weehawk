@@ -15,6 +15,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import {
   Gamepad2,
   Bird,
@@ -40,7 +41,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsNotificationsAdd,
   orgMemberAllowsNotificationsEdit,
@@ -439,7 +440,8 @@ export function NotificationsChannelsClient({
     !inOrgNotifications ||
     (orgWorkspace != null &&
       orgMemberAllowsNotificationsTest(orgWorkspace.workspacePermissions));
-  const remoteServersQueryKey = ["remote-servers", organizationPublicId || "personal"] as const;
+  const orgSegment = orgScopedQuerySegment(organizationPublicId);
+  const remoteServersQueryKey = ["remote-servers", orgSegment] as const;
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -476,7 +478,7 @@ export function NotificationsChannelsClient({
         accessToken!,
         organizationPublicId ? organizationPublicId : undefined,
       ),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken && orgSegment),
     staleTime: 120_000,
   });
   const deployServers = useMemo(
@@ -485,14 +487,7 @@ export function NotificationsChannelsClient({
   );
 
   const channelsPagedQuery = useQuery({
-    queryKey: [
-      "notifications",
-      "channels",
-      "paged",
-      organizationPublicId ?? "personal",
-      channelsPage,
-      channelsQ,
-    ],
+    queryKey: ["notifications", "channels", "paged", orgSegment, channelsPage, channelsQ],
     queryFn: () =>
       fetchNotificationChannelsPaged(
         accessToken!,
@@ -501,7 +496,7 @@ export function NotificationsChannelsClient({
         channelsQ,
         organizationPublicId,
       ),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken && orgSegment),
     initialData:
       channelsPage === urlPage && channelsQ.trim() === urlQ.trim()
         ? (initialData ?? undefined)
@@ -655,18 +650,20 @@ export function NotificationsChannelsClient({
     mutationFn: async () => {
       if (!form.name.trim()) throw new Error("Service name is required.");
       if (addTestRemoteId == null) throw new Error("Select a deploy host to run the test.");
+      const org = organizationPublicId?.trim();
+      if (!org) throw new Error("Organization workspace is required.");
       const tempChannel = await createNotificationChannel(accessToken!, {
         name: `${form.name.trim()} (test)`,
         type: form.type.trim(),
         config: platformPayload(),
         remoteServerId: addTestRemoteId,
-        ...(organizationPublicId ? { organizationPublicId } : {}),
+        organizationPublicId: org,
       });
       try {
-        return await testNotificationChannel(accessToken!, tempChannel.id, organizationPublicId);
+        return await testNotificationChannel(accessToken!, tempChannel.id, org);
       } finally {
         try {
-          await deleteNotificationChannel(accessToken!, tempChannel.id, organizationPublicId);
+          await deleteNotificationChannel(accessToken!, tempChannel.id, org);
         } catch {}
       }
     },
@@ -677,13 +674,16 @@ export function NotificationsChannelsClient({
     onError: (e: Error) => toast({ title: "Test failed", description: e.message, variant: "destructive" }),
   });
   const createMutation = useMutation({
-    mutationFn: () =>
-      createNotificationChannel(accessToken!, {
+    mutationFn: () => {
+      const org = organizationPublicId?.trim();
+      if (!org) throw new Error("Organization workspace is required.");
+      return createNotificationChannel(accessToken!, {
         name: form.name.trim(),
         type: form.type.trim(),
         config: platformPayload(),
-        ...(organizationPublicId ? { organizationPublicId } : {}),
-      }),
+        organizationPublicId: org,
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });

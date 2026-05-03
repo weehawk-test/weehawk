@@ -17,11 +17,10 @@ export class CreateProjectDto {
   description?: string;
 
   @ApiProperty({
-    required: false,
     description:
-      'When set, the project is scoped to this organization (you must be a member).',
+      'Organization publicId (`org_…`); project is created in this organization.',
   })
-  @IsOptional()
   @IsString()
-  organizationPublicId?: string;
+  @IsNotEmpty()
+  organizationPublicId!: string;
 }

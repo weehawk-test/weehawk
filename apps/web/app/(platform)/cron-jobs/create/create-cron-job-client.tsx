@@ -106,6 +106,15 @@ export function CreateCronJobClient({
       return;
     }
 
+    const org = organizationPublicId?.trim();
+    if (!org) {
+      toast({
+        title: "Organization required",
+        description: "Select an organization workspace before creating a cron job.",
+        variant: "destructive",
+      });
+      return;
+    }
     createMutation.mutate(
       {
         name: name.trim(),
@@ -113,6 +122,7 @@ export function CreateCronJobClient({
         cronExpression: cronExpression.trim(),
         bashScript: bashScript.trim(),
         remoteServerId: parsedRemoteServerId,
+        organizationPublicId: org,
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId: Number(notifyChannelId), notifyMessage: notifyMessage.trim() }
           : {}),

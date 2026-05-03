@@ -8,7 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
-import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
+import { resolveRequiredOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
 import {
   ORGANIZATION_WORKSPACE_PERMISSIONS,
   type OrganizationWorkspacePermission,
@@ -71,12 +71,12 @@ export class CronJobsService {
     );
   }
 
-  private async workspaceOrgId(
+  private async requireWorkspaceOrgId(
     userId: number,
     organizationPublicId?: string | null,
     extra?: OrganizationWorkspacePermission[],
-  ): Promise<number | null> {
-    return resolveOrganizationInternalIdForMember(
+  ): Promise<number> {
+    return resolveRequiredOrganizationInternalIdForMember(
       this.organizationsRepository,
       userId,
       organizationPublicId,
@@ -89,13 +89,7 @@ export class CronJobsService {
     );
   }
 
-  private assertCronWorkspace(
-    job: CronJob,
-    organizationPublicId: string | null | undefined,
-    expectedOrgId: number | null,
-  ): void {
-    const raw = organizationPublicId?.trim();
-    if (!raw) return;
+  private assertCronWorkspace(job: CronJob, expectedOrgId: number): void {
     const rowOrg = job.organizationId ?? null;
     if (rowOrg !== expectedOrgId) {
       throw new NotFoundException('Cron job not found');
@@ -289,13 +283,13 @@ export class CronJobsService {
     idOrPublicId: string | number,
     opts?: { lines?: number; organizationPublicId?: string | null },
   ): Promise<{ log: string; source: string }> {
-    const expectedOrg = await this.workspaceOrgId(
+    const expectedOrg = await this.requireWorkspaceOrgId(
       userId,
       opts?.organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_LOGS],
     );
     const job = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(job, opts?.organizationPublicId, expectedOrg);
+    this.assertCronWorkspace(job, expectedOrg);
     if (job.remoteServerId == null) {
       return { log: '', source: 'not-applicable' };
     }
@@ -479,9 +473,11 @@ fi
     dto: CreateCronJobDto,
   ): Promise<CronJobDetailRow> {
     this.validateCreate(dto);
-    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId, [
-      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_ADD,
-    ]);
+    const orgId = await this.requireWorkspaceOrgId(
+      userId,
+      dto.organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_ADD],
+    );
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(
         userId,
@@ -522,15 +518,17 @@ fi
     userId: number,
     organizationPublicId?: string | null,
   ): Promise<CronJobListRow[]> {
-    const orgId = await this.workspaceOrgId(userId, organizationPublicId);
-    const list =
-      orgId != null
-        ? await this.scopedCronJobs.listForOrganization(userId, orgId, {
-            order: { createdAt: 'DESC' },
-          })
-        : await this.scopedCronJobs.listPersonal(userId, {
-            order: { createdAt: 'DESC' },
-          });
+    const orgId = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+    );
+    const list = await this.scopedCronJobs.listForOrganization(
+      userId,
+      orgId,
+      {
+        order: { createdAt: 'DESC' },
+      },
+    );
     return Promise.all(list.map((w) => this.toListRow(w)));
   }
 
@@ -539,9 +537,12 @@ fi
     idOrPublicId: string | number,
     organizationPublicId?: string | null,
   ): Promise<CronJobDetailRow> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+    );
     const job = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
+    this.assertCronWorkspace(job, expectedOrg);
     return await this.toDetailRow(job);
   }
 
@@ -551,11 +552,13 @@ fi
     dto: UpdateCronJobDto,
     organizationPublicId?: string | null,
   ): Promise<CronJobDetailRow> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
-      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_EDIT,
-    ]);
+    const expectedOrg = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_EDIT],
+    );
     const job = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
+    this.assertCronWorkspace(job, expectedOrg);
     const previousJob = this.cronJobRepo.create({ ...job });
 
     if (dto.name !== undefined) job.name = dto.name.trim();
@@ -633,11 +636,13 @@ fi
     idOrPublicId: string | number,
     organizationPublicId?: string | null,
   ): Promise<void> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
-      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_DELETE,
-    ]);
+    const expectedOrg = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_DELETE],
+    );
     const existing = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(existing, organizationPublicId, expectedOrg);
+    this.assertCronWorkspace(existing, expectedOrg);
     await this.removeCrontabEntry(existing);
     await this.scopedCronJobs.deleteScoped(existing.id, userId);
   }
@@ -692,11 +697,13 @@ fi
     action: string;
     output: string;
   }> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
-      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_RUN,
-    ]);
+    const expectedOrg = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_RUN],
+    );
     const job = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
+    this.assertCronWorkspace(job, expectedOrg);
     if (!job.isActive) {
       throw new BadRequestException('Cron job is inactive.');
     }

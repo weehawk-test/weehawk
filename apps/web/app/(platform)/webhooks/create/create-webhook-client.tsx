@@ -125,6 +125,15 @@ export function CreateWebhookClient({
       return;
     }
 
+    const org = organizationPublicId?.trim();
+    if (!org) {
+      toast({
+        title: "Organization required",
+        description: "Select an organization workspace before creating a webhook.",
+        variant: "destructive",
+      });
+      return;
+    }
     createMutation.mutate(
       {
         name: name.trim(),
@@ -132,9 +141,7 @@ export function CreateWebhookClient({
         bashScript: bashScript.trim(),
         remoteServerId: parsedRemoteServerId,
         hooksPublicHost: host,
-        ...(organizationPublicId?.trim()
-          ? { organizationPublicId: organizationPublicId.trim() }
-          : {}),
+        organizationPublicId: org,
         ...(hasNotifyChannel && hasNotifyMessage
           ? { notifyChannelId: Number(notifyChannelId), notifyMessage: notifyMessage.trim() }
           : {}),

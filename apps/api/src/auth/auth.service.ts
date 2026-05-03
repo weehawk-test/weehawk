@@ -19,6 +19,7 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RefreshTokenService } from '../token/refresh-token.service';
 import { EmailConfirmationService } from '../email/email-confirmation.service';
+import { OrganizationsService } from '../organizations/organizations.service';
 import type { Profile } from 'passport-google-oauth20';
 
 function isPostgresUniqueViolation(err: unknown): boolean {
@@ -38,6 +39,7 @@ export class AuthService {
     private readonly config: ConfigService,
     private readonly refreshTokenService: RefreshTokenService,
     private readonly emailConfirmationService: EmailConfirmationService,
+    private readonly organizationsService: OrganizationsService,
   ) {}
 
   async register(dto: RegisterDto): Promise<AuthResponseDto> {
@@ -68,7 +70,7 @@ export class AuthService {
     const accessToken = this.generateAccessToken(saved);
     const refreshToken =
       await this.refreshTokenService.createRefreshToken(saved);
-    return this.buildAuthResponse(saved, accessToken, refreshToken);
+    return this.buildAuthResponseWithOrg(saved, accessToken, refreshToken);
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
@@ -96,7 +98,7 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
     const refreshToken =
       await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, refreshToken);
+    return this.buildAuthResponseWithOrg(user, accessToken, refreshToken);
   }
 
   async refresh(refreshToken: string): Promise<AuthResponseDto> {
@@ -106,7 +108,7 @@ export class AuthService {
     await this.refreshTokenService.deleteByToken(refreshToken);
     const accessToken = this.generateAccessToken(user);
     const newRt = await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, newRt);
+    return this.buildAuthResponseWithOrg(user, accessToken, newRt);
   }
 
   async logout(email: string, refreshToken: string): Promise<void> {
@@ -247,7 +249,7 @@ export class AuthService {
     const accessToken = this.generateAccessToken(merged);
     const refreshToken =
       await this.refreshTokenService.createRefreshToken(merged);
-    return this.buildAuthResponse(merged, accessToken, refreshToken);
+    return this.buildAuthResponseWithOrg(merged, accessToken, refreshToken);
   }
 
   async loginWithGoogle(profile: Profile): Promise<AuthResponseDto> {
@@ -333,7 +335,7 @@ export class AuthService {
     const accessToken = this.generateAccessToken(user);
     const refreshToken =
       await this.refreshTokenService.createRefreshToken(user);
-    return this.buildAuthResponse(user, accessToken, refreshToken);
+    return this.buildAuthResponseWithOrg(user, accessToken, refreshToken);
   }
 
   private async mergeGoogleProfileIntoUser(
@@ -377,6 +379,17 @@ export class AuthService {
       },
       { expiresIn: this.config.get('JWT_EXP', '7d') },
     );
+  }
+
+  private async buildAuthResponseWithOrg(
+    user: User,
+    accessToken: string,
+    refreshToken: string,
+  ): Promise<AuthResponseDto> {
+    await this.organizationsService.ensureAtLeastOneOwnedOrganizationForUser(
+      user.id,
+    );
+    return this.buildAuthResponse(user, accessToken, refreshToken);
   }
 
   private buildAuthResponse(

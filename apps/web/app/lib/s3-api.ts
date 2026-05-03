@@ -14,9 +14,9 @@ function parseErrorMessage(text: string): string {
   return text;
 }
 
-function appendOrgParam(path: string, organizationPublicId?: string | null): string {
+function appendOrgParam(path: string, organizationPublicId: string | null | undefined): string {
   const o = organizationPublicId?.trim();
-  if (!o) return path;
+  if (!o) throw new Error("organizationPublicId is required");
   const sep = path.includes("?") ? "&" : "?";
   return `${path}${sep}organizationPublicId=${encodeURIComponent(o)}`;
 }
@@ -50,8 +50,11 @@ export type S3ProfilePayload = {
   /** Omit or leave empty when updating to keep the stored secret. */
   secretAccessKey?: string;
   forcePathStyle?: boolean;
-  organizationPublicId?: string;
+  organizationPublicId: string;
 };
+
+/** Form fields only; `organizationPublicId` is merged when calling the API. */
+export type S3ProfileFormState = Omit<S3ProfilePayload, "forcePathStyle" | "organizationPublicId">;
 
 export type S3ProfilePublic = {
   publicId?: string;
@@ -73,7 +76,7 @@ export function s3ProfileRouteId(profile: { publicId?: string | null; name: stri
   return profile.name.trim();
 }
 
-export function listS3ProfilesApi(organizationPublicId?: string | null) {
+export function listS3ProfilesApi(organizationPublicId: string | null | undefined) {
   return request<S3ProfilePublic[]>(appendOrgParam("/api/s3/profiles", organizationPublicId));
 }
 
@@ -99,7 +102,7 @@ export function testS3ConnectionApi(body: S3TestConnectionPayload) {
   });
 }
 
-export function deleteS3ProfileApi(profileId: string, organizationPublicId?: string | null) {
+export function deleteS3ProfileApi(profileId: string, organizationPublicId: string | null | undefined) {
   return request<{ success: boolean; publicId: string }>(
     appendOrgParam(`/api/s3/profiles/${encodeURIComponent(profileId)}`, organizationPublicId),
     { method: "DELETE" },
@@ -123,7 +126,8 @@ export function listS3BucketObjectsApi(
   if (opts?.prefix !== undefined && opts.prefix !== "") q.set("prefix", opts.prefix);
   if (opts?.continuationToken) q.set("continuationToken", opts.continuationToken);
   const org = opts?.organizationPublicId?.trim();
-  if (org) q.set("organizationPublicId", org);
+  if (!org) throw new Error("organizationPublicId is required");
+  q.set("organizationPublicId", org);
   const qs = q.toString();
   return request<S3BucketListResponse>(
     `/api/s3/profiles/${encodeURIComponent(profileId)}/objects${qs ? `?${qs}` : ""}`,
@@ -133,7 +137,7 @@ export function listS3BucketObjectsApi(
 export function deleteS3ObjectApi(
   profileId: string,
   key: string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ) {
   return request<{ success: boolean; key: string }>(
     appendOrgParam(
@@ -147,7 +151,7 @@ export function deleteS3ObjectApi(
 export function deleteS3ObjectsBatchApi(
   profileId: string,
   keys: string[],
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ) {
   return request<{
     deleted: string[];
@@ -174,11 +178,12 @@ export type S3PrefixSummaryResponse = {
 export function getPrefixSummaryApi(
   profileId: string,
   prefix: string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ) {
   const q = new URLSearchParams({ prefix });
   const org = organizationPublicId?.trim();
-  if (org) q.set("organizationPublicId", org);
+  if (!org) throw new Error("organizationPublicId is required");
+  q.set("organizationPublicId", org);
   return request<S3PrefixSummaryResponse>(
     `/api/s3/profiles/${encodeURIComponent(profileId)}/prefix-summary?${q.toString()}`,
   );
@@ -187,7 +192,7 @@ export function getPrefixSummaryApi(
 export function deleteS3PrefixApi(
   profileId: string,
   prefix: string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ) {
   return request<{
     deletedCount: number;
@@ -207,7 +212,7 @@ export function deleteS3PrefixApi(
 export function createS3FolderApi(
   profileId: string,
   key: string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ) {
   return request<{ bucket: string; key: string }>(
     appendOrgParam(
@@ -235,7 +240,7 @@ export async function presignS3PutApi(
   opts?: {
     contentType?: string;
     expiresInSeconds?: number;
-    organizationPublicId?: string | null;
+    organizationPublicId: string | null | undefined;
   },
 ): Promise<S3PresignPutResponse> {
   return request<S3PresignPutResponse>(
@@ -261,14 +266,15 @@ export async function uploadS3ObjectApi(
   profileId: string,
   key: string,
   file: File,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ) {
   const contentType =
     file.type ||
     (key.toLowerCase().endsWith(".gz") ? "application/gzip" : "application/octet-stream");
   const q = new URLSearchParams({ key, contentType });
   const org = organizationPublicId?.trim();
-  if (org) q.set("organizationPublicId", org);
+  if (!org) throw new Error("organizationPublicId is required");
+  q.set("organizationPublicId", org);
   const url = `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileId)}/objects/upload?${q.toString()}`;
   const form = new FormData();
   form.append("file", file, file.name || "upload.bin");
@@ -297,13 +303,14 @@ export type S3PresignGetResponse = {
 export async function presignS3GetApi(
   profileId: string,
   key: string,
+  organizationPublicId: string | null | undefined,
   expiresInSeconds?: number,
-  organizationPublicId?: string | null,
 ) {
   const q = new URLSearchParams({ key });
   if (expiresInSeconds != null) q.set("expiresInSeconds", String(expiresInSeconds));
   const org = organizationPublicId?.trim();
-  if (org) q.set("organizationPublicId", org);
+  if (!org) throw new Error("organizationPublicId is required");
+  q.set("organizationPublicId", org);
   return request<S3PresignGetResponse>(
     `/api/s3/profiles/${encodeURIComponent(profileId)}/presign-get?${q.toString()}`,
   );
@@ -317,11 +324,12 @@ export async function presignS3GetApi(
 export async function downloadS3ObjectBlob(
   profileId: string,
   key: string,
-  organizationPublicId?: string | null,
+  organizationPublicId: string | null | undefined,
 ): Promise<Blob> {
   const q = new URLSearchParams({ key });
   const org = organizationPublicId?.trim();
-  if (org) q.set("organizationPublicId", org);
+  if (!org) throw new Error("organizationPublicId is required");
+  q.set("organizationPublicId", org);
   const url = `${API_BASE}/api/s3/profiles/${encodeURIComponent(profileId)}/download?${q.toString()}`;
   const res = await authFetch("cookie-session", url, {
     method: "GET",

@@ -1,14 +1,15 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Put,
   Query,
+  Req,
+  UnauthorizedException,
   UseGuards,
   UsePipes,
   ValidationPipe,
-  Req,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
@@ -33,22 +34,47 @@ export class TraefikController {
     return id;
   }
 
+  private parseRequiredOrgPublicId(raw: string | undefined): string {
+    const t = raw?.trim() ?? '';
+    if (!t) {
+      throw new BadRequestException('organizationPublicId is required');
+    }
+    return t;
+  }
+
   @Get('settings')
   @ApiOperation({
     summary:
-      'Get Traefik / ACME settings and generated compose + static YAML previews',
+      'Get Traefik / ACME settings and generated compose + static YAML previews (organization-scoped)',
   })
-  getSettings(@Req() req: { user?: { userId: number } }) {
-    return this.traefikService.getResponsePayload(this.uid(req));
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: true,
+    description: 'Organization workspace; caller must have Domains access.',
+  })
+  async getSettings(
+    @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
+  ) {
+    const userId = this.uid(req);
+    const orgPub = this.parseRequiredOrgPublicId(organizationPublicId);
+    const ctx = await this.organizationsService.requireMemberContext(
+      orgPub,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS,
+      },
+    );
+    return this.traefikService.getResponsePayloadForOrganization(ctx.internalId);
   }
 
   @Put('settings')
-  @ApiOperation({ summary: 'Update Traefik / ACME settings' })
+  @ApiOperation({ summary: 'Update Traefik / ACME settings (organization-scoped)' })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: false,
+    required: true,
     description:
-      'When set, caller must be an org member with Domains + Certificate email sub-permission (org Domains page).',
+      'Organization workspace; caller must have Domains + certificate email permission when not owner.',
   })
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async putSettings(
@@ -57,21 +83,19 @@ export class TraefikController {
     @Body() dto: UpdateTraefikSettingsDto,
   ) {
     const userId = this.uid(req);
-    const orgRaw = organizationPublicId?.trim();
-    if (orgRaw) {
-      const ctx = await this.organizationsService.requireMemberContext(
-        orgRaw,
-        userId,
-        {
-          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS,
-        },
-      );
-      await this.organizationsService.assertMemberCanEditOrgDomainsCertificateEmail(
-        userId,
-        ctx.internalId,
-      );
-    }
-    await this.traefikService.updateSettings(userId, dto);
-    return this.traefikService.getResponsePayload(userId);
+    const orgPub = this.parseRequiredOrgPublicId(organizationPublicId);
+    const ctx = await this.organizationsService.requireMemberContext(
+      orgPub,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS,
+      },
+    );
+    await this.organizationsService.assertMemberCanEditOrgDomainsCertificateEmail(
+      userId,
+      ctx.internalId,
+    );
+    await this.traefikService.updateSettingsForOrganization(ctx.internalId, dto);
+    return this.traefikService.getResponsePayloadForOrganization(ctx.internalId);
   }
 }

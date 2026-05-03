@@ -9,7 +9,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { fetchRemoteServers, type RemoteServerRow } from "@/lib/remote-servers-api";
 import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
-import { saveS3ProfileApi, testS3ConnectionApi, type S3ProfilePayload } from "@/lib/s3-api";
+import {
+  saveS3ProfileApi,
+  testS3ConnectionApi,
+  type S3ProfileFormState,
+  type S3ProfilePayload,
+} from "@/lib/s3-api";
 
 type S3ProviderPreset = {
   id: string;
@@ -33,10 +38,7 @@ export function CreateS3ProfileClient({
   organizationPublicId?: string | null;
 } = {}) {
   const orgTrim = organizationPublicId?.trim();
-  const s3BasePath =
-    orgTrim != null && orgTrim !== ""
-      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
-      : "/s3";
+  const s3BasePath = "/s3";
   const router = useRouter();
   const { toast } = useToast();
   const { accessToken } = useAuth();
@@ -45,7 +47,7 @@ export function CreateS3ProfileClient({
   const [testing, setTesting] = useState(false);
   const [s3VerifyRemoteId, setS3VerifyRemoteId] = useState<number | null>(null);
   const [deployServersForTest, setDeployServersForTest] = useState<RemoteServerRow[]>([]);
-  const [form, setForm] = useState<Omit<S3ProfilePayload, "forcePathStyle">>({
+  const [form, setForm] = useState<S3ProfileFormState>({
     name: "",
     endpoint: "",
     region: "us-east-1",
@@ -75,14 +77,15 @@ export function CreateS3ProfileClient({
   const canSubmit = useMemo(
     () =>
       Boolean(
-        form.name.trim() &&
+        orgTrim &&
+          form.name.trim() &&
           form.endpoint.trim() &&
           form.region.trim() &&
           form.bucket.trim() &&
           form.accessKeyId.trim() &&
           (form.secretAccessKey ?? "").trim(),
       ),
-    [form],
+    [form, orgTrim],
   );
 
   const applyProviderPreset = (providerId: string) => {
@@ -97,9 +100,9 @@ export function CreateS3ProfileClient({
     }));
   };
 
-  const payloadForApi = useMemo((): S3ProfilePayload => {
+  const payloadForApi = useMemo((): S3ProfilePayload | null => {
+    if (!orgTrim) return null;
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
-    const o = organizationPublicId?.trim();
     return {
       name: form.name.trim(),
       endpoint: form.endpoint.trim(),
@@ -108,12 +111,12 @@ export function CreateS3ProfileClient({
       accessKeyId: form.accessKeyId.trim(),
       secretAccessKey: (form.secretAccessKey ?? "").trim(),
       forcePathStyle,
-      ...(o ? { organizationPublicId: o } : {}),
+      organizationPublicId: orgTrim,
     };
-  }, [form, organizationPublicId]);
+  }, [form, orgTrim]);
 
   const onTest = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !payloadForApi) return;
     if (s3VerifyRemoteId == null) {
       toast({
         title: "Choose a deploy host",
@@ -141,7 +144,7 @@ export function CreateS3ProfileClient({
   };
 
   const onSave = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !payloadForApi) return;
     setSaving(true);
     try {
       const res = await saveS3ProfileApi(payloadForApi);

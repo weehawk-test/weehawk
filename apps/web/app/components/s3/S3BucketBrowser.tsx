@@ -29,7 +29,7 @@ import {
   type S3BucketListResponse,
   type S3PrefixSummaryResponse,
 } from "@/lib/s3-api";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsS3Add,
   orgMemberAllowsS3Browse,
@@ -177,10 +177,7 @@ export function S3BucketBrowser({
   organizationPublicId?: string | null;
 }) {
   const orgTrim = organizationPublicId?.trim();
-  const s3BrowseBase =
-    orgTrim != null && orgTrim !== ""
-      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
-      : "/s3";
+  const s3BrowseBase = "/s3";
   const inOrgBucket = orgTrim != null && orgTrim !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
   const allowS3Browse =

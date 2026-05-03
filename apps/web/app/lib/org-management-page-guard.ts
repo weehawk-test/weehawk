@@ -5,6 +5,7 @@ import {
   type OrgWorkspacePermissionKey,
 } from "@/lib/org-workspace-permissions";
 import { redirectOrgWorkspaceAccessDenied } from "@/lib/org-workspace-access-denied";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 
 /** Server guard: organization management tab requires parent Management + matching sub-permission (owners bypass). */
 export async function requireOrgManagementTab(
@@ -26,4 +27,14 @@ export async function requireOrgManagementTab(
       redirectOrgWorkspaceAccessDenied(org.publicId, subKey);
     }
   }
+}
+
+/** Resolves active org from cookie / default, then enforces the management sub-tab permission. */
+export async function requireOrgManagementTabForActiveOrg(
+  subKey: OrgWorkspacePermissionKey,
+): Promise<string> {
+  const id = await getServerActiveOrganizationPublicId();
+  if (!id) notFound();
+  await requireOrgManagementTab(id, subKey);
+  return id;
 }

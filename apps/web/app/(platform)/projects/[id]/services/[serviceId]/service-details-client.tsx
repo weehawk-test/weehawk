@@ -133,6 +133,7 @@ import {
   type S3ProfilePublic,
 } from "@/lib/s3-api";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
+import { GIT_SETTINGS_QUERY_SCOPE } from "@/lib/react-query-scope";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { cn } from "@/lib/utils";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
@@ -1833,8 +1834,9 @@ function ServiceBackupPanel({
   const [backupS3ProfileName, setBackupS3ProfileName] = useState("");
   const s3OrganizationPublicId = s3OrganizationPublicIdProp?.trim() || null;
   const s3ProfilesQuery = useQuery({
-    queryKey: ["s3-profiles", s3OrganizationPublicId ?? "personal"],
+    queryKey: ["s3-profiles", s3OrganizationPublicId],
     queryFn: () => listS3ProfilesApi(s3OrganizationPublicId),
+    enabled: Boolean(s3OrganizationPublicId),
     ...(initialS3Profiles !== undefined
       ? { initialData: initialS3Profiles, refetchOnMount: false }
       : {}),
@@ -2296,6 +2298,7 @@ function ServiceBackupPanel({
               }}
               defaultProfileName={backupS3ProfileName}
               initialProfiles={initialS3Profiles}
+              organizationPublicId={s3OrganizationPublicId}
               importPickerMode="db"
               ssr={
                 s3ImportSsr?.mode === "db"
@@ -2515,6 +2518,7 @@ function ServiceBackupPanel({
           }}
           defaultProfileName={backupS3ProfileName}
           initialProfiles={initialS3Profiles}
+          organizationPublicId={s3OrganizationPublicId}
           importPickerMode="vol"
           ssr={
             s3ImportSsr?.mode === "vol"
@@ -3325,7 +3329,7 @@ function ApplicationArchivePanel({
     return typeof id === "number" && id > 0;
   }, [effectiveService.remoteServerId]);
   const { data: gitSettings, isLoading: gitSettingsLoading } = useQuery({
-    queryKey: ["git-settings"],
+    queryKey: ["git-settings", GIT_SETTINGS_QUERY_SCOPE],
     queryFn: () => fetchGitSettings(accessToken!),
     enabled: Boolean(accessToken),
   });

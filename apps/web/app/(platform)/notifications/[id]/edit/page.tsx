@@ -3,6 +3,7 @@ import {
   fetchNotificationChannelsPagedSSR,
   fetchNotificationChannelsSSR,
 } from "@/lib/server-fetch";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { NotificationsChannelsClient } from "../../channels/notifications-channels-client";
 import type {
   NotificationChannel,
@@ -12,16 +13,16 @@ import { NOTIFICATIONS_BASE_PATH } from "../../page";
 
 const CHANNELS_PAGE_SIZE = 10;
 
-async function getChannelsList(): Promise<NotificationChannel[]> {
-  return fetchNotificationChannelsSSR();
-}
+export const dynamic = "force-dynamic";
 
 export async function NotificationsEditView({
   params,
   notificationsBasePath = NOTIFICATIONS_BASE_PATH,
+  organizationPublicId,
 }: {
   params: Promise<{ id: string }>;
   notificationsBasePath?: string;
+  organizationPublicId?: string | null;
 }) {
   const { id: rawId } = await params;
   const id = rawId.trim();
@@ -30,11 +31,16 @@ export async function NotificationsEditView({
   let initialData: PaginatedNotificationChannelsResponse | null = null;
   let initialError: string | null = null;
   try {
-    initialData = await fetchNotificationChannelsPagedSSR(urlPage, CHANNELS_PAGE_SIZE, urlQ);
+    initialData = await fetchNotificationChannelsPagedSSR(
+      urlPage,
+      CHANNELS_PAGE_SIZE,
+      urlQ,
+      organizationPublicId,
+    );
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
   }
-  const channels = await getChannelsList();
+  const channels = await fetchNotificationChannelsSSR(organizationPublicId);
   const channel = channels.find((ch) => String(ch.publicId ?? "") === id || String(ch.id) === id) ?? null;
   if (!channel) redirect("/resource-not-found");
 
@@ -47,6 +53,7 @@ export async function NotificationsEditView({
       initialMode="edit"
       initialRouteChannel={channel}
       notificationsBasePath={notificationsBasePath}
+      organizationPublicId={organizationPublicId ?? undefined}
     />
   );
 }
@@ -56,5 +63,10 @@ export default async function NotificationsEditPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  return NotificationsEditView({ params, notificationsBasePath: NOTIFICATIONS_BASE_PATH });
+  const orgPid = await getServerActiveOrganizationPublicId();
+  return NotificationsEditView({
+    params,
+    notificationsBasePath: NOTIFICATIONS_BASE_PATH,
+    organizationPublicId: orgPid ?? undefined,
+  });
 }

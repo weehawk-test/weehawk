@@ -16,6 +16,8 @@ import {
   buildWeehawkProvisionScript,
 } from './remote-server-provision.script';
 import { TraefikService } from '../traefik/traefik.service';
+import { OrganizationsService } from '../organizations/organizations.service';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 
 const MAX_LOG_CHARS = 512_000;
 
@@ -29,14 +31,28 @@ export class RemoteServerProvisionService {
     private readonly jobRepo: Repository<RemoteServerProvisionJob>,
     private readonly remoteServersService: RemoteServersService,
     private readonly traefikService: TraefikService,
+    private readonly organizationsService: OrganizationsService,
   ) {}
 
   /** Same bash the worker runs over SSH — for UI preview. */
   async getProvisionScriptPreview(
     role: 'deploy' | 'build',
     userId: number,
+    organizationPublicId: string,
   ): Promise<{ script: string }> {
-    const traefikSettings = await this.traefikService.getSettings(userId);
+    const orgPub = organizationPublicId?.trim();
+    if (!orgPub) {
+      throw new BadRequestException('organizationPublicId is required');
+    }
+    const ctx = await this.organizationsService.requireMemberContext(
+      orgPub,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+      },
+    );
+    const traefikSettings =
+      await this.traefikService.getSettingsForOrganization(ctx.internalId);
     return {
       script: buildWeehawkProvisionScript({
         role,
@@ -210,7 +226,13 @@ export class RemoteServerProvisionService {
           ctx.server.serverRole === 'build'
             ? undefined
             : await this.remoteServersService.getWebhookAgentProvisionInput();
-        const traefikSettings = await this.traefikService.getSettings(ownerId);
+        const traefikOrg =
+          await this.traefikService.resolveOrganizationInternalIdForTraefik(
+            ctx.server.organizationId,
+            ownerId,
+          );
+        const traefikSettings =
+          await this.traefikService.getSettingsForOrganization(traefikOrg);
         script = buildWeehawkProvisionScript({
           role: ctx.server.serverRole === 'build' ? 'build' : 'deploy',
           webhookAgent,

@@ -21,23 +21,25 @@ function cronJobQueryEnabled(id: string | number): boolean {
   return typeof id === "string" ? id.trim().length > 0 : Number.isFinite(id);
 }
 
-export function useCronJobs() {
+export function useCronJobs(organizationPublicId: string | null | undefined) {
   const { accessToken } = useAuth();
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useQuery({
-    queryKey: ["cron-jobs", "personal"],
-    queryFn: () => fetchCronJobs(accessToken!),
+    queryKey: ["cron-jobs", orgKey],
+    queryFn: () => fetchCronJobs(accessToken!, orgKey),
     select: (rows) =>
       reconcileAndFilterPendingDeletions("cron-jobs", rows, (item) => [item.id, item.publicId]),
-    enabled: Boolean(accessToken),
+    enabled: Boolean(accessToken) && Boolean(orgKey),
   });
 }
 
-export function useCronJob(id: string | number) {
+export function useCronJob(id: string | number, organizationPublicId: string | null | undefined) {
   const { accessToken } = useAuth();
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useQuery({
-    queryKey: ["cron-jobs", id],
-    queryFn: () => fetchCronJob(accessToken!, id),
-    enabled: Boolean(accessToken) && cronJobQueryEnabled(id),
+    queryKey: ["cron-jobs", orgKey, id],
+    queryFn: () => fetchCronJob(accessToken!, id, orgKey),
+    enabled: Boolean(accessToken) && cronJobQueryEnabled(id) && Boolean(orgKey),
   });
 }
 
@@ -47,7 +49,6 @@ export function useCreateCronJob() {
   return useMutation({
     mutationFn: (body: CreateCronJobBody) => createCronJob(accessToken!, body),
     onSuccess: (_data, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["cron-jobs", "personal"] });
       const org = vars.organizationPublicId?.trim();
       if (org) queryClient.invalidateQueries({ queryKey: ["cron-jobs", org] });
     },
@@ -57,14 +58,13 @@ export function useCreateCronJob() {
 export function useUpdateCronJob(organizationPublicId?: string | null) {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
-  const orgKey = organizationPublicId?.trim();
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string | number } & UpdateCronJobBody) =>
       updateCronJob(accessToken!, id, body, organizationPublicId),
     onSuccess: (updated, v) => {
-      queryClient.invalidateQueries({ queryKey: ["cron-jobs", "personal"] });
       if (orgKey) queryClient.invalidateQueries({ queryKey: ["cron-jobs", orgKey] });
-      queryClient.invalidateQueries({ queryKey: ["cron-jobs", v.id] });
+      queryClient.invalidateQueries({ queryKey: ["cron-jobs", orgKey, v.id] });
       queryClient.invalidateQueries({ queryKey: ["cron-jobs", cronJobRouteId(updated)] });
     },
   });
@@ -73,10 +73,12 @@ export function useUpdateCronJob(organizationPublicId?: string | null) {
 export function useDeleteCronJob(organizationPublicId?: string | null) {
   const queryClient = useQueryClient();
   const { accessToken } = useAuth();
-  const orgKey = organizationPublicId?.trim() || "personal";
+  const orgKey = organizationPublicId?.trim() ?? "";
   return useMutation({
-    mutationFn: (id: string | number) =>
-      deleteCronJob(accessToken!, id, organizationPublicId),
+    mutationFn: (id: string | number) => {
+      if (!orgKey) throw new Error("organizationPublicId is required");
+      return deleteCronJob(accessToken!, id, organizationPublicId);
+    },
     onMutate: async (id) => {
       const matchId = String(id);
       const pendingIds = new Set<string>([matchId]);

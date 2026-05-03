@@ -56,12 +56,12 @@ export class CreateNotificationChannelDto {
   @Min(1)
   remoteServerId?: number;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description:
-      'Organization workspace: channel is shared with org members (not the personal account).',
+      'Organization workspace (required). Channels are scoped to the organization.',
   })
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(48)
-  organizationPublicId?: string;
+  organizationPublicId!: string;
 }

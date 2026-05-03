@@ -13,6 +13,7 @@ import {
   registryVerifyApi,
 } from "@/lib/registry-api";
 import { RegistryBreadcrumb } from "./registry-breadcrumb";
+import { REGISTRY_ACCOUNTS_QUERY_SCOPE } from "@/lib/react-query-scope";
 
 type PresetId = "dockerhub" | "ghcr" | "gitlab" | "custom";
 
@@ -97,7 +98,7 @@ export function RegistrySettingsClient({ preset }: Props) {
   const [isClearingToken, setIsClearingToken] = useState(false);
 
   const accountsQ = useQuery({
-    queryKey: ["registry-accounts"],
+    queryKey: ["registry-accounts", REGISTRY_ACCOUNTS_QUERY_SCOPE],
     queryFn: () => fetchRegistryAccounts(accessToken ?? ""),
     enabled: Boolean(accessToken),
   });

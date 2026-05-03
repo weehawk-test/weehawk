@@ -69,10 +69,7 @@ export default function AcceptOrgInvitePage() {
     };
   }, [token, isReady, accessToken]);
 
-  const orgHref =
-    orgPublicId && orgPublicId.length > 0
-      ? `/organizations/${encodeURIComponent(orgPublicId)}/projects`
-      : "/organizations";
+  const orgHref = orgPublicId && orgPublicId.length > 0 ? "/projects" : "/";
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-6">
@@ -113,10 +110,7 @@ export default function AcceptOrgInvitePage() {
               Sign in
             </Link>
           ) : null}
-          <Link href="/organizations" className="btn-secondary w-full text-center">
-            All organizations
-          </Link>
-          <Link href="/" className="text-center text-sm text-muted-foreground hover:text-foreground">
+          <Link href="/" className="btn-secondary w-full text-center">
             Home
           </Link>
         </div>

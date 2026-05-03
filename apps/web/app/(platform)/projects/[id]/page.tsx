@@ -2,6 +2,7 @@ import ProjectsIdClient from "./ProjectsIdClient";
 import { fetchProjectSSR, fetchServicesPageSSR } from "@/lib/server-fetch";
 import type { Project } from "@/lib/schema";
 import type { ServicesPageResponse } from "@/lib/services-api";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -34,8 +35,9 @@ export default async function ProjectDetailsPage({
   const q = typeof sp.q === "string" ? sp.q : "";
   const orgFromQuery =
     typeof sp.organizationPublicId === "string" ? sp.organizationPublicId.trim() : "";
+  const orgFromCookie = (await getServerActiveOrganizationPublicId())?.trim() || "";
   const organizationPublicId =
-    organizationPublicIdProp?.trim() || orgFromQuery || undefined;
+    organizationPublicIdProp?.trim() || orgFromQuery || orgFromCookie || undefined;
 
   const safeProjectId = rawId.trim() ? rawId.trim() : null;
 
@@ -64,9 +66,7 @@ export default async function ProjectDetailsPage({
         params.set("organizationPublicId", organizationPublicId);
       }
       const qs = params.toString();
-      const base = organizationPublicId
-        ? `/organizations/${encodeURIComponent(organizationPublicId)}/projects/${initialProject.publicId}`
-        : `/projects/${initialProject.publicId}`;
+      const base = `/projects/${initialProject.publicId}`;
       redirect(qs ? `${base}?${qs}` : base);
     }
   }

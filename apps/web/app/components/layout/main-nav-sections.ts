@@ -106,8 +106,8 @@ export function buildMainNavSections(): MainNavSection[] {
       label: "More",
       items: [
         {
-          href: "/organizations",
-          label: "Organizations",
+          href: "/organization",
+          label: "Management",
           icon: Building2,
           orgPermission: ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
           orgManagementEntry: true,

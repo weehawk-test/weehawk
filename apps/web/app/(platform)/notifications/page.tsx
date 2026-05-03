@@ -1,10 +1,13 @@
 import { fetchNotificationChannelsPagedSSR } from "@/lib/server-fetch";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { NotificationsChannelsClient } from "./channels/notifications-channels-client";
 import type { PaginatedNotificationChannelsResponse } from "@/lib/notifications-api";
 
 const CHANNELS_PAGE_SIZE = 10;
 
 export const NOTIFICATIONS_BASE_PATH = "/notifications";
+
+export const dynamic = "force-dynamic";
 
 export async function NotificationsListView({
   searchParams,
@@ -48,5 +51,10 @@ export default async function NotificationsPage({
 }: {
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
-  return NotificationsListView({ searchParams, notificationsBasePath: NOTIFICATIONS_BASE_PATH });
+  const orgPid = await getServerActiveOrganizationPublicId();
+  return NotificationsListView({
+    searchParams,
+    notificationsBasePath: NOTIFICATIONS_BASE_PATH,
+    organizationPublicId: orgPid ?? undefined,
+  });
 }

@@ -23,6 +23,7 @@ import {
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
 
 @ApiTags('Projects')
 @ApiBearerAuth()
@@ -61,9 +62,8 @@ export class ProjectsController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: false,
-    description:
-      'When set, list projects linked to this organization (membership required)',
+    required: true,
+    description: 'List projects in this organization (membership required).',
   })
   async findAll(
     @Query('page') pageStr?: string,
@@ -74,27 +74,19 @@ export class ProjectsController {
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const limit = parseInt(limitStr ?? '9', 10);
-    const orgRaw = organizationPublicId?.trim();
-    if (orgRaw) {
-      const ctx = await this.organizationsService.requireMemberContext(
-        orgRaw,
-        this.uid(req),
-        {
-          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
-        },
-      );
-      return this.projectsService.findAllPaginatedForOrganization(
-        ctx.internalId,
-        page,
-        limit,
-        q ?? '',
-      );
-    }
-    return this.projectsService.findAllPaginated(
+    const orgRaw = parseOrganizationPublicIdParam(organizationPublicId);
+    const ctx = await this.organizationsService.requireMemberContext(
+      orgRaw,
+      this.uid(req),
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+      },
+    );
+    return this.projectsService.findAllPaginatedForOrganization(
+      ctx.internalId,
       page,
       limit,
       q ?? '',
-      this.uid(req),
     );
   }
 
@@ -102,13 +94,12 @@ export class ProjectsController {
   @ApiOperation({ summary: 'Get project details and its services' })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: false,
-    description:
-      'When calling from an organization workspace, pass the org publicId so org projects resolve; omit for personal-only projects',
+    required: true,
+    description: 'Active organization workspace (`org_…`).',
   })
   async findOne(
     @Param('publicId') publicId: string,
-    @Query('organizationPublicId') organizationPublicId: string | undefined,
+    @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
     const project = await this.projectsService.findOneWithRoute(
@@ -117,25 +108,21 @@ export class ProjectsController {
       organizationPublicId,
       { requireOrgProjectView: true },
     );
-    let organizationPublicIdOut: string | undefined;
-    if (project.organizationId != null) {
-      const op = await this.organizationsService.getPublicIdByInternalId(
-        project.organizationId,
-      );
-      organizationPublicIdOut = op ?? undefined;
-    }
+    const op = await this.organizationsService.getPublicIdByInternalId(
+      project.organizationId,
+    );
     return Object.assign(project, {
-      organizationPublicId: organizationPublicIdOut,
+      organizationPublicId: op ?? undefined,
     });
   }
 
   @Patch(':publicId')
   @ApiOperation({ summary: 'update project' })
-  @ApiQuery({ name: 'organizationPublicId', required: false })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
   update(
     @Param('publicId') publicId: string,
     @Body() updateProjectDto: UpdateProjectDto,
-    @Query('organizationPublicId') organizationPublicId: string | undefined,
+    @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
     return this.projectsService.update(
@@ -148,10 +135,10 @@ export class ProjectsController {
 
   @Delete(':publicId')
   @ApiOperation({ summary: 'delete project' })
-  @ApiQuery({ name: 'organizationPublicId', required: false })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
   remove(
     @Param('publicId') publicId: string,
-    @Query('organizationPublicId') organizationPublicId: string | undefined,
+    @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
     return this.projectsService.remove(

@@ -90,11 +90,10 @@ export class CreateRemoteServerDto {
   domainsJson?: string;
 
   @ApiProperty({
-    required: false,
     description:
-      'When set, the server belongs to this organization (you must be a member). Omit for a personal account server.',
+      'Organization publicId (`org_…`); server is created in this organization.',
   })
-  @IsOptional()
   @IsString()
-  organizationPublicId?: string;
+  @IsNotEmpty()
+  organizationPublicId!: string;
 }

@@ -1,7 +1,8 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
@@ -31,12 +32,12 @@ export class PagedLogsQueryDto {
   @MaxLength(200)
   q?: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description:
-      'When set, list channels in this organization workspace (membership required).',
+      'Organization workspace (required). Channels are listed for this org only.',
   })
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(64)
-  organizationPublicId?: string;
+  organizationPublicId!: string;
 }

@@ -12,10 +12,13 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
 import * as net from 'net';
-import { IsNull, Like, Repository } from 'typeorm';
+import { Like, Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
-import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
+import {
+  assertOrganizationWorkspaceAccessForInternalId,
+  resolveRequiredOrganizationInternalIdForMember,
+} from '../common/organization-workspace-scope';
 import {
   ORGANIZATION_WORKSPACE_PERMISSIONS,
   type OrganizationWorkspacePermission,
@@ -98,12 +101,12 @@ export class WebhooksService implements OnApplicationBootstrap {
     );
   }
 
-  private async workspaceOrgId(
+  private async requireWorkspaceOrgId(
     userId: number,
     organizationPublicId: string | null | undefined,
     extra?: OrganizationWorkspacePermission[],
-  ): Promise<number | null> {
-    return resolveOrganizationInternalIdForMember(
+  ): Promise<number> {
+    return resolveRequiredOrganizationInternalIdForMember(
       this.organizationsRepository,
       userId,
       organizationPublicId,
@@ -116,21 +119,22 @@ export class WebhooksService implements OnApplicationBootstrap {
     );
   }
 
-  /**
-   * When the client passes `organizationPublicId`, the resource must belong to that workspace
-   * (or personal when omitted / empty after trim).
-   */
-  private assertWebhookWorkspace(
-    w: Webhook,
-    organizationPublicId: string | null | undefined,
-    expectedOrgId: number | null,
-  ): void {
-    const raw = organizationPublicId?.trim();
-    if (!raw) return;
+  private assertWebhookWorkspace(w: Webhook, expectedOrgId: number): void {
     const rowOrg = w.organizationId ?? null;
     if (rowOrg !== expectedOrgId) {
       throw new NotFoundException('Webhook not found');
     }
+  }
+
+  private async deleteWebhookArtifacts(userId: number, w: Webhook): Promise<void> {
+    const remoteId = w.remoteServerId;
+    if (w.remoteServerId != null && w.bashScript?.trim()) {
+      await this.remoteServersService
+        .removeRemoteWebhookScript(w.remoteServerId, userId, w.secretToken)
+        .catch(() => undefined);
+    }
+    await this.scopedWebhooks.deleteScoped(w.id, userId);
+    await this.syncWebhookAgentForRemoteServer(remoteId, userId);
   }
 
   private runRemoteSyncInBackground(
@@ -597,9 +601,11 @@ export class WebhooksService implements OnApplicationBootstrap {
     dto: CreateWebhookDto,
   ): Promise<WebhookDetailRow> {
     this.validateCreate(dto);
-    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId, [
-      ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_ADD,
-    ]);
+    const orgId = await this.requireWorkspaceOrgId(
+      userId,
+      dto.organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_ADD],
+    );
     if (dto.remoteServerId != null) {
       await this.remoteServersService.assertDeployServerById(
         dto.remoteServerId,
@@ -751,20 +757,21 @@ export class WebhooksService implements OnApplicationBootstrap {
     opts?: { includeHidden?: boolean; organizationPublicId?: string | null },
   ): Promise<WebhookListRow[]> {
     const includeHidden = opts?.includeHidden === true;
-    const orgId = await this.workspaceOrgId(userId, opts?.organizationPublicId);
+    const orgId = await this.requireWorkspaceOrgId(
+      userId,
+      opts?.organizationPublicId,
+    );
     const baseWhere = includeHidden
       ? {}
       : { hiddenFromWebhooksList: false };
-    const list =
-      orgId != null
-        ? await this.scopedWebhooks.listForOrganization(userId, orgId, {
-            where: baseWhere,
-            order: { createdAt: 'DESC' },
-          })
-        : await this.scopedWebhooks.listPersonal(userId, {
-            where: baseWhere,
-            order: { createdAt: 'DESC' },
-          });
+    const list = await this.scopedWebhooks.listForOrganization(
+      userId,
+      orgId,
+      {
+        where: baseWhere,
+        order: { createdAt: 'DESC' },
+      },
+    );
     return await Promise.all(list.map((w) => this.toListRow(userId, w)));
   }
 
@@ -775,18 +782,10 @@ export class WebhooksService implements OnApplicationBootstrap {
   async findWebhooksForService(
     serviceId: number,
     projectUserId: number,
-    projectOrganizationId: number | null,
+    projectOrganizationId: number,
   ): Promise<WebhookListRow[]> {
-    const where =
-      projectOrganizationId != null
-        ? { serviceId, organizationId: projectOrganizationId }
-        : {
-            serviceId,
-            userId: projectUserId,
-            organizationId: IsNull(),
-          };
     const rows = await this._internal_system_findWebhooks({
-      where,
+      where: { serviceId, organizationId: projectOrganizationId },
       order: { createdAt: 'DESC' },
     });
     return await Promise.all(rows.map((w) => this.toListRow(projectUserId, w)));
@@ -797,9 +796,12 @@ export class WebhooksService implements OnApplicationBootstrap {
     idOrPublicId: string | number,
     organizationPublicId?: string | null,
   ): Promise<WebhookDetailRow> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+    );
     const w = await this.resolveEntity(userId, idOrPublicId);
-    this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
+    this.assertWebhookWorkspace(w, expectedOrg);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
     return await this.toDetailRow(w, remoteTriggerUrl);
   }
@@ -809,13 +811,13 @@ export class WebhooksService implements OnApplicationBootstrap {
     idOrPublicId: string | number,
     opts?: { lines?: number; organizationPublicId?: string | null },
   ): Promise<{ log: string; source: string }> {
-    const expectedOrg = await this.workspaceOrgId(
+    const expectedOrg = await this.requireWorkspaceOrgId(
       userId,
       opts?.organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_LOGS],
     );
     const w = await this.resolveEntity(userId, idOrPublicId);
-    this.assertWebhookWorkspace(w, opts?.organizationPublicId, expectedOrg);
+    this.assertWebhookWorkspace(w, expectedOrg);
     if (!w.bashScript?.trim() || w.remoteServerId == null) {
       return { log: '', source: 'not-applicable' };
     }
@@ -837,11 +839,13 @@ export class WebhooksService implements OnApplicationBootstrap {
     dto: UpdateWebhookDto,
     organizationPublicId?: string | null,
   ): Promise<WebhookDetailRow> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
-      ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_EDIT,
-    ]);
+    const expectedOrg = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_EDIT],
+    );
     const w = await this.resolveEntity(userId, idOrPublicId);
-    this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
+    this.assertWebhookWorkspace(w, expectedOrg);
 
     const beforeRemote = w.remoteServerId;
     const beforeBash = w.bashScript;
@@ -990,19 +994,14 @@ export class WebhooksService implements OnApplicationBootstrap {
     idOrPublicId: string | number,
     organizationPublicId?: string | null,
   ): Promise<void> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
-      ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_DELETE,
-    ]);
+    const expectedOrg = await this.requireWorkspaceOrgId(
+      userId,
+      organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_DELETE],
+    );
     const w = await this.resolveEntity(userId, idOrPublicId);
-    this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
-    const remoteId = w.remoteServerId;
-    if (w.remoteServerId != null && w.bashScript?.trim()) {
-      await this.remoteServersService
-        .removeRemoteWebhookScript(w.remoteServerId, userId, w.secretToken)
-        .catch(() => undefined);
-    }
-    await this.scopedWebhooks.deleteScoped(w.id, userId);
-    await this.syncWebhookAgentForRemoteServer(remoteId, userId);
+    this.assertWebhookWorkspace(w, expectedOrg);
+    await this.deleteWebhookArtifacts(userId, w);
   }
 
   /**
@@ -1013,20 +1012,26 @@ export class WebhooksService implements OnApplicationBootstrap {
     actingUserId: number,
     serviceId: number,
     projectUserId: number,
-    projectOrganizationId: number | null,
+    projectOrganizationId: number,
   ): Promise<void> {
-    const where =
-      projectOrganizationId != null
-        ? { serviceId, organizationId: projectOrganizationId }
-        : {
-            serviceId,
-            userId: projectUserId,
-            organizationId: IsNull(),
-          };
-    const rows = await this._internal_system_findWebhooks({ where });
+    const rows = await this._internal_system_findWebhooks({
+      where: { serviceId, organizationId: projectOrganizationId },
+    });
     for (const w of rows) {
       const ensured = await this.ensurePublicId(w);
-      await this.remove(actingUserId, ensured.publicId);
+      await assertOrganizationWorkspaceAccessForInternalId(
+        this.organizationsRepository,
+        actingUserId,
+        projectOrganizationId,
+        {
+          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS,
+          requireAllWorkspaceAreas: [
+            ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_DELETE,
+          ],
+        },
+      );
+      this.assertWebhookWorkspace(ensured, projectOrganizationId);
+      await this.deleteWebhookArtifacts(actingUserId, ensured);
     }
   }
 

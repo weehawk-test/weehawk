@@ -1,34 +1,15 @@
-import ProjectsClient from "./projects/ProjectsClient";
-import { fetchProjectsSSR } from "@/lib/server-fetch";
-import type { ProjectsPageResponse } from "@/lib/projects-api";
+import { redirect } from "next/navigation";
 
-/** Always run with the incoming request cookies (JWT). Avoids stale/cached RSC without auth. */
-export const dynamic = "force-dynamic";
-
-export default async function HomeProjectsPage({
+/** Canonical project list lives at `/projects`; `/` keeps bookmarks working. */
+export default async function HomeRedirectPage({
   searchParams,
 }: {
   searchParams: Promise<{ page?: string; q?: string }>;
 }) {
   const sp = await searchParams;
-  const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
-  const q = typeof sp.q === "string" ? sp.q : "";
-
-  let initialPageData: ProjectsPageResponse | undefined;
-  let initialError: string | null = null;
-
-  try {
-    initialPageData = await fetchProjectsSSR(page, q);
-  } catch (e) {
-    initialError = e instanceof Error ? e.message : "Unknown error";
-  }
-
-  return (
-    <ProjectsClient
-      urlPage={page}
-      urlQ={q}
-      initialPageData={initialPageData}
-      initialError={initialError}
-    />
-  );
+  const params = new URLSearchParams();
+  if (sp.page) params.set("page", sp.page);
+  if (sp.q) params.set("q", sp.q);
+  const qs = params.toString();
+  redirect(qs ? `/projects?${qs}` : "/projects");
 }

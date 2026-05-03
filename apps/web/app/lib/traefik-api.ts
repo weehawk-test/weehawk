@@ -3,6 +3,8 @@ import { authFetch } from "./auth-fetch";
 
 export type TraefikSettingsPayload = {
   id: number;
+  /** Internal tenant key (API only); UI uses `organizationPublicId` in requests. */
+  organizationId?: number;
   acmeEmail: string;
   platformDomain: string | null;
   acmeStorageHostPath: string;
@@ -45,8 +47,17 @@ async function errorBody(res: Response): Promise<string> {
   return text || res.statusText;
 }
 
-export async function fetchTraefikSettings(accessToken: string): Promise<TraefikSettingsPayload> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/traefik/settings`, { method: "GET" });
+export async function fetchTraefikSettings(
+  accessToken: string,
+  organizationPublicId: string,
+): Promise<TraefikSettingsPayload> {
+  const org = organizationPublicId.trim();
+  if (!org) throw new Error("organizationPublicId is required");
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/traefik/settings?organizationPublicId=${encodeURIComponent(org)}`,
+    { method: "GET" },
+  );
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json();
 }
@@ -54,10 +65,11 @@ export async function fetchTraefikSettings(accessToken: string): Promise<Traefik
 export async function updateTraefikSettings(
   accessToken: string,
   patch: TraefikSettingsPatch,
-  organizationPublicId?: string | null,
+  organizationPublicId: string,
 ): Promise<TraefikSettingsPayload> {
-  const org = organizationPublicId?.trim();
-  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const org = organizationPublicId.trim();
+  if (!org) throw new Error("organizationPublicId is required");
+  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
   const res = await authFetch(accessToken, `${API_BASE}/api/traefik/settings${q}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

@@ -61,9 +61,20 @@ export class OrganizationsRepository {
     return this.memberships.count({ where: { organizationId } });
   }
 
+  async countMembershipsForUser(userId: number): Promise<number> {
+    return this.memberships.count({ where: { userId } });
+  }
+
   async countOwnersForOrganization(organizationId: number): Promise<number> {
     return this.memberships.count({
       where: { organizationId, role: ORGANIZATION_MEMBER_ROLE.OWNER },
+    });
+  }
+
+  /** Organizations where the user has the owner role (used to enforce “keep at least one owned org”). */
+  async countOrganizationsWhereUserIsOwner(userId: number): Promise<number> {
+    return this.memberships.count({
+      where: { userId, role: ORGANIZATION_MEMBER_ROLE.OWNER },
     });
   }
 
@@ -97,6 +108,26 @@ export class OrganizationsRepository {
       select: ['userId'],
     });
     return rows.map((row) => row.userId);
+  }
+
+  /**
+   * Another organization this user owns (not `excludeOrganizationId`), oldest membership first.
+   * Used when dissolving a sole-member org so resources keep a valid org scope.
+   */
+  async findFirstOtherOwnedOrganizationInternalId(
+    userId: number,
+    excludeOrganizationId: number,
+  ): Promise<number | null> {
+    const links = await this.memberships.find({
+      where: { userId, role: ORGANIZATION_MEMBER_ROLE.OWNER },
+      order: { createdAt: 'ASC' },
+    });
+    for (const l of links) {
+      if (l.organizationId !== excludeOrganizationId) {
+        return l.organizationId;
+      }
+    }
+    return null;
   }
 
   async listOrganizationsForUser(userId: number): Promise<Organization[]> {

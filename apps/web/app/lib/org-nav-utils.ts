@@ -1,44 +1,42 @@
-/** Prefix personal app paths for organization workspace URLs. */
-export function prefixOrgHref(orgBase: string, href: string): string {
-  const b = orgBase.replace(/\/$/, "");
+/** Prefix for main nav: flat workspace paths (active org comes from cookie). */
+export function prefixOrgHref(_orgBaseUnused: string, href: string): string {
   if (href.startsWith("http")) return href;
-  if (href === "/") return `${b}/projects`;
-  return `${b}${href}`;
+  if (href === "/") return "/projects";
+  return href;
 }
 
-/** Organization management tabs: `/organizations/:id/overview|audit|members|permissions|settings`. */
+/** Organization management: `/organization/overview`, … */
+export const ORGANIZATION_MANAGEMENT_BASE = "/organization";
+
 const ORG_MANAGEMENT_SEGMENTS = ["overview", "audit", "members", "permissions", "settings"] as const;
 
-export function isOrgManagementSectionActive(pathname: string, orgBase: string): boolean {
-  const b = orgBase.replace(/\/$/, "");
+export function isOrgManagementSectionActive(pathname: string, _orgBaseUnused: string): boolean {
   for (const seg of ORG_MANAGEMENT_SEGMENTS) {
-    const prefix = `${b}/${seg}`;
+    const prefix = `${ORGANIZATION_MANAGEMENT_BASE}/${seg}`;
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return true;
   }
   return false;
 }
 
-/** Mirrors the personal sidebar `isActive` logic for paths under `/organizations/:publicId/...`. */
-export function orgPersonalNavIsActive(pathname: string, orgBase: string, personalHref: string): boolean {
-  const b = orgBase.replace(/\/$/, "");
+/** Active state for sidebar rows under flat org workspace URLs. */
+export function orgPersonalNavIsActive(pathname: string, _orgBaseUnused: string, personalHref: string): boolean {
   if (personalHref === "/") {
-    return pathname === `${b}/projects` || pathname.startsWith(`${b}/projects/`);
+    return pathname === "/projects" || pathname.startsWith("/projects/");
   }
-  if (personalHref === "/notifications") return pathname.startsWith(`${b}/notifications`);
+  if (personalHref === "/notifications") return pathname.startsWith("/notifications");
   if (personalHref === "/registry") {
-    return pathname === `${b}/registry` || pathname.startsWith(`${b}/registry/`);
+    return pathname === "/registry" || pathname.startsWith("/registry/");
   }
   if (personalHref === "/git") {
-    return pathname === `${b}/git` || pathname.startsWith(`${b}/git/`);
+    return pathname === "/git" || pathname.startsWith("/git/");
   }
   if (personalHref === "/remote-server") {
-    return pathname === `${b}/remote-server` || pathname.startsWith(`${b}/remote-server/`);
+    return pathname === "/remote-server" || pathname.startsWith("/remote-server/");
   }
-  if (personalHref === "/organizations") {
-    if (pathname === b || pathname.startsWith(`${b}/`)) return false;
-    return pathname === "/organizations" || pathname.startsWith("/organizations/");
+  if (personalHref === "/organization") {
+    return isOrgManagementSectionActive(pathname, "");
   }
-  const p = `${b}${personalHref}`;
+  const p = personalHref.startsWith("/") ? personalHref : `/${personalHref}`;
   if (personalHref.includes("/secrets")) {
     if (pathname === p || pathname.startsWith(`${p}/`)) return true;
     return false;

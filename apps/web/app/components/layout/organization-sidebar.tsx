@@ -6,8 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
+  PanelLeft,
   LogOut,
   Menu,
   Server,
@@ -18,7 +18,6 @@ import {
 import { LayoutGroup } from "framer-motion";
 import type { OrganizationPublic } from "@/lib/organizations-types";
 import { cn } from "@/lib/utils";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
 import { NavRow } from "./sidebar-nav-row";
@@ -36,6 +35,7 @@ import {
   isOrgManagementSectionActive,
   orgPersonalNavIsActive,
   prefixOrgHref,
+  ORGANIZATION_MANAGEMENT_BASE,
 } from "@/lib/org-nav-utils";
 import {
   PLATFORM_NEWS_FETCH_URL,
@@ -53,6 +53,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ProfileThemeMenuItems } from "./profile-theme-menu-items";
+import { WorkspaceSwitcher } from "./workspace-switcher";
 
 const ORG_LAYOUT = "org-sidebar-nav";
 const ORG_ACTIVE = "org-sidebar-active-pill";
@@ -66,7 +68,8 @@ type OrganizationSidebarProps = {
 export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: OrganizationSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const orgBase = `/organizations/${encodeURIComponent(org.publicId)}`;
+  /** Legacy `prefixOrgHref` second arg; URLs are flat (active org is cookie-scoped). */
+  const navOrgBase = "";
   const { collapsed, toggle, isMobileNav } = useSidebarLayout();
   const { user, logout } = useAuth();
   const railMode = collapsed && !isMobileNav;
@@ -122,20 +125,18 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
     };
   }, [user?.userId]);
 
-  const orgDockerConsoleMatch = /^\/organizations\/([^/]+)\/docker-manager\/([^/]+)/u.exec(pathname);
+  const orgDockerConsoleMatch = /^\/docker-manager\/([^/]+)/u.exec(pathname);
   const consoleNavBase =
-    orgDockerConsoleMatch != null
-      ? `/organizations/${orgDockerConsoleMatch[1]}/docker-manager/${orgDockerConsoleMatch[2]}`
-      : null;
+    orgDockerConsoleMatch != null ? `/docker-manager/${orgDockerConsoleMatch[1]}` : null;
   const dockerNavDynamic = consoleNavBase != null ? buildDockerNavItems(consoleNavBase) : [];
 
   const dockerShell =
-    /^\/organizations\/[^/]+\/docker-manager\/[^/]+/u.test(pathname) ||
-    pathname === `${orgBase}/secrets` ||
-    pathname.startsWith(`${orgBase}/secrets/`);
+    /^\/docker-manager\/[^/]+/u.test(pathname) ||
+    pathname === "/secrets" ||
+    pathname.startsWith("/secrets/");
 
-  const isConsoleOrgSidebar = /^\/organizations\/[^/]+\/docker-manager\/[^/]+/u.test(pathname);
-  const consoleLogoHref = consoleNavBase != null ? `${consoleNavBase}/images` : "/";
+  const isConsoleOrgSidebar = /^\/docker-manager\/[^/]+/u.test(pathname);
+  const consoleLogoHref = consoleNavBase != null ? `${consoleNavBase}/images` : "/projects";
 
   const closeMobile = () => onMobileOpenChange(false);
 
@@ -182,39 +183,33 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
           {!railMode ? (
             <div className="flex min-w-0 items-start gap-2">
               <Link
-                href={isConsoleOrgSidebar ? consoleLogoHref : "/"}
+                href={isConsoleOrgSidebar ? consoleLogoHref : "/projects"}
                 scroll={false}
                 onClick={closeMobile}
-                className="flex min-w-0 flex-1 items-start gap-3 rounded-xl -mx-1 px-1 py-0.5 outline-none ring-offset-background transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="relative size-10 shrink-0 self-center overflow-hidden rounded-xl border border-primary/20 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5"
               >
-                <div className="relative size-10 shrink-0 overflow-hidden rounded-xl border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
-                  <Image
-                    src="/weehawk-logo.svg"
-                    alt=""
-                    width={40}
-                    height={40}
-                    className="logo-adaptive size-10 scale-90 object-contain p-0.5"
-                    priority
-                  />
-                </div>
-                <div className="min-w-0 flex-1 pt-0.5">
-                  <span className="block truncate text-lg font-bold tracking-tight leading-none text-foreground">Weehawk</span>
-                  <span
-                    className="mt-1 block min-w-0 truncate font-mono text-[10px] tracking-widest text-muted-foreground"
-                    title={org.name}
-                  >
-                    {org.name}
-                  </span>
-                </div>
+                <Image
+                  src="/weehawk-logo.svg"
+                  alt=""
+                  width={40}
+                  height={40}
+                  className="logo-adaptive size-10 scale-90 object-contain p-0.5"
+                  priority
+                />
               </Link>
-              <div className="mt-0.5 flex shrink-0 items-center gap-0.5">
-                <ThemeToggle />
+              <WorkspaceSwitcher
+                className="min-w-0 flex-1"
+                currentLabel={org.name}
+                activeOrgPublicId={org.publicId}
+                onNavigate={closeMobile}
+              />
+              <div className="flex shrink-0 items-center gap-0.5">
                 {isMobileNav ? (
                   <button
                     type="button"
                     onClick={closeMobile}
                     aria-label="Close menu"
-                    className="shrink-0 rounded-lg p-1.5 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+                    className="shrink-0 rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                   >
                     <X className="size-4" />
                   </button>
@@ -223,9 +218,9 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                     type="button"
                     onClick={toggle}
                     aria-label="Collapse sidebar"
-                    className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+                    className="rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                   >
-                    <ChevronLeft className="size-4" />
+                    <PanelLeft className="size-4" />
                   </button>
                 )}
               </div>
@@ -235,7 +230,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
               <Tooltip delayDuration={0}>
                 <TooltipTrigger asChild>
                   <Link
-                    href={isConsoleOrgSidebar ? consoleLogoHref : "/"}
+                    href={isConsoleOrgSidebar ? consoleLogoHref : "/projects"}
                     scroll={false}
                     className="flex justify-center rounded-xl p-1 transition-colors hover:bg-accent/60"
                     onClick={closeMobile}
@@ -256,14 +251,13 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                   {org.name}
                 </TooltipContent>
               </Tooltip>
-              <ThemeToggle iconOnly />
               <Tooltip delayDuration={0}>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
                     onClick={toggle}
                     aria-label="Expand sidebar"
-                    className="rounded-lg p-1.5 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+                    className="rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                   >
                     <ChevronRight className="size-4" />
                   </button>
@@ -295,9 +289,9 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                   <div className="space-y-px">
                     <NavRow
                       collapsed={railMode}
-                      href={prefixOrgHref(orgBase, "/remote-server")}
+                      href={prefixOrgHref(navOrgBase, "/remote-server")}
                       label="Servers"
-                      active={orgPersonalNavIsActive(pathname, orgBase, "/remote-server")}
+                      active={orgPersonalNavIsActive(pathname, navOrgBase, "/remote-server")}
                       icon={Server}
                       activeLayoutId={ORG_ACTIVE}
                       onNavigate={closeMobile}
@@ -356,14 +350,14 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                           org.workspacePermissions,
                           org.isOwner,
                         );
-                        const orgManagementEntryHref = `${orgBase.replace(/\/$/, "")}/${mgmtSeg}`;
-                        const isOrgSettings = item.href === "/organizations";
-                        const href = isOrgSettings ? orgManagementEntryHref : prefixOrgHref(orgBase, item.href);
+                        const orgManagementEntryHref = `${ORGANIZATION_MANAGEMENT_BASE}/${mgmtSeg}`;
+                        const isOrgSettings = Boolean(item.orgManagementEntry);
+                        const href = isOrgSettings ? orgManagementEntryHref : prefixOrgHref(navOrgBase, item.href);
                         const active = item.external
                           ? false
                           : isOrgSettings
-                            ? isOrgManagementSectionActive(pathname, orgBase)
-                            : orgPersonalNavIsActive(pathname, orgBase, item.href);
+                            ? isOrgManagementSectionActive(pathname, navOrgBase)
+                            : orgPersonalNavIsActive(pathname, navOrgBase, item.href);
                         const navDisabled = isOrgMainNavItemDisabled(org, item);
                         return (
                           <NavRow
@@ -413,7 +407,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                       <Tooltip delayDuration={0}>
                         <TooltipTrigger asChild>
                           <Link
-                            href={prefixOrgHref(orgBase, "/remote-server")}
+                            href={prefixOrgHref(navOrgBase, "/remote-server")}
                             className="flex justify-center rounded-xl p-2.5 text-primary hover:bg-accent/70"
                             aria-label="Add a remote server"
                             onClick={closeMobile}
@@ -429,7 +423,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                       <p className="px-4 py-1.5 text-xs leading-relaxed text-foreground/90">
                         Add an SSH host under{" "}
                         <Link
-                          href={prefixOrgHref(orgBase, "/remote-server")}
+                          href={prefixOrgHref(navOrgBase, "/remote-server")}
                           className="text-primary hover:underline"
                           onClick={closeMobile}
                         >
@@ -452,7 +446,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
               "pb-[max(0.625rem,env(safe-area-inset-bottom,0px))] pl-[max(0.625rem,env(safe-area-inset-left,0px))] pr-[max(0.625rem,env(safe-area-inset-right,0px))]",
           )}
         >
-          <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+          <DropdownMenu modal={false} open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
             <DropdownMenuTrigger asChild>
               {railMode ? (
                 <button
@@ -497,7 +491,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                   </div>
                   <ChevronDown
                     className={cn(
-                      "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                      "h-4 w-4 shrink-0 text-foreground transition-transform duration-200",
                       profileMenuOpen && "rotate-180",
                     )}
                     aria-hidden
@@ -522,6 +516,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                 <UserCog className="h-4 w-4" />
                 Edit profile
               </DropdownMenuItem>
+              <ProfileThemeMenuItems />
               <DropdownMenuItem
                 onSelect={() => void handleLogout()}
                 className="text-red-600 dark:text-red-400 focus:bg-red-500/10 focus:text-red-700 dark:focus:text-red-300"
@@ -557,7 +552,7 @@ export function OrganizationMobileHeader({
         <Menu className="size-5" />
       </button>
       <Link
-        href="/"
+        href="/projects"
         scroll={false}
         className="relative size-9 shrink-0 overflow-hidden rounded-lg border border-primary/20 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:ring-white/5"
         aria-label="Weehawk home"

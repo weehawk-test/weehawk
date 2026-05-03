@@ -56,11 +56,12 @@ export class CreateCronJobDto {
   @MaxLength(4000)
   notifyMessage?: string;
 
-  @ApiPropertyOptional({
-    description: 'Organization workspace (shared cron jobs for org members).',
+  @ApiProperty({
+    description:
+      'Organization workspace (required). Cron jobs are scoped to the organization.',
   })
-  @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(48)
-  organizationPublicId?: string;
+  organizationPublicId!: string;
 }

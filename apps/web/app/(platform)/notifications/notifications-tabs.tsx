@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Plus } from "lucide-react";
-import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import { orgMemberAllowsNotificationsAdd } from "@/lib/org-workspace-permissions";
 
 const DEFAULT_BASE = "/notifications";

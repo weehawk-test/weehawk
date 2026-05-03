@@ -12,6 +12,7 @@ import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
 import {
   saveS3ProfileApi,
   testS3ConnectionApi,
+  type S3ProfileFormState,
   type S3ProfilePayload,
   type S3ProfilePublic,
 } from "@/lib/s3-api";
@@ -23,10 +24,7 @@ type Props = {
 
 export function EditS3ProfileClient({ profile, organizationPublicId = null }: Props) {
   const orgTrim = organizationPublicId?.trim();
-  const s3BasePath =
-    orgTrim != null && orgTrim !== ""
-      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
-      : "/s3";
+  const s3BasePath = "/s3";
   const router = useRouter();
   const { toast } = useToast();
   const { accessToken } = useAuth();
@@ -34,7 +32,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
   const [testing, setTesting] = useState(false);
   const [s3VerifyRemoteId, setS3VerifyRemoteId] = useState<number | null>(null);
   const [deployServersForTest, setDeployServersForTest] = useState<RemoteServerRow[]>([]);
-  const [form, setForm] = useState<Omit<S3ProfilePayload, "forcePathStyle">>({
+  const [form, setForm] = useState<S3ProfileFormState>({
     name: profile.name,
     endpoint: profile.endpoint,
     region: profile.region,
@@ -64,45 +62,35 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
   const canSubmit = useMemo(
     () =>
       Boolean(
-        form.name.trim() &&
+        orgTrim &&
+          form.name.trim() &&
           form.endpoint.trim() &&
           form.region.trim() &&
           form.bucket.trim() &&
           form.accessKeyId.trim(),
       ),
-    [form],
+    [form, orgTrim],
   );
 
-  const payloadForApi = useMemo((): S3ProfilePayload => {
+  const payloadForApi = useMemo((): S3ProfilePayload | null => {
+    if (!orgTrim) return null;
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
     const secret = (form.secretAccessKey ?? "").trim();
-    const o = organizationPublicId?.trim();
-    const orgField = o ? { organizationPublicId: o } : {};
-    if (!secret) {
-      return {
-        name: form.name.trim(),
-        endpoint: form.endpoint.trim(),
-        region: form.region.trim(),
-        bucket: form.bucket.trim(),
-        accessKeyId: form.accessKeyId.trim(),
-        forcePathStyle,
-        ...orgField,
-      };
-    }
-    return {
+    const base = {
       name: form.name.trim(),
       endpoint: form.endpoint.trim(),
       region: form.region.trim(),
       bucket: form.bucket.trim(),
       accessKeyId: form.accessKeyId.trim(),
-      secretAccessKey: secret,
       forcePathStyle,
-      ...orgField,
+      organizationPublicId: orgTrim,
     };
-  }, [form, organizationPublicId]);
+    if (!secret) return base;
+    return { ...base, secretAccessKey: secret };
+  }, [form, orgTrim]);
 
   const onTest = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !payloadForApi) return;
     if (!(form.secretAccessKey ?? "").trim()) {
       toast({
         title: "Secret required",
@@ -138,7 +126,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
   };
 
   const onSave = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !payloadForApi) return;
     setSaving(true);
     try {
       const res = await saveS3ProfileApi(payloadForApi);

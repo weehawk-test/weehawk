@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { Building2, Loader2, LogOut, Pencil } from "lucide-react";
 import Link from "next/link";
 import { leaveOrganization, updateOrganization } from "@/lib/organizations-api";
-import { useOrgWorkspace } from "../../org-workspace-context";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import { ORGANIZATION_MANAGEMENT_BASE } from "@/lib/org-nav-utils";
 import {
   orgMemberAllowsOrgManagementMembers,
   orgMemberAllowsOrgManagementSettings,
@@ -65,7 +66,7 @@ export function OrgSettingsClient() {
       const { message } = await leaveOrganization(org.publicId);
       toast({ title: "Left organization", description: message });
       setLeaveOpen(false);
-      router.push("/organizations");
+      router.push("/");
       router.refresh();
     } catch (err) {
       toast({
@@ -79,7 +80,7 @@ export function OrgSettingsClient() {
   };
 
   const createdLabel = new Date(org.createdAt).toLocaleDateString(undefined, { dateStyle: "long" });
-  const membersHref = `/organizations/${encodeURIComponent(org.publicId)}/members`;
+  const membersHref = `${ORGANIZATION_MANAGEMENT_BASE}/members`;
 
   return (
     <div className="space-y-8">

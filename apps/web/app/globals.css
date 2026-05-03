@@ -105,14 +105,6 @@ html.dark {
   color-scheme: dark;
 }
 
-/* Prevent global transition/animation jitter while toggling dark/light mode. */
-html.theme-switching *,
-html.theme-switching *::before,
-html.theme-switching *::after {
-  transition: none !important;
-  animation: none !important;
-}
-
 @layer base {
   * {
     @apply border-border;

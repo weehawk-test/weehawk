@@ -3,20 +3,20 @@ import {
   CreateDateColumn,
   Entity,
   Index,
-  PrimaryColumn,
+  PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik.constants';
 
-/** Singleton row (`id` = 1): Traefik / ACME defaults for generated compose snippets and app labels. */
+/** Traefik / ACME settings scoped to one organization (internal `organizations.id`). */
 @Entity('traefik_settings')
-@Index(['userId'], { unique: true })
+@Index(['organizationId'], { unique: true })
 export class TraefikSettings {
-  @PrimaryColumn({ type: 'int' })
+  @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ name: 'user_id', type: 'int' })
-  userId!: number;
+  @Column({ name: 'organization_id', type: 'int' })
+  organizationId!: number;
 
   @Column({ type: 'varchar', length: 254, default: 'admin@example.com' })
   acmeEmail!: string;

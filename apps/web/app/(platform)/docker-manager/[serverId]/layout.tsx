@@ -7,6 +7,7 @@ import {
   ORG_WORKSPACE_PERMISSIONS,
   orgMemberAllowsRemoteServerDockerManager,
 } from "@/lib/org-workspace-permissions";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 
 export default async function DockerManagerServerLayout({
   children,
@@ -20,8 +21,11 @@ export default async function DockerManagerServerLayout({
   const { serverId } = await params;
   const sp = searchParams ? await searchParams : {};
   const orgRaw = sp.organizationPublicId;
-  const organizationPublicId =
+  let organizationPublicId =
     typeof orgRaw === "string" ? orgRaw.trim() : Array.isArray(orgRaw) ? String(orgRaw[0] ?? "").trim() : "";
+  if (!organizationPublicId) {
+    organizationPublicId = (await getServerActiveOrganizationPublicId()) ?? "";
+  }
   const target = parseConsoleServerSlug(serverId);
   /** Block invalid / legacy numeric slugs before rendering any console page. */
   if (target == null || /^[0-9]+$/.test(target)) {

@@ -207,6 +207,18 @@ export class ServicesService {
     return Math.trunc(id);
   }
 
+  /** Traefik / ACME rows are scoped to the service's organization (tenant isolation). */
+  private async traefikSettingsForService(service: Service) {
+    const uid = this.integrationOwnerUserId(service);
+    const orgInternal = service.project?.organizationId ?? null;
+    const resolved =
+      await this.traefikService.resolveOrganizationInternalIdForTraefik(
+        orgInternal,
+        uid,
+      );
+    return this.traefikService.getSettingsForOrganization(resolved);
+  }
+
   private async getScopedProjectForUser(
     projectId: number,
     userId: number,
@@ -994,7 +1006,7 @@ export class ServicesService {
       }
       s.magicTraefikMeIpv4 = fromBody;
     }
-    const settings = await this.traefikService.getSettings(userId);
+    const settings = await this.traefikSettingsForService(s);
     const platformHost = this.sanitizePlatformHostForComparison(
       settings.platformDomain,
     );
@@ -1053,9 +1065,7 @@ export class ServicesService {
     service: Service,
   ): Promise<string | null> {
     const svc = await this.ensureServiceForMagicDomains(service);
-    const settings = await this.traefikService.getSettings(
-      this.integrationOwnerUserId(svc),
-    );
+    const settings = await this.traefikSettingsForService(svc);
     const platformHost = this.sanitizePlatformHostForComparison(
       settings.platformDomain,
     );
@@ -1189,9 +1199,7 @@ export class ServicesService {
       return undefined;
     }
     const svc = await this.ensureServiceForMagicDomains(service);
-    const settings = await this.traefikService.getSettings(
-      this.integrationOwnerUserId(svc),
-    );
+    const settings = await this.traefikSettingsForService(svc);
     const platformHost = this.sanitizePlatformHostForComparison(
       settings.platformDomain,
     );
@@ -2403,10 +2411,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         output: `${r.output}\nS3 destination is not configured.`,
       };
     }
-    const key =
-      organizationInternalId != null
-        ? `weehawk/backups/o${organizationInternalId}/${contextId}/${r.archiveBasename}`
-        : `weehawk/backups/u${userId}/${contextId}/${r.archiveBasename}`;
+    if (organizationInternalId == null || organizationInternalId < 1) {
+      return {
+        success: false,
+        output: `${r.output}\nS3 backups require an organization project.`,
+      };
+    }
+    const key = `weehawk/backups/o${organizationInternalId}/${contextId}/${r.archiveBasename}`;
     const ra = r.remoteArtifact;
     if (!ra) {
       return {
@@ -2927,11 +2938,12 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         'That SSH host is the local machine (loopback). It can only be used for image builds — pick a real remote deploy server to run containers.',
       );
     }
-    this.assertRemoteServerBelongsToProjectOwner(
-      rs,
-      projectUserId,
-      projectOrganizationId,
-    );
+    if (projectOrganizationId == null || projectOrganizationId < 1) {
+      throw new BadRequestException(
+        'Every project must belong to an organization; remote server could not be validated.',
+      );
+    }
+    this.assertRemoteServerBelongsToProjectOwner(rs, projectOrganizationId);
   }
 
   private async assertBuildRemoteServer(
@@ -2948,40 +2960,22 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         'Only hosts marked as build servers can be used as the dedicated image-build target.',
       );
     }
-    this.assertRemoteServerBelongsToProjectOwner(
-      rs,
-      projectUserId,
-      projectOrganizationId,
-    );
+    if (projectOrganizationId == null || projectOrganizationId < 1) {
+      throw new BadRequestException(
+        'Every project must belong to an organization; remote server could not be validated.',
+      );
+    }
+    this.assertRemoteServerBelongsToProjectOwner(rs, projectOrganizationId);
   }
 
   /** Same rules as {@link RemoteServersService.assertRemoteServerMatchesProject} but user-facing BadRequest for form/API. */
   private assertRemoteServerBelongsToProjectOwner(
     rs: RemoteServer,
-    projectUserId: number | null,
-    projectOrganizationId: number | null,
+    projectOrganizationId: number,
   ): void {
-    if (projectOrganizationId != null) {
-      if (rs.organizationId !== projectOrganizationId) {
-        throw new BadRequestException(
-          'That remote server is not in this organization. Pick a server from the same org workspace.',
-        );
-      }
-      return;
-    }
-    if (projectUserId == null || projectUserId < 1) {
+    if (rs.organizationId !== projectOrganizationId) {
       throw new BadRequestException(
-        'Project owner is missing; cannot validate remote server ownership.',
-      );
-    }
-    if (rs.organizationId != null) {
-      throw new BadRequestException(
-        'Organization remote servers cannot be attached to a personal project.',
-      );
-    }
-    if (rs.userId !== projectUserId) {
-      throw new BadRequestException(
-        'Remote server does not belong to this project owner. Choose one of your own remote servers.',
+        'That remote server is not in this organization. Pick a server from the same org workspace.',
       );
     }
   }
@@ -3100,7 +3094,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       userId,
       id,
       service.project.userId,
-      service.project.organizationId ?? null,
+      service.project.organizationId,
     );
     await this.executorService.stopAndRemove(id);
     await this.removeManagedSecretsForService(service);
@@ -3119,7 +3113,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         await this.assertDeployRemoteServer(
           updateServiceDto.remoteServerId,
           service.project?.userId ?? null,
-          service.project?.organizationId ?? null,
+          service.project.organizationId,
         );
       }
     }
@@ -3137,7 +3131,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         await this.assertBuildRemoteServer(
           updateServiceDto.buildRemoteServerId,
           service.project?.userId ?? null,
-          service.project?.organizationId ?? null,
+          service.project.organizationId,
         );
       }
     }
@@ -4086,7 +4080,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     const webhooks = await this.webhooksService.findWebhooksForService(
       service.id,
       service.project.userId,
-      service.project.organizationId ?? null,
+      service.project.organizationId,
     );
     for (const w of webhooks) {
       if (w.remoteServerId != null && w.remoteTriggerUrl) {

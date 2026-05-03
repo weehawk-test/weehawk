@@ -29,11 +29,8 @@ export class Webhook {
   @Column({ name: 'user_id', type: 'int' })
   userId!: number;
 
-  /**
-   * Org workspace: shared across members. `NULL` = personal account resources.
-   */
-  @Column({ name: 'organization_id', type: 'int', nullable: true })
-  organizationId!: number | null;
+  @Column({ name: 'organization_id', type: 'int' })
+  organizationId!: number;
 
   @Column({ type: 'text', nullable: true })
   description: string | null = null;

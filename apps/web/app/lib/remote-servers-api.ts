@@ -267,11 +267,20 @@ export async function fetchNixpacksInstallScriptApi(
 export async function fetchProvisionScriptApi(
   accessToken: string,
   role: RemoteServerRole,
+  organizationPublicId: string,
 ): Promise<{ script: string }> {
-  const q = role === "build" ? "?role=build" : "?role=deploy";
-  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/provision-script${q}`, {
-    method: "GET",
-  });
+  const org = organizationPublicId.trim();
+  if (!org) throw new Error("organizationPublicId is required");
+  const params = new URLSearchParams();
+  params.set("organizationPublicId", org);
+  params.set("role", role === "build" ? "build" : "deploy");
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/remote-servers/provision-script?${params.toString()}`,
+    {
+      method: "GET",
+    },
+  );
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));

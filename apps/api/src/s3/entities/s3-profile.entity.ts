@@ -14,7 +14,6 @@ import { generatePublicId } from '../../common/public-id';
  * `secretAccessKey` is stored encrypted at rest using app-level AES-GCM.
  */
 @Entity('s3_profiles')
-/** Disambiguates personal (`u:<userId>`) vs org (`o:<orgId>`) for unique profile names. */
 @Index(['workspaceKey', 'name'], { unique: true })
 export class S3Profile {
   @PrimaryGeneratedColumn()
@@ -26,15 +25,12 @@ export class S3Profile {
   @Column({ name: 'user_id', type: 'int' })
   userId!: number;
 
-  @Column({ name: 'organization_id', type: 'int', nullable: true })
-  organizationId!: number | null;
+  @Column({ name: 'organization_id', type: 'int' })
+  organizationId!: number;
 
-  /**
-   * `u:<userId>` personal workspace, or `o:<organizationId>` org workspace (internal id).
-   * Nullable only until backfilled for legacy rows.
-   */
-  @Column({ name: 'workspace_key', type: 'varchar', length: 96, nullable: true })
-  workspaceKey!: string | null;
+  /** `o:<organizationId>` (internal id). */
+  @Column({ name: 'workspace_key', type: 'varchar', length: 96 })
+  workspaceKey!: string;
 
   @Column({ type: 'varchar', length: 191 })
   name!: string;
@@ -66,10 +62,6 @@ export class S3Profile {
   @BeforeInsert()
   ensurePublicIdAndWorkspace() {
     if (!this.publicId) this.publicId = generatePublicId('s3');
-    if (this.organizationId != null) {
-      this.workspaceKey = `o:${this.organizationId}`;
-    } else {
-      this.workspaceKey = `u:${this.userId}`;
-    }
+    this.workspaceKey = `o:${this.organizationId}`;
   }
 }

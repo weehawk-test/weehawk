@@ -1,15 +1,9 @@
 import { ClipboardList } from "lucide-react";
 import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
-import { requireOrgManagementTab } from "@/lib/org-management-page-guard";
+import { requireOrgManagementTabForActiveOrg } from "@/lib/org-management-page-guard";
 
-type PageProps = {
-  params: Promise<{ publicId: string }>;
-};
-
-export default async function OrganizationAuditPage({ params }: PageProps) {
-  const { publicId: raw } = await params;
-  await requireOrgManagementTab(
-    raw.trim(),
+export default async function OrganizationAuditPage() {
+  await requireOrgManagementTabForActiveOrg(
     ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG,
   );
   return (

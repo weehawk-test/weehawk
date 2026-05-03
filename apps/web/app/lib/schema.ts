@@ -11,14 +11,13 @@ export const projectSchema = z.object({
   createdAt: z.string(),
   /** Set when listing from API (nested `services` length). */
   serviceCount: z.number().int().nonnegative().optional(),
-  /** Present when the project belongs to an organization (from API). */
-  organizationPublicId: z.string().min(1).optional(),
+  organizationPublicId: z.string().min(1),
 });
 export type Project = z.infer<typeof projectSchema>;
 export const createProjectSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   description: z.string().default(""),
-  organizationPublicId: z.string().optional(),
+  organizationPublicId: z.string().min(1, "Organization is required"),
 });
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
