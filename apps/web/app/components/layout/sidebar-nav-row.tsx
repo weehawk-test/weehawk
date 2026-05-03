@@ -14,7 +14,6 @@ export function NavRow({
   icon: Icon,
   activeLayoutId,
   external,
-  showUnreadDot,
   onNavigate,
   disabled,
   disabledHint = "No access",
@@ -26,8 +25,6 @@ export function NavRow({
   icon: LucideIcon;
   activeLayoutId: string;
   external?: boolean;
-  /** Red badge (e.g. new platform news). */
-  showUnreadDot?: boolean;
   onNavigate?: () => void;
   /** When true, the row is non-interactive and visually muted. */
   disabled?: boolean;
@@ -75,12 +72,6 @@ export function NavRow({
                 : "text-foreground/90 group-hover:text-foreground",
           )}
         />
-        {showUnreadDot ? (
-          <span
-            className="absolute -right-1 -top-1 size-2 rounded-full bg-red-500 ring-2 ring-card dark:ring-zinc-950"
-            aria-hidden
-          />
-        ) : null}
       </span>
       {!collapsed && (
         <span className="relative z-10 min-w-0 break-words text-sm font-medium leading-snug">{label}</span>
@@ -111,7 +102,6 @@ export function NavRow({
           {disabled ? (
             <span className="mt-0.5 block text-[10px] text-muted-foreground">{disabledHint}</span>
           ) : null}
-          {showUnreadDot ? <span className="mt-0.5 block text-[10px] text-red-400">New items</span> : null}
           {external ? <span className="mt-0.5 block text-[10px] text-muted-foreground">Opens in new tab</span> : null}
         </TooltipContent>
       </Tooltip>

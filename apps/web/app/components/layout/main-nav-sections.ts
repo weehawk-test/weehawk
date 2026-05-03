@@ -16,7 +16,6 @@ import {
   GitBranch,
   Server,
   Globe,
-  Newspaper,
   Building2,
 } from "lucide-react";
 import {
@@ -103,16 +102,15 @@ export function buildMainNavSections(): MainNavSection[] {
       ],
     },
     {
-      label: "More",
+      label: "Organization",
       items: [
         {
           href: "/organization",
-          label: "Management",
+          label: "Settings",
           icon: Building2,
           orgPermission: ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
           orgManagementEntry: true,
         },
-        { href: "/news", label: "News", icon: Newspaper },
       ],
     },
   ];

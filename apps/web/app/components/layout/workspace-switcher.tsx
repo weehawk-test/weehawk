@@ -154,8 +154,9 @@ export function WorkspaceSwitcher({
           type="button"
           className={cn(
             "flex min-h-0 min-w-0 w-full max-w-full flex-col items-stretch rounded-xl px-1 py-0.5 text-left -mx-1",
-            "outline-none ring-offset-background transition-colors hover:bg-accent/60",
-            "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            "outline-none transition-colors hover:bg-accent/60 data-[state=open]:bg-accent/60",
+            /** Avoid `focus-visible:bg-*`: Radix returns focus to the trigger on close, which looked stuck “hovered”. */
+            "focus-visible:ring-1 focus-visible:ring-primary/40 focus-visible:ring-offset-0",
             className,
           )}
           aria-label="Workspace and organizations"

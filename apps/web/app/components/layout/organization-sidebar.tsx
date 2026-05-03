@@ -6,8 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   ChevronDown,
-  ChevronRight,
   PanelLeft,
+  PanelRight,
   LogOut,
   Menu,
   Server,
@@ -37,15 +37,6 @@ import {
   prefixOrgHref,
   ORGANIZATION_MANAGEMENT_BASE,
 } from "@/lib/org-nav-utils";
-import {
-  PLATFORM_NEWS_FETCH_URL,
-  type PlatformNewsItem,
-} from "@/(platform)/news/platform-news";
-import {
-  newsFeedHasUnread,
-  PLATFORM_NEWS_SEEN_EVENT,
-  PLATFORM_NEWS_SEEN_STORAGE_KEY,
-} from "@/lib/platform-news-read";
 import { useAuth } from "@/contexts/auth-context";
 import {
   DropdownMenu,
@@ -75,7 +66,6 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
   const railMode = collapsed && !isMobileNav;
 
   const mainNavSections = useMemo(() => buildMainNavSections(), []);
-  const [newsUnread, setNewsUnread] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const nameParts = [user?.firstName?.trim(), user?.lastName?.trim()].filter(Boolean);
@@ -93,37 +83,6 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
   useEffect(() => {
     onMobileOpenChange(false);
   }, [pathname, onMobileOpenChange]);
-
-  useEffect(() => {
-    if (!user?.userId) {
-      setNewsUnread(false);
-      return;
-    }
-    let cancelled = false;
-    async function refreshNewsUnread() {
-      try {
-        const res = await fetch(PLATFORM_NEWS_FETCH_URL, { cache: "no-store" });
-        if (!res.ok || cancelled) return;
-        const data: unknown = await res.json();
-        if (!Array.isArray(data) || cancelled) return;
-        setNewsUnread(newsFeedHasUnread(data as PlatformNewsItem[]));
-      } catch {
-        if (!cancelled) setNewsUnread(false);
-      }
-    }
-    void refreshNewsUnread();
-    const onSeen = () => setNewsUnread(false);
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === PLATFORM_NEWS_SEEN_STORAGE_KEY) setNewsUnread(false);
-    };
-    window.addEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
-    window.addEventListener("storage", onStorage);
-    return () => {
-      cancelled = true;
-      window.removeEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, [user?.userId]);
 
   const orgDockerConsoleMatch = /^\/docker-manager\/([^/]+)/u.exec(pathname);
   const consoleNavBase =
@@ -220,7 +179,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                     aria-label="Collapse sidebar"
                     className="rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                   >
-                    <PanelLeft className="size-4" />
+                    <PanelLeft className="size-4 -translate-y-px" />
                   </button>
                 )}
               </div>
@@ -259,7 +218,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                     aria-label="Expand sidebar"
                     className="rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                   >
-                    <ChevronRight className="size-4" />
+                    <PanelRight className="size-4 -translate-y-px" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right" sideOffset={8}>
@@ -364,12 +323,11 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                             key={item.href}
                             collapsed={railMode}
                             href={href}
-                            label={isOrgSettings ? "Management" : item.label}
+                            label={item.label}
                             active={active}
                             icon={isOrgSettings ? Settings : item.icon}
                             activeLayoutId={ORG_ACTIVE}
                             external={item.external}
-                            showUnreadDot={item.href === "/news" && newsUnread}
                             onNavigate={closeMobile}
                             disabled={navDisabled}
                           />

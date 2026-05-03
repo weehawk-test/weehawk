@@ -3,19 +3,10 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronRight, PanelLeft, Server, LogOut, UserCog, ChevronDown, X, Settings } from "lucide-react";
+import { PanelLeft, PanelRight, Server, LogOut, UserCog, ChevronDown, X, Settings } from "lucide-react";
 import { LayoutGroup } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
-import {
-  PLATFORM_NEWS_FETCH_URL,
-  type PlatformNewsItem,
-} from "@/(platform)/news/platform-news";
-import {
-  newsFeedHasUnread,
-  PLATFORM_NEWS_SEEN_EVENT,
-  PLATFORM_NEWS_SEEN_STORAGE_KEY,
-} from "@/lib/platform-news-read";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NavRow } from "./sidebar-nav-row";
 import { buildMainNavSections, buildDockerNavItems } from "./main-nav-sections";
@@ -58,45 +49,7 @@ export function Sidebar() {
     .join("") || "WU";
 
   const mainNavSections = useMemo(() => buildMainNavSections(), []);
-  const [newsUnread, setNewsUnread] = useState(false);
   const [myOrganizations, setMyOrganizations] = useState<OrganizationPublic[]>([]);
-
-  useEffect(() => {
-    if (!user?.userId) {
-      setNewsUnread(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function refreshNewsUnread() {
-      try {
-        const res = await fetch(PLATFORM_NEWS_FETCH_URL, { cache: "no-store" });
-        if (!res.ok || cancelled) return;
-        const data: unknown = await res.json();
-        if (!Array.isArray(data) || cancelled) return;
-        setNewsUnread(newsFeedHasUnread(data as PlatformNewsItem[]));
-      } catch {
-        if (!cancelled) setNewsUnread(false);
-      }
-    }
-
-    void refreshNewsUnread();
-    const onSeen = () => setNewsUnread(false);
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === PLATFORM_NEWS_SEEN_STORAGE_KEY) {
-        setNewsUnread(false);
-      }
-    };
-    window.addEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
-    window.addEventListener("storage", onStorage);
-
-    return () => {
-      cancelled = true;
-      window.removeEventListener(PLATFORM_NEWS_SEEN_EVENT, onSeen);
-      window.removeEventListener("storage", onStorage);
-    };
-  }, [user?.userId]);
 
   useEffect(() => {
     if (!user?.userId) {
@@ -224,7 +177,7 @@ export function Sidebar() {
                   aria-label="Collapse sidebar"
                   className="rounded-lg p-1.5 text-foreground hover:bg-accent/80 shrink-0"
                 >
-                  <PanelLeft className="w-4 h-4" />
+                  <PanelLeft className="w-4 h-4 -translate-y-px" />
                 </button>
               )}
             </div>
@@ -262,7 +215,7 @@ export function Sidebar() {
                   aria-label="Expand sidebar"
                   className="rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <PanelRight className="w-4 h-4 -translate-y-px" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="right" sideOffset={8}>
@@ -355,11 +308,10 @@ export function Sidebar() {
                             key={`${item.href}-personal-mgmt`}
                             collapsed={railMode}
                             href={href}
-                            label="Management"
+                            label={item.label}
                             active={active}
                             icon={Settings}
                             activeLayoutId={activeLayoutId}
-                            showUnreadDot={false}
                           />,
                         ];
                       }
@@ -374,7 +326,6 @@ export function Sidebar() {
                           icon={item.icon}
                           activeLayoutId={activeLayoutId}
                           external={item.external}
-                          showUnreadDot={item.href === "/news" && newsUnread}
                         />,
                       ];
                     })}
