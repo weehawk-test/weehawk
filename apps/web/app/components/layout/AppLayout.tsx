@@ -3,11 +3,11 @@
 import { ReactNode, useEffect, useLayoutEffect, useRef } from "react";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { SidebarLayoutProvider, useSidebarLayout } from "@/contexts/sidebar-layout-context";
 import { useRequireAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
+import { isOrganizationWorkspacePath } from "@/lib/personal-sidebar-path";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -19,6 +19,7 @@ function PlatformShell({ children }: { children: ReactNode }) {
   const { isMobileNav, mobileNavOpen, closeMobileNav, openMobileNav } = useSidebarLayout();
   const pathname = usePathname();
   const mainScrollRef = useRef<HTMLElement>(null);
+  const orgWorkspace = isOrganizationWorkspacePath(pathname);
 
   /** Shell stays mounted across routes; the scrollable region is `main`, not the document. */
   useLayoutEffect(() => {
@@ -27,9 +28,13 @@ function PlatformShell({ children }: { children: ReactNode }) {
     el.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [pathname]);
 
+  useEffect(() => {
+    if (orgWorkspace && mobileNavOpen) closeMobileNav();
+  }, [orgWorkspace, mobileNavOpen, closeMobileNav]);
+
   return (
     <>
-      {isMobileNav ? (
+      {!orgWorkspace && isMobileNav ? (
         <button
           type="button"
           className={cn(
@@ -42,48 +47,47 @@ function PlatformShell({ children }: { children: ReactNode }) {
           onClick={closeMobileNav}
         />
       ) : null}
-      <Sidebar />
+      {!orgWorkspace ? <Sidebar /> : null}
       <main
         ref={mainScrollRef}
         className={cn(
           "relative z-10 min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain transition-[margin-left] duration-200 ease-out [scrollbar-gutter:stable]",
-          "ml-[var(--app-sidebar-width)] max-md:ml-0",
+          orgWorkspace
+            ? "max-md:ml-0 md:ml-[var(--app-sidebar-width)]"
+            : "ml-[var(--app-sidebar-width)] max-md:ml-0",
         )}
       >
-        <header className="sticky top-0 z-20 flex min-w-0 items-center border-b border-border/70 bg-background/90 backdrop-blur-md px-2 py-2 md:hidden supports-[backdrop-filter]:bg-background/75 shadow-sm">
-          <button
-            type="button"
-            onClick={openMobileNav}
-            className="flex min-w-0 w-full items-center gap-2.5 rounded-xl py-1 pl-1 pr-2 text-left hover:bg-accent/40 active:bg-accent/70 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            aria-expanded={Boolean(isMobileNav && mobileNavOpen)}
-            aria-controls="app-sidebar"
-            aria-label="Open side menu"
-          >
-            <div className="relative size-10 shrink-0 overflow-hidden rounded-xl border border-primary/20 bg-card/40 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_12px_rgba(255,255,255,0.06)] dark:ring-white/5">
-              <Image
-                src="/weehawk-logo.svg"
-                alt=""
-                width={40}
-                height={40}
-                className="logo-adaptive object-contain size-10 p-0.5 scale-90"
-                priority
-              />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="font-bold text-foreground text-base tracking-tight leading-tight truncate">
-                Weehawk
-              </p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.2em] text-muted-foreground">
-                <span>Cloud</span>
-                <ChevronLeft
-                  className="size-3.5 shrink-0 text-muted-foreground/90"
-                  strokeWidth={2.5}
-                  aria-hidden
+        {!orgWorkspace ? (
+          <header className="sticky top-0 z-20 flex min-w-0 items-center border-b border-border/70 bg-background/90 backdrop-blur-md px-2 py-2 md:hidden supports-[backdrop-filter]:bg-background/75 shadow-sm">
+            <button
+              type="button"
+              onClick={openMobileNav}
+              className="flex min-w-0 w-full items-center gap-2.5 rounded-xl py-1 pl-1 pr-2 text-left hover:bg-accent/40 active:bg-accent/70 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              aria-expanded={Boolean(isMobileNav && mobileNavOpen)}
+              aria-controls="app-sidebar"
+              aria-label="Open side menu"
+            >
+              <div className="relative size-10 shrink-0 overflow-hidden rounded-xl border border-primary/20 bg-card/40 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_12px_rgba(255,255,255,0.06)] dark:ring-white/5">
+                <Image
+                  src="/weehawk-logo.svg"
+                  alt=""
+                  width={40}
+                  height={40}
+                  className="logo-adaptive object-contain size-10 p-0.5 scale-90"
+                  priority
                 />
-              </p>
-            </div>
-          </button>
-        </header>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-bold text-foreground text-base tracking-tight leading-tight truncate">
+                  Weehawk
+                </p>
+                <p className="mt-0.5 font-mono text-[10px] tracking-[0.2em] text-muted-foreground">
+                  Personal
+                </p>
+              </div>
+            </button>
+          </header>
+        ) : null}
         <div className="max-w-6xl mx-auto p-8 max-md:px-4 max-md:py-6">{children}</div>
       </main>
     </>

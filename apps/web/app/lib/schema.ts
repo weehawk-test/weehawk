@@ -16,6 +16,7 @@ export type Project = z.infer<typeof projectSchema>;
 export const createProjectSchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   description: z.string().default(""),
+  organizationPublicId: z.string().optional(),
 });
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 

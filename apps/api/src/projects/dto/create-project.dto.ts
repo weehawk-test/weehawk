@@ -15,4 +15,13 @@ export class CreateProjectDto {
   @IsString()
   @IsOptional()
   description?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'When set, the project is scoped to this organization (you must be a member).',
+  })
+  @IsOptional()
+  @IsString()
+  organizationPublicId?: string;
 }

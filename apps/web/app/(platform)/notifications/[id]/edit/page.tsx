@@ -8,6 +8,7 @@ import type {
   NotificationChannel,
   PaginatedNotificationChannelsResponse,
 } from "@/lib/notifications-api";
+import { NOTIFICATIONS_BASE_PATH } from "../../page";
 
 const CHANNELS_PAGE_SIZE = 10;
 
@@ -15,10 +16,12 @@ async function getChannelsList(): Promise<NotificationChannel[]> {
   return fetchNotificationChannelsSSR();
 }
 
-export default async function NotificationsEditPage({
+export async function NotificationsEditView({
   params,
+  notificationsBasePath = NOTIFICATIONS_BASE_PATH,
 }: {
   params: Promise<{ id: string }>;
+  notificationsBasePath?: string;
 }) {
   const { id: rawId } = await params;
   const id = rawId.trim();
@@ -43,6 +46,15 @@ export default async function NotificationsEditPage({
       urlQ={urlQ}
       initialMode="edit"
       initialRouteChannel={channel}
+      notificationsBasePath={notificationsBasePath}
     />
   );
+}
+
+export default async function NotificationsEditPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  return NotificationsEditView({ params, notificationsBasePath: NOTIFICATIONS_BASE_PATH });
 }

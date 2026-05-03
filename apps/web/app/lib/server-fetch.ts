@@ -11,6 +11,11 @@ import type { RemoteServerRow } from "./remote-servers-api";
 import type { TraefikSettingsPayload } from "./traefik-api";
 import type { PaginatedSecretsResponse } from "./docker-paged-fetch";
 import type { GitSettingsPublic } from "./git-api";
+import type {
+  OrganizationMemberPublic,
+  OrganizationProjectListItem,
+  OrganizationPublic,
+} from "./organizations-types";
 import {
   mapApiServiceToService,
   parseServicesPageResponse,
@@ -125,12 +130,15 @@ export async function fetchProjectSSR(id: string): Promise<Project | null> {
 export async function fetchProjectsSSR(
   page = 1,
   q = "",
+  organizationPublicId?: string,
 ): Promise<ProjectsPageResponse> {
   const params = new URLSearchParams();
   params.set("page", String(Math.max(1, page)));
   params.set("limit", String(PROJECTS_PAGE_SIZE));
   const trim = q.trim();
   if (trim) params.set("q", trim);
+  const org = organizationPublicId?.trim();
+  if (org) params.set("organizationPublicId", org);
   const res = await fetch(`${apiBase()}/api/projects?${params.toString()}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
@@ -301,6 +309,115 @@ export async function fetchGitSettingsSSR(): Promise<GitSettingsPublic | null> {
   });
   if (!res.ok) return null;
   return (await res.json()) as GitSettingsPublic;
+}
+
+export async function fetchOrganizationsListSSR(): Promise<OrganizationPublic[]> {
+  const res = await fetch(`${apiBase()}/api/organizations`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const created = row.createdAt;
+    let createdAt: string;
+    if (created instanceof Date) createdAt = created.toISOString();
+    else if (typeof created === "string") createdAt = created;
+    else createdAt = new Date().toISOString();
+    return {
+      publicId: String(row.publicId ?? ""),
+      name: String(row.name ?? ""),
+      isOwner: row.isOwner === true,
+      createdAt,
+    };
+  });
+}
+
+export async function fetchOrganizationMembersSSR(
+  organizationPublicId: string,
+): Promise<OrganizationMemberPublic[]> {
+  const id = organizationPublicId.trim();
+  if (!id) return [];
+  const res = await fetch(`${apiBase()}/api/organizations/${encodeURIComponent(id)}/members`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const joined = row.joinedAt;
+    let joinedAt: string;
+    if (joined instanceof Date) joinedAt = joined.toISOString();
+    else if (typeof joined === "string") joinedAt = joined;
+    else joinedAt = new Date().toISOString();
+    return {
+      email: String(row.email ?? ""),
+      firstName: String(row.firstName ?? ""),
+      lastName: String(row.lastName ?? ""),
+      isOwner: row.isOwner === true,
+      joinedAt,
+    };
+  });
+}
+
+export async function fetchOrganizationProjectsSSR(
+  organizationPublicId: string,
+): Promise<OrganizationProjectListItem[]> {
+  const id = organizationPublicId.trim();
+  if (!id) return [];
+  const res = await fetch(`${apiBase()}/api/organizations/${encodeURIComponent(id)}/projects`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const created = row.createdAt;
+    let createdAt: string;
+    if (created instanceof Date) createdAt = created.toISOString();
+    else if (typeof created === "string") createdAt = created;
+    else createdAt = new Date().toISOString();
+    const sc = row.serviceCount;
+    const serviceCount =
+      typeof sc === "number" && Number.isFinite(sc) ? Math.max(0, Math.floor(sc)) : 0;
+    return {
+      publicId: String(row.publicId ?? ""),
+      name: String(row.name ?? ""),
+      description: typeof row.description === "string" ? row.description : "",
+      createdAt,
+      serviceCount,
+    };
+  });
+}
+
+export async function fetchOrganizationSSR(
+  publicId: string,
+): Promise<OrganizationPublic | null> {
+  const id = publicId.trim();
+  if (!id) return null;
+  const res = await fetch(`${apiBase()}/api/organizations/${encodeURIComponent(id)}`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const row = (await res.json()) as Record<string, unknown>;
+  const created = row.createdAt;
+  let createdAt: string;
+  if (created instanceof Date) createdAt = created.toISOString();
+  else if (typeof created === "string") createdAt = created;
+  else createdAt = new Date().toISOString();
+  return {
+    publicId: String(row.publicId ?? ""),
+    name: String(row.name ?? ""),
+    isOwner: row.isOwner === true,
+    createdAt,
+  };
 }
 
 /** Server-only: bucket listing at root prefix (no client Network tab on first paint). */

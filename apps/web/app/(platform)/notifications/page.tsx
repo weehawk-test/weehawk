@@ -4,10 +4,15 @@ import type { PaginatedNotificationChannelsResponse } from "@/lib/notifications-
 
 const CHANNELS_PAGE_SIZE = 10;
 
-export default async function NotificationsPage({
+export const NOTIFICATIONS_BASE_PATH = "/notifications";
+
+export async function NotificationsListView({
   searchParams,
+  notificationsBasePath = NOTIFICATIONS_BASE_PATH,
 }: {
   searchParams: Promise<{ page?: string; q?: string }>;
+  /** e.g. `/organizations/:publicId/notifications` in org workspace */
+  notificationsBasePath?: string;
 }) {
   const sp = await searchParams;
   const urlPage = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
@@ -25,6 +30,15 @@ export default async function NotificationsPage({
       initialError={initialError}
       urlPage={urlPage}
       urlQ={urlQ}
+      notificationsBasePath={notificationsBasePath}
     />
   );
+}
+
+export default async function NotificationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string; q?: string }>;
+}) {
+  return NotificationsListView({ searchParams, notificationsBasePath: NOTIFICATIONS_BASE_PATH });
 }

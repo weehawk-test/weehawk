@@ -3,12 +3,8 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import {
-  Webhook, FolderKanban, KeyRound, ChevronLeft, ChevronRight,
-  ImageIcon, Box, Database, Bell, HardDrive, Network, Boxes, ShieldCheck, Clock3,
-  GitBranch, Server, Mail, Globe, Newspaper, LogOut, UserCog, ChevronDown, X,
-} from "lucide-react";
-import { motion, LayoutGroup } from "framer-motion";
+import { ChevronLeft, ChevronRight, Server, LogOut, UserCog, ChevronDown, X } from "lucide-react";
+import { LayoutGroup } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
 import {
@@ -20,8 +16,9 @@ import {
   PLATFORM_NEWS_SEEN_EVENT,
   PLATFORM_NEWS_SEEN_STORAGE_KEY,
 } from "@/lib/platform-news-read";
-import type { LucideIcon } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { NavRow } from "./sidebar-nav-row";
+import { buildMainNavSections, buildDockerNavItems } from "./main-nav-sections";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -31,169 +28,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-function buildDockerNavItems(base: string): { href: string; label: string; icon: LucideIcon }[] {
-  return [
-    { href: `${base}/images`, label: "Images", icon: ImageIcon },
-    { href: `${base}/containers`, label: "Containers", icon: Box },
-    { href: `${base}/services`, label: "Services", icon: Boxes },
-    { href: `${base}/networks`, label: "Networks", icon: Network },
-    { href: `${base}/secrets`, label: "Secrets", icon: KeyRound },
-    { href: `${base}/volumes`, label: "Volumes", icon: Database },
-  ];
-}
-
-type MainNavItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  /** Opens in a new tab (docs, contact, etc.). */
-  external?: boolean;
-};
-
-type MainNavSection = {
-  label: string;
-  items: MainNavItem[];
-};
-
-function buildMainNavSections(): MainNavSection[] {
-  return [
-    {
-      label: "General",
-      items: [
-        { href: "/", label: "Projects", icon: FolderKanban },
-        { href: "/remote-server", label: "Servers", icon: Server },
-        { href: "/domains", label: "Domains", icon: Globe },
-      ],
-    },
-    {
-      label: "Integrations",
-      items: [
-        { href: "/webhooks", label: "Webhooks", icon: Webhook },
-        { href: "/cron-jobs", label: "Cron Jobs", icon: Clock3 },
-        { href: "/notifications", label: "Notifications", icon: Bell },
-        { href: "/s3", label: "S3 Destinations", icon: HardDrive },
-      ],
-    },
-    {
-      label: "Registry & Git",
-      items: [
-        { href: "/registry", label: "Registry", icon: ShieldCheck },
-        { href: "/git", label: "Git", icon: GitBranch },
-      ],
-    },
-    {
-      label: "More",
-      items: [
-        { href: "/news", label: "News", icon: Newspaper },
-        {
-          href: "https://weehawk.io/contact",
-          label: "Contact us",
-          icon: Mail,
-          external: true,
-        },
-      ],
-    },
-  ];
-}
-
-function NavRow({
-  collapsed,
-  href,
-  label,
-  active,
-  icon: Icon,
-  activeLayoutId,
-  external,
-  showUnreadDot,
-}: {
-  collapsed: boolean;
-  href: string;
-  label: string;
-  active: boolean;
-  icon: LucideIcon;
-  activeLayoutId: string;
-  external?: boolean;
-  /** Red badge (e.g. new platform news). */
-  showUnreadDot?: boolean;
-}) {
-  const className = cn(
-    "relative flex items-center rounded-xl transition-colors duration-200 group",
-    collapsed ? "justify-center px-2 py-2" : "gap-3 px-4 py-2",
-    active
-      ? "text-violet-800 dark:text-primary"
-      : "text-foreground/90 hover:text-foreground hover:bg-accent/70",
-  );
-
-  const inner = (
-    <>
-      {active && !external && (
-        <motion.div
-          layoutId={activeLayoutId}
-          className={cn(
-            "absolute inset-0 rounded-xl border",
-            "bg-violet-500/[0.12] border-violet-500/30",
-            "dark:bg-primary/10 dark:border-primary/20",
-          )}
-          initial={false}
-          transition={{ type: "spring", stiffness: 320, damping: 30 }}
-        />
-      )}
-      <span className="relative z-10 inline-flex flex-shrink-0">
-        <Icon
-          className={cn(
-            "w-4 h-4",
-            active
-              ? "text-violet-700 dark:text-primary"
-              : "text-foreground/90 group-hover:text-foreground",
-          )}
-        />
-        {showUnreadDot ? (
-          <span
-            className="absolute -right-1 -top-1 size-2 rounded-full bg-red-500 ring-2 ring-card dark:ring-zinc-950"
-            aria-hidden
-          />
-        ) : null}
-      </span>
-      {!collapsed && (
-        <span className="font-medium relative z-10 text-sm min-w-0 break-words leading-snug">{label}</span>
-      )}
-    </>
-  );
-
-  const link =
-    external ? (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={className}
-      >
-        {inner}
-      </a>
-    ) : (
-      <Link href={href} scroll={false} className={className}>
-        {inner}
-      </Link>
-    );
-
-  if (collapsed) {
-    return (
-      <Tooltip delayDuration={0}>
-        <TooltipTrigger asChild>{link}</TooltipTrigger>
-        <TooltipContent side="right" sideOffset={8}>
-          {label}
-          {showUnreadDot ? (
-            <span className="block text-[10px] text-red-400 mt-0.5">New items</span>
-          ) : null}
-          {external ? <span className="block text-[10px] text-muted-foreground mt-0.5">Opens in new tab</span> : null}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  return link;
-}
 
 export function Sidebar() {
   const { collapsed, toggle, isMobileNav, mobileNavOpen, closeMobileNav } = useSidebarLayout();
@@ -293,6 +127,9 @@ export function Sidebar() {
     if (href === "/remote-server") {
       return location === "/remote-server" || location.startsWith("/remote-server/");
     }
+    if (href === "/organizations") {
+      return location === "/organizations" || location.startsWith("/organizations/");
+    }
     if (href.includes("/secrets")) {
       if (location === href || location.startsWith(`${href}/`)) return true;
       return false;
@@ -329,29 +166,27 @@ export function Sidebar() {
       {/* Logo + collapse toggle */}
       <div className={cn("flex-shrink-0 pt-7 pb-1.5", railMode ? "px-2" : "px-6 max-md:px-4")}>
         {!railMode ? (
-          <div className="flex items-start gap-2 min-w-0">
+          <div className="flex min-w-0 items-start gap-2">
             <Link
               href={isConsoleServerSidebar ? consoleLogoHref : "/"}
               scroll={false}
-              className="flex items-start gap-3 flex-1 min-w-0 rounded-xl -mx-1 px-1 py-0.5 hover:bg-accent/60 transition-colors"
+              className="flex min-w-0 flex-1 items-start gap-3 rounded-xl -mx-1 px-1 py-0.5 outline-none ring-offset-background transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
-              <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm flex-shrink-0 ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
+              <div className="relative size-10 shrink-0 overflow-hidden rounded-xl border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
                 <Image
                   src="/weehawk-logo.svg"
-                  alt="Weehawk"
+                  alt=""
                   width={40}
                   height={40}
-                  className="logo-adaptive object-contain size-10 p-0.5 scale-90"
+                  className="logo-adaptive size-10 scale-90 object-contain p-0.5"
                   priority
                 />
               </div>
               <div className="min-w-0 flex-1 pt-0.5">
-                <h1 className="font-bold text-lg text-foreground tracking-tight leading-none truncate">
-                  Weehawk
-                </h1>
-                <p className="text-[10px] text-muted-foreground tracking-widest uppercase font-mono mt-1">
-                  CLOUD
-                </p>
+                <span className="block truncate text-lg font-bold tracking-tight leading-none text-foreground">Weehawk</span>
+                <span className="mt-1 block font-mono text-[10px] tracking-widest text-muted-foreground">
+                  Personal
+                </span>
               </div>
             </Link>
             <div className="flex items-center gap-0.5 shrink-0 mt-0.5">
@@ -379,22 +214,29 @@ export function Sidebar() {
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2.5">
-            <Link
-              href={isConsoleServerSidebar ? consoleLogoHref : "/"}
-              scroll={false}
-              className="flex justify-center rounded-xl p-1 hover:bg-accent/60 transition-colors"
-            >
-              <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
-                <Image
-                  src="/weehawk-logo.svg"
-                  alt="Weehawk"
-                  width={40}
-                  height={40}
-                  className="logo-adaptive object-contain size-10 p-0.5 scale-90"
-                  priority
-                />
-              </div>
-            </Link>
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <Link
+                  href={isConsoleServerSidebar ? consoleLogoHref : "/"}
+                  scroll={false}
+                  className="flex justify-center rounded-xl p-1 hover:bg-accent/60 transition-colors"
+                >
+                  <div className="relative w-10 h-10 rounded-xl overflow-hidden border border-primary/20 shadow-sm ring-1 ring-border/70 dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5">
+                    <Image
+                      src="/weehawk-logo.svg"
+                      alt="Weehawk"
+                      width={40}
+                      height={40}
+                      className="logo-adaptive object-contain size-10 p-0.5 scale-90"
+                      priority
+                    />
+                  </div>
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8}>
+                Personal
+              </TooltipContent>
+            </Tooltip>
             <ThemeToggle iconOnly />
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>

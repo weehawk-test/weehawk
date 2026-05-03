@@ -1,6 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
+
+function normalizeNotificationsBasePath(raw?: string): string {
+  const b = (raw ?? "/notifications").trim().replace(/\/$/, "");
+  return b || "/notifications";
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -381,6 +390,7 @@ export function NotificationsChannelsClient({
   urlQ,
   initialMode,
   initialRouteChannel,
+  notificationsBasePath,
 }: {
   initialData: PaginatedNotificationChannelsResponse | null;
   initialError: string | null;
@@ -388,10 +398,19 @@ export function NotificationsChannelsClient({
   urlQ: string;
   initialMode?: "create" | "edit";
   initialRouteChannel?: NotificationChannel | null;
+  /** List root, e.g. `/notifications` or `/organizations/:id/notifications`. */
+  notificationsBasePath?: string;
 }) {
   const pathname = usePathname();
-  const isCreateRoute = pathname === "/notifications/create";
-  const isEditRoute = /^\/notifications\/[^/]+\/edit$/.test(pathname);
+  const listBase = useMemo(
+    () => normalizeNotificationsBasePath(notificationsBasePath),
+    [notificationsBasePath],
+  );
+  const isCreateRoute = pathname === `${listBase}/create`;
+  const isEditRoute = useMemo(
+    () => new RegExp(`^${escapeRegExp(listBase)}/[^/]+/edit$`).test(pathname),
+    [listBase, pathname],
+  );
   const router = useRouter();
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
@@ -623,7 +642,7 @@ export function NotificationsChannelsClient({
       setAddTestRemoteId(null);
       setShowAdd(false);
       toast({ title: "Channel added", description: "Notification channel saved." });
-      if (isCreateRoute) router.push("/notifications");
+      if (isCreateRoute) router.push(listBase);
     },
     onError: (e: Error) => toast({ title: "Could not add channel", description: e.message, variant: "destructive" }),
   });
@@ -692,7 +711,7 @@ export function NotificationsChannelsClient({
       setShowEditChannel(false);
       setEditChannel(null);
       toast({ title: "Channel updated" });
-      if (isEditRoute) router.push("/notifications");
+      if (isEditRoute) router.push(listBase);
     },
     onError: (e: Error) =>
       toast({ title: "Update failed", description: e.message, variant: "destructive" }),
@@ -709,7 +728,7 @@ export function NotificationsChannelsClient({
     if (updateChannelMutation.isPending) return;
     setShowEditChannel(false);
     setEditChannel(null);
-    if (isEditRoute) router.push("/notifications");
+    if (isEditRoute) router.push(listBase);
   };
 
   const toggleReveal = (id: string) => setRevealedTokens((prev) => {
@@ -806,7 +825,7 @@ export function NotificationsChannelsClient({
     setForm({ name: "", type: "telegram" });
     setAddTestRemoteId(null);
     setTelegramForm({ token: "", target: "" });
-    if (isCreateRoute) router.push("/notifications");
+    if (isCreateRoute) router.push(listBase);
   };
 
   return (
@@ -1365,7 +1384,7 @@ export function NotificationsChannelsClient({
           </div>
           <h3 className="text-xl font-bold mb-2">No channels configured</h3>
           <p className="text-muted-foreground mb-8 max-w-md">Add your first provider to start receiving notifications.</p>
-          <Link href="/notifications/create" className="btn-primary flex items-center gap-2">
+          <Link href={`${listBase}/create`} className="btn-primary flex items-center gap-2">
             <Plus className="w-5 h-5" /> Add Channel
           </Link>
         </div>
@@ -1534,7 +1553,7 @@ export function NotificationsChannelsClient({
                   </div>
                   <div className="flex items-center gap-3 flex-wrap justify-end shrink-0">
                     <Link
-                      href={`/notifications/${encodeURIComponent(String(ch.publicId ?? ch.id))}/edit`}
+                      href={`${listBase}/${encodeURIComponent(String(ch.publicId ?? ch.id))}/edit`}
                       className={`text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 ${
                         updateChannelMutation.isPending || testMutation.isPending ? "pointer-events-none opacity-50" : ""
                       }`}

@@ -16,6 +16,7 @@ import { GitModule } from './git/git.module';
 import { TraefikModule } from './traefik/traefik.module';
 import { RemoteServersModule } from './remote-servers/remote-servers.module';
 import { AuthModule } from './auth/auth.module';
+import { OrganizationsModule } from './organizations/organizations.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RedisService } from './common/redis/redis.service';
 import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
@@ -86,6 +87,7 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
     GitModule,
     TraefikModule,
     RemoteServersModule,
+    OrganizationsModule,
     AuthModule,
   ],
   controllers: [],

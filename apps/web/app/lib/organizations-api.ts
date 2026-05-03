@@ -1,0 +1,188 @@
+import { API_BASE } from "./api";
+import { authFetch } from "./auth-fetch";
+import { getServerApiBase } from "./server-api";
+import type {
+  CreateOrganizationInput,
+  OrganizationMemberPublic,
+  OrganizationProjectListItem,
+  OrganizationPublic,
+} from "./organizations-types";
+
+export type {
+  CreateOrganizationInput,
+  OrganizationMemberPublic,
+  OrganizationProjectListItem,
+  OrganizationPublic,
+} from "./organizations-types";
+
+function nestErrorMessage(text: string, fallback: string): string {
+  try {
+    const j = JSON.parse(text) as { message?: string | string[] };
+    if (typeof j.message === "string") return j.message;
+    if (Array.isArray(j.message)) return j.message.join(", ");
+  } catch {
+    /* keep fallback */
+  }
+  return text.trim() || fallback;
+}
+
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const base = typeof window === "undefined" ? getServerApiBase() : API_BASE;
+  const url = `${base}${path}`;
+  const headers: HeadersInit = {
+    Accept: "application/json",
+    ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    ...init?.headers,
+  };
+  if (typeof window !== "undefined") {
+    return authFetch("cookie-session", url, {
+      ...init,
+      cache: "no-store",
+      headers,
+    });
+  }
+  return fetch(url, {
+    ...init,
+    cache: "no-store",
+    headers,
+  });
+}
+
+function mapOrg(raw: unknown): OrganizationPublic {
+  const row = raw as Record<string, unknown>;
+  const created = row.createdAt;
+  let createdAt: string;
+  if (created instanceof Date) createdAt = created.toISOString();
+  else if (typeof created === "string") createdAt = created;
+  else createdAt = new Date().toISOString();
+  return {
+    publicId: String(row.publicId ?? ""),
+    name: String(row.name ?? ""),
+    isOwner: row.isOwner === true,
+    createdAt,
+  };
+}
+
+export async function fetchOrganizations(): Promise<OrganizationPublic[]> {
+  const res = await apiFetch("/api/organizations", { method: "GET" });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data.map(mapOrg);
+}
+
+export async function fetchOrganization(publicId: string): Promise<OrganizationPublic | null> {
+  const id = publicId.trim();
+  if (!id) return null;
+  const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}`, {
+    method: "GET",
+  });
+  if (res.status === 404) return null;
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapOrg(JSON.parse(text) as unknown);
+}
+
+function mapMember(raw: unknown): OrganizationMemberPublic {
+  const row = raw as Record<string, unknown>;
+  return {
+    email: String(row.email ?? ""),
+    firstName: String(row.firstName ?? ""),
+    lastName: String(row.lastName ?? ""),
+    isOwner: row.isOwner === true,
+    joinedAt:
+      row.joinedAt instanceof Date
+        ? row.joinedAt.toISOString()
+        : String(row.joinedAt ?? new Date().toISOString()),
+  };
+}
+
+function mapOrgProject(raw: unknown): OrganizationProjectListItem {
+  const row = raw as Record<string, unknown>;
+  const created = row.createdAt;
+  let createdAt: string;
+  if (created instanceof Date) createdAt = created.toISOString();
+  else if (typeof created === "string") createdAt = created;
+  else createdAt = new Date().toISOString();
+  const sc = row.serviceCount;
+  const serviceCount =
+    typeof sc === "number" && Number.isFinite(sc) ? Math.max(0, Math.floor(sc)) : 0;
+  return {
+    publicId: String(row.publicId ?? ""),
+    name: String(row.name ?? ""),
+    description: typeof row.description === "string" ? row.description : "",
+    createdAt,
+    serviceCount,
+  };
+}
+
+export async function fetchOrganizationMembers(
+  organizationPublicId: string,
+): Promise<OrganizationMemberPublic[]> {
+  const id = organizationPublicId.trim();
+  if (!id) return [];
+  const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/members`, {
+    method: "GET",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data.map(mapMember);
+}
+
+export async function fetchOrganizationProjects(
+  organizationPublicId: string,
+): Promise<OrganizationProjectListItem[]> {
+  const id = organizationPublicId.trim();
+  if (!id) return [];
+  const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/projects`, {
+    method: "GET",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data.map(mapOrgProject);
+}
+
+export async function addOrganizationMember(
+  organizationPublicId: string,
+  email: string,
+): Promise<OrganizationMemberPublic> {
+  const res = await apiFetch(
+    `/api/organizations/${encodeURIComponent(organizationPublicId.trim())}/members`,
+    {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapMember(JSON.parse(text) as unknown);
+}
+
+export async function createOrganization(
+  body: CreateOrganizationInput,
+): Promise<OrganizationPublic> {
+  const res = await apiFetch("/api/organizations", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  return mapOrg(JSON.parse(text) as unknown);
+}

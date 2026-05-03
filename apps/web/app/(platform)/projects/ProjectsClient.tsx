@@ -31,17 +31,33 @@ function projectRouteId(project: { id: string; publicId?: string }): string {
   return pub && pub.length > 0 ? pub : project.id;
 }
 
-function CreateProjectModal({ onClose }: { onClose: () => void }) {
+function CreateProjectModal({
+  onClose,
+  organizationPublicId,
+}: {
+  onClose: () => void;
+  organizationPublicId?: string;
+}) {
   const router = useRouter();
   const create = useCreateProject();
   const { toast } = useToast();
   const { register, handleSubmit, formState: { errors } } = useForm({
     resolver: zodResolver(createProjectSchema),
-    defaultValues: { name: "", description: "" },
+    defaultValues: {
+      name: "",
+      description: "",
+      ...(organizationPublicId?.trim()
+        ? { organizationPublicId: organizationPublicId.trim() }
+        : {}),
+    },
   });
 
   const onSubmit = (data: CreateProjectInput) => {
-    create.mutate(data, {
+    const payload: CreateProjectInput =
+      organizationPublicId?.trim() != null && organizationPublicId.trim() !== ""
+        ? { ...data, organizationPublicId: organizationPublicId.trim() }
+        : data;
+    create.mutate(payload, {
       onSuccess: () => {
         toast({ title: "Project Created", description: "Your new project is ready." });
         router.refresh();
@@ -131,16 +147,27 @@ export default function ProjectsClient({
   urlQ,
   initialPageData,
   initialError,
+  organizationPublicId,
+  initialPageOrganizationId,
 }: {
   urlPage: number;
   urlQ: string;
   initialPageData?: ProjectsPageResponse;
   initialError?: string | null;
+  /** When set, lists/creates projects scoped to this organization (API `organizationPublicId`). */
+  organizationPublicId?: string;
+  /** Same as `organizationPublicId` on the server render that produced `initialPageData` (if any). */
+  initialPageOrganizationId?: string;
 }) {
   const router = useRouter();
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
   const [showCreate, setShowCreate] = useState(false);
   const [serverError, setServerError] = useState<string | null>(initialError ?? null);
+
+  const projectDetailBasePath =
+    organizationPublicId?.trim() != null && organizationPublicId.trim() !== ""
+      ? `/organizations/${encodeURIComponent(organizationPublicId.trim())}/projects`
+      : "/projects";
 
   const { data: pageData, isLoading, isError, error, refetch } = useProjectsPage(
     page,
@@ -148,6 +175,8 @@ export default function ProjectsClient({
     urlPage,
     urlQ,
     initialPageData,
+    organizationPublicId,
+    initialPageOrganizationId,
   );
   const deleteProject = useDeleteProject();
   const { toast } = useToast();
@@ -238,7 +267,12 @@ export default function ProjectsClient({
 
   return (
     <>
-      {showCreate ? <CreateProjectModal onClose={() => setShowCreate(false)} /> : null}
+      {showCreate ? (
+        <CreateProjectModal
+          onClose={() => setShowCreate(false)}
+          organizationPublicId={organizationPublicId}
+        />
+      ) : null}
 
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-10">
         <div>
@@ -384,7 +418,7 @@ export default function ProjectsClient({
                     <Clock className="w-3 h-3" />
                     {format(new Date(project.createdAt), "MMM d, yyyy")}
                   </div>
-                  <Link href={`/projects/${projectRouteId(project)}`}>
+                  <Link href={`${projectDetailBasePath}/${projectRouteId(project)}`}>
                     <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                       View <ChevronRight className="w-3 h-3" />
                     </span>

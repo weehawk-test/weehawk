@@ -15,19 +15,25 @@ export function useProjectsPage(
   ssrPage: number,
   ssrQ: string,
   initialPageData?: ProjectsPageResponse,
+  organizationPublicId?: string,
+  /** Must match `organizationPublicId` used when SSR fetched `initialPageData` (usually same as current org id). */
+  initialPageOrganizationId?: string,
 ) {
   const { user } = useAuth();
   const ownerKey = user?.userId ?? "none";
   const trimmed = q.trim();
   const ssrTrim = ssrQ.trim();
+  const orgKey = organizationPublicId?.trim() ?? "";
+  const initialOrgKey = initialPageOrganizationId?.trim() ?? "";
   const hasSsrInitial =
     initialPageData !== undefined &&
     page === ssrPage &&
-    trimmed === ssrTrim;
+    trimmed === ssrTrim &&
+    orgKey === initialOrgKey;
 
   return useQuery({
-    queryKey: ["projects", "list", ownerKey, page, trimmed],
-    queryFn: () => fetchProjectsPage(page, undefined, trimmed),
+    queryKey: ["projects", "list", ownerKey, orgKey, page, trimmed],
+    queryFn: () => fetchProjectsPage(page, undefined, trimmed, organizationPublicId),
     initialData:
       hasSsrInitial && user?.userId != null ? initialPageData : undefined,
     initialDataUpdatedAt:

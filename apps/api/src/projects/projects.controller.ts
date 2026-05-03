@@ -21,6 +21,7 @@ import {
   ApiQuery,
 } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
+import { OrganizationsService } from '../organizations/organizations.service';
 
 @ApiTags('Projects')
 @ApiBearerAuth()
@@ -28,7 +29,10 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 /** `/api/projects` matches other controllers (`/api/user`, …) and typical `/api` ingress to this service. */
 @Controller('api/projects')
 export class ProjectsController {
-  constructor(private readonly projectsService: ProjectsService) {}
+  constructor(
+    private readonly projectsService: ProjectsService,
+    private readonly organizationsService: OrganizationsService,
+  ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
     const id = req?.user?.userId;
@@ -54,14 +58,34 @@ export class ProjectsController {
     required: false,
     description: 'Filter by name or description',
   })
-  findAll(
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'When set, list projects linked to this organization (membership required)',
+  })
+  async findAll(
     @Query('page') pageStr?: string,
     @Query('limit') limitStr?: string,
     @Query('q') q?: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
     @Req() req?: { user?: { userId: number } },
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const limit = parseInt(limitStr ?? '9', 10);
+    const orgRaw = organizationPublicId?.trim();
+    if (orgRaw) {
+      const ctx = await this.organizationsService.requireMemberContext(
+        orgRaw,
+        this.uid(req),
+      );
+      return this.projectsService.findAllPaginatedForOrganization(
+        ctx.internalId,
+        page,
+        limit,
+        q ?? '',
+      );
+    }
     return this.projectsService.findAllPaginated(
       page,
       limit,

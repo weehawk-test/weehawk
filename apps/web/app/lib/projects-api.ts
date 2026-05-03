@@ -96,12 +96,15 @@ export async function fetchProjectsPage(
   page = 1,
   limit = PROJECTS_PAGE_SIZE,
   q = "",
+  organizationPublicId?: string,
 ): Promise<ProjectsPageResponse> {
   const params = new URLSearchParams();
   params.set("page", String(Math.max(1, page)));
   params.set("limit", String(limit));
   const trimmed = q.trim();
   if (trimmed) params.set("q", trimmed);
+  const org = organizationPublicId?.trim();
+  if (org) params.set("organizationPublicId", org);
   const res = await apiFetch(`/api/projects?${params.toString()}`);
   const text = await res.text();
   if (!res.ok) {
@@ -120,11 +123,13 @@ export async function fetchProject(id: string): Promise<Project> {
 }
 
 export async function createProjectApi(body: CreateProjectInput): Promise<Project> {
+  const org = body.organizationPublicId?.trim();
   const res = await apiFetch("/api/projects", {
     method: "POST",
     body: JSON.stringify({
       name: body.name,
       description: body.description?.trim() ? body.description.trim() : undefined,
+      ...(org ? { organizationPublicId: org } : {}),
     }),
   });
   const text = await res.text();

@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { API_BASE } from "@/lib/api";
 import { NotificationsChannelsClient } from "../channels/notifications-channels-client";
 import type { PaginatedNotificationChannelsResponse } from "@/lib/notifications-api";
+import { NOTIFICATIONS_BASE_PATH } from "../page";
 
 const CHANNELS_PAGE_SIZE = 10;
 
@@ -28,7 +29,11 @@ async function getChannelsPaged(page: number, q: string): Promise<PaginatedNotif
   return res.json();
 }
 
-export default async function NotificationsCreatePage() {
+export async function NotificationsCreateView({
+  notificationsBasePath = NOTIFICATIONS_BASE_PATH,
+}: {
+  notificationsBasePath?: string;
+}) {
   const urlPage = 1;
   const urlQ = "";
   let initialData: PaginatedNotificationChannelsResponse | null = null;
@@ -45,6 +50,11 @@ export default async function NotificationsCreatePage() {
       urlPage={urlPage}
       urlQ={urlQ}
       initialMode="create"
+      notificationsBasePath={notificationsBasePath}
     />
   );
+}
+
+export default async function NotificationsCreatePage() {
+  return NotificationsCreateView({});
 }
