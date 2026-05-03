@@ -87,6 +87,7 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
           lead={<p>Remove {names.length} network(s)?</p>}
           emphasis={names.join("\n")}
           hint="Removal fails if containers still use a network or the network is predefined (e.g. bridge)."
+          emphasisFixedScroll
         />
       ),
       confirmLabel: "Remove",

@@ -130,6 +130,7 @@ export function DockerServicesClient({ consoleTarget, urlPage, urlQ }: Props) {
           lead={<p>Remove {targets.length} service(s)?</p>}
           emphasis={targets.map((s) => (s.name.trim() ? `${s.name}\n${s.id}` : s.id)).join("\n\n")}
           hint="This will stop scheduling tasks for them."
+          emphasisFixedScroll
         />
       ),
       confirmLabel: "Remove",

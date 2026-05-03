@@ -135,6 +135,7 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
             </p>
           }
           emphasis={targets.map((c) => (c.name.trim() ? `${c.name}\n${c.id}` : c.id)).join("\n\n")}
+          emphasisFixedScroll
         />
       ),
       confirmLabel: "Remove",

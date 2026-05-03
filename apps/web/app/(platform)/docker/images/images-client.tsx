@@ -89,6 +89,7 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
           lead={<p>Remove {targets.length} image reference(s)?</p>}
           emphasis={targets.map((img) => dockerImageDeleteRef(img)).join("\n")}
           hint="Containers or services using an image may block removal until they are removed or updated."
+          emphasisFixedScroll
         />
       ),
       confirmLabel: "Remove",

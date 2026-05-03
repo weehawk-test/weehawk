@@ -630,6 +630,7 @@ export function DockerSecretsClient({
           lead={<p>Delete {names.length} Docker secret(s)?</p>}
           emphasis={names.join("\n")}
           hint="This cannot be undone."
+          emphasisFixedScroll
         />
       ),
       confirmLabel: "Delete all",

@@ -87,6 +87,7 @@ export function DockerVolumesClient({ consoleTarget, urlPage, urlQ }: Props) {
           lead={<p>Delete {names.length} volume(s)?</p>}
           emphasis={names.join("\n")}
           hint="This fails if a container still uses a volume."
+          emphasisFixedScroll
         />
       ),
       confirmLabel: "Delete",
