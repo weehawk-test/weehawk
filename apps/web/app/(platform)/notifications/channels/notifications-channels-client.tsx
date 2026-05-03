@@ -42,6 +42,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
 import {
+  orgMemberAllowsNotificationsAdd,
+  orgMemberAllowsNotificationsEdit,
+  orgMemberAllowsNotificationsTest,
+} from "@/lib/org-workspace-permissions";
+import {
   createNotificationChannel,
   bulkDeleteNotificationChannels,
   deleteNotificationChannel,
@@ -420,6 +425,20 @@ export function NotificationsChannelsClient({
   const orgWorkspace = useOptionalOrgWorkspace();
   const organizationPublicId =
     organizationPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
+  const inOrgNotifications =
+    organizationPublicId != null && String(organizationPublicId).trim() !== "";
+  const allowNotificationsAdd =
+    !inOrgNotifications ||
+    (orgWorkspace != null &&
+      orgMemberAllowsNotificationsAdd(orgWorkspace.workspacePermissions));
+  const allowNotificationsEdit =
+    !inOrgNotifications ||
+    (orgWorkspace != null &&
+      orgMemberAllowsNotificationsEdit(orgWorkspace.workspacePermissions));
+  const allowNotificationsTest =
+    !inOrgNotifications ||
+    (orgWorkspace != null &&
+      orgMemberAllowsNotificationsTest(orgWorkspace.workspacePermissions));
   const remoteServersQueryKey = ["remote-servers", organizationPublicId || "personal"] as const;
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -533,9 +552,17 @@ export function NotificationsChannelsClient({
   const [pushoverForm, setPushoverForm] = useState({ userKey: "", appToken: "", device: "" });
 
   const openAddChannelModal = useCallback(() => {
+    if (inOrgNotifications && !allowNotificationsAdd) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot add notification channels in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     setAddTestRemoteId(null);
     setShowAdd(true);
-  }, []);
+  }, [allowNotificationsAdd, inOrgNotifications, toast]);
 
   useEffect(() => {
     if (initialMode === "create") {
@@ -747,6 +774,14 @@ export function NotificationsChannelsClient({
   });
 
   const openEditChannel = (ch: NotificationChannel) => {
+    if (inOrgNotifications && !allowNotificationsEdit) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot edit notification channels in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     setEditChannel(ch);
     setEditName(ch.name);
     setEditDeployServerId(ch.remoteServerId ?? "");
@@ -769,11 +804,28 @@ export function NotificationsChannelsClient({
   const addFormReady = Boolean(form.name.trim() && isPlatformValid());
 
   const addChannel = () => {
+    if (inOrgNotifications && !allowNotificationsAdd) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot add notification channels in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!form.name.trim()) return toast({ title: "Missing name", description: "Please enter a service name before saving.", variant: "destructive" });
     if (!isPlatformValid()) return toast({ title: "Missing fields", description: "Please complete required fields for this provider.", variant: "destructive" });
     createMutation.mutate();
   };
   const runDraftTest = () => {
+    if (inOrgNotifications && (!allowNotificationsAdd || !allowNotificationsTest)) {
+      toast({
+        title: "Not allowed",
+        description:
+          "Draft test needs permission to add channels and to run tests in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!form.name.trim()) return toast({ title: "Missing name", description: "Please enter a service name before testing.", variant: "destructive" });
     if (!isPlatformValid()) return toast({ title: "Missing fields", description: "Please complete required fields for this provider.", variant: "destructive" });
     if (addTestRemoteId == null) {
@@ -786,6 +838,14 @@ export function NotificationsChannelsClient({
     testDraftMutation.mutate();
   };
   const openChannelActions = (ch: NotificationChannel) => {
+    if (inOrgNotifications && !allowNotificationsTest) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot run notification tests in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     setActionChannel({
       id: ch.id,
       name: ch.name,
@@ -796,6 +856,14 @@ export function NotificationsChannelsClient({
   };
   const runChannelTest = () => {
     if (!actionChannel) return;
+    if (inOrgNotifications && !allowNotificationsTest) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot run notification tests in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (testActionRemoteId === "") {
       toast({
         title: "Select a deploy host",
@@ -805,6 +873,16 @@ export function NotificationsChannelsClient({
       return;
     }
     if (deployServers.length === 0) return;
+    const nextRemote = testActionRemoteId as number;
+    const remoteChanging = actionChannel.remoteServerId !== nextRemote;
+    if (inOrgNotifications && remoteChanging && !allowNotificationsEdit) {
+      toast({
+        title: "Not allowed",
+        description: "Changing the deploy host requires edit access to notification channels.",
+        variant: "destructive",
+      });
+      return;
+    }
     testMutation.mutate({
       channelId: actionChannel.id,
       remoteServerId: testActionRemoteId as number,
@@ -812,6 +890,14 @@ export function NotificationsChannelsClient({
     });
   };
   const handleBulkDeleteChannels = async () => {
+    if (inOrgNotifications && !allowNotificationsEdit) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot delete notification channels in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     const ids = channelsBulk.selectedInFiltered;
     if (ids.length === 0) return;
     const ok = await confirm({
@@ -825,6 +911,14 @@ export function NotificationsChannelsClient({
   };
 
   const handleDeleteChannel = async (id: string, name: string) => {
+    if (inOrgNotifications && !allowNotificationsEdit) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot delete notification channels in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     const ok = await confirm({
       title: "Delete channel?",
       description: `“${name}” will be removed and can no longer receive notifications.`,
@@ -864,7 +958,7 @@ export function NotificationsChannelsClient({
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input className="input-field !pl-10 w-full bg-card/50" placeholder="Search channels..." value={channelsLocalQ} onChange={(e) => setChannelsLocalQ(e.target.value)} />
         </div>
-        {channels.length > 0 && (
+        {channels.length > 0 && allowNotificationsEdit && (
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <DockerBulkCheckbox checked={channelsBulk.allSelected ? true : channelsBulk.someSelected ? "indeterminate" : false} onCheckedChange={() => channelsBulk.toggleAllFiltered()} aria-label="Select all channels on this page" />
@@ -1183,7 +1277,9 @@ export function NotificationsChannelsClient({
                         createMutation.isPending ||
                         !addFormReady ||
                         addTestRemoteId == null ||
-                        deployServers.length === 0
+                        deployServers.length === 0 ||
+                        !allowNotificationsAdd ||
+                        !allowNotificationsTest
                       }
                       title="Creates a temporary channel on the selected host, runs one test, then deletes it"
                       className="btn-secondary text-sm border border-primary/40 text-primary inline-flex items-center justify-center gap-1.5 shrink-0 h-9 min-h-9 px-3 disabled:opacity-50"
@@ -1207,7 +1303,12 @@ export function NotificationsChannelsClient({
                 <button
                   type="button"
                   onClick={addChannel}
-                  disabled={!addFormReady || createMutation.isPending || testDraftMutation.isPending}
+                  disabled={
+                    !addFormReady ||
+                    createMutation.isPending ||
+                    testDraftMutation.isPending ||
+                    !allowNotificationsAdd
+                  }
                   className="btn-primary w-full text-sm sm:w-auto disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {createMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
@@ -1413,9 +1514,11 @@ export function NotificationsChannelsClient({
           </div>
           <h3 className="text-xl font-bold mb-2">No channels configured</h3>
           <p className="text-muted-foreground mb-8 max-w-md">Add your first provider to start receiving notifications.</p>
-          <Link href={`${listBase}/create`} className="btn-primary flex items-center gap-2">
-            <Plus className="w-5 h-5" /> Add Channel
-          </Link>
+          {allowNotificationsAdd ? (
+            <Link href={`${listBase}/create`} className="btn-primary flex items-center gap-2">
+              <Plus className="w-5 h-5" /> Add Channel
+            </Link>
+          ) : null}
         </div>
       ) : (
         <>
@@ -1535,25 +1638,35 @@ export function NotificationsChannelsClient({
                     <button
                       type="button"
                     onClick={() => handleDeleteChannel(notificationChannelRouteId(ch), ch.name)}
-                      disabled={deleteMutation.isPending || bulkDeleteChannelsMutation.isPending}
-                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete"
+                      disabled={
+                        deleteMutation.isPending ||
+                        bulkDeleteChannelsMutation.isPending ||
+                        !allowNotificationsEdit
+                      }
+                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
+                      title={
+                        allowNotificationsEdit
+                          ? "Delete"
+                          : "Your role cannot delete notification channels in this organization"
+                      }
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
-                    <div
-                      className={`transition-opacity ${
-                        channelsBulk.selected.has(notificationChannelRouteId(ch))
-                          ? "opacity-100"
-                          : "opacity-0 group-hover:opacity-100"
-                      }`}
-                    >
-                      <DockerBulkCheckbox
-                        checked={channelsBulk.selected.has(notificationChannelRouteId(ch))}
-                        onCheckedChange={() => channelsBulk.toggle(notificationChannelRouteId(ch))}
-                        aria-label={`Select channel ${ch.name}`}
-                      />
-                    </div>
+                    {allowNotificationsEdit ? (
+                      <div
+                        className={`transition-opacity ${
+                          channelsBulk.selected.has(notificationChannelRouteId(ch))
+                            ? "opacity-100"
+                            : "opacity-0 group-hover:opacity-100"
+                        }`}
+                      >
+                        <DockerBulkCheckbox
+                          checked={channelsBulk.selected.has(notificationChannelRouteId(ch))}
+                          onCheckedChange={() => channelsBulk.toggle(notificationChannelRouteId(ch))}
+                          aria-label={`Select channel ${ch.name}`}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -1581,26 +1694,46 @@ export function NotificationsChannelsClient({
                     </span>
                   </div>
                   <div className="flex items-center gap-3 flex-wrap justify-end shrink-0">
-                    <Link
-                      href={`${listBase}/${encodeURIComponent(String(ch.publicId ?? ch.id))}/edit`}
-                      className={`text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 ${
-                        updateChannelMutation.isPending || testMutation.isPending ? "pointer-events-none opacity-50" : ""
-                      }`}
-                      title="Edit name and Run test from host"
-                    >
-                      {updateChannelMutation.isPending && editChannel?.id === ch.id ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
+                    {allowNotificationsEdit ? (
+                      <Link
+                        href={`${listBase}/${encodeURIComponent(String(ch.publicId ?? ch.id))}/edit`}
+                        className={`text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 ${
+                          updateChannelMutation.isPending || testMutation.isPending
+                            ? "pointer-events-none opacity-50"
+                            : ""
+                        }`}
+                        title="Edit name and Run test from host"
+                      >
+                        {updateChannelMutation.isPending && editChannel?.id === ch.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Pencil className="w-3 h-3" />
+                        )}
+                        Edit
+                      </Link>
+                    ) : (
+                      <span
+                        className="cursor-not-allowed font-medium text-muted-foreground/70 flex items-center gap-1"
+                        title="Your role cannot edit notification channels in this organization"
+                      >
                         <Pencil className="w-3 h-3" />
-                      )}
-                      Edit
-                    </Link>
+                        Edit
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => openChannelActions(ch)}
-                      disabled={testMutation.isPending || updateChannelMutation.isPending}
+                      disabled={
+                        testMutation.isPending ||
+                        updateChannelMutation.isPending ||
+                        !allowNotificationsTest
+                      }
                       className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:opacity-50"
-                      title="Run test (pick deploy host in dialog)"
+                      title={
+                        allowNotificationsTest
+                          ? "Run test (pick deploy host in dialog)"
+                          : "Your role cannot run notification tests in this organization"
+                      }
                     >
                       {testMutation.isPending ? (
                         <Loader2 className="w-3 h-3 animate-spin" />

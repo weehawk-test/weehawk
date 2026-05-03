@@ -25,6 +25,11 @@ import {
   isLetsEncryptEmailConfigured,
   isValidEmailShape,
 } from "@/lib/traefik-acme-email";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import {
+  orgMemberAllowsDomainsAddSites,
+  orgMemberAllowsDomainsCertificateEmail,
+} from "@/lib/org-workspace-permissions";
 
 const TRAEFIK_SETTINGS_QK = ["traefik", "settings"] as const;
 
@@ -308,6 +313,16 @@ export function DeployDomainsClient({
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const inOrgDomains =
+    organizationPublicId != null && String(organizationPublicId).trim() !== "";
+  const allowOrgCertEmail =
+    !inOrgDomains ||
+    (orgWorkspace != null &&
+      orgMemberAllowsDomainsCertificateEmail(orgWorkspace.workspacePermissions));
+  const allowOrgAddSites =
+    !inOrgDomains ||
+    (orgWorkspace != null && orgMemberAllowsDomainsAddSites(orgWorkspace.workspacePermissions));
   const orgKey = organizationPublicId?.trim() || "personal";
   const remoteServersQueryKey = ["remote-servers", orgKey] as const;
   const remoteServerHref = organizationPublicId?.trim()
@@ -350,8 +365,12 @@ export function DeployDomainsClient({
   }, [traefikQ.data, acmeEmailDirty]);
 
   const emailMutation = useMutation({
-    mutationFn: (email: string) =>
-      updateTraefikSettings(accessToken ?? "", { acmeEmail: email.trim() }),
+    mutationFn: (args: { email: string; organizationPublicId?: string | null }) =>
+      updateTraefikSettings(
+        accessToken ?? "",
+        { acmeEmail: args.email.trim() },
+        args.organizationPublicId,
+      ),
     onSuccess: async (updated) => {
       qc.setQueryData(TRAEFIK_SETTINGS_QK, updated);
       await qc.invalidateQueries({ queryKey: TRAEFIK_SETTINGS_QK });
@@ -380,13 +399,17 @@ export function DeployDomainsClient({
       });
       return;
     }
-    emailMutation.mutate(t);
+    emailMutation.mutate({
+      email: t,
+      organizationPublicId: organizationPublicId?.trim() || undefined,
+    });
   };
 
   const savedAcme = traefikQ.data?.acmeEmail ?? "";
   const acmeEmailChanged =
     traefikQ.data != null && acmeEmailLocal.trim() !== savedAcme.trim();
   const domainsUnlocked = isLetsEncryptEmailConfigured(savedAcme);
+  const sitesEditingEnabled = domainsUnlocked && allowOrgAddSites;
 
   const deployServers = useMemo(
     () => filterSshDeployServers(q.data ?? []),
@@ -467,6 +490,12 @@ export function DeployDomainsClient({
                     setAcmeEmailLocal(e.target.value);
                   }}
                   placeholder="you@example.com"
+                  disabled={inOrgDomains && !allowOrgCertEmail}
+                  title={
+                    inOrgDomains && !allowOrgCertEmail
+                      ? "Your role cannot change certificate email in this organization"
+                      : undefined
+                  }
                   className="w-full"
                 />
               </div>
@@ -481,7 +510,13 @@ export function DeployDomainsClient({
                     emailMutation.isPending ||
                     !acmeEmailChanged ||
                     !isValidEmailShape(acmeEmailLocal) ||
-                    isBlockedAcmeContactEmail(acmeEmailLocal)
+                    isBlockedAcmeContactEmail(acmeEmailLocal) ||
+                    (inOrgDomains && !allowOrgCertEmail)
+                  }
+                  title={
+                    inOrgDomains && !allowOrgCertEmail
+                      ? "Your role cannot change certificate email in this organization"
+                      : undefined
                   }
                   onClick={onSaveAcmeEmail}
                 >
@@ -525,7 +560,7 @@ export function DeployDomainsClient({
               key={s.id}
               server={s}
               accessToken={accessToken}
-              domainsEnabled={domainsUnlocked}
+              domainsEnabled={sitesEditingEnabled}
               remoteServersQueryKey={remoteServersQueryKey}
             />
           ))}

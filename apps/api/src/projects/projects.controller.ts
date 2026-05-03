@@ -115,6 +115,7 @@ export class ProjectsController {
       publicId,
       this.uid(req),
       organizationPublicId,
+      { requireOrgProjectView: true },
     );
     let organizationPublicIdOut: string | undefined;
     if (project.organizationId != null) {

@@ -17,6 +17,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { createProjectSchema, CreateProjectInput } from "@/lib/schema";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import {
+  orgMemberAllowsProjectAdd,
+  orgMemberAllowsProjectDelete,
+  orgMemberAllowsProjectView,
+} from "@/lib/org-workspace-permissions";
 
 function ServiceCount({ count }: { count: number }) {
   return (
@@ -169,6 +175,19 @@ export default function ProjectsClient({
       ? `/organizations/${encodeURIComponent(organizationPublicId.trim())}/projects`
       : "/projects";
 
+  const inOrgProjects =
+    organizationPublicId != null && String(organizationPublicId).trim() !== "";
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const allowOrgProjectAdd =
+    !inOrgProjects ||
+    (orgWorkspace != null && orgMemberAllowsProjectAdd(orgWorkspace.workspacePermissions));
+  const allowOrgProjectDelete =
+    !inOrgProjects ||
+    (orgWorkspace != null && orgMemberAllowsProjectDelete(orgWorkspace.workspacePermissions));
+  const allowOrgProjectView =
+    !inOrgProjects ||
+    (orgWorkspace != null && orgMemberAllowsProjectView(orgWorkspace.workspacePermissions));
+
   const { data: pageData, isLoading, isError, error, refetch } = useProjectsPage(
     page,
     q,
@@ -219,14 +238,17 @@ export default function ProjectsClient({
     });
     if (!ok) return;
 
-    deleteProject.mutate(id, {
+    deleteProject.mutate(
+      { id, organizationPublicId: organizationPublicId?.trim() || undefined },
+      {
       onSuccess: () => {
         toast({ title: "Project Deleted", description: `"${name}" has been removed.` });
         router.refresh();
       },
       onError: (e: Error) =>
         toast({ title: "Could not delete project", description: e.message, variant: "destructive" }),
-    });
+    },
+    );
   };
 
   const handleBulkDelete = async () => {
@@ -242,7 +264,10 @@ export default function ProjectsClient({
 
     setIsBulkDeleting(true);
     try {
-      const results = await Promise.allSettled(ids.map((id) => deleteProject.mutateAsync(id)));
+      const orgPid = organizationPublicId?.trim() || undefined;
+      const results = await Promise.allSettled(
+        ids.map((id) => deleteProject.mutateAsync({ id, organizationPublicId: orgPid })),
+      );
       const removed = results.filter((r) => r.status === "fulfilled").length;
       const fail = results.length - removed;
       projectsBulk.clear();
@@ -280,7 +305,17 @@ export default function ProjectsClient({
           <p className="text-muted-foreground">Organize your services into projects.</p>
         </div>
 
-        <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          disabled={!allowOrgProjectAdd}
+          title={
+            inOrgProjects && !allowOrgProjectAdd
+              ? "Your role cannot create projects in this organization"
+              : undefined
+          }
+          className="btn-primary flex items-center gap-2 disabled:pointer-events-none disabled:opacity-40"
+        >
           <Plus className="w-5 h-5" /> New Project
         </button>
       </div>
@@ -296,7 +331,7 @@ export default function ProjectsClient({
             className="input-field !pl-10 w-full bg-card/50"
           />
         </div>
-        {items.length > 0 && (
+        {items.length > 0 && allowOrgProjectDelete ? (
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <DockerBulkCheckbox
@@ -322,7 +357,7 @@ export default function ProjectsClient({
               </button>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {(serverError || isError) && (
@@ -353,7 +388,17 @@ export default function ProjectsClient({
               : "Create your first project to start organizing services."}
           </p>
           {!q.trim() && (
-            <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowCreate(true)}
+              disabled={!allowOrgProjectAdd}
+              title={
+                inOrgProjects && !allowOrgProjectAdd
+                  ? "Your role cannot create projects in this organization"
+                  : undefined
+              }
+              className="btn-primary flex items-center gap-2 disabled:pointer-events-none disabled:opacity-40"
+            >
               <Plus className="w-5 h-5" /> New Project
             </button>
           )}
@@ -384,28 +429,32 @@ export default function ProjectsClient({
                   </div>
 
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(projectRouteId(project), project.name)}
-                      disabled={isBulkDeleting || deleteProject.isPending}
-                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                    <div
-                      className={`transition-opacity ${
-                        projectsBulk.selected.has(projectRouteId(project))
-                          ? "opacity-100"
-                          : "opacity-0 group-hover:opacity-100"
-                      }`}
-                    >
-                      <DockerBulkCheckbox
-                        checked={projectsBulk.selected.has(projectRouteId(project))}
-                        onCheckedChange={() => projectsBulk.toggle(projectRouteId(project))}
-                        aria-label={`Select project ${project.name}`}
-                      />
-                    </div>
+                    {allowOrgProjectDelete ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(projectRouteId(project), project.name)}
+                        disabled={isBulkDeleting || deleteProject.isPending}
+                        className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    ) : null}
+                    {allowOrgProjectDelete ? (
+                      <div
+                        className={`transition-opacity ${
+                          projectsBulk.selected.has(projectRouteId(project))
+                            ? "opacity-100"
+                            : "opacity-0 group-hover:opacity-100"
+                        }`}
+                      >
+                        <DockerBulkCheckbox
+                          checked={projectsBulk.selected.has(projectRouteId(project))}
+                          onCheckedChange={() => projectsBulk.toggle(projectRouteId(project))}
+                          aria-label={`Select project ${project.name}`}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -418,11 +467,20 @@ export default function ProjectsClient({
                     <Clock className="w-3 h-3" />
                     {format(new Date(project.createdAt), "MMM d, yyyy")}
                   </div>
-                  <Link href={`${projectDetailBasePath}/${projectRouteId(project)}`}>
-                    <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
+                  {allowOrgProjectView ? (
+                    <Link href={`${projectDetailBasePath}/${projectRouteId(project)}`}>
+                      <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
+                        View <ChevronRight className="w-3 h-3" />
+                      </span>
+                    </Link>
+                  ) : (
+                    <span
+                      className="font-medium flex items-center gap-1 text-muted-foreground opacity-50 cursor-not-allowed"
+                      title="Your role cannot open project details in this organization"
+                    >
                       View <ChevronRight className="w-3 h-3" />
                     </span>
-                  </Link>
+                  )}
                 </div>
             </div>
           ))}

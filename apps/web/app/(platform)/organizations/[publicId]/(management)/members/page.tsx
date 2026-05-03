@@ -1,4 +1,6 @@
 import { fetchOrganizationMembersSSR } from "@/lib/server-fetch";
+import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
+import { requireOrgManagementTab } from "@/lib/org-management-page-guard";
 import { OrgMembersClient } from "./org-members-client";
 
 type PageProps = {
@@ -8,6 +10,7 @@ type PageProps = {
 export default async function OrganizationMembersPage({ params }: PageProps) {
   const { publicId: raw } = await params;
   const publicId = raw.trim();
+  await requireOrgManagementTab(publicId, ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS);
   const members = await fetchOrganizationMembersSSR(publicId);
 
   return (

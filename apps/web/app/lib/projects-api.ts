@@ -116,8 +116,13 @@ export async function fetchProjectsPage(
   return parseProjectsPageResponse(text);
 }
 
-export async function fetchProject(id: string): Promise<Project> {
-  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`);
+export async function fetchProject(
+  id: string,
+  organizationPublicId?: string | null,
+): Promise<Project> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -161,8 +166,13 @@ export async function updateProjectApi(
   return mapApiProjectToProject(JSON.parse(text));
 }
 
-export async function deleteProjectApi(id: string): Promise<void> {
-  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+export async function deleteProjectApi(
+  id: string,
+  organizationPublicId?: string | null,
+): Promise<void> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`, { method: "DELETE" });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));

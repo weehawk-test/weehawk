@@ -37,8 +37,13 @@ import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
 import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
 import {
+  orgMemberAllowsRemoteServerAdd,
+  orgMemberAllowsRemoteServerDelete,
   orgMemberAllowsRemoteServerDockerManager,
+  orgMemberAllowsRemoteServerEdit,
+  orgMemberAllowsRemoteServerInstallMaintenance,
   orgMemberAllowsRemoteServerTerminal,
+  orgMemberAllowsRemoteServerTest,
 } from "@/lib/org-workspace-permissions";
 /** When Host is a dotted public IPv4, it is stored as `publicIpv4` (e.g. Magic traefik.me). Hostnames are SSH-only. */
 function parseDottedPublicIpv4(hostOrIp: string): string | null {
@@ -112,7 +117,24 @@ export function RemoteServerSettingsClient({
     !inOrgRemoteServerPage ||
     (orgWorkspace != null &&
       orgMemberAllowsRemoteServerDockerManager(orgWorkspace.workspacePermissions));
-  const showConnectionTests = allowOrgTerminal || allowOrgDocker;
+  const allowOrgTest =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null && orgMemberAllowsRemoteServerTest(orgWorkspace.workspacePermissions));
+  const allowOrgAdd =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null && orgMemberAllowsRemoteServerAdd(orgWorkspace.workspacePermissions));
+  const allowOrgEdit =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null && orgMemberAllowsRemoteServerEdit(orgWorkspace.workspacePermissions));
+  const allowOrgDelete =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null && orgMemberAllowsRemoteServerDelete(orgWorkspace.workspacePermissions));
+  const allowOrgInstallMaintenance =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null &&
+      orgMemberAllowsRemoteServerInstallMaintenance(orgWorkspace.workspacePermissions));
+  const showConnectionTests =
+    allowOrgTest && (allowOrgTerminal || allowOrgDocker);
   const remoteServersQueryKey = ["remote-servers", orgKey] as const;
   const traefikSettingsQueryKey = ["traefik", "settings"] as const;
   const hasInitialRemoteServers = initialRemoteServers !== undefined;
@@ -548,11 +570,13 @@ export function RemoteServerSettingsClient({
           {!creating && (
             <button
               type="button"
-              disabled={addHostBlocked}
+              disabled={addHostBlocked || (inOrgRemoteServerPage && !allowOrgAdd)}
               title={
                 addHostBlocked
                   ? "Save your Let's Encrypt email on Domains first"
-                  : "Add a remote host"
+                  : inOrgRemoteServerPage && !allowOrgAdd
+                    ? "Your role cannot add remote hosts in this organization"
+                    : "Add a remote host"
               }
               onClick={() => {
                 setShowPrivateKeyCreate(false);
@@ -650,7 +674,9 @@ export function RemoteServerSettingsClient({
                         className="btn-secondary inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs disabled:opacity-40 sm:min-h-0 sm:py-1.5"
                         title={
                           !showConnectionTests && inOrgRemoteServerPage
-                            ? "Connection tests are disabled for your role"
+                            ? !allowOrgTest
+                              ? "Connection tests are disabled for your role"
+                              : "Enable Terminal or Docker Manager under org permissions to run tests"
                             : "Open test options"
                         }
                       >
@@ -675,18 +701,29 @@ export function RemoteServerSettingsClient({
                       </button>
                       <button
                         type="button"
+                        disabled={inOrgRemoteServerPage && !allowOrgEdit}
+                        title={
+                          inOrgRemoteServerPage && !allowOrgEdit
+                            ? "Your role cannot edit remote hosts in this organization"
+                            : undefined
+                        }
                         onClick={() => {
                           setGeneratedPublicKey(null);
                           setShowPrivateKeyEdit(false);
                           setEditingId(row.id);
                         }}
-                        className="btn-secondary min-h-10 px-2.5 py-2 text-xs sm:min-h-0 sm:py-1.5"
+                        className="btn-secondary min-h-10 px-2.5 py-2 text-xs disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:py-1.5"
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        disabled={deleteMut.isPending}
+                        disabled={deleteMut.isPending || (inOrgRemoteServerPage && !allowOrgDelete)}
+                        title={
+                          inOrgRemoteServerPage && !allowOrgDelete
+                            ? "Your role cannot delete remote hosts in this organization"
+                            : "Delete host"
+                        }
                         onClick={async () => {
                           const ok = await confirm({
                             title: `Delete remote host “${row.name}”?`,
@@ -699,15 +736,18 @@ export function RemoteServerSettingsClient({
                           if (!ok) return;
                           deleteMut.mutate(remoteServerRouteId(row));
                         }}
-                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-destructive/45 bg-destructive/10 p-2 text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-40 sm:min-h-0 sm:p-1.5"
-                        title="Delete host"
+                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-destructive/45 bg-destructive/10 p-2 text-destructive transition-colors hover:bg-destructive/15 disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:p-1.5"
                         aria-label="Delete host"
                       >
                         <Trash2 className="size-3.5" aria-hidden />
                       </button>
                     </div>
                   </div>
-                  <RemoteServerInstallBlock accessToken={accessToken} row={row} />
+                  <RemoteServerInstallBlock
+                    accessToken={accessToken}
+                    row={row}
+                    installMaintenanceAllowed={allowOrgInstallMaintenance}
+                  />
                 </>
               </div>
             ))}
@@ -1071,7 +1111,10 @@ export function RemoteServerSettingsClient({
                   <button
                     type="button"
                     disabled={
-                      !allowOrgTerminal || testSshMut.isPending || testMut.isPending
+                      !allowOrgTest ||
+                      !allowOrgTerminal ||
+                      testSshMut.isPending ||
+                      testMut.isPending
                     }
                     onClick={() => testSshMut.mutate(remoteServerRouteId(testModalRow))}
                     className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
@@ -1082,7 +1125,9 @@ export function RemoteServerSettingsClient({
                   </button>
                   <button
                     type="button"
-                    disabled={!allowOrgDocker || testMut.isPending || testSshMut.isPending}
+                    disabled={
+                      !allowOrgTest || !allowOrgDocker || testMut.isPending || testSshMut.isPending
+                    }
                     onClick={() => testMut.mutate(remoteServerRouteId(testModalRow))}
                     className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-2 px-3 py-2 text-sm disabled:opacity-40 sm:min-h-0"
                     title="Remote Docker API via Dockerode over SSH (same path as the Docker Manager)"

@@ -9,7 +9,10 @@ import { Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
 import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
-import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import {
+  ORGANIZATION_WORKSPACE_PERMISSIONS,
+  type OrganizationWorkspacePermission,
+} from '../organizations/organization-workspace-permissions';
 import { NotificationChannel } from './entities/notification-channel.entity';
 import { NotificationChannelType } from './entities/notification-channel-type.enum';
 import { CreateNotificationChannelDto } from './dto/create-notification-channel.dto';
@@ -69,12 +72,18 @@ export class NotificationService {
   private async workspaceOrgId(
     userId: number,
     organizationPublicId?: string | null,
+    extra?: OrganizationWorkspacePermission[],
   ): Promise<number | null> {
     return resolveOrganizationInternalIdForMember(
       this.organizationsRepository,
       userId,
       organizationPublicId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS,
+        ...(extra != null && extra.length > 0
+          ? { requireAllWorkspaceAreas: extra }
+          : {}),
+      },
     );
   }
 
@@ -286,7 +295,9 @@ export class NotificationService {
     userId: number,
     dto: CreateNotificationChannelDto,
   ): Promise<NotificationChannelRow> {
-    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId);
+    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS_ADD,
+    ]);
     const provider = this.providerRegistry.get(
       dto.type as NotificationChannelType,
     );
@@ -314,7 +325,9 @@ export class NotificationService {
     dto: UpdateNotificationChannelDto,
     organizationPublicId?: string | null,
   ): Promise<NotificationChannelRow> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS_EDIT,
+    ]);
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
     this.assertChannelWorkspace(ch, organizationPublicId, expectedOrg);
@@ -345,7 +358,9 @@ export class NotificationService {
     id: string,
     organizationPublicId?: string | null,
   ): Promise<void> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS_EDIT,
+    ]);
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
     this.assertChannelWorkspace(ch, organizationPublicId, expectedOrg);
@@ -358,7 +373,9 @@ export class NotificationService {
     organizationPublicId?: string | null,
   ): Promise<{ removed: number }> {
     if (ids.length === 0) return { removed: 0 };
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS_EDIT,
+    ]);
     let removed = 0;
     for (const rawId of ids) {
       const id = String(rawId ?? '').trim();
@@ -380,7 +397,9 @@ export class NotificationService {
     channelId: string,
     organizationPublicId?: string | null,
   ): Promise<{ success: boolean; message: string }> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.NOTIFICATIONS_TEST,
+    ]);
     const channel = await this.findChannelForUser(userId, channelId);
     if (!channel) throw new NotFoundException('Channel not found');
     this.assertChannelWorkspace(channel, organizationPublicId, expectedOrg);

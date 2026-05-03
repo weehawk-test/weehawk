@@ -27,6 +27,8 @@ import { useToast } from "@/hooks/use-toast";
 type Props = {
   accessToken: string;
   row: RemoteServerRow;
+  /** When false (e.g. org workspace), hide install/maintenance queue actions. Default true. */
+  installMaintenanceAllowed?: boolean;
 };
 
 type InstallDialog = "provision" | "nixpacks" | "purge" | null;
@@ -56,7 +58,11 @@ function formatCreatedAtLabel(value: string): string {
 const scriptPreviewPreClassName =
   "min-w-0 max-w-full text-[10px] leading-snug font-mono max-h-60 overflow-x-hidden overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-slate-300 bg-slate-100 p-3 text-slate-800 shadow-inner dark:border-border dark:bg-zinc-950/90 dark:text-zinc-300";
 
-export function RemoteServerInstallBlock({ accessToken, row }: Props) {
+export function RemoteServerInstallBlock({
+  accessToken,
+  row,
+  installMaintenanceAllowed = true,
+}: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [installMenuOpen, setInstallMenuOpen] = useState(false);
@@ -170,11 +176,23 @@ export function RemoteServerInstallBlock({ accessToken, row }: Props) {
               {formatCreatedAtLabel(row.createdAt)}
             </span>
           </p>
-        <Popover open={installMenuOpen} onOpenChange={setInstallMenuOpen}>
+        <Popover
+          open={installMaintenanceAllowed ? installMenuOpen : false}
+          onOpenChange={(open) => {
+            if (!installMaintenanceAllowed) return;
+            setInstallMenuOpen(open);
+          }}
+        >
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="inline-flex w-full sm:w-auto min-h-9 items-center justify-center gap-2 rounded-lg border border-border/80 bg-background/80 px-3 py-2 text-xs font-medium text-foreground shadow-sm hover:bg-muted/50 dark:bg-muted/30 dark:hover:bg-muted/45"
+              disabled={!installMaintenanceAllowed}
+              title={
+                installMaintenanceAllowed
+                  ? undefined
+                  : "Install and maintenance scripts are disabled for your role in this organization"
+              }
+              className="inline-flex w-full sm:w-auto min-h-9 items-center justify-center gap-2 rounded-lg border border-border/80 bg-background/80 px-3 py-2 text-xs font-medium text-foreground shadow-sm hover:bg-muted/50 dark:bg-muted/30 dark:hover:bg-muted/45 disabled:pointer-events-none disabled:opacity-40"
             >
               Installs &amp; maintenance
               <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden />

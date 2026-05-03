@@ -1,7 +1,11 @@
 import { notFound, redirect } from "next/navigation";
-import { fetchOrganizationMembersSSR, fetchOrganizationSSR } from "@/lib/server-fetch";
+import { fetchOrganizationSSR } from "@/lib/server-fetch";
 import { OrgManagementTabs } from "@/components/org/org-management-tabs";
-import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
+import {
+  ORG_WORKSPACE_PERMISSIONS,
+  allowedOrgManagementTabMatches,
+  orgMemberHasAnyOrgManagementTab,
+} from "@/lib/org-workspace-permissions";
 
 export default async function OrganizationManagementLayout({
   children,
@@ -20,8 +24,11 @@ export default async function OrganizationManagementLayout({
   ) {
     redirect(`/organizations/${encodeURIComponent(org.publicId)}/projects`);
   }
+  if (!org.isOwner && !orgMemberHasAnyOrgManagementTab(org.workspacePermissions)) {
+    redirect(`/organizations/${encodeURIComponent(org.publicId)}/projects`);
+  }
 
-  const members = await fetchOrganizationMembersSSR(org.publicId);
+  const allowedTabMatches = allowedOrgManagementTabMatches(org.workspacePermissions, org.isOwner);
   const base = `/organizations/${encodeURIComponent(org.publicId)}`;
 
   return (
@@ -31,7 +38,7 @@ export default async function OrganizationManagementLayout({
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{org.name}</h1>
           <p className="mt-0.5 font-mono text-sm text-muted-foreground">{org.publicId}</p>
         </div>
-        <OrgManagementTabs base={base} memberCount={members.length} />
+        <OrgManagementTabs base={base} memberCount={org.memberCount} allowedTabMatches={allowedTabMatches} />
       </div>
       {children}
     </div>

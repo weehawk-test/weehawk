@@ -16,7 +16,10 @@ import { IsNull, Like, Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
 import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
-import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import {
+  ORGANIZATION_WORKSPACE_PERMISSIONS,
+  type OrganizationWorkspacePermission,
+} from '../organizations/organization-workspace-permissions';
 import { NotificationService } from '../notifications/notification.service';
 import { ExecutorService } from '../executor/executor.service';
 import { ServicesService } from '../services/services.service';
@@ -98,12 +101,18 @@ export class WebhooksService implements OnApplicationBootstrap {
   private async workspaceOrgId(
     userId: number,
     organizationPublicId: string | null | undefined,
+    extra?: OrganizationWorkspacePermission[],
   ): Promise<number | null> {
     return resolveOrganizationInternalIdForMember(
       this.organizationsRepository,
       userId,
       organizationPublicId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS,
+        ...(extra != null && extra.length > 0
+          ? { requireAllWorkspaceAreas: extra }
+          : {}),
+      },
     );
   }
 
@@ -588,7 +597,9 @@ export class WebhooksService implements OnApplicationBootstrap {
     dto: CreateWebhookDto,
   ): Promise<WebhookDetailRow> {
     this.validateCreate(dto);
-    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId);
+    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_ADD,
+    ]);
     if (dto.remoteServerId != null) {
       await this.remoteServersService.assertDeployServerById(
         dto.remoteServerId,
@@ -801,6 +812,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     const expectedOrg = await this.workspaceOrgId(
       userId,
       opts?.organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_LOGS],
     );
     const w = await this.resolveEntity(userId, idOrPublicId);
     this.assertWebhookWorkspace(w, opts?.organizationPublicId, expectedOrg);
@@ -825,7 +837,9 @@ export class WebhooksService implements OnApplicationBootstrap {
     dto: UpdateWebhookDto,
     organizationPublicId?: string | null,
   ): Promise<WebhookDetailRow> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_EDIT,
+    ]);
     const w = await this.resolveEntity(userId, idOrPublicId);
     this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
 
@@ -976,7 +990,9 @@ export class WebhooksService implements OnApplicationBootstrap {
     idOrPublicId: string | number,
     organizationPublicId?: string | null,
   ): Promise<void> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_DELETE,
+    ]);
     const w = await this.resolveEntity(userId, idOrPublicId);
     this.assertWebhookWorkspace(w, organizationPublicId, expectedOrg);
     const remoteId = w.remoteServerId;

@@ -18,6 +18,14 @@ import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
 import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import {
+  orgMemberAllowsWebhooksAdd,
+  orgMemberAllowsWebhooksDelete,
+  orgMemberAllowsWebhooksEdit,
+  orgMemberAllowsWebhooksLogs,
+  orgMemberAllowsWebhooksRun,
+} from "@/lib/org-workspace-permissions";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -41,6 +49,23 @@ export function WebhooksClient({
     orgTrim != null && orgTrim !== ""
       ? `/organizations/${encodeURIComponent(orgTrim)}/webhooks`
       : "/webhooks";
+  const inOrgWebhooks = orgTrim != null && orgTrim !== "";
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const allowWebhooksAdd =
+    !inOrgWebhooks ||
+    (orgWorkspace != null && orgMemberAllowsWebhooksAdd(orgWorkspace.workspacePermissions));
+  const allowWebhooksEdit =
+    !inOrgWebhooks ||
+    (orgWorkspace != null && orgMemberAllowsWebhooksEdit(orgWorkspace.workspacePermissions));
+  const allowWebhooksLogs =
+    !inOrgWebhooks ||
+    (orgWorkspace != null && orgMemberAllowsWebhooksLogs(orgWorkspace.workspacePermissions));
+  const allowWebhooksRun =
+    !inOrgWebhooks ||
+    (orgWorkspace != null && orgMemberAllowsWebhooksRun(orgWorkspace.workspacePermissions));
+  const allowWebhooksDelete =
+    !inOrgWebhooks ||
+    (orgWorkspace != null && orgMemberAllowsWebhooksDelete(orgWorkspace.workspacePermissions));
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -179,6 +204,16 @@ export function WebhooksClient({
   ) => {
     if (provisioningWebhookIds.includes(webhook.id)) return;
     if (!accessToken) return;
+    if (inOrgWebhooks && !allowWebhooksLogs) {
+      if (!opts?.silent) {
+        toast({
+          title: "Logs not allowed",
+          description: "Your role cannot view webhook logs in this organization.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     const useButtonLoading = opts?.useButtonLoading !== false;
     if (useButtonLoading && loadingLogWebhookId === webhook.id) return;
     if (!opts?.keepModalState) {
@@ -237,6 +272,14 @@ export function WebhooksClient({
   const triggerWebhookNow = async (webhook: WebhookListItem) => {
     if (provisioningWebhookIds.includes(webhook.id)) return;
     if (triggeringWebhookId === webhook.id) return;
+    if (inOrgWebhooks && !allowWebhooksRun) {
+      toast({
+        title: "Run not allowed",
+        description: "Your role cannot run webhooks from the UI in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     setTriggeringWebhookId(webhook.id);
     setOpenLogWebhookId(webhook.id);
     setLogTextByWebhookId((prev) => ({ ...prev, [webhook.id]: "" }));
@@ -284,6 +327,7 @@ export function WebhooksClient({
 
   useEffect(() => {
     if (openLogWebhookId == null || !accessToken) return;
+    if (inOrgWebhooks && !allowWebhooksLogs) return;
     const webhook = webhooks.find((w) => w.id === openLogWebhookId);
     if (!webhook) return;
 
@@ -292,7 +336,7 @@ export function WebhooksClient({
       void loadWebhookLog(webhook, { silent: true, keepModalState: true });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [openLogWebhookId, accessToken, webhooks]);
+  }, [openLogWebhookId, accessToken, webhooks, inOrgWebhooks, allowWebhooksLogs]);
 
   return (
     <>
@@ -301,12 +345,21 @@ export function WebhooksClient({
           <h1 className="text-3xl font-bold text-foreground mb-2">Webhooks</h1>
           <p className="text-muted-foreground">Manage inbound webhooks and actions.</p>
         </div>
-        <Link
-          href={`${webhooksBasePath}/create`}
-          className="btn-primary flex items-center justify-center gap-2"
-        >
-          <Plus className="w-5 h-5" /> New webhook
-        </Link>
+        {allowWebhooksAdd ? (
+          <Link
+            href={`${webhooksBasePath}/create`}
+            className="btn-primary flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" /> New webhook
+          </Link>
+        ) : (
+          <span
+            className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-4 py-2 text-sm text-muted-foreground"
+            title="Your role cannot create webhooks in this organization"
+          >
+            <Plus className="w-5 h-5" /> New webhook
+          </span>
+        )}
       </div>
 
       <div className="mb-4">
@@ -320,7 +373,7 @@ export function WebhooksClient({
             className="input-field !pl-10 w-full bg-card/50"
           />
         </div>
-        {filtered.length > 0 && (
+        {filtered.length > 0 && allowWebhooksDelete && (
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <DockerBulkCheckbox
@@ -356,7 +409,7 @@ export function WebhooksClient({
           <p className="text-muted-foreground mb-8 max-w-md">
             {search ? "No webhooks match your search." : "Create your first webhook trigger to run actions."}
           </p>
-          {!search && (
+          {!search && allowWebhooksAdd && (
             <Link href={`${webhooksBasePath}/create`} className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> New webhook
             </Link>
@@ -406,26 +459,39 @@ export function WebhooksClient({
                     <button
                       type="button"
                       onClick={() => handleDelete(webhookRouteId(w), w.name)}
-                      disabled={isProvisioning || isBulkDeleting || deleteWebhook.isPending}
-                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete"
+                      disabled={
+                        isProvisioning ||
+                        isBulkDeleting ||
+                        deleteWebhook.isPending ||
+                        !allowWebhooksDelete
+                      }
+                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
+                      title={
+                        allowWebhooksDelete
+                          ? "Delete"
+                          : "Your role cannot delete webhooks in this organization"
+                      }
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
-                    <div
-                      className={`transition-opacity ${
-                        webhooksBulk.selected.has(webhookRouteId(w)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                      }`}
-                    >
-                      <DockerBulkCheckbox
-                        checked={webhooksBulk.selected.has(webhookRouteId(w))}
-                        onCheckedChange={() => {
-                          if (isProvisioning) return;
-                          webhooksBulk.toggle(webhookRouteId(w));
-                        }}
-                        aria-label={`Select webhook ${w.name}`}
-                      />
-                    </div>
+                    {allowWebhooksDelete ? (
+                      <div
+                        className={`transition-opacity ${
+                          webhooksBulk.selected.has(webhookRouteId(w))
+                            ? "opacity-100"
+                            : "opacity-0 group-hover:opacity-100"
+                        }`}
+                      >
+                        <DockerBulkCheckbox
+                          checked={webhooksBulk.selected.has(webhookRouteId(w))}
+                          onCheckedChange={() => {
+                            if (isProvisioning) return;
+                            webhooksBulk.toggle(webhookRouteId(w));
+                          }}
+                          aria-label={`Select webhook ${w.name}`}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -472,17 +538,29 @@ export function WebhooksClient({
                       <span className="text-muted-foreground/70 font-medium flex items-center gap-1 cursor-not-allowed">
                         Edit <Pencil className="w-3 h-3" />
                       </span>
-                    ) : (
+                    ) : allowWebhooksEdit ? (
                       <Link href={`${webhooksBasePath}/${webhookRouteId(w)}/edit`}>
                         <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                           Edit <Pencil className="w-3 h-3" />
                         </span>
                       </Link>
+                    ) : (
+                      <span
+                        className="cursor-not-allowed font-medium text-muted-foreground/70 flex items-center gap-1"
+                        title="Your role cannot edit webhooks in this organization"
+                      >
+                        Edit <Pencil className="w-3 h-3" />
+                      </span>
                     )}
                     <button
                       type="button"
                       onClick={() => void loadWebhookLog(w)}
-                      disabled={isProvisioning}
+                      disabled={isProvisioning || !allowWebhooksLogs}
+                      title={
+                        allowWebhooksLogs
+                          ? undefined
+                          : "Your role cannot view webhook logs in this organization"
+                      }
                       className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
                     >
                       Logs
@@ -491,7 +569,12 @@ export function WebhooksClient({
                     <button
                       type="button"
                       onClick={() => void triggerWebhookNow(w)}
-                      disabled={isProvisioning}
+                      disabled={isProvisioning || !allowWebhooksRun}
+                      title={
+                        allowWebhooksRun
+                          ? undefined
+                          : "Your role cannot run webhooks from the UI in this organization"
+                      }
                       className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
                     >
                       Run

@@ -6,6 +6,7 @@ import { Loader2, UserPlus } from "lucide-react";
 import type { OrganizationMemberPublic } from "@/lib/organizations-types";
 import { inviteOrganizationMember, setOrganizationMemberRole } from "@/lib/organizations-api";
 import { useOrgWorkspace } from "../../org-workspace-context";
+import { orgMemberAllowsOrgManagementMembers } from "@/lib/org-workspace-permissions";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -38,7 +39,8 @@ export function OrgMembersClient({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [roleUpdatingEmail, setRoleUpdatingEmail] = useState<string | null>(null);
 
-  const canInvite = org.isOwner;
+  const canInvite =
+    org.isOwner || orgMemberAllowsOrgManagementMembers(org.workspacePermissions);
 
   useEffect(() => {
     setMembers(initialMembers);

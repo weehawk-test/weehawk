@@ -21,6 +21,12 @@ import {
 } from "@/lib/s3-api";
 import { fetchRemoteServers, type RemoteServerRow } from "@/lib/remote-servers-api";
 import { inferS3ForcePathStyle } from "@/lib/s3-force-path-style";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import {
+  orgMemberAllowsS3Add,
+  orgMemberAllowsS3Browse,
+  orgMemberAllowsS3Edit,
+} from "@/lib/org-workspace-permissions";
 
 /** Short provider label from endpoint host (card badges). */
 function s3ProviderLabelFromEndpoint(endpoint: string): string {
@@ -88,6 +94,20 @@ export function S3Client({
   initialError: string | null;
   organizationPublicId?: string | null;
 }) {
+  const orgTrim = organizationPublicId?.trim();
+  const s3BasePath =
+    orgTrim != null && orgTrim !== ""
+      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
+      : "/s3";
+  const inOrgS3 = orgTrim != null && orgTrim !== "";
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const allowS3Browse =
+    !inOrgS3 ||
+    (orgWorkspace != null && orgMemberAllowsS3Browse(orgWorkspace.workspacePermissions));
+  const allowS3Add =
+    !inOrgS3 || (orgWorkspace != null && orgMemberAllowsS3Add(orgWorkspace.workspacePermissions));
+  const allowS3Edit =
+    !inOrgS3 || (orgWorkspace != null && orgMemberAllowsS3Edit(orgWorkspace.workspacePermissions));
   const { toast } = useToast();
   const { accessToken } = useAuth();
   const confirm = useConfirm();
@@ -169,7 +189,7 @@ export function S3Client({
   const loadProfiles = async () => {
     setLoading(true);
     try {
-      const list = await listS3ProfilesApi();
+      const list = await listS3ProfilesApi(organizationPublicId);
       setProfiles(list);
     } catch (e) {
       toast({
@@ -211,6 +231,7 @@ export function S3Client({
   const payloadForApi = useMemo((): S3ProfilePayload => {
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
     const secret = (form.secretAccessKey ?? "").trim();
+    const o = organizationPublicId?.trim();
     return {
       name: form.name.trim(),
       endpoint: form.endpoint.trim(),
@@ -219,8 +240,9 @@ export function S3Client({
       accessKeyId: form.accessKeyId.trim(),
       secretAccessKey: secret,
       forcePathStyle,
+      ...(o ? { organizationPublicId: o } : {}),
     };
-  }, [form]);
+  }, [form, organizationPublicId]);
 
   const onTest = async () => {
     if (!canSubmit) return;
@@ -284,7 +306,7 @@ export function S3Client({
     try {
       const target = profiles.find((p) => p.name === name);
       if (!target) throw new Error("S3 destination not found.");
-      await deleteS3ProfileApi(s3ProfileRouteId(target));
+      await deleteS3ProfileApi(s3ProfileRouteId(target), organizationPublicId);
       toast({ title: "Deleted", description: name });
       await loadProfiles();
     } catch (e) {
@@ -313,7 +335,7 @@ export function S3Client({
         names.map((name) => {
           const target = profiles.find((p) => p.name === name);
           if (!target) throw new Error(`S3 destination "${name}" not found.`);
-          return deleteS3ProfileApi(s3ProfileRouteId(target));
+          return deleteS3ProfileApi(s3ProfileRouteId(target), organizationPublicId);
         }),
       );
       profilesBulk.clear();
@@ -339,9 +361,11 @@ export function S3Client({
             Link your cloud storage buckets so backups and uploads know where to send data.
           </p>
         </div>
-        <Link href="/s3/create" className="btn-primary flex items-center justify-center gap-2">
-          <Plus className="w-5 h-5" /> Add destination
-        </Link>
+        {allowS3Add ? (
+          <Link href={`${s3BasePath}/create`} className="btn-primary flex items-center justify-center gap-2">
+            <Plus className="w-5 h-5" /> Add destination
+          </Link>
+        ) : null}
       </div>
 
       <div className="mb-4">
@@ -355,7 +379,7 @@ export function S3Client({
             className="input-field !pl-10 w-full bg-card/50"
           />
         </div>
-        {filtered.length > 0 && (
+        {allowS3Edit && filtered.length > 0 && (
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <DockerBulkCheckbox
@@ -396,8 +420,8 @@ export function S3Client({
           <p className="text-muted-foreground mb-8 max-w-md">
             {search ? "No destinations match your search." : "Add your first S3 destination profile."}
           </p>
-          {!search && (
-            <Link href="/s3/create" className="btn-primary flex items-center gap-2">
+          {!search && allowS3Add && (
+            <Link href={`${s3BasePath}/create`} className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> Add destination
             </Link>
           )}
@@ -424,26 +448,30 @@ export function S3Client({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
-                  <button
-                    type="button"
-                    onClick={() => void onDelete(item.name)}
-                    disabled={deletingName === item.name || isBulkDeleting}
-                    className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-100"
-                    title="Delete"
-                  >
-                    {deletingName === item.name ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                  </button>
-                  <div
-                    className={`transition-opacity ${
-                      profilesBulk.selected.has(item.name) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                    }`}
-                  >
-                    <DockerBulkCheckbox
-                      checked={profilesBulk.selected.has(item.name)}
-                      onCheckedChange={() => profilesBulk.toggle(item.name)}
-                      aria-label={`Select destination ${item.name}`}
-                    />
-                  </div>
+                  {allowS3Edit ? (
+                    <button
+                      type="button"
+                      onClick={() => void onDelete(item.name)}
+                      disabled={deletingName === item.name || isBulkDeleting}
+                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-100"
+                      title="Delete"
+                    >
+                      {deletingName === item.name ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                    </button>
+                  ) : null}
+                  {allowS3Edit ? (
+                    <div
+                      className={`transition-opacity ${
+                        profilesBulk.selected.has(item.name) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                      }`}
+                    >
+                      <DockerBulkCheckbox
+                        checked={profilesBulk.selected.has(item.name)}
+                        onCheckedChange={() => profilesBulk.toggle(item.name)}
+                        aria-label={`Select destination ${item.name}`}
+                      />
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -465,20 +493,24 @@ export function S3Client({
                   <span title="Created (UTC)">{formatDateUTC(profileCreatedAtIso(item))}</span>
                 </div>
                 <div className="flex items-center gap-3 flex-wrap justify-end">
-                  <Link
-                    href={`/s3/${encodeURIComponent(s3ProfileRouteId(item))}/edit`}
-                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
-                  >
-                    <Pencil className="w-3 h-3" />
-                    Edit
-                  </Link>
-                  <Link
-                    href={`/s3/${encodeURIComponent(s3ProfileRouteId(item))}`}
-                    className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
-                  >
-                    <FolderOpen className="w-3 h-3" />
-                    Browse
-                  </Link>
+                  {allowS3Edit ? (
+                    <Link
+                      href={`${s3BasePath}/${encodeURIComponent(s3ProfileRouteId(item))}/edit`}
+                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      Edit
+                    </Link>
+                  ) : null}
+                  {allowS3Browse ? (
+                    <Link
+                      href={`${s3BasePath}/${encodeURIComponent(s3ProfileRouteId(item))}`}
+                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1"
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      Browse
+                    </Link>
+                  ) : null}
                 </div>
               </div>
             </div>

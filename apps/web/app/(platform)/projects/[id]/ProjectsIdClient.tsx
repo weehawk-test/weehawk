@@ -12,7 +12,7 @@ import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Data
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
-import { useProject } from "@/hooks/use-projects";
+import { projectQueryKey, useProject } from "@/hooks/use-projects";
 import { useServicesPage, useCreateService, useDeleteService, useServiceRuntime } from "@/hooks/use-services";
 import { ListPagination } from "@/components/docker/ListPagination";
 import { useForm, type Resolver } from "react-hook-form";
@@ -787,13 +787,17 @@ export default function ProjectsIdClient({
   const { data: project, isLoading: projectLoading } = useProject(projectId, {
     initialData: initialProject ?? undefined,
     skipClientFetch: Boolean(initialProject),
+    organizationPublicId: organizationPublicId ?? initialProject?.organizationPublicId,
   });
 
   useEffect(() => {
     if (initialProject) {
-      qc.setQueryData(["projects", user?.userId ?? "none", projectId], initialProject);
+      qc.setQueryData(
+        projectQueryKey(user?.userId, projectId, organizationPublicId ?? initialProject.organizationPublicId),
+        initialProject,
+      );
     }
-  }, [initialProject, projectId, qc, user?.userId]);
+  }, [initialProject, projectId, qc, user?.userId, organizationPublicId]);
 
   useEffect(() => {
     if (initialServicesPage === undefined) return;

@@ -27,7 +27,10 @@ import { IsNull, Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
 import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
-import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import {
+  ORGANIZATION_WORKSPACE_PERMISSIONS,
+  type OrganizationWorkspacePermission,
+} from '../organizations/organization-workspace-permissions';
 import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
 import { TestS3ConnectionDto } from './dto/test-s3-connection.dto';
 import { S3Profile } from './entities/s3-profile.entity';
@@ -107,13 +110,47 @@ export class S3Service implements OnModuleInit {
   private async workspaceOrgId(
     userId: number,
     organizationPublicId?: string | null,
+    opts?: {
+      requireAllWorkspaceAreas?: OrganizationWorkspacePermission[];
+      requireAnyWorkspaceAreas?: OrganizationWorkspacePermission[];
+    },
   ): Promise<number | null> {
+    const raw = organizationPublicId?.trim();
+    if (!raw) return null;
     return resolveOrganizationInternalIdForMember(
       this.organizationsRepository,
       userId,
       organizationPublicId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.S3 },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.S3,
+        ...(opts?.requireAllWorkspaceAreas != null &&
+        opts.requireAllWorkspaceAreas.length > 0
+          ? { requireAllWorkspaceAreas: opts.requireAllWorkspaceAreas }
+          : {}),
+        ...(opts?.requireAnyWorkspaceAreas != null &&
+        opts.requireAnyWorkspaceAreas.length > 0
+          ? { requireAnyWorkspaceAreas: opts.requireAnyWorkspaceAreas }
+          : {}),
+      },
     );
+  }
+
+  /** Enforce S3 sub-capabilities for organization workspace; no-op for personal workspace. */
+  private async requireOrgS3Subs(
+    userId: number,
+    organizationPublicId: string | null | undefined,
+    requireAll?: OrganizationWorkspacePermission[],
+    requireAny?: OrganizationWorkspacePermission[],
+  ): Promise<void> {
+    if (!organizationPublicId?.trim()) return;
+    await this.workspaceOrgId(userId, organizationPublicId, {
+      ...(requireAll != null && requireAll.length > 0
+        ? { requireAllWorkspaceAreas: requireAll }
+        : {}),
+      ...(requireAny != null && requireAny.length > 0
+        ? { requireAnyWorkspaceAreas: requireAny }
+        : {}),
+    });
   }
 
   private async resolveExpectedOrgId(
@@ -465,7 +502,11 @@ export class S3Service implements OnModuleInit {
     userId: number,
     organizationPublicId?: string | null,
   ) {
-    const orgId = await this.workspaceOrgId(userId, organizationPublicId);
+    const orgId = await this.workspaceOrgId(userId, organizationPublicId, {
+      requireAllWorkspaceAreas: organizationPublicId?.trim()
+        ? [ORGANIZATION_WORKSPACE_PERMISSIONS.S3_BROWSE]
+        : undefined,
+    });
     const rows =
       orgId != null
         ? await this.scopedProfiles.listForOrganization(userId, orgId, {
@@ -489,6 +530,13 @@ export class S3Service implements OnModuleInit {
       userId,
       base.name,
       orgId,
+    );
+    await this.requireOrgS3Subs(
+      userId,
+      dto.organizationPublicId,
+      row
+        ? [ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT]
+        : [ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD],
     );
     const secretAccessKey = this.resolveSecretForSave(dto, row);
     const n: NormalizedS3Credentials = { ...base, secretAccessKey };
@@ -543,6 +591,9 @@ export class S3Service implements OnModuleInit {
     publicId: string,
     organizationPublicId?: string | null,
   ) {
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT,
+    ]);
     const row = await this.findProfileByPublicIdOrThrow(
       userId,
       publicId,
@@ -560,6 +611,15 @@ export class S3Service implements OnModuleInit {
     message: string;
     remoteServerId: number;
   }> {
+    await this.requireOrgS3Subs(
+      userId,
+      dto.organizationPublicId,
+      undefined,
+      [
+        ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT,
+      ],
+    );
     const input = this.normalizeProfile(dto);
     const remoteId = dto.remoteServerId;
 
@@ -685,6 +745,9 @@ export class S3Service implements OnModuleInit {
     isTruncated: boolean;
     continuationToken?: string;
   }> {
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_BROWSE,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -758,6 +821,9 @@ export class S3Service implements OnModuleInit {
     objectKey: string,
     organizationPublicId?: string | null,
   ): Promise<{ success: boolean; key: string }> {
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -814,6 +880,9 @@ export class S3Service implements OnModuleInit {
         sanitized.push(k);
       }
     }
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -886,6 +955,9 @@ export class S3Service implements OnModuleInit {
   }> {
     const PREFIX_SUMMARY_MAX_PAGES = 200;
     const prefix = this.normalizeFolderPrefix(prefixRaw);
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_BROWSE,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -960,6 +1032,9 @@ export class S3Service implements OnModuleInit {
   }> {
     const MAX_LIST = 1_000_000;
     const prefix = this.normalizeFolderPrefix(prefixRaw);
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -1055,6 +1130,9 @@ export class S3Service implements OnModuleInit {
     contentLength?: number;
     filename: string;
   }> {
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_BROWSE,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -1111,6 +1189,9 @@ export class S3Service implements OnModuleInit {
     objectKey: string,
     organizationPublicId?: string | null,
   ): Promise<{ bucket: string; key: string }> {
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -1180,6 +1261,9 @@ export class S3Service implements OnModuleInit {
         `Upload exceeds maximum size (${Math.floor(maxBytes / (1024 * 1024))} MiB).`,
       );
     }
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -1230,6 +1314,9 @@ export class S3Service implements OnModuleInit {
     if (!key.endsWith('/')) {
       key = `${key}/`;
     }
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -1284,6 +1371,11 @@ export class S3Service implements OnModuleInit {
     expiresIn: number;
     contentType: string;
   }> {
+    await this.requireOrgS3Subs(
+      userId,
+      opts?.organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD],
+    );
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -1339,6 +1431,9 @@ export class S3Service implements OnModuleInit {
     organizationPublicId?: string | null,
     organizationInternalId?: number | null,
   ): Promise<{ url: string; bucket: string; key: string; expiresIn: number }> {
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_BROWSE,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,
@@ -1385,6 +1480,9 @@ export class S3Service implements OnModuleInit {
     destAbsolutePath: string,
     organizationPublicId?: string | null,
   ): Promise<void> {
+    await this.requireOrgS3Subs(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.S3_BROWSE,
+    ]);
     const row = await this.findProfileOrThrow(
       userId,
       profileName,

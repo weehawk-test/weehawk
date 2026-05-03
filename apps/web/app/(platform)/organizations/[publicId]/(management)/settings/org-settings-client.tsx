@@ -6,6 +6,10 @@ import { Building2, Loader2, LogOut, Pencil } from "lucide-react";
 import Link from "next/link";
 import { leaveOrganization, updateOrganization } from "@/lib/organizations-api";
 import { useOrgWorkspace } from "../../org-workspace-context";
+import {
+  orgMemberAllowsOrgManagementMembers,
+  orgMemberAllowsOrgManagementSettings,
+} from "@/lib/org-workspace-permissions";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -31,7 +35,9 @@ export function OrgSettingsClient() {
   }, [org.name]);
 
   const nameDirty = name.trim() !== org.name.trim();
-  const canEditName = org.isOwner;
+  const canEditName =
+    org.isOwner || orgMemberAllowsOrgManagementSettings(org.workspacePermissions);
+  const canOpenMembers = orgMemberAllowsOrgManagementMembers(org.workspacePermissions);
 
   const onSaveName = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,9 +100,11 @@ export function OrgSettingsClient() {
               </p>
             </div>
           </div>
-          <Link href={membersHref} className="btn-secondary inline-flex shrink-0 justify-center text-sm">
-            Manage members
-          </Link>
+          {canOpenMembers ? (
+            <Link href={membersHref} className="btn-secondary inline-flex shrink-0 justify-center text-sm">
+              Manage members
+            </Link>
+          ) : null}
         </div>
       </div>
 
@@ -134,7 +142,7 @@ export function OrgSettingsClient() {
           </form>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Only organization owners can rename this workspace. The current name is{" "}
+            You need the Management · Settings capability (or owner role) to rename this workspace. The current name is{" "}
             <span className="font-medium text-foreground">{org.name}</span>.
           </p>
         )}

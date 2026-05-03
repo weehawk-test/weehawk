@@ -113,7 +113,7 @@ export function invalidateProjectServicesQueries(qc: QueryClient, projectId: str
   });
 }
 
-/** useProject: `["projects", ownerKey, id]` — not `["projects", id]`. */
+/** useProject: `["projects", ownerKey, id, organizationPublicId?]`. */
 export function invalidateProjectDetailQueries(qc: QueryClient, projectId: string) {
   const pid = String(projectId);
   return qc.invalidateQueries({

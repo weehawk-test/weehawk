@@ -9,8 +9,17 @@ import {
 export type ResolveOrganizationWorkspaceOptions = {
   /** Require access to this workspace area (non-owners). */
   requireWorkspaceArea?: OrganizationWorkspacePermission;
+  /**
+   * Additional areas that must be allowed (e.g. sub-capabilities under the parent area).
+   * Each is checked with {@link membershipAllowsWorkspaceArea}.
+   */
+  requireAllWorkspaceAreas?: OrganizationWorkspacePermission[];
   /** Remote servers / domains: at least one of those areas must be allowed. */
   requireOrgServersAccess?: boolean;
+  /**
+   * At least one of these workspace areas must be allowed (e.g. S3 add **or** edit for connection tests).
+   */
+  requireAnyWorkspaceAreas?: OrganizationWorkspacePermission[];
 };
 
 /**
@@ -29,8 +38,15 @@ export async function resolveOrganizationInternalIdForMember(
   const m = await organizations.findMembership(userId, org.id);
   if (!m) throw new NotFoundException('Organization not found');
 
+  const areasToCheck = new Set<OrganizationWorkspacePermission>();
   if (options?.requireWorkspaceArea) {
-    if (!membershipAllowsWorkspaceArea(m, options.requireWorkspaceArea)) {
+    areasToCheck.add(options.requireWorkspaceArea);
+  }
+  for (const a of options?.requireAllWorkspaceAreas ?? []) {
+    areasToCheck.add(a);
+  }
+  for (const area of areasToCheck) {
+    if (!membershipAllowsWorkspaceArea(m, area)) {
       throw new ForbiddenException(
         'You do not have access to this area of the organization workspace.',
       );
@@ -40,6 +56,19 @@ export async function resolveOrganizationInternalIdForMember(
     if (!membershipHasOrgServerAccess(m)) {
       throw new ForbiddenException(
         'You do not have access to organization servers or domains.',
+      );
+    }
+  }
+  if (
+    options?.requireAnyWorkspaceAreas != null &&
+    options.requireAnyWorkspaceAreas.length > 0
+  ) {
+    const ok = options.requireAnyWorkspaceAreas.some((a) =>
+      membershipAllowsWorkspaceArea(m, a),
+    );
+    if (!ok) {
+      throw new ForbiddenException(
+        'You do not have access to this area of the organization workspace.',
       );
     }
   }

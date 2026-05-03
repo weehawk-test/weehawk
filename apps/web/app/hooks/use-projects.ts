@@ -9,6 +9,14 @@ import {
   type ProjectsPageResponse,
 } from "@/lib/projects-api";
 
+export function projectQueryKey(
+  userId: number | undefined,
+  projectId: string,
+  organizationPublicId?: string | null,
+) {
+  return ["projects", userId ?? "none", projectId, organizationPublicId?.trim() ?? ""] as const;
+}
+
 export function useProjectsPage(
   page: number,
   q: string,
@@ -49,15 +57,20 @@ export function useProjectsPage(
  */
 export function useProject(
   id: string,
-  options?: { initialData?: Project; skipClientFetch?: boolean },
+  options?: {
+    initialData?: Project;
+    skipClientFetch?: boolean;
+    organizationPublicId?: string | null;
+  },
 ) {
   const { user } = useAuth();
   const ownerKey = user?.userId ?? "none";
+  const orgKey = options?.organizationPublicId?.trim() ?? "";
   const skip = options?.skipClientFetch === true;
   const hasInitial = options?.initialData !== undefined;
   return useQuery({
-    queryKey: ["projects", ownerKey, id],
-    queryFn: () => fetchProject(id),
+    queryKey: projectQueryKey(user?.userId, id, orgKey || undefined),
+    queryFn: () => fetchProject(id, orgKey || undefined),
     enabled: !!id && !skip,
     initialData: options?.initialData,
     initialDataUpdatedAt: hasInitial ? Date.now() : undefined,
@@ -78,7 +91,8 @@ export function useCreateProject() {
 export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deleteProjectApi(id),
+    mutationFn: (args: { id: string; organizationPublicId?: string | null }) =>
+      deleteProjectApi(args.id, args.organizationPublicId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects", "list"], exact: false }),
   });
 }

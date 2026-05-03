@@ -3019,7 +3019,7 @@ done
             'presigned probe can be run from non-user system contexts',
           );
     if (projectUserId != null) {
-      await this.assertOrgServerManageIfNeeded(rs, projectUserId);
+      await this.assertOrgServerInstallMaintainIfNeeded(rs, projectUserId);
     }
     const pem = await this.resolvePrivateKeyPem(rs);
     const token = randomBytes(8).toString('hex');
@@ -3047,7 +3047,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<{ server: RemoteServer; privateKeyPem: string }> {
     const server = await this.findEntityOrFail(id, userId);
-    await this.assertOrgServerManageIfNeeded(server, userId);
+    await this.assertOrgServerInstallMaintainIfNeeded(server, userId);
     const privateKeyPem = await this.resolvePrivateKeyPem(server);
     return { server, privateKeyPem };
   }
@@ -3071,7 +3071,7 @@ curl -fsS -o /dev/null "$U"
       };
     }
     const rs = await this.findEntityOrFail(remoteServerId, userId);
-    await this.assertOrgServerManageIfNeeded(rs, userId);
+    await this.assertOrgServerInstallMaintainIfNeeded(rs, userId);
     const pem = await this.resolvePrivateKeyPem(rs);
     const tag = `WHNK_MSG_${randomBytes(16).toString('hex')}`;
     const exportsBlock = cred.map((line) => `export ${line}`).join('\n');
@@ -3131,12 +3131,34 @@ curl -fsS -o /dev/null "$U"
     return ensured;
   }
 
-  private async assertOrgServerManageIfNeeded(
+  private async assertOrgServerEditIfNeeded(
     rs: RemoteServer,
     userId: number,
   ): Promise<void> {
     if (rs.organizationId == null) return;
-    await this.organizationsService.assertMemberCanManageOrgRemoteServers(
+    await this.organizationsService.assertMemberCanEditOrgRemoteServerRow(
+      userId,
+      rs.organizationId,
+    );
+  }
+
+  private async assertOrgServerDeleteIfNeeded(
+    rs: RemoteServer,
+    userId: number,
+  ): Promise<void> {
+    if (rs.organizationId == null) return;
+    await this.organizationsService.assertMemberCanDeleteOrgRemoteServer(
+      userId,
+      rs.organizationId,
+    );
+  }
+
+  private async assertOrgServerInstallMaintainIfNeeded(
+    rs: RemoteServer,
+    userId: number,
+  ): Promise<void> {
+    if (rs.organizationId == null) return;
+    await this.organizationsService.assertMemberCanInstallMaintainOrgRemoteServers(
       userId,
       rs.organizationId,
     );
@@ -3172,7 +3194,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<void> {
     const rs = await this.findEntityOrFail(remoteServerId, userId);
-    await this.assertOrgServerManageIfNeeded(rs, userId);
+    await this.assertOrgServerInstallMaintainIfNeeded(rs, userId);
   }
 
   private async findEntityOrFail(
@@ -3260,6 +3282,10 @@ curl -fsS -o /dev/null "$U"
         },
       );
       organizationId = ctx.internalId;
+      await this.organizationsService.assertMemberCanAddOrgRemoteServer(
+        userId,
+        organizationId,
+      );
     }
 
     const entity = this.remoteServerRepository.create({
@@ -3311,7 +3337,7 @@ curl -fsS -o /dev/null "$U"
           existing.organizationId,
         );
       } else {
-        await this.assertOrgServerManageIfNeeded(existing, userId);
+        await this.assertOrgServerEditIfNeeded(existing, userId);
       }
     }
     let privateKeyEncrypted: string | null | undefined =
@@ -3459,7 +3485,7 @@ curl -fsS -o /dev/null "$U"
 
   async remove(id: number, userId: number): Promise<void> {
     const rs = await this.findEntityOrFail(id, userId);
-    await this.assertOrgServerManageIfNeeded(rs, userId);
+    await this.assertOrgServerDeleteIfNeeded(rs, userId);
     const repo = this.remoteServerRepository.manager.getRepository(Service);
     const nDeploy = await repo.count({ where: { remoteServer: { id } } });
     const nBuild = await repo.count({ where: { buildRemoteServer: { id } } });
@@ -3908,6 +3934,12 @@ curl -fsS -o /dev/null "$U"
   ): Promise<{ success: boolean; output: string }> {
     const rs = await this.findEntityOrFail(id, userId);
     await this.assertOrgServerDockerIfNeeded(rs, userId);
+    if (rs.organizationId != null) {
+      await this.organizationsService.assertMemberCanTestOrgRemoteServers(
+        userId,
+        rs.organizationId,
+      );
+    }
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
@@ -3940,6 +3972,12 @@ curl -fsS -o /dev/null "$U"
   ): Promise<{ success: boolean; output: string }> {
     const rs = await this.findEntityOrFail(id, userId);
     await this.assertOrgServerTerminalIfNeeded(rs, userId);
+    if (rs.organizationId != null) {
+      await this.organizationsService.assertMemberCanTestOrgRemoteServers(
+        userId,
+        rs.organizationId,
+      );
+    }
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const p = this.getSshConnectParams(rs, pem);

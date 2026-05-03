@@ -54,8 +54,11 @@ export async function fetchTraefikSettings(accessToken: string): Promise<Traefik
 export async function updateTraefikSettings(
   accessToken: string,
   patch: TraefikSettingsPatch,
+  organizationPublicId?: string | null,
 ): Promise<TraefikSettingsPayload> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/traefik/settings`, {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await authFetch(accessToken, `${API_BASE}/api/traefik/settings${q}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),

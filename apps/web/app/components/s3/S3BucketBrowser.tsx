@@ -29,6 +29,12 @@ import {
   type S3BucketListResponse,
   type S3PrefixSummaryResponse,
 } from "@/lib/s3-api";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import {
+  orgMemberAllowsS3Add,
+  orgMemberAllowsS3Browse,
+  orgMemberAllowsS3Edit,
+} from "@/lib/org-workspace-permissions";
 import { s3PrefixToPathSegments } from "@/lib/s3-prefix-param";
 import {
   Dialog,
@@ -42,10 +48,15 @@ import { Input } from "@/components/ui/input";
 
 const BATCH_MAX = 1000;
 
-function s3BucketBrowseHref(profileName: string, prefix: string): string {
+function s3BucketBrowseHref(
+  profileName: string,
+  prefix: string,
+  browseBase: string,
+): string {
   const profileSegment = encodeURIComponent(profileName.trim());
   const segments = s3PrefixToPathSegments(prefix).map((part) => encodeURIComponent(part));
-  return `/s3/${profileSegment}${segments.length > 0 ? `/${segments.join("/")}` : ""}`;
+  const base = browseBase.replace(/\/+$/, "");
+  return `${base}/${profileSegment}${segments.length > 0 ? `/${segments.join("/")}` : ""}`;
 }
 
 function formatBytes(n: number): string {
@@ -80,11 +91,13 @@ function FolderStatsCells({
   profileName,
   folderPrefix,
   initialSummary,
+  organizationPublicId,
 }: {
   profileName: string;
   folderPrefix: string;
   /** From SSR — avoids a client fetch for this row on first paint. */
   initialSummary?: S3PrefixSummaryResponse | null;
+  organizationPublicId?: string | null;
 }) {
   const [state, setState] = useState<
     "loading" | "error" | { data: S3PrefixSummaryResponse }
@@ -97,7 +110,7 @@ function FolderStatsCells({
     }
     let cancelled = false;
     setState("loading");
-    getPrefixSummaryApi(profileName, folderPrefix)
+    getPrefixSummaryApi(profileName, folderPrefix, organizationPublicId)
       .then((data) => {
         if (!cancelled) setState({ data });
       })
@@ -107,7 +120,7 @@ function FolderStatsCells({
     return () => {
       cancelled = true;
     };
-  }, [profileName, folderPrefix, initialSummary]);
+  }, [profileName, folderPrefix, initialSummary, organizationPublicId]);
 
   if (state === "loading") {
     return (
@@ -153,6 +166,7 @@ export function S3BucketBrowser({
   initialPrefix = "",
   initialList = null,
   initialFolderSummaries,
+  organizationPublicId = null,
 }: {
   profileName: string;
   /** Current path from URL — folder navigation uses server render (no client list fetch). */
@@ -160,7 +174,22 @@ export function S3BucketBrowser({
   /** From SSR for this prefix — list + folder summaries fetched on the server. */
   initialList?: S3BucketListResponse | null;
   initialFolderSummaries?: Record<string, S3PrefixSummaryResponse>;
+  organizationPublicId?: string | null;
 }) {
+  const orgTrim = organizationPublicId?.trim();
+  const s3BrowseBase =
+    orgTrim != null && orgTrim !== ""
+      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
+      : "/s3";
+  const inOrgBucket = orgTrim != null && orgTrim !== "";
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const allowS3Browse =
+    !inOrgBucket ||
+    (orgWorkspace != null && orgMemberAllowsS3Browse(orgWorkspace.workspacePermissions));
+  const allowS3Add =
+    !inOrgBucket || (orgWorkspace != null && orgMemberAllowsS3Add(orgWorkspace.workspacePermissions));
+  const allowS3Edit =
+    !inOrgBucket || (orgWorkspace != null && orgMemberAllowsS3Edit(orgWorkspace.workspacePermissions));
   const { toast } = useToast();
   const confirm = useConfirm();
   const [prefix, setPrefix] = useState<string>(initialPrefix);
@@ -204,7 +233,10 @@ export function S3BucketBrowser({
   const loadPrefix = async (targetPrefix: string) => {
     setRefreshing(true);
     try {
-      const r = await listS3BucketObjectsApi(profileName, { prefix: targetPrefix });
+      const r = await listS3BucketObjectsApi(profileName, {
+        prefix: targetPrefix,
+        organizationPublicId,
+      });
       setPrefix(targetPrefix);
       setBucket(r.bucket);
       setFolders(r.folders);
@@ -229,6 +261,7 @@ export function S3BucketBrowser({
       const r = await listS3BucketObjectsApi(profileName, {
         prefix,
         continuationToken: nextToken,
+        organizationPublicId,
       });
       setObjects((prev) => [...prev, ...r.objects]);
       setNextToken(r.isTruncated ? r.continuationToken : undefined);
@@ -310,7 +343,7 @@ export function S3BucketBrowser({
     const key = `${prefix}${file.name}`;
     setUploading(true);
     try {
-      await uploadS3ObjectApi(profileName, key, file);
+      await uploadS3ObjectApi(profileName, key, file, organizationPublicId);
       toast({ title: "Uploaded", description: key });
       await loadPrefix(prefix);
     } catch (e) {
@@ -324,7 +357,7 @@ export function S3BucketBrowser({
   const onDownload = async (key: string, filename: string) => {
     setDownloadingKey(key);
     try {
-      const blob = await downloadS3ObjectBlob(profileName, key);
+      const blob = await downloadS3ObjectBlob(profileName, key, organizationPublicId);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -352,7 +385,7 @@ export function S3BucketBrowser({
     const fullKey = prefix ? `${prefix}${seg}` : seg;
     setMkdirSaving(true);
     try {
-      await createS3FolderApi(profileName, fullKey);
+      await createS3FolderApi(profileName, fullKey, organizationPublicId);
       toast({ title: "Directory created", description: fullKey.endsWith("/") ? fullKey : `${fullKey}/` });
       setMkdirOpen(false);
       setMkdirName("");
@@ -375,7 +408,7 @@ export function S3BucketBrowser({
     if (!ok) return;
     setDeletingKey(key);
     try {
-      await deleteS3ObjectApi(profileName, key);
+      await deleteS3ObjectApi(profileName, key, organizationPublicId);
       toast({ title: "Deleted", description: label });
       setSelectedKeys((prev) => {
         const next = new Set(prev);
@@ -401,7 +434,7 @@ export function S3BucketBrowser({
     if (!ok) return;
     setDeletingFolderPrefix(folderPrefix);
     try {
-      const r = await deleteS3PrefixApi(profileName, folderPrefix);
+      const r = await deleteS3PrefixApi(profileName, folderPrefix, organizationPublicId);
       const errN = r.errors.length;
       if (errN > 0) {
         toast({
@@ -460,13 +493,13 @@ export function S3BucketBrowser({
     try {
       let prefixErrors = 0;
       for (const fp of prefixes) {
-        const r = await deleteS3PrefixApi(profileName, fp);
+        const r = await deleteS3PrefixApi(profileName, fp, organizationPublicId);
         if (r.errors.length > 0) prefixErrors += r.errors.length;
       }
       let fileErrors = 0;
       for (let i = 0; i < fileKeys.length; i += BATCH_MAX) {
         const chunk = fileKeys.slice(i, i + BATCH_MAX);
-        const r = await deleteS3ObjectsBatchApi(profileName, chunk);
+        const r = await deleteS3ObjectsBatchApi(profileName, chunk, organizationPublicId);
         fileErrors += r.errors.length;
       }
       if (prefixErrors > 0 || fileErrors > 0) {
@@ -497,7 +530,7 @@ export function S3BucketBrowser({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
             <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2 min-w-0">
-              <Link href="/s3">
+              <Link href={s3BrowseBase}>
                 <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors shrink-0">
                   <FolderKanban className="w-3.5 h-3.5" /> S3 destinations
                 </span>
@@ -533,7 +566,7 @@ export function S3BucketBrowser({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2 min-w-0">
-            <Link href="/s3">
+            <Link href={s3BrowseBase}>
               <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors shrink-0">
                 <FolderKanban className="w-3.5 h-3.5" /> S3 destinations
               </span>
@@ -554,32 +587,36 @@ export function S3BucketBrowser({
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="btn-secondary text-sm inline-flex items-center gap-2 cursor-pointer transition-none disabled:opacity-50">
-            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {uploading ? "Uploading…" : "Upload file"}
-            <input
-              type="file"
-              className="sr-only"
-              disabled={uploading || batchDeleting}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = "";
-                if (f) void onUpload(f);
+          {allowS3Add ? (
+            <label className="btn-secondary text-sm inline-flex items-center gap-2 cursor-pointer transition-none disabled:opacity-50">
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {uploading ? "Uploading…" : "Upload file"}
+              <input
+                type="file"
+                className="sr-only"
+                disabled={uploading || batchDeleting}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) void onUpload(f);
+                }}
+              />
+            </label>
+          ) : null}
+          {allowS3Add ? (
+            <button
+              type="button"
+              className="btn-secondary text-sm inline-flex items-center gap-2 transition-none active:!scale-100"
+              onClick={() => {
+                setMkdirName("");
+                setMkdirOpen(true);
               }}
-            />
-          </label>
-          <button
-            type="button"
-            className="btn-secondary text-sm inline-flex items-center gap-2 transition-none active:!scale-100"
-            onClick={() => {
-              setMkdirName("");
-              setMkdirOpen(true);
-            }}
-            disabled={uploading || batchDeleting || mkdirSaving}
-          >
-            <FolderPlus className="w-4 h-4" />
-            Add directory
-          </button>
+              disabled={uploading || batchDeleting || mkdirSaving}
+            >
+              <FolderPlus className="w-4 h-4" />
+              Add directory
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn-secondary text-sm inline-flex items-center gap-2 transition-none active:!scale-100"
@@ -645,7 +682,7 @@ export function S3BucketBrowser({
             <span key={`${c.prefix}-${i}`} className="flex items-center gap-1 min-w-0">
               {i > 0 ? <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" /> : null}
               <Link
-                href={s3BucketBrowseHref(profileName, c.prefix)}
+                href={s3BucketBrowseHref(profileName, c.prefix, s3BrowseBase)}
                 onClick={(e) => {
                   e.preventDefault();
                   void loadPrefix(c.prefix);
@@ -664,7 +701,7 @@ export function S3BucketBrowser({
         </div>
       </div>
 
-      {selectedCount > 0 ? (
+      {allowS3Edit && selectedCount > 0 ? (
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4 rounded-xl border border-border/60 bg-destructive/5 px-4 py-3">
           <span className="text-sm font-medium">
             {selectedFolderPrefixes.size > 0 ? (
@@ -711,7 +748,7 @@ export function S3BucketBrowser({
               <thead>
                 <tr className="border-b border-border/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="pl-3 pr-1 py-3 w-10">
-                    {objectKeys.length > 0 ? (
+                    {allowS3Edit && objectKeys.length > 0 ? (
                       <DockerBulkCheckbox
                         checked={headerCheckbox}
                         onCheckedChange={() => toggleSelectAllFiles()}
@@ -730,16 +767,18 @@ export function S3BucketBrowser({
                 {folders.map((f) => (
                   <tr key={f.prefix} className="border-b border-border/40 hover:bg-muted/20">
                     <td className="pl-3 pr-1 py-3 align-middle w-10">
-                      <DockerBulkCheckbox
-                        checked={selectedFolderPrefixes.has(f.prefix)}
-                        onCheckedChange={() => toggleFolderPrefix(f.prefix)}
-                        disabled={batchDeleting}
-                        aria-label={`Select folder ${f.name}`}
-                      />
+                      {allowS3Edit ? (
+                        <DockerBulkCheckbox
+                          checked={selectedFolderPrefixes.has(f.prefix)}
+                          onCheckedChange={() => toggleFolderPrefix(f.prefix)}
+                          disabled={batchDeleting}
+                          aria-label={`Select folder ${f.name}`}
+                        />
+                      ) : null}
                     </td>
                     <td className="px-2 py-3 align-middle">
                       <Link
-                        href={s3BucketBrowseHref(profileName, f.prefix)}
+                        href={s3BucketBrowseHref(profileName, f.prefix, s3BrowseBase)}
                         onClick={(e) => {
                           e.preventDefault();
                           void loadPrefix(f.prefix);
@@ -758,34 +797,39 @@ export function S3BucketBrowser({
                       profileName={profileName}
                       folderPrefix={f.prefix}
                       initialSummary={initialFolderSummaries?.[f.prefix]}
+                      organizationPublicId={organizationPublicId}
                     />
                     <td className="px-4 py-3 text-right align-middle whitespace-nowrap">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs sm:text-sm hover:bg-destructive/15 text-destructive"
-                        title="Delete entire prefix"
-                        disabled={deletingFolderPrefix === f.prefix || batchDeleting}
-                        onClick={() => void onDeleteFolder(f.prefix, f.name)}
-                      >
-                        {deletingFolderPrefix === f.prefix ? (
-                          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                        ) : (
-                          <Trash2 className="w-4 h-4 shrink-0" />
-                        )}
-                        <span className="hidden sm:inline">Delete folder</span>
-                      </button>
+                      {allowS3Edit ? (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs sm:text-sm hover:bg-destructive/15 text-destructive"
+                          title="Delete entire prefix"
+                          disabled={deletingFolderPrefix === f.prefix || batchDeleting}
+                          onClick={() => void onDeleteFolder(f.prefix, f.name)}
+                        >
+                          {deletingFolderPrefix === f.prefix ? (
+                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                          ) : (
+                            <Trash2 className="w-4 h-4 shrink-0" />
+                          )}
+                          <span className="hidden sm:inline">Delete folder</span>
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
                 {objects.map((o) => (
                   <tr key={o.key} className="border-b border-border/40 hover:bg-muted/20">
                     <td className="pl-3 pr-1 py-3 align-middle w-10">
-                      <DockerBulkCheckbox
-                        checked={selectedKeys.has(o.key)}
-                        onCheckedChange={() => toggleOneFile(o.key)}
-                        disabled={batchDeleting}
-                        aria-label={`Select ${o.name}`}
-                      />
+                      {allowS3Edit ? (
+                        <DockerBulkCheckbox
+                          checked={selectedKeys.has(o.key)}
+                          onCheckedChange={() => toggleOneFile(o.key)}
+                          disabled={batchDeleting}
+                          aria-label={`Select ${o.name}`}
+                        />
+                      ) : null}
                     </td>
                     <td className="px-2 py-3 align-middle font-mono text-xs sm:text-sm break-all">{o.name}</td>
                     <td className="px-4 py-3 align-middle text-muted-foreground whitespace-nowrap">
@@ -796,34 +840,38 @@ export function S3BucketBrowser({
                     </td>
                     <td className="px-4 py-3 align-middle text-right whitespace-nowrap">
                       <div className="inline-flex flex-wrap items-center justify-end gap-1 sm:gap-2">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs sm:text-sm hover:bg-primary/15 text-primary"
-                          title="Download"
-                          disabled={downloadingKey === o.key || batchDeleting}
-                          onClick={() => void onDownload(o.key, o.name)}
-                        >
-                          {downloadingKey === o.key ? (
-                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                          ) : (
-                            <Download className="w-4 h-4 shrink-0" />
-                          )}
-                          <span className="hidden sm:inline">Download</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs sm:text-sm hover:bg-destructive/15 text-destructive"
-                          title="Delete"
-                          disabled={deletingKey === o.key || batchDeleting}
-                          onClick={() => void onDeleteFile(o.key, o.name)}
-                        >
-                          {deletingKey === o.key ? (
-                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                          ) : (
-                            <Trash2 className="w-4 h-4 shrink-0" />
-                          )}
-                          <span className="hidden sm:inline">Delete</span>
-                        </button>
+                        {allowS3Browse ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs sm:text-sm hover:bg-primary/15 text-primary"
+                            title="Download"
+                            disabled={downloadingKey === o.key || batchDeleting}
+                            onClick={() => void onDownload(o.key, o.name)}
+                          >
+                            {downloadingKey === o.key ? (
+                              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                            ) : (
+                              <Download className="w-4 h-4 shrink-0" />
+                            )}
+                            <span className="hidden sm:inline">Download</span>
+                          </button>
+                        ) : null}
+                        {allowS3Edit ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs sm:text-sm hover:bg-destructive/15 text-destructive"
+                            title="Delete"
+                            disabled={deletingKey === o.key || batchDeleting}
+                            onClick={() => void onDeleteFile(o.key, o.name)}
+                          >
+                            {deletingKey === o.key ? (
+                              <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                            ) : (
+                              <Trash2 className="w-4 h-4 shrink-0" />
+                            )}
+                            <span className="hidden sm:inline">Delete</span>
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>

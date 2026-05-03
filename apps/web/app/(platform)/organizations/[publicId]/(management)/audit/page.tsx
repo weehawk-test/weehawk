@@ -1,6 +1,17 @@
 import { ClipboardList } from "lucide-react";
+import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
+import { requireOrgManagementTab } from "@/lib/org-management-page-guard";
 
-export default function OrganizationAuditPage() {
+type PageProps = {
+  params: Promise<{ publicId: string }>;
+};
+
+export default async function OrganizationAuditPage({ params }: PageProps) {
+  const { publicId: raw } = await params;
+  await requireOrgManagementTab(
+    raw.trim(),
+    ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG,
+  );
   return (
     <div className="space-y-4">
       <p className="max-w-2xl text-sm text-muted-foreground">

@@ -16,6 +16,8 @@ export function NavRow({
   external,
   showUnreadDot,
   onNavigate,
+  disabled,
+  disabledHint = "No access",
 }: {
   collapsed: boolean;
   href: string;
@@ -27,13 +29,19 @@ export function NavRow({
   /** Red badge (e.g. new platform news). */
   showUnreadDot?: boolean;
   onNavigate?: () => void;
+  /** When true, the row is non-interactive and visually muted. */
+  disabled?: boolean;
+  /** Shown in the collapsed tooltip under the label. */
+  disabledHint?: string;
 }) {
   const className = cn(
     "relative flex items-center rounded-xl transition-colors duration-200 group",
     collapsed ? "justify-center px-2 py-2" : "gap-3 px-4 py-2",
-    active
-      ? "text-violet-800 dark:text-primary"
-      : "text-foreground/90 hover:text-foreground hover:bg-accent/70",
+    disabled
+      ? "cursor-not-allowed text-muted-foreground/55"
+      : active
+        ? "text-violet-800 dark:text-primary"
+        : "text-foreground/90 hover:text-foreground hover:bg-accent/70",
   );
 
   const inner = (
@@ -43,8 +51,12 @@ export function NavRow({
           layoutId={activeLayoutId}
           className={cn(
             "absolute inset-0 rounded-xl border",
-            "bg-violet-500/[0.12] border-violet-500/30",
-            "dark:bg-primary/10 dark:border-primary/20",
+            disabled
+              ? "border-border/40 bg-muted/30"
+              : cn(
+                  "bg-violet-500/[0.12] border-violet-500/30",
+                  "dark:bg-primary/10 dark:border-primary/20",
+                ),
           )}
           initial={false}
           transition={{ type: "spring", stiffness: 320, damping: 30 }}
@@ -54,7 +66,13 @@ export function NavRow({
         <Icon
           className={cn(
             "h-4 w-4",
-            active ? "text-violet-700 dark:text-primary" : "text-foreground/90 group-hover:text-foreground",
+            disabled
+              ? active
+                ? "text-muted-foreground/65"
+                : "text-muted-foreground/45"
+              : active
+                ? "text-violet-700 dark:text-primary"
+                : "text-foreground/90 group-hover:text-foreground",
           )}
         />
         {showUnreadDot ? (
@@ -70,7 +88,11 @@ export function NavRow({
     </>
   );
 
-  const link = external ? (
+  const link = disabled ? (
+    <span className={className} aria-disabled="true" aria-label={`${label} (${disabledHint})`}>
+      {inner}
+    </span>
+  ) : external ? (
     <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
       {inner}
     </a>
@@ -86,6 +108,9 @@ export function NavRow({
         <TooltipTrigger asChild>{link}</TooltipTrigger>
         <TooltipContent side="right" sideOffset={8}>
           {label}
+          {disabled ? (
+            <span className="mt-0.5 block text-[10px] text-muted-foreground">{disabledHint}</span>
+          ) : null}
           {showUnreadDot ? <span className="mt-0.5 block text-[10px] text-red-400">New items</span> : null}
           {external ? <span className="mt-0.5 block text-[10px] text-muted-foreground">Opens in new tab</span> : null}
         </TooltipContent>

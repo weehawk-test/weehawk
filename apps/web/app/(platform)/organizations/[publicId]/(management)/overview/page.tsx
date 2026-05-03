@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { FolderKanban, Users } from "lucide-react";
-import { fetchOrganizationMembersSSR, fetchOrganizationProjectsSSR } from "@/lib/server-fetch";
+import { fetchOrganizationProjectsSSR, fetchOrganizationSSR } from "@/lib/server-fetch";
+import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
+import { requireOrgManagementTab } from "@/lib/org-management-page-guard";
 
 type PageProps = {
   params: Promise<{ publicId: string }>;
@@ -9,11 +11,13 @@ type PageProps = {
 export default async function OrganizationOverviewPage({ params }: PageProps) {
   const { publicId: raw } = await params;
   const publicId = raw.trim();
+  await requireOrgManagementTab(publicId, ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW);
   const base = `/organizations/${encodeURIComponent(publicId)}`;
-  const [members, projects] = await Promise.all([
-    fetchOrganizationMembersSSR(publicId),
+  const [org, projects] = await Promise.all([
+    fetchOrganizationSSR(publicId),
     fetchOrganizationProjectsSSR(publicId),
   ]);
+  const memberCount = org?.memberCount ?? 1;
 
   return (
     <div className="space-y-8">
@@ -49,7 +53,7 @@ export default async function OrganizationOverviewPage({ params }: PageProps) {
             </div>
             <div>
               <p className="text-sm font-medium text-muted-foreground">Members</p>
-              <p className="text-2xl font-bold tabular-nums text-foreground">{members.length}</p>
+              <p className="text-2xl font-bold tabular-nums text-foreground">{memberCount}</p>
             </div>
           </div>
           <p className="mt-3 text-xs text-muted-foreground">Invite people and manage who can access this workspace.</p>

@@ -204,9 +204,14 @@ export class OrganizationsService implements OnModuleInit {
     ctx: OrganizationMemberContext,
     dto: UpdateOrganizationDto,
   ): Promise<OrganizationPublicDto> {
-    if (!ctx.actingIsOwner) {
+    if (
+      !ctx.actingIsOwner &&
+      !ctx.workspacePermissions[
+        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_SETTINGS
+      ]
+    ) {
       throw new ForbiddenException(
-        'Only an organization owner can update organization settings.',
+        'You do not have permission to update organization settings.',
       );
     }
     const name = this.sanitizeCreateName(dto);
@@ -228,9 +233,14 @@ export class OrganizationsService implements OnModuleInit {
     rawEmail: string,
     permissions: Record<string, unknown>,
   ): Promise<{ message: string }> {
-    if (!ctx.actingIsOwner) {
+    if (
+      !ctx.actingIsOwner &&
+      !ctx.workspacePermissions[
+        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS
+      ]
+    ) {
       throw new ForbiddenException(
-        'Only an organization owner can change member permissions.',
+        'You do not have permission to change member workspace permissions.',
       );
     }
     const email = String(rawEmail ?? '')
@@ -300,8 +310,7 @@ export class OrganizationsService implements OnModuleInit {
     }
   }
 
-  /** Create/update/delete server rows, provision jobs, notification delivery over SSH, etc. */
-  async assertMemberCanManageOrgRemoteServers(
+  async assertMemberCanViewOrgProject(
     userId: number,
     organizationInternalId: number,
   ): Promise<void> {
@@ -310,11 +319,139 @@ export class OrganizationsService implements OnModuleInit {
     if (
       !membershipAllowsWorkspaceArea(
         m,
-        ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS_VIEW,
       )
     ) {
       throw new ForbiddenException(
-        'You do not have access to manage organization remote servers.',
+        'You do not have permission to view this organization project.',
+      );
+    }
+  }
+
+  async assertMemberCanAddOrgProject(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS_ADD,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to create projects in this organization.',
+      );
+    }
+  }
+
+  async assertMemberCanDeleteOrgProject(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS_DELETE,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to delete projects in this organization.',
+      );
+    }
+  }
+
+  async assertMemberCanTestOrgRemoteServers(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_TEST,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to run connection tests for organization remote servers.',
+      );
+    }
+  }
+
+  async assertMemberCanAddOrgRemoteServer(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_ADD,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to add organization remote servers.',
+      );
+    }
+  }
+
+  /** Update host row fields (not domains-only JSON — see {@link assertMemberCanEditOrgServerDomainsJson}). */
+  async assertMemberCanEditOrgRemoteServerRow(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_EDIT,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to edit organization remote server settings.',
+      );
+    }
+  }
+
+  async assertMemberCanDeleteOrgRemoteServer(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_DELETE,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to delete organization remote servers.',
+      );
+    }
+  }
+
+  /** Provision / install queues, presigned URL probes on host, notification send via deploy host. */
+  async assertMemberCanInstallMaintainOrgRemoteServers(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_INSTALL_MAINTENANCE,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to run install or maintenance actions on organization remote servers.',
       );
     }
   }
@@ -359,6 +496,24 @@ export class OrganizationsService implements OnModuleInit {
    * PATCH remote server with only `domainsJson` (Domains UI): allow members with `domains` who can
    * see the server row, or anyone who can manage remote servers.
    */
+  async assertMemberCanEditOrgDomainsCertificateEmail(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS_CERTIFICATE_EMAIL,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to change certificate email for this organization workspace.',
+      );
+    }
+  }
+
   async assertMemberCanEditOrgServerDomainsJson(
     userId: number,
     organizationInternalId: number,
@@ -382,12 +537,16 @@ export class OrganizationsService implements OnModuleInit {
       membershipAllowsWorkspaceArea(
         m,
         ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS,
+      ) &&
+      membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS_ADD,
       )
     ) {
       return;
     }
     throw new ForbiddenException(
-      'You do not have permission to edit domain metadata for organization servers.',
+      'You do not have permission to edit domain hostnames for organization servers.',
     );
   }
 
@@ -489,9 +648,14 @@ export class OrganizationsService implements OnModuleInit {
     rawEmail: string,
     role: OrganizationMemberRole,
   ): Promise<{ message: string }> {
-    if (!ctx.actingIsOwner) {
+    if (
+      !ctx.actingIsOwner &&
+      !ctx.workspacePermissions[
+        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS
+      ]
+    ) {
       throw new ForbiddenException(
-        'Only an organization owner can change member roles.',
+        'You do not have permission to change member roles.',
       );
     }
     const email = String(rawEmail ?? '')
@@ -581,10 +745,30 @@ export class OrganizationsService implements OnModuleInit {
         );
       }
     }
+    for (const a of opts?.requireAllWorkspaceAreas ?? []) {
+      if (!membershipAllowsWorkspaceArea(member, a)) {
+        throw new ForbiddenException(
+          'You do not have access to this area of the organization workspace.',
+        );
+      }
+    }
     if (opts?.requireOrgServersAccess) {
       if (!membershipHasOrgServerAccess(member)) {
         throw new ForbiddenException(
           'You do not have access to organization servers or domains.',
+        );
+      }
+    }
+    if (
+      opts?.requireAnyWorkspaceAreas != null &&
+      opts.requireAnyWorkspaceAreas.length > 0
+    ) {
+      const ok = opts.requireAnyWorkspaceAreas.some((a) =>
+        membershipAllowsWorkspaceArea(member, a),
+      );
+      if (!ok) {
+        throw new ForbiddenException(
+          'You do not have access to this area of the organization workspace.',
         );
       }
     }
@@ -603,6 +787,19 @@ export class OrganizationsService implements OnModuleInit {
   async listMembers(
     ctx: OrganizationMemberContext,
   ): Promise<OrganizationMemberPublicDto[]> {
+    if (
+      !ctx.actingIsOwner &&
+      !ctx.workspacePermissions[
+        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS
+      ] &&
+      !ctx.workspacePermissions[
+        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS
+      ]
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to list organization members.',
+      );
+    }
     const links = await this.repo.listMembershipsForOrganization(ctx.internalId);
     if (links.length === 0) return [];
     const userIds = [...new Set(links.map((l) => l.userId))];

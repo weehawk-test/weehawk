@@ -19,7 +19,10 @@ import {
   Newspaper,
   Building2,
 } from "lucide-react";
-import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
+import {
+  ORG_WORKSPACE_PERMISSIONS,
+  orgMemberHasAnyOrgManagementTab,
+} from "@/lib/org-workspace-permissions";
 import type { OrganizationPublic } from "@/lib/organizations-types";
 
 export type MainNavItem = {
@@ -28,8 +31,13 @@ export type MainNavItem = {
   icon: LucideIcon;
   /** Opens in a new tab (e.g. docs). */
   external?: boolean;
-  /** In an organization workspace, hide when this permission is false (owners always see all). */
+  /** In an organization workspace, non-owners see the row faded/disabled when this permission is false. */
   orgPermission?: OrgWorkspacePermissionKey;
+  /**
+   * Organization “Management” entry: non-owners need `orgPermission` plus at least one allowed
+   * management sub-tab; otherwise the row is shown disabled.
+   */
+  orgManagementEntry?: boolean;
 };
 
 export type MainNavSection = {
@@ -37,12 +45,15 @@ export type MainNavSection = {
   items: MainNavItem[];
 };
 
-export function isOrgMainNavItemVisible(org: OrganizationPublic, item: MainNavItem): boolean {
-  if (org.isOwner) return true;
-  if (item.orgPermission != null) {
-    return org.workspacePermissions[item.orgPermission];
+/** Non-owners: disabled when the workspace permission (or management sub-tabs) is not allowed. */
+export function isOrgMainNavItemDisabled(org: OrganizationPublic, item: MainNavItem): boolean {
+  if (org.isOwner) return false;
+  if (item.orgPermission == null) return false;
+  if (!org.workspacePermissions[item.orgPermission]) return true;
+  if (item.orgManagementEntry && !orgMemberHasAnyOrgManagementTab(org.workspacePermissions)) {
+    return true;
   }
-  return true;
+  return false;
 }
 
 export function buildMainNavSections(): MainNavSection[] {
@@ -99,6 +110,7 @@ export function buildMainNavSections(): MainNavSection[] {
           label: "Organizations",
           icon: Building2,
           orgPermission: ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
+          orgManagementEntry: true,
         },
         { href: "/news", label: "News", icon: Newspaper },
       ],

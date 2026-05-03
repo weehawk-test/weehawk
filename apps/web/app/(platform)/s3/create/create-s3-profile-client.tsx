@@ -32,6 +32,11 @@ export function CreateS3ProfileClient({
 }: {
   organizationPublicId?: string | null;
 } = {}) {
+  const orgTrim = organizationPublicId?.trim();
+  const s3BasePath =
+    orgTrim != null && orgTrim !== ""
+      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
+      : "/s3";
   const router = useRouter();
   const { toast } = useToast();
   const { accessToken } = useAuth();
@@ -94,6 +99,7 @@ export function CreateS3ProfileClient({
 
   const payloadForApi = useMemo((): S3ProfilePayload => {
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
+    const o = organizationPublicId?.trim();
     return {
       name: form.name.trim(),
       endpoint: form.endpoint.trim(),
@@ -102,8 +108,9 @@ export function CreateS3ProfileClient({
       accessKeyId: form.accessKeyId.trim(),
       secretAccessKey: (form.secretAccessKey ?? "").trim(),
       forcePathStyle,
+      ...(o ? { organizationPublicId: o } : {}),
     };
-  }, [form]);
+  }, [form, organizationPublicId]);
 
   const onTest = async () => {
     if (!canSubmit) return;
@@ -139,7 +146,7 @@ export function CreateS3ProfileClient({
     try {
       const res = await saveS3ProfileApi(payloadForApi);
       toast({ title: "Destination saved", description: `Saved "${res.profile.name}".` });
-      router.push("/s3");
+      router.push(s3BasePath);
       router.refresh();
     } catch (e) {
       toast({
@@ -156,7 +163,7 @@ export function CreateS3ProfileClient({
 
   const closeModal = () => {
     if (saving || testing) return;
-    router.push("/s3");
+    router.push(s3BasePath);
   };
 
   return createPortal(

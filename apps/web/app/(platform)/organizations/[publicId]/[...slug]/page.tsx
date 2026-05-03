@@ -7,10 +7,15 @@ import {
   fetchNotificationChannelsSSR,
   fetchOrganizationSSR,
   fetchRemoteServersSSR,
+  fetchS3BucketObjectsSSR,
+  fetchS3PrefixSummarySSR,
   fetchS3ProfilesSSR,
   fetchTraefikSettingsSSR,
   fetchWebhookSSR,
 } from "@/lib/server-fetch";
+import type { S3PrefixSummaryResponse } from "@/lib/s3-api";
+import { s3PathSegmentsToPrefix } from "@/lib/s3-prefix-param";
+import { S3BucketBrowser } from "@/components/s3/S3BucketBrowser";
 import {
   ORG_WORKSPACE_PERMISSIONS,
   type OrgWorkspacePermissionKey,
@@ -65,6 +70,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (slug.length === 2 && slug[0] === "projects") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.PROJECTS);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.PROJECTS_VIEW);
     return (
       <ProjectDetailsPage
         params={Promise.resolve({ id: slug[1] })}
@@ -81,6 +87,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (path === "notifications/create") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS_ADD);
     return (
       <>
         <NotificationsTabs basePath={notificationsBase} />
@@ -91,6 +98,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (slug.length === 3 && slug[0] === "notifications" && slug[2] === "edit") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS_EDIT);
     return (
       <>
         <NotificationsTabs basePath={notificationsBase} />
@@ -104,6 +112,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (slug.length === 3 && slug[0] === "webhooks" && slug[2] === "edit") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.WEBHOOKS);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.WEBHOOKS_EDIT);
     const rawId = slug[1] ?? "";
     const [webhook, initialChannels, initialRemoteServers] = await Promise.all([
       fetchWebhookSSR(rawId, publicId),
@@ -126,6 +135,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (slug.length === 3 && slug[0] === "cron-jobs" && slug[2] === "edit") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.CRON_JOBS);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.CRON_JOBS_EDIT);
     const rawId = slug[1] ?? "";
     const [cronJob, initialChannels, initialRemoteServers] = await Promise.all([
       fetchCronJobSSR(rawId, publicId),
@@ -148,6 +158,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (path === "cron-jobs/create") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.CRON_JOBS);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.CRON_JOBS_ADD);
     const [initialChannels, initialRemoteServers] = await Promise.all([
       fetchNotificationChannelsSSR(publicId),
       fetchRemoteServersSSR(publicId),
@@ -163,6 +174,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (path === "webhooks/create") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.WEBHOOKS);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.WEBHOOKS_ADD);
     const [initialChannels, initialRemoteServers] = await Promise.all([
       fetchNotificationChannelsSSR(publicId),
       fetchRemoteServersSSR(publicId),
@@ -178,16 +190,53 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
 
   if (path === "s3/create") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.S3);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.S3_ADD);
     return <CreateS3ProfileClient organizationPublicId={publicId} />;
   }
 
   if (slug.length === 3 && slug[0] === "s3" && slug[2] === "edit") {
     requirePerm(ORG_WORKSPACE_PERMISSIONS.S3);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.S3_EDIT);
     const id = (slug[1] ?? "").trim();
     const profiles = await fetchS3ProfilesSSR(publicId);
     const profile = profiles.find((p) => (p.publicId ?? "").trim() === id);
     if (!profile) notFound();
     return <EditS3ProfileClient profile={profile} organizationPublicId={publicId} />;
+  }
+
+  if (
+    slug[0] === "s3" &&
+    slug.length >= 2 &&
+    !(slug.length === 2 && slug[1] === "create")
+  ) {
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.S3);
+    requirePerm(ORG_WORKSPACE_PERMISSIONS.S3_BROWSE);
+    const profileSeg = decodeURIComponent((slug[1] ?? "").trim());
+    if (!profileSeg) notFound();
+    const prefixParam = s3PathSegmentsToPrefix(slug.slice(2));
+    const initialList = await fetchS3BucketObjectsSSR(profileSeg, prefixParam, publicId);
+    const initialFolderSummaries: Record<string, S3PrefixSummaryResponse> = {};
+    if (initialList?.folders?.length) {
+      const results = await Promise.all(
+        initialList.folders.map(async (f) => {
+          const s = await fetchS3PrefixSummarySSR(profileSeg, f.prefix, publicId);
+          return [f.prefix, s] as const;
+        }),
+      );
+      for (const [pfx, s] of results) {
+        if (s) initialFolderSummaries[pfx] = s;
+      }
+    }
+    return (
+      <S3BucketBrowser
+        key={`${profileSeg}:${prefixParam}`}
+        profileName={profileSeg}
+        initialPrefix={prefixParam}
+        initialList={initialList}
+        initialFolderSummaries={initialFolderSummaries}
+        organizationPublicId={publicId}
+      />
+    );
   }
 
   if (slug.length !== 1) {
@@ -246,6 +295,7 @@ export default async function OrganizationWorkspaceMirrorPage({ params, searchPa
       );
     case "s3":
       requirePerm(ORG_WORKSPACE_PERMISSIONS.S3);
+      requirePerm(ORG_WORKSPACE_PERMISSIONS.S3_BROWSE);
       return <S3Page organizationPublicId={publicId} />;
     case "registry":
       requirePerm(ORG_WORKSPACE_PERMISSIONS.REGISTRY);

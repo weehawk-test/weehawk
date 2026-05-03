@@ -39,7 +39,7 @@ import {
   usePatchApplicationVolumes,
   usePatchApplicationEnv,
 } from "@/hooks/use-services";
-import { useProject } from "@/hooks/use-projects";
+import { projectQueryKey, useProject } from "@/hooks/use-projects";
 import { useDockerSecretsPagedWithInitialData } from "@/hooks/use-docker-secrets";
 import { getDeployLogText, useDeploy, useDeployLogs } from "@/hooks/use-deploy-logs";
 import { useToast } from "@/hooks/use-toast";
@@ -783,11 +783,15 @@ export default function ServiceDetails({
   const { data: project, isLoading: projectLoading } = useProject(projectId!, {
     initialData: initialProject ?? undefined,
     skipClientFetch: Boolean(initialProject),
+    organizationPublicId: initialProject?.organizationPublicId,
   });
 
   useEffect(() => {
     if (initialProject && projectId) {
-      qc.setQueryData(["projects", user?.userId ?? "none", projectId], initialProject);
+      qc.setQueryData(
+        projectQueryKey(user?.userId, projectId, initialProject.organizationPublicId),
+        initialProject,
+      );
     }
   }, [initialProject, projectId, qc, user?.userId]);
 

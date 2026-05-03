@@ -22,6 +22,11 @@ type Props = {
 };
 
 export function EditS3ProfileClient({ profile, organizationPublicId = null }: Props) {
+  const orgTrim = organizationPublicId?.trim();
+  const s3BasePath =
+    orgTrim != null && orgTrim !== ""
+      ? `/organizations/${encodeURIComponent(orgTrim)}/s3`
+      : "/s3";
   const router = useRouter();
   const { toast } = useToast();
   const { accessToken } = useAuth();
@@ -71,6 +76,8 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
   const payloadForApi = useMemo((): S3ProfilePayload => {
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
     const secret = (form.secretAccessKey ?? "").trim();
+    const o = organizationPublicId?.trim();
+    const orgField = o ? { organizationPublicId: o } : {};
     if (!secret) {
       return {
         name: form.name.trim(),
@@ -79,6 +86,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
         bucket: form.bucket.trim(),
         accessKeyId: form.accessKeyId.trim(),
         forcePathStyle,
+        ...orgField,
       };
     }
     return {
@@ -89,8 +97,9 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
       accessKeyId: form.accessKeyId.trim(),
       secretAccessKey: secret,
       forcePathStyle,
+      ...orgField,
     };
-  }, [form]);
+  }, [form, organizationPublicId]);
 
   const onTest = async () => {
     if (!canSubmit) return;
@@ -137,7 +146,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
         title: "Destination updated",
         description: `Updated "${res.profile.name}".`,
       });
-      router.push("/s3");
+      router.push(s3BasePath);
       router.refresh();
     } catch (e) {
       toast({
@@ -154,7 +163,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
 
   const closeModal = () => {
     if (saving || testing) return;
-    router.push("/s3");
+    router.push(s3BasePath);
   };
 
   return createPortal(
@@ -169,7 +178,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
               <h1 className="text-2xl font-bold text-foreground">Edit S3 destination</h1>
               <p className="text-sm text-muted-foreground mt-1">Update connection details for this profile.</p>
             </div>
-            <Link href="/s3" aria-label="Close">
+            <Link href={s3BasePath} aria-label="Close">
               <button
                 type="button"
                 aria-label="Close"
@@ -271,7 +280,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Link href="/s3" className="btn-secondary text-sm">
+              <Link href={s3BasePath} className="btn-secondary text-sm">
                 Cancel
               </Link>
               <button

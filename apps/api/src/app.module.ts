@@ -3,7 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ServicesModule } from './services/services.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ProjectsModule } from './projects/projects.module';
 import { DockersecretsModule } from './dockersecrets/dockersecrets.module';
 import { UserModule } from './user/user.module';
@@ -20,6 +20,7 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { RedisModule } from './common/redis/redis.module';
 import { RedisService } from './common/redis/redis.service';
 import { RedisThrottlerStorage } from './common/redis/redis-throttler.storage';
+import { DevThrottlerGuard } from './common/dev-throttler.guard';
 import { existsSync } from 'fs';
 
 const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
@@ -94,7 +95,7 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
   providers: [
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: DevThrottlerGuard,
     },
   ],
 })

@@ -59,6 +59,10 @@ export class ProjectsService {
         },
       );
       organizationId = ctx.internalId;
+      await this.organizationsService.assertMemberCanAddOrgProject(
+        userId,
+        organizationId,
+      );
     }
 
     const nameTrim = createProjectDto.name.trim();
@@ -283,9 +287,19 @@ export class ProjectsService {
     idOrPublicId: string,
     userId: number,
     organizationPublicId?: string | null,
+    options?: { requireOrgProjectView?: boolean },
   ) {
     const project = await this.findOne(idOrPublicId, userId);
     await this.assertProjectFitsRoute(project, userId, organizationPublicId);
+    if (
+      options?.requireOrgProjectView === true &&
+      project.organizationId != null
+    ) {
+      await this.organizationsService.assertMemberCanViewOrgProject(
+        userId,
+        project.organizationId,
+      );
+    }
     return project;
   }
 
@@ -299,6 +313,7 @@ export class ProjectsService {
       idOrPublicId,
       userId,
       organizationPublicId,
+      { requireOrgProjectView: true },
     );
     const updated = this.projectRepository.merge(project, updateProjectDto);
     return await this._internal_system_saveProject(updated);
@@ -314,6 +329,12 @@ export class ProjectsService {
       userId,
       organizationPublicId,
     );
+    if (project.organizationId != null) {
+      await this.organizationsService.assertMemberCanDeleteOrgProject(
+        userId,
+        project.organizationId,
+      );
+    }
     const services = project.services ?? [];
     if (services.length > 0) {
       throw new ConflictException(

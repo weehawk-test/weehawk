@@ -34,7 +34,9 @@ import { PasswordResetService } from '../email/password-reset.service';
 import { Public } from './decorators/public.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
-const IS_DEV = (process.env.NODE_ENV ?? '').toLowerCase() === 'development';
+const IS_DEV = ['development', 'dev'].includes(
+  (process.env.NODE_ENV ?? '').toLowerCase().trim(),
+);
 const AUTH_THROTTLE_LIMIT = IS_DEV ? 1_000_000 : 5;
 const AUTH_THROTTLE_TTL_MS = IS_DEV ? 60 * 1000 : 15 * 60 * 1000;
 const AUTH_THROTTLE_BLOCK_MS = IS_DEV ? 1 : 15 * 60 * 1000;

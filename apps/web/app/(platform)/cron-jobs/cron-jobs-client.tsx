@@ -31,6 +31,14 @@ import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
 import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
+import { useOptionalOrgWorkspace } from "@/(platform)/organizations/[publicId]/org-workspace-context";
+import {
+  orgMemberAllowsCronJobsAdd,
+  orgMemberAllowsCronJobsDelete,
+  orgMemberAllowsCronJobsEdit,
+  orgMemberAllowsCronJobsLogs,
+  orgMemberAllowsCronJobsRun,
+} from "@/lib/org-workspace-permissions";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -54,6 +62,24 @@ export function CronJobsClient({
     organizationPublicId != null && organizationPublicId !== ""
       ? `/organizations/${encodeURIComponent(organizationPublicId)}/cron-jobs`
       : "/cron-jobs";
+  const inOrgCron =
+    organizationPublicId != null && organizationPublicId !== "";
+  const orgWorkspace = useOptionalOrgWorkspace();
+  const allowCronAdd =
+    !inOrgCron ||
+    (orgWorkspace != null && orgMemberAllowsCronJobsAdd(orgWorkspace.workspacePermissions));
+  const allowCronEdit =
+    !inOrgCron ||
+    (orgWorkspace != null && orgMemberAllowsCronJobsEdit(orgWorkspace.workspacePermissions));
+  const allowCronLogs =
+    !inOrgCron ||
+    (orgWorkspace != null && orgMemberAllowsCronJobsLogs(orgWorkspace.workspacePermissions));
+  const allowCronRun =
+    !inOrgCron ||
+    (orgWorkspace != null && orgMemberAllowsCronJobsRun(orgWorkspace.workspacePermissions));
+  const allowCronDelete =
+    !inOrgCron ||
+    (orgWorkspace != null && orgMemberAllowsCronJobsDelete(orgWorkspace.workspacePermissions));
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -138,6 +164,14 @@ export function CronJobsClient({
   };
   const handleToggleCronJobActive = (j: CronJobListItem) => {
     if (!accessToken) return;
+    if (inOrgCron && !allowCronEdit) {
+      toast({
+        title: "Not allowed",
+        description: "Your role cannot change cron jobs in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     updateCronJob.mutate(
       { id: j.id, isActive: !j.isActive },
       {
@@ -196,6 +230,16 @@ export function CronJobsClient({
   ) => {
     if (provisioningCronJobIds.includes(cronJob.id)) return;
     if (!accessToken) return;
+    if (inOrgCron && !allowCronLogs) {
+      if (!opts?.silent) {
+        toast({
+          title: "Logs not allowed",
+          description: "Your role cannot view cron job logs in this organization.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     const useButtonLoading = opts?.useButtonLoading !== false;
     if (useButtonLoading && loadingLogCronJobId === cronJob.id) return;
     if (!opts?.keepModalState) {
@@ -249,6 +293,14 @@ export function CronJobsClient({
     if (provisioningCronJobIds.includes(cronJob.id)) return;
     if (!accessToken) return;
     if (runningCronJobId === cronJob.id) return;
+    if (inOrgCron && !allowCronRun) {
+      toast({
+        title: "Run not allowed",
+        description: "Your role cannot run cron jobs on demand in this organization.",
+        variant: "destructive",
+      });
+      return;
+    }
     setRunningCronJobId(cronJob.id);
     setOpenLogCronJobId(cronJob.id);
     setLogTextByCronJobId((prev) => ({ ...prev, [cronJob.id]: "" }));
@@ -275,6 +327,7 @@ export function CronJobsClient({
 
   useEffect(() => {
     if (openLogCronJobId == null || !accessToken) return;
+    if (inOrgCron && !allowCronLogs) return;
     const cronJob = jobs.find((j) => j.id === openLogCronJobId);
     if (!cronJob) return;
 
@@ -283,7 +336,7 @@ export function CronJobsClient({
       void loadCronJobLog(cronJob, { silent: true, keepModalState: true });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [openLogCronJobId, accessToken, jobs, organizationPublicId]);
+  }, [openLogCronJobId, accessToken, jobs, organizationPublicId, inOrgCron, allowCronLogs]);
 
   return (
     <>
@@ -292,12 +345,21 @@ export function CronJobsClient({
           <h1 className="text-3xl font-bold text-foreground mb-2">Cron Jobs</h1>
           <p className="text-muted-foreground">Manage scheduled automation jobs.</p>
         </div>
-        <Link
-          href={`${cronJobsBasePath}/create`}
-          className="btn-primary flex items-center justify-center gap-2"
-        >
-          <Plus className="w-5 h-5" /> New cron job
-        </Link>
+        {allowCronAdd ? (
+          <Link
+            href={`${cronJobsBasePath}/create`}
+            className="btn-primary flex items-center justify-center gap-2"
+          >
+            <Plus className="w-5 h-5" /> New cron job
+          </Link>
+        ) : (
+          <span
+            className="inline-flex cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-4 py-2 text-sm text-muted-foreground"
+            title="Your role cannot create cron jobs in this organization"
+          >
+            <Plus className="w-5 h-5" /> New cron job
+          </span>
+        )}
       </div>
 
       <div className="mb-4">
@@ -311,7 +373,7 @@ export function CronJobsClient({
             className="input-field !pl-10 w-full bg-card/50"
           />
         </div>
-        {filtered.length > 0 && (
+        {filtered.length > 0 && allowCronDelete && (
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">
               <DockerBulkCheckbox
@@ -347,7 +409,7 @@ export function CronJobsClient({
           <p className="text-muted-foreground mb-8 max-w-md">
             {search ? "No cron jobs match your search." : "Create your first cron job trigger."}
           </p>
-          {!search && (
+          {!search && allowCronAdd && (
             <Link href={`${cronJobsBasePath}/create`} className="btn-primary flex items-center gap-2">
               <Plus className="w-5 h-5" /> New cron job
             </Link>
@@ -410,26 +472,39 @@ export function CronJobsClient({
                     <button
                       type="button"
                       onClick={() => handleDelete(cronJobRouteId(j), j.name)}
-                      disabled={isProvisioning || isBulkDeleting || deleteCronJob.isPending}
-                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete"
+                      disabled={
+                        isProvisioning ||
+                        isBulkDeleting ||
+                        deleteCronJob.isPending ||
+                        !allowCronDelete
+                      }
+                      className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
+                      title={
+                        allowCronDelete
+                          ? "Delete"
+                          : "Your role cannot delete cron jobs in this organization"
+                      }
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
-                    <div
-                      className={`transition-opacity ${
-                        cronJobsBulk.selected.has(cronJobRouteId(j)) ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                      }`}
-                    >
-                      <DockerBulkCheckbox
-                        checked={cronJobsBulk.selected.has(cronJobRouteId(j))}
-                        onCheckedChange={() => {
-                          if (isProvisioning) return;
-                          cronJobsBulk.toggle(cronJobRouteId(j));
-                        }}
-                        aria-label={`Select cron job ${j.name}`}
-                      />
-                    </div>
+                    {allowCronDelete ? (
+                      <div
+                        className={`transition-opacity ${
+                          cronJobsBulk.selected.has(cronJobRouteId(j))
+                            ? "opacity-100"
+                            : "opacity-0 group-hover:opacity-100"
+                        }`}
+                      >
+                        <DockerBulkCheckbox
+                          checked={cronJobsBulk.selected.has(cronJobRouteId(j))}
+                          onCheckedChange={() => {
+                            if (isProvisioning) return;
+                            cronJobsBulk.toggle(cronJobRouteId(j));
+                          }}
+                          aria-label={`Select cron job ${j.name}`}
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -464,9 +539,15 @@ export function CronJobsClient({
                       <button
                         type="button"
                         onClick={() => handleToggleCronJobActive(j)}
-                        disabled={updateCronJob.isPending}
+                        disabled={updateCronJob.isPending || !allowCronEdit}
                         className="shrink-0 text-[11px] font-medium text-primary hover:underline inline-flex items-center gap-0.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
-                        title={j.isActive ? "Pause schedule (deactivate)" : "Resume schedule (activate)"}
+                        title={
+                          allowCronEdit
+                            ? j.isActive
+                              ? "Pause schedule (deactivate)"
+                              : "Resume schedule (activate)"
+                            : "Your role cannot change cron jobs in this organization"
+                        }
                         aria-label={j.isActive ? "Pause cron job schedule" : "Resume cron job schedule"}
                       >
                         {updateCronJob.isPending && updateCronJob.variables?.id === j.id ? (
@@ -513,17 +594,29 @@ export function CronJobsClient({
                       <span className="text-muted-foreground/70 font-medium flex items-center gap-1 cursor-not-allowed">
                         Edit <Pencil className="w-3 h-3" />
                       </span>
-                    ) : (
+                    ) : allowCronEdit ? (
                       <Link href={`${cronJobsBasePath}/${cronJobRouteId(j)}/edit`}>
                         <span className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1">
                           Edit <Pencil className="w-3 h-3" />
                         </span>
                       </Link>
+                    ) : (
+                      <span
+                        className="cursor-not-allowed font-medium text-muted-foreground/70 flex items-center gap-1"
+                        title="Your role cannot edit cron jobs in this organization"
+                      >
+                        Edit <Pencil className="w-3 h-3" />
+                      </span>
                     )}
                     <button
                       type="button"
                       onClick={() => void loadCronJobLog(j)}
-                      disabled={isProvisioning}
+                      disabled={isProvisioning || !allowCronLogs}
+                      title={
+                        allowCronLogs
+                          ? undefined
+                          : "Your role cannot view cron job logs in this organization"
+                      }
                       className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
                     >
                       Logs
@@ -532,7 +625,12 @@ export function CronJobsClient({
                     <button
                       type="button"
                       onClick={() => void runCronJobNow(j)}
-                      disabled={isProvisioning}
+                      disabled={isProvisioning || !allowCronRun}
+                      title={
+                        allowCronRun
+                          ? undefined
+                          : "Your role cannot run cron jobs on demand in this organization"
+                      }
                       className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:no-underline"
                     >
                       Run

@@ -5,8 +5,10 @@ import { buildServerApiCookieHeaders } from "@/lib/server-cookie-headers";
 
 export const dynamic = "force-dynamic";
 
-async function getInitialProfiles(): Promise<S3ProfilePublic[]> {
-  const res = await fetch(`${API_BASE}/api/s3/profiles`, {
+async function getInitialProfiles(organizationPublicId?: string | null): Promise<S3ProfilePublic[]> {
+  const org = organizationPublicId?.trim();
+  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
+  const res = await fetch(`${API_BASE}/api/s3/profiles${q}`, {
     method: "GET",
     headers: await buildServerApiCookieHeaders(),
     cache: "no-store",
@@ -25,7 +27,7 @@ export default async function S3Page(props: S3PageProps = {}) {
   let initialProfiles: S3ProfilePublic[] = [];
   let initialError: string | null = null;
   try {
-    initialProfiles = await getInitialProfiles();
+    initialProfiles = await getInitialProfiles(organizationPublicId);
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
   }

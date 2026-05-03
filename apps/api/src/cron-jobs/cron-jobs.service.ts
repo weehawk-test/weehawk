@@ -9,7 +9,10 @@ import { Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
 import { resolveOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
-import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import {
+  ORGANIZATION_WORKSPACE_PERMISSIONS,
+  type OrganizationWorkspacePermission,
+} from '../organizations/organization-workspace-permissions';
 import { NotificationService } from '../notifications/notification.service';
 import {
   buildRemoteEnvAndWrappedShInstallScript,
@@ -71,12 +74,18 @@ export class CronJobsService {
   private async workspaceOrgId(
     userId: number,
     organizationPublicId?: string | null,
+    extra?: OrganizationWorkspacePermission[],
   ): Promise<number | null> {
     return resolveOrganizationInternalIdForMember(
       this.organizationsRepository,
       userId,
       organizationPublicId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS,
+        ...(extra != null && extra.length > 0
+          ? { requireAllWorkspaceAreas: extra }
+          : {}),
+      },
     );
   }
 
@@ -283,6 +292,7 @@ export class CronJobsService {
     const expectedOrg = await this.workspaceOrgId(
       userId,
       opts?.organizationPublicId,
+      [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_LOGS],
     );
     const job = await this.resolveEntity(userId, idOrPublicId);
     this.assertCronWorkspace(job, opts?.organizationPublicId, expectedOrg);
@@ -469,7 +479,9 @@ fi
     dto: CreateCronJobDto,
   ): Promise<CronJobDetailRow> {
     this.validateCreate(dto);
-    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId);
+    const orgId = await this.workspaceOrgId(userId, dto.organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_ADD,
+    ]);
     if (dto.notifyChannelId != null && dto.notifyChannelId >= 1) {
       await this.assertNotificationChannel(
         userId,
@@ -539,7 +551,9 @@ fi
     dto: UpdateCronJobDto,
     organizationPublicId?: string | null,
   ): Promise<CronJobDetailRow> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_EDIT,
+    ]);
     const job = await this.resolveEntity(userId, idOrPublicId);
     this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
     const previousJob = this.cronJobRepo.create({ ...job });
@@ -619,7 +633,9 @@ fi
     idOrPublicId: string | number,
     organizationPublicId?: string | null,
   ): Promise<void> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_DELETE,
+    ]);
     const existing = await this.resolveEntity(userId, idOrPublicId);
     this.assertCronWorkspace(existing, organizationPublicId, expectedOrg);
     await this.removeCrontabEntry(existing);
@@ -676,7 +692,9 @@ fi
     action: string;
     output: string;
   }> {
-    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId);
+    const expectedOrg = await this.workspaceOrgId(userId, organizationPublicId, [
+      ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_RUN,
+    ]);
     const job = await this.resolveEntity(userId, idOrPublicId);
     this.assertCronWorkspace(job, organizationPublicId, expectedOrg);
     if (!job.isActive) {
