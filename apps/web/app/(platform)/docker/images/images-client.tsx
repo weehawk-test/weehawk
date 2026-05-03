@@ -18,22 +18,15 @@ import {
 import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 import type { DockerConsoleTarget } from "@/lib/console-target";
 import { useToast } from "@/hooks/use-toast";
+import { ConfirmDangerDescription } from "@/components/confirm/confirm-danger-description";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { ListPagination } from "@/components/docker/ListPagination";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
+import { ForceDeleteDialog } from "@/components/confirm/force-delete-dialog";
 
 function formatCreated(value: string) {
   const d = new Date(value);
@@ -91,7 +84,13 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
     if (targets.length === 0) return;
     const confirmed = await confirm({
       title: "Remove selected images?",
-      description: `Remove ${targets.length} image(s)? Containers using an image may block removal.`,
+      description: (
+        <ConfirmDangerDescription
+          lead={<p>Remove {targets.length} image reference(s)?</p>}
+          emphasis={targets.map((img) => dockerImageDeleteRef(img)).join("\n")}
+          hint="Containers or services using an image may block removal until they are removed or updated."
+        />
+      ),
       confirmLabel: "Remove",
       variant: "destructive",
     });
@@ -130,18 +129,11 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
     const ok = await confirm({
       title: "Remove image?",
       description: (
-        <div className="space-y-3">
-          <p>Remove this image reference?</p>
-          <p
-            className="rounded-lg border border-border bg-muted/50 px-3 py-2 font-mono text-[11px] leading-snug text-foreground shadow-inner"
-            title={ref}
-          >
-            {ref}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Containers or services using it may block removal until they are removed or updated.
-          </p>
-        </div>
+        <ConfirmDangerDescription
+          lead={<p>Remove this image reference?</p>}
+          emphasis={ref}
+          hint="Containers or services using it may block removal until they are removed or updated."
+        />
       ),
       confirmLabel: "Remove",
       variant: "destructive",
@@ -383,48 +375,32 @@ export function DockerImagesClient({ consoleTarget, urlPage, urlQ }: Props) {
         </div>
       ) : null}
 
-      <AlertDialog open={!!forceDialog} onOpenChange={(open) => !open && setForceDialog(null)}>
-        <AlertDialogContent className="max-w-lg border-amber-500/20">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
-              <OctagonAlert className="w-5 h-5 shrink-0" />
-              Force delete by image ID
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-left text-muted-foreground">
-                <p>
-                  This runs <strong className="text-foreground">docker rmi -f</strong> using the image digest (ID). It can remove
-                  this layer even when tagged under other names, and may affect multiple tags pointing at the same ID.
-                </p>
-                <p>
-                  If a <strong className="text-foreground">running or stopped container</strong> still references this image,
-                  Docker may refuse removal — stop/remove those containers first.
-                </p>
-                {forceDeleteCmd && (
-                  <div>
-                    <span className="text-xs font-medium text-foreground">Command on the API host:</span>
-                    <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
-                      {forceDeleteCmd}
-                    </code>
-                  </div>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={listQuery.isFetching}>Cancel</AlertDialogCancel>
-            <button
-              type="button"
-              disabled={listQuery.isFetching}
-              className={cn(buttonVariants({ variant: "destructive" }), "gap-2")}
-              onClick={runForceDelete}
-            >
-              {listQuery.isFetching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              Confirm force delete
-            </button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ForceDeleteDialog
+        open={!!forceDialog}
+        onOpenChange={(open) => !open && setForceDialog(null)}
+        title="Force delete by image ID"
+        onConfirm={runForceDelete}
+        pending={listQuery.isFetching}
+      >
+        <div className="space-y-3 text-left">
+          <p>
+            This runs <strong className="text-foreground">docker rmi -f</strong> using the image digest (ID). It can remove this
+            layer even when tagged under other names, and may affect multiple tags pointing at the same ID.
+          </p>
+          <p>
+            If a <strong className="text-foreground">running or stopped container</strong> still references this image, Docker may
+            refuse removal — stop/remove those containers first.
+          </p>
+          {forceDeleteCmd ? (
+            <div>
+              <span className="text-xs font-medium text-foreground">Command on the API host:</span>
+              <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
+                {forceDeleteCmd}
+              </code>
+            </div>
+          ) : null}
+        </div>
+      </ForceDeleteDialog>
     </>
   );
 }

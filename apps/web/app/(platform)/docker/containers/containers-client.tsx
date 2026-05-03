@@ -15,6 +15,8 @@ import type { DockerConsoleTarget } from "@/lib/console-target";
 import { DOCKER_LIST_PAGE_SIZE } from "@/lib/docker-paged-fetch";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
+import { ForceDeleteDialog } from "@/components/confirm/force-delete-dialog";
+import { ConfirmDangerDescription } from "@/components/confirm/confirm-danger-description";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { ListPagination } from "@/components/docker/ListPagination";
@@ -27,15 +29,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -129,9 +122,21 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
     const running = targets.filter((c) => c.status === "running").length;
     const confirmed = await confirm({
       title: "Remove selected containers?",
-      description:
-        `Remove ${targets.length} container(s)?` +
-        (running > 0 ? ` ${running} are running and will be force-removed.` : ""),
+      description: (
+        <ConfirmDangerDescription
+          lead={
+            <p>
+              Remove {targets.length} container(s)?
+              {running > 0 ? (
+                <span className="block mt-1 text-xs">
+                  {running} are running and will be force-removed.
+                </span>
+              ) : null}
+            </p>
+          }
+          emphasis={targets.map((c) => (c.name.trim() ? `${c.name}\n${c.id}` : c.id)).join("\n\n")}
+        />
+      ),
       confirmLabel: "Remove",
       variant: "destructive",
     });
@@ -155,12 +160,16 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
   };
 
   const handleDelete = async (id: string, name: string, status: ContainerStatus) => {
+    const display = name.trim() ? (name.trim() === id ? name.trim() : `${name.trim()}\n${id}`) : id;
     const ok = await confirm({
       title: status === "running" ? "Force-remove running container?" : "Remove container?",
-      description:
-        status === "running"
-          ? `Remove “${name}”? Running containers usually require force delete.`
-          : `Remove “${name}”?`,
+      description: (
+        <ConfirmDangerDescription
+          lead={<p>{status === "running" ? "Remove this running container?" : "Remove this container?"}</p>}
+          emphasis={display}
+          hint={status === "running" ? "Running containers usually require force delete." : undefined}
+        />
+      ),
       confirmLabel: "Remove",
       variant: "destructive",
     });
@@ -478,48 +487,30 @@ export function DockerContainersClient({ consoleTarget, urlPage, urlQ }: Props) 
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <AlertDialog open={!!forceDialog} onOpenChange={(open) => !open && setForceDialog(null)}>
-        <AlertDialogContent className="max-w-lg border-amber-500/20">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
-              <OctagonAlert className="w-5 h-5 shrink-0" />
-              Force delete container
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-left text-muted-foreground">
-                <p>
-                  This runs <strong className="text-foreground">docker rm -f</strong> and will stop then remove the
-                  container.
-                </p>
-                <p>
-                  This can interrupt running workloads immediately. Use it only when normal remove fails or when this
-                  is intended.
-                </p>
-                {forceDialog && (
-                  <div>
-                    <span className="text-xs font-medium text-foreground">Command on the API host:</span>
-                    <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
-                      docker rm -f {forceDialog.id}
-                    </code>
-                  </div>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={!!forcePending}>Cancel</AlertDialogCancel>
-            <button
-              type="button"
-              disabled={!!forcePending}
-              className={cn(buttonVariants({ variant: "destructive" }), "gap-2")}
-              onClick={runForceDelete}
-            >
-              {forcePending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              Confirm force delete
-            </button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ForceDeleteDialog
+        open={!!forceDialog}
+        onOpenChange={(open) => !open && setForceDialog(null)}
+        title="Force delete container"
+        onConfirm={runForceDelete}
+        pending={!!forcePending}
+      >
+        <div className="space-y-3 text-left">
+          <p>
+            This runs <strong className="text-foreground">docker rm -f</strong> and will stop then remove the container.
+          </p>
+          <p>
+            This can interrupt running workloads immediately. Use it only when normal remove fails or when this is intended.
+          </p>
+          {forceDialog ? (
+            <div>
+              <span className="text-xs font-medium text-foreground">Command on the API host:</span>
+              <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
+                docker rm -f {forceDialog.id}
+              </code>
+            </div>
+          ) : null}
+        </div>
+      </ForceDeleteDialog>
     </>
   );
 }

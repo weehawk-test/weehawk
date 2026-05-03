@@ -36,6 +36,8 @@ import {
 } from "@/lib/schema";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
+import { ForceDeleteDialog } from "@/components/confirm/force-delete-dialog";
+import { ConfirmDangerDescription } from "@/components/confirm/confirm-danger-description";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { ListPagination } from "@/components/docker/ListPagination";
@@ -48,15 +50,6 @@ import {
   reconcileSecretsPageWithPendingDeletions,
 } from "@/lib/docker-secrets-pending";
 import { clearPendingDeletion, markPendingDeletion } from "@/lib/pending-deletions";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { UseMutationResult } from "@tanstack/react-query";
@@ -441,7 +434,13 @@ function SecretRow({
   const handleDelete = async () => {
     const ok = await confirm({
       title: "Delete Docker secret?",
-      description: `“${secret.name}” will be removed from the Swarm. This cannot be undone.`,
+      description: (
+        <ConfirmDangerDescription
+          lead={<p>This secret will be removed from the Swarm.</p>}
+          emphasis={secret.name}
+          hint="This cannot be undone."
+        />
+      ),
       confirmLabel: "Delete",
       variant: "destructive",
     });
@@ -626,7 +625,13 @@ export function DockerSecretsClient({
     if (names.length === 0) return;
     const confirmed = await confirm({
       title: "Delete multiple secrets?",
-      description: `Delete ${names.length} Docker secret(s)? This cannot be undone.`,
+      description: (
+        <ConfirmDangerDescription
+          lead={<p>Delete {names.length} Docker secret(s)?</p>}
+          emphasis={names.join("\n")}
+          hint="This cannot be undone."
+        />
+      ),
       confirmLabel: "Delete all",
       variant: "destructive",
     });
@@ -845,47 +850,29 @@ export function DockerSecretsClient({
           />
         </div>
       ) : null}
-      <AlertDialog open={!!forceDialog} onOpenChange={(open) => !open && setForceDialog(null)}>
-        <AlertDialogContent className="max-w-lg border-amber-500/20">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-amber-500">
-              <OctagonAlert className="w-5 h-5 shrink-0" />
-              Force delete secret
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-3 text-left text-muted-foreground">
-                <p>
-                  This force flow tries to detach this secret from Docker services, then runs{" "}
-                  <strong className="text-foreground">docker secret rm</strong>.
-                </p>
-                <p>
-                  If a service still references the secret, Docker may refuse removal until the service update finishes.
-                </p>
-                {forceDialog && (
-                  <div>
-                    <span className="text-xs font-medium text-foreground">Equivalent on the remote host:</span>
-                    <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
-                      docker secret rm {forceDialog.name}
-                    </code>
-                  </div>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={forcePending}>Cancel</AlertDialogCancel>
-            <button
-              type="button"
-              disabled={forcePending}
-              className={cn(buttonVariants({ variant: "destructive" }), "gap-2")}
-              onClick={runForceDelete}
-            >
-              {forcePending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-              Confirm force delete
-            </button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ForceDeleteDialog
+        open={!!forceDialog}
+        onOpenChange={(open) => !open && setForceDialog(null)}
+        title="Force delete secret"
+        onConfirm={runForceDelete}
+        pending={forcePending}
+      >
+        <div className="space-y-3 text-left">
+          <p>
+            This force flow tries to detach this secret from Docker services, then runs{" "}
+            <strong className="text-foreground">docker secret rm</strong>.
+          </p>
+          <p>If a service still references the secret, Docker may refuse removal until the service update finishes.</p>
+          {forceDialog ? (
+            <div>
+              <span className="text-xs font-medium text-foreground">Equivalent on the remote host:</span>
+              <code className="mt-1 block w-full rounded-lg border border-white/10 bg-zinc-950/90 px-3 py-2 text-[11px] font-mono text-zinc-200 break-all">
+                docker secret rm {forceDialog.name}
+              </code>
+            </div>
+          ) : null}
+        </div>
+      </ForceDeleteDialog>
     </>
   );
 }
