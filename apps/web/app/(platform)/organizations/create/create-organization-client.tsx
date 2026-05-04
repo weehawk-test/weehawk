@@ -4,7 +4,7 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Loader2, Type, X } from "lucide-react";
-import { createOrganization } from "@/lib/organizations-api";
+import { createOrganization, notifyOrganizationsListChanged } from "@/lib/organizations-api";
 import { setActiveOrganizationPublicBrowserCookie } from "@/lib/active-org-cookie";
 
 export function CreateOrganizationClient() {
@@ -27,7 +27,9 @@ export function CreateOrganizationClient() {
         name: name.trim(),
       });
       setActiveOrganizationPublicBrowserCookie(org.publicId);
+      notifyOrganizationsListChanged();
       router.replace("/projects");
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create organization");
     } finally {

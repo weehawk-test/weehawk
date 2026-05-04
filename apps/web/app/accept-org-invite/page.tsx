@@ -6,7 +6,10 @@ import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { acceptOrganizationInvite } from "@/lib/organizations-api";
+import {
+  acceptOrganizationInvite,
+  notifyOrganizationsListChanged,
+} from "@/lib/organizations-api";
 import { useAuth } from "@/contexts/auth-context";
 
 type State = "loading" | "success" | "error" | "need_sign_in";
@@ -57,6 +60,7 @@ export default function AcceptOrgInvitePage() {
         setOrgPublicId(result.organizationPublicId);
         setState("success");
         setMessage(`You joined ${result.organizationName}.`);
+        notifyOrganizationsListChanged();
       } catch (err) {
         if (cancelled) return;
         setState("error");

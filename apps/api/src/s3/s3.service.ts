@@ -26,6 +26,7 @@ import * as path from 'path';
 import { Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { OrganizationsService } from '../organizations/organizations.service';
 import {
   assertOrganizationWorkspaceAccessForInternalId,
   resolveRequiredOrganizationInternalIdForMember,
@@ -100,6 +101,7 @@ export class S3Service implements OnModuleInit {
     @InjectRepository(OrganizationMembership)
     private readonly membershipRepo: Repository<OrganizationMembership>,
     private readonly organizationsRepository: OrganizationsRepository,
+    private readonly organizationsService: OrganizationsService,
     private readonly configService: ConfigService,
     private readonly remoteServersService: RemoteServersService,
   ) {
@@ -134,6 +136,28 @@ export class S3Service implements OnModuleInit {
           : {}),
       },
     );
+  }
+
+  private logS3OrgAudit(
+    row: S3Profile,
+    userId: number,
+    action: string,
+    endpoint: string,
+    extra?: Record<string, unknown>,
+  ): void {
+    const orgId = row.organizationId;
+    if (orgId == null || orgId < 1) return;
+    const pid = row.publicId?.trim();
+    void this.organizationsService
+      .appendOrganizationAuditEvent(orgId, userId, action, {
+        metadata: {
+          endpoint,
+          s3ProfilePublicId: pid || null,
+          s3ProfileName: row.name,
+          ...(extra ?? {}),
+        },
+      })
+      .catch(() => undefined);
   }
 
   /** Enforce S3 area + sub-capabilities using public id or internal org id (server-side). */
@@ -583,6 +607,7 @@ export class S3Service implements OnModuleInit {
       base.name,
       orgId,
     );
+    const hadExisting = row != null;
     await this.requireOrgS3Subs(
       userId,
       dto.organizationPublicId,
@@ -629,6 +654,12 @@ export class S3Service implements OnModuleInit {
       (await this.findProfileByNameInWorkspace(userId, n.name, orgId)) ??
       row;
     const ensured = await this.ensureProfilePublicId(saved);
+    this.logS3OrgAudit(
+      ensured,
+      userId,
+      hadExisting ? 'security.s3.profile_updated' : 'security.s3.profile_created',
+      'POST /api/s3/profiles',
+    );
     return {
       success: true,
       profile: this.toPublicProfile(ensured),
@@ -651,6 +682,12 @@ export class S3Service implements OnModuleInit {
       userId,
       publicId,
       organizationPublicId,
+    );
+    this.logS3OrgAudit(
+      row,
+      userId,
+      'security.s3.profile_deleted',
+      `DELETE /api/s3/profiles/${encodeURIComponent(publicId)}`,
     );
     await this.scopedProfiles.deleteScoped(row.id, userId);
     return { success: true, publicId: row.publicId };
@@ -725,6 +762,26 @@ export class S3Service implements OnModuleInit {
       );
       throw new InternalServerErrorException('Storage service error');
     }
+
+    const orgId = await this.resolveExpectedOrgId(
+      userId,
+      dto.organizationPublicId,
+      undefined,
+    );
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        orgId,
+        userId,
+        'security.s3.connection_tested',
+        {
+          metadata: {
+            endpoint: 'POST /api/s3/test-connection',
+            s3ProfileName: input.name,
+            remoteServerId: remoteId,
+          },
+        },
+      )
+      .catch(() => undefined);
 
     return {
       success: true,
@@ -903,6 +960,14 @@ export class S3Service implements OnModuleInit {
       await client.send(
         new DeleteObjectCommand({ Bucket: input.bucket, Key: key }),
       );
+      const pid = row.publicId?.trim() || 'by-name';
+      this.logS3OrgAudit(
+        row,
+        userId,
+        'security.s3.object_deleted',
+        `DELETE /api/s3/profiles/${encodeURIComponent(pid)}/objects`,
+        { objectKey: key.slice(0, 1024) },
+      );
       return { success: true, key };
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
@@ -978,6 +1043,14 @@ export class S3Service implements OnModuleInit {
         key: e.Key ?? '',
         message: e.Message ?? 'Unknown error',
       }));
+      const pid = row.publicId?.trim() || 'by-name';
+      this.logS3OrgAudit(
+        row,
+        userId,
+        'security.s3.objects_batch_deleted',
+        `POST /api/s3/profiles/${encodeURIComponent(pid)}/objects/delete-batch`,
+        { keyCountRequested: sanitized.length, deletedCount: deleted.length },
+      );
       return { deleted, errors };
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
@@ -1178,6 +1251,17 @@ export class S3Service implements OnModuleInit {
       while (pending.length > 0) {
         await flushDelete(pending.splice(0, 1000));
       }
+      const pid = row.publicId?.trim() || 'by-name';
+      this.logS3OrgAudit(
+        row,
+        userId,
+        'security.s3.prefix_deleted',
+        `POST /api/s3/profiles/${encodeURIComponent(pid)}/objects/delete-prefix`,
+        {
+          prefix: prefix.slice(0, 1024),
+          deletedCount,
+        },
+      );
       return { deletedCount, errors };
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
@@ -1312,6 +1396,14 @@ export class S3Service implements OnModuleInit {
           ContentType: contentType,
         }),
       );
+      const pid = row.publicId?.trim() || 'by-name';
+      this.logS3OrgAudit(
+        row,
+        userId,
+        'security.s3.object_uploaded',
+        `POST /api/s3/profiles/${encodeURIComponent(pid)}/objects/upload`,
+        { objectKey: key.slice(0, 1024), via: 'multipart' },
+      );
       return { bucket: input.bucket, key };
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
@@ -1375,6 +1467,14 @@ export class S3Service implements OnModuleInit {
           ContentType: ct,
         }),
       );
+      const pid = row.publicId?.trim() || 'by-name';
+      this.logS3OrgAudit(
+        row,
+        userId,
+        'security.s3.object_uploaded',
+        `POST /api/s3/profiles/${encodeURIComponent(pid)}/objects/upload`,
+        { objectKey: key.slice(0, 1024), via: 'buffer' },
+      );
       return { bucket: input.bucket, key };
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
@@ -1427,6 +1527,14 @@ export class S3Service implements OnModuleInit {
           Body: new Uint8Array(0),
           ContentType: 'application/x-directory',
         }),
+      );
+      const pid = row.publicId?.trim() || 'by-name';
+      this.logS3OrgAudit(
+        row,
+        userId,
+        'security.s3.folder_marker_created',
+        `POST /api/s3/profiles/${encodeURIComponent(pid)}/objects/mkdir`,
+        { objectKey: key.slice(0, 1024) },
       );
       return { bucket: input.bucket, key };
     } catch (e) {
@@ -1502,6 +1610,14 @@ export class S3Service implements OnModuleInit {
           opts: { expiresIn: number },
         ) => Promise<string>
       )(client, cmd, { expiresIn });
+      const pid = row.publicId?.trim() || 'by-name';
+      this.logS3OrgAudit(
+        row,
+        userId,
+        'security.s3.presign_put_issued',
+        `POST /api/s3/profiles/${encodeURIComponent(pid)}/objects/presign-put`,
+        { objectKey: key.slice(0, 1024), expiresIn },
+      );
       return { url, bucket: input.bucket, key, expiresIn, contentType };
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {

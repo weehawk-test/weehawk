@@ -44,11 +44,20 @@ export class ProjectsController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new project container' })
-  create(
+  async create(
     @Body() createProjectDto: CreateProjectDto,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.create(createProjectDto, this.uid(req));
+    const project = await this.projectsService.create(
+      createProjectDto,
+      this.uid(req),
+    );
+    const op = await this.organizationsService.getPublicIdByInternalId(
+      project.organizationId,
+    );
+    return Object.assign(project, {
+      organizationPublicId: op ?? undefined,
+    });
   }
 
   @Get()
@@ -82,12 +91,19 @@ export class ProjectsController {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
       },
     );
-    return this.projectsService.findAllPaginatedForOrganization(
+    const pageResult = await this.projectsService.findAllPaginatedForOrganization(
       ctx.internalId,
       page,
       limit,
       q ?? '',
     );
+    const orgPub = ctx.publicId;
+    return {
+      ...pageResult,
+      data: pageResult.data.map((p) =>
+        Object.assign(p, { organizationPublicId: orgPub }),
+      ),
+    };
   }
 
   @Get(':publicId')
@@ -119,18 +135,24 @@ export class ProjectsController {
   @Patch(':publicId')
   @ApiOperation({ summary: 'update project' })
   @ApiQuery({ name: 'organizationPublicId', required: true })
-  update(
+  async update(
     @Param('publicId') publicId: string,
     @Body() updateProjectDto: UpdateProjectDto,
     @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
-    return this.projectsService.update(
+    const project = await this.projectsService.update(
       publicId,
       updateProjectDto,
       this.uid(req),
       organizationPublicId,
     );
+    const op = await this.organizationsService.getPublicIdByInternalId(
+      project.organizationId,
+    );
+    return Object.assign(project, {
+      organizationPublicId: op ?? undefined,
+    });
   }
 
   @Delete(':publicId')

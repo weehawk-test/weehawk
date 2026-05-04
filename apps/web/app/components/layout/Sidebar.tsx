@@ -10,7 +10,7 @@ import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NavRow } from "./sidebar-nav-row";
 import { buildMainNavSections, buildDockerNavItems } from "./main-nav-sections";
-import { fetchOrganizations } from "@/lib/organizations-api";
+import { fetchOrganizations, ORGANIZATIONS_LIST_CHANGED_EVENT } from "@/lib/organizations-api";
 import type { OrganizationPublic } from "@/lib/organizations-types";
 import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
 import { firstOrgManagementPathSegment } from "@/lib/org-workspace-permissions";
@@ -57,15 +57,21 @@ export function Sidebar() {
       return;
     }
     let cancelled = false;
-    void fetchOrganizations()
-      .then((list) => {
-        if (!cancelled) setMyOrganizations(list);
-      })
-      .catch(() => {
-        if (!cancelled) setMyOrganizations([]);
-      });
+    const load = () => {
+      void fetchOrganizations()
+        .then((list) => {
+          if (!cancelled) setMyOrganizations(list);
+        })
+        .catch(() => {
+          if (!cancelled) setMyOrganizations([]);
+        });
+    };
+    load();
+    const onListChanged = () => load();
+    window.addEventListener(ORGANIZATIONS_LIST_CHANGED_EVENT, onListChanged);
     return () => {
       cancelled = true;
+      window.removeEventListener(ORGANIZATIONS_LIST_CHANGED_EVENT, onListChanged);
     };
   }, [user?.userId]);
 

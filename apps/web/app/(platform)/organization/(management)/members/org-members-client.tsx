@@ -62,10 +62,14 @@ export function OrgMembersClient({
     setError(null);
     setAdding(true);
     try {
-      await inviteOrganizationMember(organizationPublicId, email);
+      const { message, notice } = await inviteOrganizationMember(organizationPublicId, email);
       resetInviteForm();
       setInviteOpen(false);
       router.refresh();
+      toast({
+        title: notice ? "Request recorded" : "Invitation sent",
+        description: notice ?? message,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send invitation");
     } finally {
@@ -130,8 +134,8 @@ export function OrgMembersClient({
                 <DialogHeader>
                   <DialogTitle>Invite member</DialogTitle>
                   <DialogDescription>
-                    Enter their Weehawk account email (they must already be registered). We&apos;ll email them a link to
-                    accept— they need to open it while signed in as that address.
+                    Enter their email. If they already have a Weehawk account, they&apos;ll get a link to accept the
+                    invite (they should open it while signed in with that address).
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={onAdd} className="space-y-4">

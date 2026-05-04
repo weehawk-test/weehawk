@@ -50,7 +50,7 @@ export class OrganizationInviteService {
     ctx: OrganizationMemberContext,
     actingUserId: number,
     rawEmail: string,
-  ): Promise<{ message: string }> {
+  ): Promise<{ message: string; notice?: string }> {
     if (
       !ctx.actingIsOwner &&
       !ctx.workspacePermissions[
@@ -72,9 +72,12 @@ export class OrganizationInviteService {
       .where('LOWER(u.email) = :email', { email })
       .getOne();
     if (!invitee) {
-      throw new NotFoundException(
-        'No user with this email was found. They must sign up first.',
-      );
+      /** Do not reveal whether the address exists; no email or token is created. */
+      return {
+        message: 'Your request was processed.',
+        notice:
+          'Invitation emails are only delivered to addresses that already have a Weehawk account. If they are registered, they will receive the invitation shortly.',
+      };
     }
     const already = await this.orgRepo.findMembership(invitee.id, ctx.internalId);
     if (already) {
@@ -103,6 +106,12 @@ export class OrganizationInviteService {
       ctx.name,
       inviterName || inviter.email,
       link,
+    );
+    await this.organizationsService.appendOrganizationAuditEvent(
+      ctx.internalId,
+      actingUserId,
+      'member.invited',
+      { targetEmail: email },
     );
     return { message: 'Invitation email sent.' };
   }

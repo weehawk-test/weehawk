@@ -30,6 +30,26 @@ export class ProjectsService {
     );
   }
 
+  private logProjectAudit(
+    organizationId: number,
+    userId: number,
+    action: string,
+    endpoint: string,
+    project: Pick<Project, 'name' | 'publicId'>,
+    extra?: Record<string, unknown>,
+  ): void {
+    void this.organizationsService
+      .appendOrganizationAuditEvent(organizationId, userId, action, {
+        metadata: {
+          endpoint,
+          projectPublicId: project.publicId?.trim() || null,
+          projectName: project.name,
+          ...(extra ?? {}),
+        },
+      })
+      .catch(() => undefined);
+  }
+
   private async _internal_system_saveProject(project: Project): Promise<Project> {
     return this.projectRepository.save(project);
   }
@@ -80,7 +100,15 @@ export class ProjectsService {
       publicId: generatePublicId('prj'),
       organizationId,
     });
-    return await this.scopedProjects.saveScoped(project, userId);
+    const saved = await this.scopedProjects.saveScoped(project, userId);
+    this.logProjectAudit(
+      organizationId,
+      userId,
+      'security.project.created',
+      'POST /api/projects',
+      saved,
+    );
+    return saved;
   }
 
   async findAllPaginatedForOrganization(
@@ -236,7 +264,15 @@ export class ProjectsService {
       { requireOrgProjectView: true },
     );
     const updated = this.projectRepository.merge(project, updateProjectDto);
-    return await this._internal_system_saveProject(updated);
+    const saved = await this._internal_system_saveProject(updated);
+    this.logProjectAudit(
+      project.organizationId,
+      userId,
+      'security.project.updated',
+      `PATCH /api/projects/${encodeURIComponent(idOrPublicId)}`,
+      saved,
+    );
+    return saved;
   }
 
   async remove(
@@ -259,6 +295,18 @@ export class ProjectsService {
         `Cannot delete project while it still contains services (${services.length}). Delete all services in this project first, then try again.`,
       );
     }
-    return await this._internal_system_removeProject(project);
+    const orgId = project.organizationId;
+    const snapshot = {
+      name: project.name,
+      publicId: project.publicId,
+    };
+    await this._internal_system_removeProject(project);
+    this.logProjectAudit(
+      orgId,
+      userId,
+      'security.project.deleted',
+      `DELETE /api/projects/${encodeURIComponent(idOrPublicId)}`,
+      snapshot,
+    );
   }
 }

@@ -14,7 +14,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { fetchOrganizations } from "@/lib/organizations-api";
+import {
+  fetchOrganizations,
+  ORGANIZATIONS_LIST_CHANGED_EVENT,
+} from "@/lib/organizations-api";
 import type { OrganizationPublic } from "@/lib/organizations-types";
 import { setActiveOrganizationPublicBrowserCookie } from "@/lib/active-org-cookie";
 import { isPlatformPathExemptFromOrgWorkspaceShell } from "@/lib/platform-shell-path";
@@ -130,15 +133,21 @@ export function WorkspaceSwitcher({
       return;
     }
     let cancelled = false;
-    void fetchOrganizations()
-      .then((list) => {
-        if (!cancelled) setOrgs(list);
-      })
-      .catch(() => {
-        if (!cancelled) setOrgs([]);
-      });
+    const load = () => {
+      void fetchOrganizations()
+        .then((list) => {
+          if (!cancelled) setOrgs(list);
+        })
+        .catch(() => {
+          if (!cancelled) setOrgs([]);
+        });
+    };
+    load();
+    const onListChanged = () => load();
+    window.addEventListener(ORGANIZATIONS_LIST_CHANGED_EVENT, onListChanged);
     return () => {
       cancelled = true;
+      window.removeEventListener(ORGANIZATIONS_LIST_CHANGED_EVENT, onListChanged);
     };
   }, [user?.userId]);
 

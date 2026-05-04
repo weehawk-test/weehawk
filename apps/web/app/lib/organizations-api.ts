@@ -235,7 +235,7 @@ export async function setOrganizationMemberRole(
 export async function inviteOrganizationMember(
   organizationPublicId: string,
   email: string,
-): Promise<{ message: string }> {
+): Promise<{ message: string; notice?: string }> {
   const res = await apiFetch(
     `/api/organizations/${encodeURIComponent(organizationPublicId.trim())}/members`,
     {
@@ -247,8 +247,11 @@ export async function inviteOrganizationMember(
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
-  const data = JSON.parse(text) as unknown as { message?: string };
-  return { message: typeof data.message === "string" ? data.message : "Invitation sent." };
+  const data = JSON.parse(text) as unknown as { message?: string; notice?: string };
+  return {
+    message: typeof data.message === "string" ? data.message : "Invitation sent.",
+    notice: typeof data.notice === "string" && data.notice.trim() !== "" ? data.notice : undefined,
+  };
 }
 
 function mapInviteAccept(raw: unknown): OrganizationInviteAcceptResult {
@@ -301,4 +304,12 @@ export async function createOrganization(
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
   return mapOrg(JSON.parse(text) as unknown);
+}
+
+/** Browser-only: workspace switcher / sidebar listen and refetch GET /api/organizations. */
+export const ORGANIZATIONS_LIST_CHANGED_EVENT = "weehawk-organizations-changed";
+
+export function notifyOrganizationsListChanged(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(ORGANIZATIONS_LIST_CHANGED_EVENT));
 }

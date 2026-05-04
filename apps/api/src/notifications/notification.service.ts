@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { OrganizationsService } from '../organizations/organizations.service';
 import { resolveRequiredOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
 import {
   ORGANIZATION_WORKSPACE_PERMISSIONS,
@@ -59,6 +60,7 @@ export class NotificationService {
     @InjectRepository(OrganizationMembership)
     private readonly membershipRepo: Repository<OrganizationMembership>,
     private readonly organizationsRepository: OrganizationsRepository,
+    private readonly organizationsService: OrganizationsService,
     private readonly providerRegistry: ProviderRegistryService,
     private readonly remoteServersService: RemoteServersService,
   ) {
@@ -85,6 +87,27 @@ export class NotificationService {
           : {}),
       },
     );
+  }
+
+  private logNotificationChannelAudit(
+    organizationId: number,
+    userId: number,
+    action: string,
+    endpoint: string,
+    channel: Pick<NotificationChannel, 'name' | 'publicId' | 'id'>,
+    extra?: Record<string, unknown>,
+  ): void {
+    void this.organizationsService
+      .appendOrganizationAuditEvent(organizationId, userId, action, {
+        metadata: {
+          endpoint,
+          notificationChannelPublicId: channel.publicId?.trim() || null,
+          notificationChannelName: channel.name,
+          notificationChannelId: channel.id,
+          ...(extra ?? {}),
+        },
+      })
+      .catch(() => undefined);
   }
 
   private assertChannelWorkspace(
@@ -314,6 +337,13 @@ export class NotificationService {
     });
     const saved = await this.scopedChannels.saveScoped(ch, userId);
     const preview = await provider.preview(saved);
+    this.logNotificationChannelAudit(
+      orgId,
+      userId,
+      'security.notification_channel.created',
+      'POST /api/notifications/channels',
+      saved,
+    );
     return this.toChannelRow(saved, preview);
   }
 
@@ -350,6 +380,13 @@ export class NotificationService {
     }
     const saved = await this.scopedChannels.saveScoped(ch, userId);
     const preview = await this.providerRegistry.get(saved.type).preview(saved);
+    this.logNotificationChannelAudit(
+      expectedOrg,
+      userId,
+      'security.notification_channel.updated',
+      `PATCH /api/notifications/channels/${encodeURIComponent(id)}`,
+      saved,
+    );
     return this.toChannelRow(saved, preview);
   }
 
@@ -366,6 +403,13 @@ export class NotificationService {
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
     this.assertChannelWorkspace(ch, expectedOrg);
+    this.logNotificationChannelAudit(
+      expectedOrg,
+      userId,
+      'security.notification_channel.deleted',
+      `DELETE /api/notifications/channels/${encodeURIComponent(id)}`,
+      ch,
+    );
     await this.scopedChannels.deleteScoped(ch.id, userId);
   }
 
@@ -390,6 +434,21 @@ export class NotificationService {
       await this.scopedChannels.deleteScoped(ch.id, userId);
       removed += 1;
     }
+    if (removed > 0) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          expectedOrg,
+          userId,
+          'security.notification_channels.bulk_deleted',
+          {
+            metadata: {
+              endpoint: 'POST /api/notifications/channels/bulk-delete',
+              removedCount: removed,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
     return { removed };
   }
 
@@ -412,16 +471,33 @@ export class NotificationService {
 
     const text = formatNotificationPlainText('Test', NOTIFICATION_TEST_MESSAGE);
     const result = await this.sendWithRetry(channel, text);
-    if (result.ok) {
-      const msg =
-        typeof result.response === 'string' && result.response.trim()
-          ? result.response.trim()
-          : 'test succeeded';
-      return { success: true, message: msg };
-    }
-    return {
-      success: false,
-      message: (result.description ?? '').trim() || 'Test failed',
-    };
+    const out = result.ok
+      ? {
+          success: true as const,
+          message:
+            typeof result.response === 'string' && result.response.trim()
+              ? result.response.trim()
+              : 'test succeeded',
+        }
+      : {
+          success: false as const,
+          message: (result.description ?? '').trim() || 'Test failed',
+        };
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        expectedOrg,
+        userId,
+        'security.notification_channel.tested',
+        {
+          metadata: {
+            endpoint: `POST /api/notifications/channels/${encodeURIComponent(channelId)}/test`,
+            success: out.success,
+            notificationChannelPublicId: channel.publicId?.trim() || null,
+            notificationChannelName: channel.name,
+          },
+        },
+      )
+      .catch(() => undefined);
+    return out;
   }
 }

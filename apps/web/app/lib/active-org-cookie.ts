@@ -9,3 +9,9 @@ export function setActiveOrganizationPublicBrowserCookie(publicId: string): void
   const v = encodeURIComponent(publicId.trim());
   document.cookie = `${WEHAWK_ACTIVE_ORG_COOKIE}=${v}; Path=/; Max-Age=${ACTIVE_ORG_COOKIE_MAX_AGE_SEC}; SameSite=Lax`;
 }
+
+/** Clear active org (e.g. user left their last organization). */
+export function clearActiveOrganizationPublicBrowserCookie(): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${WEHAWK_ACTIVE_ORG_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+}

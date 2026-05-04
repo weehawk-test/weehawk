@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
+import { OrganizationAuditLog } from './entities/organization-audit-log.entity';
 import { Organization } from './entities/organization.entity';
 import { OrganizationMembership } from './entities/organization-membership.entity';
 import { OrganizationsRepository } from './organizations.repository';
@@ -24,6 +25,7 @@ import { CronJob } from '../cron-jobs/entities/cron-job.entity';
 import { NotificationChannel } from '../notifications/entities/notification-channel.entity';
 import { S3Profile } from '../s3/entities/s3-profile.entity';
 import { TraefikSettings } from '../traefik/entities/traefik-settings.entity';
+import { RemoteServerProvisionJob } from '../remote-servers/entities/remote-server-provision-job.entity';
 import { generatePublicId } from '../common/public-id';
 import type { ResolveOrganizationWorkspaceOptions } from '../common/organization-workspace-scope';
 import {
@@ -55,6 +57,8 @@ export type OrganizationMemberContext = {
   /** Legacy column; kept in sync with membership roles for older code paths. */
   ownerId: number;
   createdAt: Date;
+  /** Session user whose membership was resolved for this request. */
+  actingUserId: number;
   /** True when the acting user’s membership role is owner. */
   actingIsOwner: boolean;
   workspacePermissions: Record<OrganizationWorkspacePermission, boolean>;
@@ -77,6 +81,16 @@ export type OrganizationProjectPublicDto = {
   serviceCount: number;
 };
 
+export type OrganizationAuditLogPublicDto = {
+  id: number;
+  action: string;
+  createdAt: string;
+  actorUserId: number;
+  actorEmail: string;
+  targetEmail: string | null;
+  metadata: Record<string, unknown> | null;
+};
+
 @Injectable()
 export class OrganizationsService implements OnModuleInit {
   constructor(
@@ -87,6 +101,8 @@ export class OrganizationsService implements OnModuleInit {
     private readonly users: Repository<User>,
     @InjectRepository(Project)
     private readonly projects: Repository<Project>,
+    @InjectRepository(OrganizationAuditLog)
+    private readonly auditLogs: Repository<OrganizationAuditLog>,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -137,7 +153,7 @@ export class OrganizationsService implements OnModuleInit {
     const owned = await this.repo.countOrganizationsWhereUserIsOwner(userId);
     if (owned <= 1) {
       throw new ConflictException(
-        "You can't leave your only owned organization. Create another one first, or transfer ownership to another member.",
+        'You must maintain at least one organization where you are the owner. Create another organization first, or transfer ownership to another member before leaving.',
       );
     }
   }
@@ -180,6 +196,65 @@ export class OrganizationsService implements OnModuleInit {
     };
   }
 
+  /** Append a row to the organization audit log (best-effort callers await). */
+  async appendOrganizationAuditEvent(
+    organizationInternalId: number,
+    actorUserId: number,
+    action: string,
+    options?: {
+      targetEmail?: string | null;
+      metadata?: Record<string, unknown> | null;
+    },
+  ): Promise<void> {
+    const raw =
+      options?.targetEmail == null
+        ? null
+        : String(options.targetEmail).trim().toLowerCase();
+    const targetEmail =
+      raw && raw.length > 0 ? raw.slice(0, 255) : null;
+    const row = this.auditLogs.create({
+      organizationId: organizationInternalId,
+      actorUserId,
+      action: action.trim().slice(0, 64),
+      targetEmail,
+      metadata: options?.metadata ?? null,
+    });
+    await this.auditLogs.save(row);
+  }
+
+  async listAuditLogsForOrg(
+    ctx: OrganizationMemberContext,
+  ): Promise<OrganizationAuditLogPublicDto[]> {
+    if (
+      !ctx.actingIsOwner &&
+      !ctx.workspacePermissions[
+        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG
+      ]
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to view the organization audit log.',
+      );
+    }
+    const rows = await this.auditLogs.find({
+      where: { organizationId: ctx.internalId },
+      order: { createdAt: 'DESC' },
+      take: 200,
+    });
+    if (rows.length === 0) return [];
+    const actorIds = [...new Set(rows.map((r) => r.actorUserId))];
+    const actors = await this.users.find({ where: { id: In(actorIds) } });
+    const emailById = new Map(actors.map((u) => [u.id, u.email]));
+    return rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      createdAt: r.createdAt.toISOString(),
+      actorUserId: r.actorUserId,
+      actorEmail: emailById.get(r.actorUserId) ?? '(unknown)',
+      targetEmail: r.targetEmail,
+      metadata: r.metadata,
+    }));
+  }
+
   async getOnePublicForMember(
     ctx: OrganizationMemberContext,
   ): Promise<OrganizationPublicDto> {
@@ -205,6 +280,9 @@ export class OrganizationsService implements OnModuleInit {
     membership.organizationId = saved.id;
     membership.role = ORGANIZATION_MEMBER_ROLE.OWNER;
     await this.repo.saveMembership(membership);
+    await this.appendOrganizationAuditEvent(saved.id, userId, 'org.created', {
+      metadata: { name },
+    });
     const memberCount = await this.repo.countMembershipsForOrganization(saved.id);
     return this.toPublicDto(saved, true, memberCount, membership);
   }
@@ -278,8 +356,12 @@ export class OrganizationsService implements OnModuleInit {
     const name = this.sanitizeCreateName(dto);
     const orgRow = await this.repo.findById(ctx.internalId);
     if (!orgRow) throw new NotFoundException('Organization not found');
+    const previousName = orgRow.name;
     orgRow.name = name;
     await this.repo.saveOrganization(orgRow);
+    await this.appendOrganizationAuditEvent(ctx.internalId, ctx.actingUserId, 'org.updated', {
+      metadata: { previousName, name },
+    });
     const memberCount = await this.repo.countMembershipsForOrganization(ctx.internalId);
     const nextCtx: OrganizationMemberContext = { ...ctx, name };
     return this.memberContextToPublicDto(nextCtx, memberCount);
@@ -351,6 +433,15 @@ export class OrganizationsService implements OnModuleInit {
     if (n === 0) {
       throw new NotFoundException('Organization membership not found');
     }
+    await this.appendOrganizationAuditEvent(
+      ctx.internalId,
+      ctx.actingUserId,
+      'member.permissions_updated',
+      {
+        targetEmail: email,
+        metadata: { patch },
+      },
+    );
     return { message: 'Member workspace permissions updated.' };
   }
 
@@ -612,66 +703,32 @@ export class OrganizationsService implements OnModuleInit {
   }
 
   /**
-   * Moves all org-scoped tenant rows to `transferToOrganizationId`, then deletes memberships and the org.
-   * Used when the sole member (owner) leaves and must keep resources under another org they own.
+   * Permanently removes all org-scoped workspace rows, then memberships and the organization.
+   * Used when the sole member (owner) leaves: no resource transfer to another organization.
    */
-  private async dissolveOrganization(
+  private async deleteOrganizationAndScopedResources(
     organizationId: number,
-    transferToOrganizationId: number,
   ): Promise<void> {
     await this.dataSource.transaction(async (em) => {
-      await em.update(Project, { organizationId }, { organizationId: transferToOrganizationId });
-      await em.update(
-        RemoteServer,
-        { organizationId },
-        { organizationId: transferToOrganizationId },
-      );
-      await em.update(Webhook, { organizationId }, { organizationId: transferToOrganizationId });
-      await em.update(CronJob, { organizationId }, { organizationId: transferToOrganizationId });
-      await em.update(
-        NotificationChannel,
-        { organizationId },
-        { organizationId: transferToOrganizationId },
-      );
+      await em.delete(OrganizationAuditLog, { organizationId });
+      await em.delete(Webhook, { organizationId });
+      await em.delete(CronJob, { organizationId });
+      await em.delete(TraefikSettings, { organizationId });
+      await em.delete(Project, { organizationId });
+      await em.delete(NotificationChannel, { organizationId });
+      await em.delete(S3Profile, { organizationId });
 
-      const s3Rows = await em.find(S3Profile, { where: { organizationId } });
-      for (const row of s3Rows) {
-        let name = row.name;
-        const dup = await em.findOne(S3Profile, {
-          where: { organizationId: transferToOrganizationId, name },
-        });
-        if (dup) {
-          name = `${row.name} (migrated)`;
-        }
-        await em.update(
-          S3Profile,
-          { id: row.id },
-          {
-            organizationId: transferToOrganizationId,
-            workspaceKey: `o:${transferToOrganizationId}`,
-            name,
-          },
-        );
-      }
-
-      const dissolvingTraefik = await em.findOne(TraefikSettings, {
+      const servers = await em.find(RemoteServer, {
         where: { organizationId },
+        select: { id: true },
       });
-      if (dissolvingTraefik) {
-        const targetTraefik = await em.findOne(TraefikSettings, {
-          where: { organizationId: transferToOrganizationId },
+      const serverIds = servers.map((s) => s.id);
+      if (serverIds.length > 0) {
+        await em.delete(RemoteServerProvisionJob, {
+          remoteServerId: In(serverIds),
         });
-        if (targetTraefik) {
-          await em.delete(TraefikSettings, { id: dissolvingTraefik.id });
-        } else {
-          await em.update(
-            TraefikSettings,
-            { organizationId },
-            { organizationId: transferToOrganizationId },
-          );
-        }
       }
-
+      await em.delete(RemoteServer, { organizationId });
       await em.delete(OrganizationMembership, { organizationId });
       await em.delete(Organization, { id: organizationId });
     });
@@ -682,6 +739,9 @@ export class OrganizationsService implements OnModuleInit {
     userId: number,
   ): Promise<{ message: string }> {
     if (!ctx.actingIsOwner) {
+      await this.appendOrganizationAuditEvent(ctx.internalId, userId, 'member.left', {
+        metadata: { role: 'member' },
+      });
       const n = await this.repo.deleteMembership(userId, ctx.internalId);
       if (n === 0) {
         throw new NotFoundException('Organization not found');
@@ -689,36 +749,34 @@ export class OrganizationsService implements OnModuleInit {
       return { message: 'You left the organization.' };
     }
 
-    await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
-      userId,
-      ctx.internalId,
-    );
-
     const links = await this.repo.listMembershipsForOrganization(ctx.internalId);
     if (links.length === 0) {
       throw new NotFoundException('Organization not found');
     }
 
     if (links.length === 1) {
-      const transferTo = await this.repo.findFirstOtherOwnedOrganizationInternalId(
+      await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
         userId,
         ctx.internalId,
       );
-      if (transferTo == null) {
-        throw new ConflictException(
-          'Cannot close this organization: no other organization you own was found to receive its resources.',
-        );
-      }
-      await this.dissolveOrganization(ctx.internalId, transferTo);
+      await this.deleteOrganizationAndScopedResources(ctx.internalId);
       return {
         message:
-          'You left and the organization was closed because you were the only member. Its resources were moved to another organization you own.',
+          'You left and the organization was closed because you were the only member. All of its workspace data was permanently deleted.',
       };
     }
+
+    await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
+      userId,
+      ctx.internalId,
+    );
 
     const ownerCount = await this.repo.countOwnersForOrganization(ctx.internalId);
 
     if (ownerCount > 1) {
+      await this.appendOrganizationAuditEvent(ctx.internalId, userId, 'member.left', {
+        metadata: { wasOwner: true, remainingOwners: ownerCount - 1 },
+      });
       const n = await this.repo.deleteMembership(userId, ctx.internalId);
       if (n === 0) {
         throw new NotFoundException('Organization not found');
@@ -740,6 +798,16 @@ export class OrganizationsService implements OnModuleInit {
       ORGANIZATION_MEMBER_ROLE.OWNER,
     );
     await this.syncLegacyOwnerIdColumn(ctx.internalId);
+
+    const successorUser = await this.users.findOne({
+      where: { id: successor.userId },
+    });
+    await this.appendOrganizationAuditEvent(ctx.internalId, userId, 'member.left', {
+      metadata: {
+        wasOwner: true,
+        promotedNewOwnerEmail: successorUser?.email ?? null,
+      },
+    });
 
     const n = await this.repo.deleteMembership(userId, ctx.internalId);
     if (n === 0) {
@@ -832,6 +900,16 @@ export class OrganizationsService implements OnModuleInit {
     }
     await this.syncLegacyOwnerIdColumn(ctx.internalId);
 
+    await this.appendOrganizationAuditEvent(
+      ctx.internalId,
+      actingUserId,
+      'member.role_changed',
+      {
+        targetEmail: email,
+        metadata: { newRole: role },
+      },
+    );
+
     if (role === ORGANIZATION_MEMBER_ROLE.OWNER) {
       return { message: 'Member promoted to owner.' };
     }
@@ -895,6 +973,7 @@ export class OrganizationsService implements OnModuleInit {
       name: org.name,
       ownerId: org.ownerId,
       createdAt: org.createdAt,
+      actingUserId: userId,
       actingIsOwner,
       workspacePermissions,
     };
@@ -956,6 +1035,12 @@ export class OrganizationsService implements OnModuleInit {
     membership.userId = user.id;
     membership.organizationId = organizationInternalId;
     const saved = await this.repo.saveMembership(membership);
+    await this.appendOrganizationAuditEvent(
+      organizationInternalId,
+      userId,
+      'member.joined',
+      { targetEmail: user.email.trim().toLowerCase() },
+    );
     return {
       email: user.email,
       firstName: user.firstName,

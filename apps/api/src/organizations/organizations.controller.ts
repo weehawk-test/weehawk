@@ -193,6 +193,16 @@ export class OrganizationsController {
     return this.organizationsService.listProjectsForOrg(ctx);
   }
 
+  @Get(':publicId/audit-log')
+  @UseGuards(OrgMembershipGuard)
+  @ApiOperation({
+    summary:
+      'List organization audit log (owners always; otherwise requires Management · Audit log permission)',
+  })
+  listAuditLog(@OrgMemberContextParam() ctx: OrganizationMemberContext) {
+    return this.organizationsService.listAuditLogsForOrg(ctx);
+  }
+
   @Patch(':publicId')
   @UseGuards(OrgMembershipGuard)
   @UsePipes(

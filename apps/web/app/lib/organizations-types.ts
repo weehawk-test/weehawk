@@ -41,3 +41,13 @@ export type OrganizationProjectListItem = {
   createdAt: string;
   serviceCount: number;
 };
+
+export type OrganizationAuditLogEntry = {
+  id: number;
+  action: string;
+  createdAt: string;
+  actorUserId: number;
+  actorEmail: string;
+  targetEmail: string | null;
+  metadata: Record<string, unknown> | null;
+};

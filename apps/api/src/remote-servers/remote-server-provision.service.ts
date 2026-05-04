@@ -77,10 +77,11 @@ export class RemoteServerProvisionService {
     remoteServerId: number,
     userId: number,
   ): Promise<{ jobId: string }> {
-    await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
-      remoteServerId,
-      userId,
-    );
+    const rs =
+      await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
+        remoteServerId,
+        userId,
+      );
     const row = this.jobRepo.create({
       remoteServerId,
       userId,
@@ -89,6 +90,24 @@ export class RemoteServerProvisionService {
       jobKind: 'provision',
     });
     const saved = await this.jobRepo.save(row);
+    if (rs.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_server.provision_enqueued',
+          {
+            metadata: {
+              endpoint: `POST /api/remote-servers/${remoteServerId}/provision`,
+              jobKind: 'provision',
+              jobId: saved.id,
+              remoteServerPublicId: rs.publicId ?? null,
+              remoteServerName: rs.name,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
     return { jobId: saved.id };
   }
 
@@ -96,10 +115,11 @@ export class RemoteServerProvisionService {
     remoteServerId: number,
     userId: number,
   ): Promise<{ jobId: string }> {
-    await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
-      remoteServerId,
-      userId,
-    );
+    const rs =
+      await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
+        remoteServerId,
+        userId,
+      );
     const row = this.jobRepo.create({
       remoteServerId,
       userId,
@@ -108,6 +128,24 @@ export class RemoteServerProvisionService {
       jobKind: 'docker_purge',
     });
     const saved = await this.jobRepo.save(row);
+    if (rs.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_server.provision_enqueued',
+          {
+            metadata: {
+              endpoint: `POST /api/remote-servers/${remoteServerId}/docker-purge`,
+              jobKind: 'docker_purge',
+              jobId: saved.id,
+              remoteServerPublicId: rs.publicId ?? null,
+              remoteServerName: rs.name,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
     return { jobId: saved.id };
   }
 
@@ -115,10 +153,11 @@ export class RemoteServerProvisionService {
     remoteServerId: number,
     userId: number,
   ): Promise<{ jobId: string }> {
-    await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
-      remoteServerId,
-      userId,
-    );
+    const rs =
+      await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
+        remoteServerId,
+        userId,
+      );
     const row = this.jobRepo.create({
       remoteServerId,
       userId,
@@ -127,6 +166,24 @@ export class RemoteServerProvisionService {
       jobKind: 'nixpacks_install',
     });
     const saved = await this.jobRepo.save(row);
+    if (rs.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_server.provision_enqueued',
+          {
+            metadata: {
+              endpoint: `POST /api/remote-servers/${remoteServerId}/nixpacks-install`,
+              jobKind: 'nixpacks_install',
+              jobId: saved.id,
+              remoteServerPublicId: rs.publicId ?? null,
+              remoteServerName: rs.name,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
     return { jobId: saved.id };
   }
 

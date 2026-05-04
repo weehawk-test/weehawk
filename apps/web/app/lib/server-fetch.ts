@@ -12,6 +12,7 @@ import type { TraefikSettingsPayload } from "./traefik-api";
 import type { PaginatedSecretsResponse } from "./docker-paged-fetch";
 import type { GitSettingsPublic } from "./git-api";
 import type {
+  OrganizationAuditLogEntry,
   OrganizationMemberPublic,
   OrganizationProjectListItem,
   OrganizationPublic,
@@ -427,6 +428,43 @@ export async function fetchOrganizationMembersSSR(
       isOwner: row.isOwner === true,
       joinedAt,
       workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
+    };
+  });
+}
+
+/** Server-only: organization audit log (requires Management · Audit log or owner). */
+export async function fetchOrganizationAuditLogSSR(
+  organizationPublicId: string,
+): Promise<OrganizationAuditLogEntry[]> {
+  const id = organizationPublicId.trim();
+  if (!id) return [];
+  const res = await fetch(`${apiBase()}/api/organizations/${encodeURIComponent(id)}/audit-log`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return [];
+  const data = (await res.json()) as unknown;
+  if (!Array.isArray(data)) return [];
+  return data.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    const created = row.createdAt;
+    let createdAt: string;
+    if (created instanceof Date) createdAt = created.toISOString();
+    else if (typeof created === "string") createdAt = created;
+    else createdAt = new Date().toISOString();
+    const meta = row.metadata;
+    const metadata =
+      meta != null && typeof meta === "object" && !Array.isArray(meta)
+        ? (meta as Record<string, unknown>)
+        : null;
+    return {
+      id: typeof row.id === "number" ? row.id : Number(row.id ?? 0),
+      action: String(row.action ?? ""),
+      createdAt,
+      actorUserId: typeof row.actorUserId === "number" ? row.actorUserId : Number(row.actorUserId ?? 0),
+      actorEmail: String(row.actorEmail ?? ""),
+      targetEmail: row.targetEmail == null || row.targetEmail === "" ? null : String(row.targetEmail),
+      metadata,
     };
   });
 }

@@ -95,7 +95,50 @@ export class TraefikController {
       userId,
       ctx.internalId,
     );
+    const before = await this.traefikService.getSettingsForOrganization(
+      ctx.internalId,
+    );
     await this.traefikService.updateSettingsForOrganization(ctx.internalId, dto);
+    const after = await this.traefikService.getSettingsForOrganization(
+      ctx.internalId,
+    );
+    const endpoint = 'PUT /api/traefik/settings';
+    if (
+      dto.acmeEmail !== undefined &&
+      before.acmeEmail.trim() !== after.acmeEmail.trim()
+    ) {
+      await this.organizationsService.appendOrganizationAuditEvent(
+        ctx.internalId,
+        userId,
+        'domains.acme_email_updated',
+        {
+          targetEmail: after.acmeEmail,
+          metadata: {
+            endpoint,
+            previousAcmeEmail: before.acmeEmail,
+            acmeEmail: after.acmeEmail,
+          },
+        },
+      );
+    }
+    if (dto.platformDomain !== undefined) {
+      const prevPd = (before.platformDomain ?? '').trim();
+      const nextPd = (after.platformDomain ?? '').trim();
+      if (prevPd !== nextPd) {
+        await this.organizationsService.appendOrganizationAuditEvent(
+          ctx.internalId,
+          userId,
+          'domains.platform_hostname_updated',
+          {
+            metadata: {
+              endpoint,
+              platformDomainPrevious: prevPd || null,
+              platformDomain: nextPd || null,
+            },
+          },
+        );
+      }
+    }
     return this.traefikService.getResponsePayloadForOrganization(ctx.internalId);
   }
 }

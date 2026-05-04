@@ -95,12 +95,7 @@ export function OrgPermissionsClient({
   return (
     <div className="space-y-4">
       <p className="max-w-2xl text-sm text-muted-foreground">
-        Control which workspace areas each <strong>member</strong> can use in this organization. Owners always have
-        full access. Turning off an area hides it in the sidebar and blocks the related API calls for that member.
-        Under <strong>Projects</strong>, <strong>Servers</strong>, <strong>Domains</strong>, <strong>Webhooks</strong>,{" "}
-        <strong>Cron jobs</strong>, <strong>Notifications</strong>, <strong>S3</strong>, or <strong>Management</strong>, open{" "}
-        <strong>Advanced</strong> to allow or block finer actions (including management tabs like Overview, Members, and
-        Settings) without turning off the whole area.
+        Configure workspace access for each member. Owners retain full access by default.
       </p>
       {!canEdit ? (
         <p className="text-sm text-amber-700 dark:text-amber-400/90">

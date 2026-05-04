@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   forwardRef,
+  HttpException,
   Inject,
   Injectable,
   Logger,
@@ -15,6 +16,7 @@ import * as net from 'net';
 import { Like, Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { OrganizationsService } from '../organizations/organizations.service';
 import {
   assertOrganizationWorkspaceAccessForInternalId,
   resolveRequiredOrganizationInternalIdForMember,
@@ -87,6 +89,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     @InjectRepository(OrganizationMembership)
     private readonly membershipRepo: Repository<OrganizationMembership>,
     private readonly organizationsRepository: OrganizationsRepository,
+    private readonly organizationsService: OrganizationsService,
     @Inject(forwardRef(() => ServicesService))
     private readonly servicesService: ServicesService,
     private readonly executorService: ExecutorService,
@@ -99,6 +102,34 @@ export class WebhooksService implements OnApplicationBootstrap {
       this.membershipRepo,
       'Webhook',
     );
+  }
+
+  private logSecurityAudit(
+    organizationId: number,
+    userId: number,
+    action: string,
+    endpoint: string,
+    extra: Record<string, unknown>,
+  ): void {
+    void this.organizationsService
+      .appendOrganizationAuditEvent(organizationId, userId, action, {
+        metadata: { endpoint, ...extra },
+      })
+      .catch(() => undefined);
+  }
+
+  /** Log denied / missing resource (HTTP 403/404) for org-scoped webhook mutations. */
+  private logWebhookSecurityHttpDenial(
+    expectedOrg: number,
+    userId: number,
+    action: string,
+    endpoint: string,
+    err: unknown,
+  ): void {
+    if (!(err instanceof HttpException)) return;
+    const httpStatus = err.getStatus();
+    if (httpStatus !== 404 && httpStatus !== 403) return;
+    this.logSecurityAudit(expectedOrg, userId, action, endpoint, { httpStatus });
   }
 
   private async requireWorkspaceOrgId(
@@ -684,6 +715,12 @@ export class WebhooksService implements OnApplicationBootstrap {
       hiddenFromWebhooksList: dto.hiddenFromWebhooksList === true,
     });
     const saved = await this.scopedWebhooks.saveScoped(w, userId);
+    const ensured = await this.ensurePublicId(saved);
+    this.logSecurityAudit(orgId, userId, 'security.webhook.created', 'POST /api/webhooks', {
+      webhookPublicId: ensured.publicId,
+      webhookName: ensured.name,
+      httpStatus: 201,
+    });
     if (dto.remoteServerId != null && resolvedBashScript) {
       this.runRemoteSyncInBackground(`create webhook ${saved.id}`, async () => {
         const mergedHosts = await this.mergeHooksPublicHostsForRemoteCreate(
@@ -844,8 +881,21 @@ export class WebhooksService implements OnApplicationBootstrap {
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_EDIT],
     );
-    const w = await this.resolveEntity(userId, idOrPublicId);
-    this.assertWebhookWorkspace(w, expectedOrg);
+    const endpoint = `PATCH /api/webhooks/${encodeURIComponent(String(idOrPublicId))}`;
+    let w: Webhook;
+    try {
+      w = await this.resolveEntity(userId, idOrPublicId);
+      this.assertWebhookWorkspace(w, expectedOrg);
+    } catch (e) {
+      this.logWebhookSecurityHttpDenial(
+        expectedOrg,
+        userId,
+        'security.webhook.updated',
+        endpoint,
+        e,
+      );
+      throw e;
+    }
 
     const beforeRemote = w.remoteServerId;
     const beforeBash = w.bashScript;
@@ -986,7 +1036,13 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
 
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
-    return await this.toDetailRow(saved, remoteTriggerUrl);
+    const detail = await this.toDetailRow(saved, remoteTriggerUrl);
+    this.logSecurityAudit(expectedOrg, userId, 'security.webhook.updated', endpoint, {
+      webhookPublicId: saved.publicId,
+      webhookName: saved.name,
+      httpStatus: 200,
+    });
+    return detail;
   }
 
   async remove(
@@ -999,8 +1055,27 @@ export class WebhooksService implements OnApplicationBootstrap {
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_DELETE],
     );
-    const w = await this.resolveEntity(userId, idOrPublicId);
-    this.assertWebhookWorkspace(w, expectedOrg);
+    const endpoint = `DELETE /api/webhooks/${encodeURIComponent(String(idOrPublicId))}`;
+    let w: Webhook;
+    try {
+      w = await this.resolveEntity(userId, idOrPublicId);
+      this.assertWebhookWorkspace(w, expectedOrg);
+    } catch (e) {
+      this.logWebhookSecurityHttpDenial(
+        expectedOrg,
+        userId,
+        'security.webhook.deleted',
+        endpoint,
+        e,
+      );
+      throw e;
+    }
+    const ensured = await this.ensurePublicId(w);
+    this.logSecurityAudit(expectedOrg, userId, 'security.webhook.deleted', endpoint, {
+      webhookPublicId: ensured.publicId,
+      webhookName: ensured.name,
+      httpStatus: 200,
+    });
     await this.deleteWebhookArtifacts(userId, w);
   }
 

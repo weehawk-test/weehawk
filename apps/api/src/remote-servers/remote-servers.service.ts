@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -244,6 +245,30 @@ function normalizeDomainsJsonInput(raw: string | undefined): string | null {
     throw new BadRequestException('domainsJson must be valid JSON');
   }
   return t;
+}
+
+/** Best-effort count of hostname labels in `domainsJson` (array, `{ domains: [] }`, or string values). */
+function countDomainLabelsInDomainsJson(raw: string | null): number {
+  if (raw == null || !String(raw).trim()) return 0;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed == null) return 0;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((x) => typeof x === 'string' && x.trim()).length;
+    }
+    if (typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const o = parsed as Record<string, unknown>;
+      if (Array.isArray(o.domains)) {
+        return o.domains.filter((x) => typeof x === 'string' && x.trim()).length;
+      }
+      return Object.values(o).filter(
+        (v) => typeof v === 'string' && String(v).trim(),
+      ).length;
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
 }
 
 @Injectable()
@@ -3174,9 +3199,10 @@ curl -fsS -o /dev/null "$U"
   async assertRemoteServerProvisionEnqueueAllowed(
     remoteServerId: number,
     userId: number,
-  ): Promise<void> {
+  ): Promise<RemoteServer> {
     const rs = await this.findEntityOrFail(remoteServerId, userId);
     await this.assertOrgServerInstallMaintainIfNeeded(rs, userId);
+    return rs;
   }
 
   private async findEntityOrFail(
@@ -3284,6 +3310,43 @@ curl -fsS -o /dev/null "$U"
           : null,
     });
     const saved = await this.scopedRemoteServers.saveScoped(entity, userId);
+    if (saved.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          saved.organizationId,
+          userId,
+          'security.remote_server.created',
+          {
+            metadata: {
+              endpoint: 'POST /api/remote-servers',
+              remoteServerPublicId: saved.publicId ?? null,
+              remoteServerName: saved.name,
+              serverRole: saved.serverRole,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
+    if (
+      saved.organizationId != null &&
+      saved.domainsJson != null &&
+      String(saved.domainsJson).trim()
+    ) {
+      await this.organizationsService.appendOrganizationAuditEvent(
+        saved.organizationId,
+        userId,
+        'domains.deploy_hostnames_updated',
+        {
+          metadata: {
+            endpoint: `POST /api/remote-servers`,
+            remoteServerPublicId: saved.publicId ?? null,
+            remoteServerName: saved.name,
+            context: 'create',
+            domainsHostCount: countDomainLabelsInDomainsJson(saved.domainsJson),
+          },
+        },
+      );
+    }
     return this.toSafe(saved);
   }
 
@@ -3401,6 +3464,46 @@ curl -fsS -o /dev/null "$U"
       await this.enforcePublicRemoteSshTargets(merged.host, merged.publicIpv4);
     }
     const saved = await this.scopedRemoteServers.saveScoped(merged, userId);
+    if (dto.domainsJson !== undefined && saved.organizationId != null) {
+      const prevDomains = existing.domainsJson ?? null;
+      const nextDomains = saved.domainsJson ?? null;
+      if (prevDomains !== nextDomains) {
+        await this.organizationsService.appendOrganizationAuditEvent(
+          saved.organizationId,
+          userId,
+          'domains.deploy_hostnames_updated',
+          {
+            metadata: {
+              endpoint: `PATCH /api/remote-servers/${saved.id}`,
+              remoteServerPublicId: saved.publicId ?? null,
+              remoteServerName: saved.name,
+              context: 'update',
+              domainsHostCountPrev: countDomainLabelsInDomainsJson(prevDomains),
+              domainsHostCountNext: countDomainLabelsInDomainsJson(nextDomains),
+            },
+          },
+        );
+      }
+    }
+    if (
+      saved.organizationId != null &&
+      !this.isDomainsJsonOnlyUpdate(dto)
+    ) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          saved.organizationId,
+          userId,
+          'security.remote_server.updated',
+          {
+            metadata: {
+              endpoint: `PATCH /api/remote-servers/${saved.id}`,
+              remoteServerPublicId: saved.publicId ?? null,
+              remoteServerName: saved.name,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
     return this.toSafe(saved);
   }
 
@@ -3473,6 +3576,49 @@ curl -fsS -o /dev/null "$U"
       );
     }
     await this.scopedRemoteServers.deleteScoped(id, userId);
+    if (rs.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_server.deleted',
+          {
+            metadata: {
+              endpoint: `DELETE /api/remote-servers/${id}`,
+              remoteServerPublicId: rs.publicId ?? null,
+              remoteServerName: rs.name,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
+  }
+
+  private logOrgRemoteDockerMutation(
+    id: number,
+    userId: number,
+    action: string,
+    endpoint: string,
+    extra?: Record<string, unknown>,
+  ): void {
+    void this.findEntityOrFail(id, userId)
+      .then((rs) => {
+        if (rs.organizationId == null) return;
+        return this.organizationsService.appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          action,
+          {
+            metadata: {
+              endpoint,
+              remoteServerPublicId: rs.publicId ?? null,
+              remoteServerName: rs.name,
+              ...(extra ?? {}),
+            },
+          },
+        );
+      })
+      .catch(() => undefined);
   }
 
   private async withRemoteDocker<T>(
@@ -3843,8 +3989,16 @@ curl -fsS -o /dev/null "$U"
     containerId: string,
     force: boolean,
   ): Promise<{ success: boolean }> {
+    const cid = decodeURIComponent(containerId);
     await this.withRemoteDocker(id, userId, (docker) =>
-      removeRemoteContainer(docker, decodeURIComponent(containerId), force),
+      removeRemoteContainer(docker, cid, force),
+    );
+    this.logOrgRemoteDockerMutation(
+      id,
+      userId,
+      'security.remote_docker.container_removed',
+      `DELETE /api/remote-servers/${id}/console/containers/${encodeURIComponent(cid)}`,
+      { containerId: cid.slice(0, 400), force },
     );
     return { success: true };
   }
@@ -3855,8 +4009,16 @@ curl -fsS -o /dev/null "$U"
     ref: string,
     force = false,
   ): Promise<{ success: boolean }> {
+    const refDecoded = decodeURIComponent(ref);
     await this.withRemoteDocker(id, userId, (docker) =>
-      removeRemoteImage(docker, decodeURIComponent(ref), { force }),
+      removeRemoteImage(docker, refDecoded, { force }),
+    );
+    this.logOrgRemoteDockerMutation(
+      id,
+      userId,
+      'security.remote_docker.image_removed',
+      `DELETE /api/remote-servers/${id}/console/images`,
+      { imageRef: refDecoded.slice(0, 400), force },
     );
     return { success: true };
   }
@@ -3867,8 +4029,16 @@ curl -fsS -o /dev/null "$U"
     name: string,
     force: boolean,
   ): Promise<{ success: boolean }> {
+    const vol = decodeURIComponent(name);
     await this.withRemoteDocker(id, userId, (docker) =>
-      removeRemoteVolume(docker, decodeURIComponent(name), force),
+      removeRemoteVolume(docker, vol, force),
+    );
+    this.logOrgRemoteDockerMutation(
+      id,
+      userId,
+      'security.remote_docker.volume_removed',
+      `DELETE /api/remote-servers/${id}/console/volumes/${encodeURIComponent(vol)}`,
+      { volumeName: vol.slice(0, 400), force },
     );
     return { success: true };
   }
@@ -3878,8 +4048,16 @@ curl -fsS -o /dev/null "$U"
     userId: number,
     networkId: string,
   ): Promise<{ success: boolean }> {
+    const nid = decodeURIComponent(networkId);
     await this.withRemoteDocker(id, userId, (docker) =>
-      removeRemoteNetwork(docker, decodeURIComponent(networkId)),
+      removeRemoteNetwork(docker, nid),
+    );
+    this.logOrgRemoteDockerMutation(
+      id,
+      userId,
+      'security.remote_docker.network_removed',
+      `DELETE /api/remote-servers/${id}/console/networks/${encodeURIComponent(nid)}`,
+      { networkId: nid.slice(0, 400) },
     );
     return { success: true };
   }
@@ -3890,8 +4068,16 @@ curl -fsS -o /dev/null "$U"
     serviceId: string,
     force: boolean,
   ): Promise<{ success: boolean }> {
+    const sid = decodeURIComponent(serviceId);
     await this.withRemoteDocker(id, userId, (docker) =>
-      removeRemoteService(docker, decodeURIComponent(serviceId), force),
+      removeRemoteService(docker, sid, force),
+    );
+    this.logOrgRemoteDockerMutation(
+      id,
+      userId,
+      'security.remote_docker.service_removed',
+      `DELETE /api/remote-servers/${id}/console/services/${encodeURIComponent(sid)}`,
+      { serviceId: sid.slice(0, 400), force },
     );
     return { success: true };
   }
@@ -3909,6 +4095,7 @@ curl -fsS -o /dev/null "$U"
         rs.organizationId,
       );
     }
+    let outcome: { success: boolean; output: string };
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const docker = this.createDockerodeForRemote(rs, pem);
@@ -3921,14 +4108,34 @@ curl -fsS -o /dev/null "$U"
           `Arch: ${v.Arch}`,
           v.KernelVersion ? `KernelVersion: ${v.KernelVersion}` : '',
         ].filter((s) => s.length > 0);
-        return { success: true, output: lines.join('\n') };
+        outcome = { success: true, output: lines.join('\n') };
       } finally {
         await this.flushPendingSshHostKeyFingerprint(rs.id);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return { success: false, output: humanizeRemoteTestError(msg, 'docker') };
+      outcome = {
+        success: false,
+        output: humanizeRemoteTestError(msg, 'docker'),
+      };
     }
+    if (rs.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_server.connection_tested',
+          {
+            metadata: {
+              endpoint: `POST /api/remote-servers/${id}/test`,
+              mode: 'docker',
+              success: outcome.success,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
+    return outcome;
   }
 
   /**
@@ -3947,6 +4154,7 @@ curl -fsS -o /dev/null "$U"
         rs.organizationId,
       );
     }
+    let outcome: { success: boolean; output: string };
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const p = this.getSshConnectParams(rs, pem);
@@ -3960,11 +4168,31 @@ curl -fsS -o /dev/null "$U"
         `Connected as ${p.username} to ${p.host}:${p.port}.`,
         uname ? `Remote reports: ${uname}.` : '',
       ].filter((s) => s.length > 0);
-      return { success: true, output: lines.join('\n') };
+      outcome = { success: true, output: lines.join('\n') };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return { success: false, output: humanizeRemoteTestError(msg, 'ssh') };
+      outcome = {
+        success: false,
+        output: humanizeRemoteTestError(msg, 'ssh'),
+      };
     }
+    if (rs.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_server.connection_tested',
+          {
+            metadata: {
+              endpoint: `POST /api/remote-servers/${id}/test-ssh`,
+              mode: 'ssh',
+              success: outcome.success,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
+    return outcome;
   }
 
   async runTerminalCommand(
@@ -3977,7 +4205,44 @@ curl -fsS -o /dev/null "$U"
       throw new BadRequestException('Command is required.');
     }
     const rs = await this.findEntityOrFail(id, userId);
-    await this.assertOrgServerTerminalIfNeeded(rs, userId);
+    const endpoint = `POST /api/remote-servers/${encodeURIComponent(String(id))}/terminal`;
+    const preview = trimmed.slice(0, 240);
+    const appendTerminalAudit = (metadata: Record<string, unknown>) => {
+      if (rs.organizationId == null) return;
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_terminal.exec',
+          {
+            metadata: {
+              endpoint,
+              remoteServerPublicId: rs.publicId ?? null,
+              remoteServerName: rs.name,
+              ...metadata,
+            },
+          },
+        )
+        .catch(() => undefined);
+    };
+    try {
+      await this.assertOrgServerTerminalIfNeeded(rs, userId);
+    } catch (e) {
+      if (e instanceof HttpException) {
+        const httpStatus = e.getStatus();
+        if (httpStatus === 403 || httpStatus === 404) {
+          appendTerminalAudit({ commandPreview: preview, httpStatus });
+        }
+      }
+      throw e;
+    }
+    const logTerminal = (success: boolean) => {
+      appendTerminalAudit({
+        commandPreview: preview,
+        success,
+        httpStatus: 200,
+      });
+    };
     try {
       const pem = await this.resolvePrivateKeyPem(rs);
       const r = await this.execSshBashScriptCollectOutput(
@@ -3988,9 +4253,11 @@ curl -fsS -o /dev/null "$U"
       const out = [r.stdout, r.stderr]
         .filter((s) => s && String(s).trim())
         .join('\n');
+      logTerminal(true);
       return { success: true, output: out || '(no output)' };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      logTerminal(false);
       return { success: false, output: humanizeRemoteTestError(msg, 'ssh') };
     }
   }

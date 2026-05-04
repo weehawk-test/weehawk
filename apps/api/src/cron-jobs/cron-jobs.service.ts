@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -8,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsRepository } from '../organizations/organizations.repository';
+import { OrganizationsService } from '../organizations/organizations.service';
 import { resolveRequiredOrganizationInternalIdForMember } from '../common/organization-workspace-scope';
 import {
   ORGANIZATION_WORKSPACE_PERMISSIONS,
@@ -60,6 +62,7 @@ export class CronJobsService {
     @InjectRepository(OrganizationMembership)
     private readonly membershipRepo: Repository<OrganizationMembership>,
     private readonly organizationsRepository: OrganizationsRepository,
+    private readonly organizationsService: OrganizationsService,
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
     private readonly remoteServersService: RemoteServersService,
@@ -69,6 +72,33 @@ export class CronJobsService {
       this.membershipRepo,
       'Cron job',
     );
+  }
+
+  private logSecurityAudit(
+    organizationId: number,
+    userId: number,
+    action: string,
+    endpoint: string,
+    extra: Record<string, unknown>,
+  ): void {
+    void this.organizationsService
+      .appendOrganizationAuditEvent(organizationId, userId, action, {
+        metadata: { endpoint, ...extra },
+      })
+      .catch(() => undefined);
+  }
+
+  private logCronSecurityHttpDenial(
+    expectedOrg: number,
+    userId: number,
+    action: string,
+    endpoint: string,
+    err: unknown,
+  ): void {
+    if (!(err instanceof HttpException)) return;
+    const httpStatus = err.getStatus();
+    if (httpStatus !== 404 && httpStatus !== 403) return;
+    this.logSecurityAudit(expectedOrg, userId, action, endpoint, { httpStatus });
   }
 
   private async requireWorkspaceOrgId(
@@ -508,6 +538,12 @@ fi
       notifyMessage: dto.notifyMessage?.trim() || null,
     });
     const saved = await this.scopedCronJobs.saveScoped(job, userId);
+    const ensured = await this.ensurePublicId(saved);
+    this.logSecurityAudit(orgId, userId, 'security.cron_job.created', 'POST /api/cron-jobs', {
+      cronJobPublicId: ensured.publicId,
+      cronJobName: ensured.name,
+      httpStatus: 201,
+    });
     this.runRemoteSyncInBackground(`create cron job ${saved.id}`, async () => {
       await this.upsertCrontabEntry(saved);
     });
@@ -557,8 +593,21 @@ fi
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_EDIT],
     );
-    const job = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(job, expectedOrg);
+    const endpoint = `PATCH /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}`;
+    let job: CronJob;
+    try {
+      job = await this.resolveEntity(userId, idOrPublicId);
+      this.assertCronWorkspace(job, expectedOrg);
+    } catch (e) {
+      this.logCronSecurityHttpDenial(
+        expectedOrg,
+        userId,
+        'security.cron_job.updated',
+        endpoint,
+        e,
+      );
+      throw e;
+    }
     const previousJob = this.cronJobRepo.create({ ...job });
 
     if (dto.name !== undefined) job.name = dto.name.trim();
@@ -628,7 +677,13 @@ fi
       }
       await this.upsertCrontabEntry(saved);
     });
-    return await this.toDetailRow(saved);
+    const detail = await this.toDetailRow(saved);
+    this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.updated', endpoint, {
+      cronJobPublicId: saved.publicId,
+      cronJobName: saved.name,
+      httpStatus: 200,
+    });
+    return detail;
   }
 
   async remove(
@@ -641,8 +696,27 @@ fi
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_DELETE],
     );
-    const existing = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(existing, expectedOrg);
+    const endpoint = `DELETE /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}`;
+    let existing: CronJob;
+    try {
+      existing = await this.resolveEntity(userId, idOrPublicId);
+      this.assertCronWorkspace(existing, expectedOrg);
+    } catch (e) {
+      this.logCronSecurityHttpDenial(
+        expectedOrg,
+        userId,
+        'security.cron_job.deleted',
+        endpoint,
+        e,
+      );
+      throw e;
+    }
+    const ensured = await this.ensurePublicId(existing);
+    this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.deleted', endpoint, {
+      cronJobPublicId: ensured.publicId,
+      cronJobName: ensured.name,
+      httpStatus: 200,
+    });
     await this.removeCrontabEntry(existing);
     await this.scopedCronJobs.deleteScoped(existing.id, userId);
   }
@@ -702,12 +776,38 @@ fi
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_RUN],
     );
-    const job = await this.resolveEntity(userId, idOrPublicId);
-    this.assertCronWorkspace(job, expectedOrg);
+    const endpoint = `POST /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}/run`;
+    let job: CronJob;
+    try {
+      job = await this.resolveEntity(userId, idOrPublicId);
+      this.assertCronWorkspace(job, expectedOrg);
+    } catch (e) {
+      this.logCronSecurityHttpDenial(
+        expectedOrg,
+        userId,
+        'security.cron_job.run_now',
+        endpoint,
+        e,
+      );
+      throw e;
+    }
+    const ensuredForGate = await this.ensurePublicId(job);
     if (!job.isActive) {
+      this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.run_now', endpoint, {
+        cronJobPublicId: ensuredForGate.publicId,
+        cronJobName: ensuredForGate.name,
+        httpStatus: 400,
+      });
       throw new BadRequestException('Cron job is inactive.');
     }
     const result = await this.execute(job);
+    this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.run_now', endpoint, {
+      cronJobPublicId: ensuredForGate.publicId,
+      cronJobName: ensuredForGate.name,
+      success: result.success,
+      action: result.action,
+      httpStatus: 200,
+    });
     return {
       ok: result.success,
       success: result.success,
