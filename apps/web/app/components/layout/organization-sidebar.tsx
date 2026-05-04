@@ -12,7 +12,6 @@ import {
   Menu,
   Server,
   UserCog,
-  X,
   Settings,
 } from "lucide-react";
 import { LayoutGroup } from "framer-motion";
@@ -170,7 +169,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                     aria-label="Close menu"
                     className="shrink-0 rounded-lg p-1.5 text-foreground hover:bg-accent/80"
                   >
-                    <X className="size-4" />
+                    <PanelLeft className="size-4 -translate-y-px" />
                   </button>
                 ) : (
                   <button
@@ -496,56 +495,46 @@ export function OrganizationMobileHeader({
   onOpenMenu,
 }: {
   org: OrganizationPublic;
-  /** When the org drawer is open: bar stays visible with the same dim+blur as the scrim; inner controls are hidden. */
+  /** When the org drawer is open on mobile, the top bar is hidden so only the drawer + scrim show. */
   menuOpen?: boolean;
   onOpenMenu: () => void;
 }) {
   return (
     <header
       className={cn(
-        "sticky top-0 flex w-full min-w-0 items-center gap-2 border-b px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top,0px))] md:hidden",
-        menuOpen
-          ? "z-[31] border-transparent bg-black/45 backdrop-blur-[2px] supports-[backdrop-filter]:bg-black/40 pointer-events-none"
-          : "z-[40] border-border/70 bg-background/90 backdrop-blur-md supports-[backdrop-filter]:bg-background/75",
+        "sticky top-0 z-[40] flex w-full min-w-0 items-center gap-2 border-b border-border/70 bg-background/90 px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top,0px))] backdrop-blur-md supports-[backdrop-filter]:bg-background/75 md:hidden",
+        menuOpen && "max-md:hidden",
       )}
     >
-      <div
-        className={cn(
-          "flex min-w-0 flex-1 items-center gap-2 transition-opacity duration-150",
-          menuOpen && "invisible",
-        )}
-        aria-hidden={menuOpen}
+      <button
+        type="button"
+        onClick={onOpenMenu}
+        className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-card/50 text-foreground transition-colors hover:bg-accent/70"
+        aria-expanded={menuOpen}
+        aria-controls="org-workspace-sidebar"
+        aria-label="Open organization menu"
       >
-        <button
-          type="button"
-          onClick={onOpenMenu}
-          className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-card/50 text-foreground transition-colors hover:bg-accent/70"
-          aria-expanded={menuOpen}
-          aria-controls="org-workspace-sidebar"
-          aria-label="Open organization menu"
-        >
-          <Menu className="size-5" />
-        </button>
-        <Link
-          href="/projects"
-          scroll={false}
-          className="relative size-9 shrink-0 overflow-hidden rounded-lg border border-primary/20 bg-card/40 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:ring-white/5"
-          aria-label="Weehawk home"
-        >
-          <Image
-            src="/weehawk-logo.svg"
-            alt=""
-            width={36}
-            height={36}
-            className="logo-adaptive size-9 scale-90 object-contain p-0.5"
-          />
-        </Link>
-        <div className="min-w-0 flex-1 py-0.5">
-          <p className="truncate text-base font-bold leading-tight tracking-tight text-foreground">Weehawk</p>
-          <p className="mt-0.5 truncate text-xs font-medium leading-snug text-muted-foreground">
-            {org.name}
-          </p>
-        </div>
+        <Menu className="size-5" />
+      </button>
+      <Link
+        href="/projects"
+        scroll={false}
+        className="relative size-9 shrink-0 overflow-hidden rounded-lg border border-primary/20 bg-card/40 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:ring-white/5"
+        aria-label="Weehawk home"
+      >
+        <Image
+          src="/weehawk-logo.svg"
+          alt=""
+          width={36}
+          height={36}
+          className="logo-adaptive size-9 scale-90 object-contain p-0.5"
+        />
+      </Link>
+      <div className="min-w-0 flex-1 py-0.5">
+        <p className="truncate text-base font-bold leading-tight tracking-tight text-foreground">Weehawk</p>
+        <p className="mt-0.5 truncate text-xs font-medium leading-snug text-muted-foreground">
+          {org.name}
+        </p>
       </div>
     </header>
   );

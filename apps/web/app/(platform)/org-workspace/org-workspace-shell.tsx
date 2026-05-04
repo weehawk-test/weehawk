@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import type { OrganizationPublic } from "@/lib/organizations-types";
 import { OrgWorkspaceProvider } from "./org-workspace-context";
 import {
@@ -27,7 +28,12 @@ export function OrgWorkspaceShell({
         onMobileOpenChange={setMobileOrgNavOpen}
       />
 
-      <div className="max-md:space-y-6 md:space-y-0">
+      <div
+        className={cn(
+          "md:space-y-0",
+          !mobileOrgNavOpen && "max-md:space-y-6",
+        )}
+      >
         <OrganizationMobileHeader
           org={org}
           menuOpen={mobileOrgNavOpen}
