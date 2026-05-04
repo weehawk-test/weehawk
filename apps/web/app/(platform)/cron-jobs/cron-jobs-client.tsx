@@ -100,7 +100,8 @@ export function CronJobsClient({
   const [runningCronJobId, setRunningCronJobId] = useState<number | null>(null);
   const [runLogLoadingCronJobId, setRunLogLoadingCronJobId] = useState<number | null>(null);
   /** Must survive `router.replace` (searchParams change) — that re-runs the effect and would cancel a cleanup-bound timer. */
-  const provisioningClearTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  /** Browser timer ids; avoid `ReturnType<typeof setTimeout>` (collides with NodeJS.Timeout under @types/node). */
+  const provisioningClearTimersRef = useRef<number[]>([]);
 
   useEffect(() => {
     return () => {
@@ -124,7 +125,7 @@ export function CronJobsClient({
       const q = sp.toString();
       router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
     }, 0);
-    const timer = setTimeout(() => {
+    const timer = window.setTimeout(() => {
       setProvisioningCronJobIds((prev) => prev.filter((id) => !ids.includes(id)));
     }, 15000);
     provisioningClearTimersRef.current.push(timer);

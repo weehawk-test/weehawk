@@ -74,15 +74,14 @@ export function useServicesPage(
   return useQuery({
     queryKey: ["services", "list", ownerKey, projectId, page, trimmed],
     queryFn: () => fetchServicesPage(projectId, page, trimmed),
-    /** When SSR supplied this page/search, skip client GET /api/services (no duplicate in Network). */
-    enabled: projectId !== undefined && projectId !== "" && !useSsrData,
-    select: (response) => ({
-      ...response,
-      data: reconcileAndFilterPendingDeletions("services", response.data, (item) => [
-        item.id,
-        item.publicId,
-      ]),
-    }),
+    /**
+     * Must stay enabled when SSR seeded `initialData`, otherwise `invalidateQueries` / org realtime
+     * cannot refetch (disabled observers skip network). Duplicates on first paint are avoided via
+     * `staleTime: Infinity` + `refetchOnMount: false` while SSR data is current.
+     */
+    enabled: projectId !== undefined && projectId !== "",
+    // Pending-deletion filtering uses localStorage/cookies — must not run in `select` or SSR and
+    // first client paint mismatch server HTML (hydration error). Apply in the page after mount.
     initialData: useSsrData ? initialPageData : undefined,
     initialDataUpdatedAt: useSsrData ? Date.now() : undefined,
     staleTime: useSsrData ? Infinity : 10_000,

@@ -27,9 +27,15 @@ export function OrgWorkspaceShell({
         onMobileOpenChange={setMobileOrgNavOpen}
       />
 
-      <div className="space-y-6 md:space-y-8">
-        <OrganizationMobileHeader org={org} onOpenMenu={() => setMobileOrgNavOpen(true)} />
-        <div>{children}</div>
+      <div className="max-md:space-y-6 md:space-y-0">
+        <OrganizationMobileHeader
+          org={org}
+          menuOpen={mobileOrgNavOpen}
+          onOpenMenu={() => setMobileOrgNavOpen(true)}
+        />
+        <div className="max-w-6xl mx-auto px-4 pb-6 md:px-8 md:pb-8 md:pt-8">
+          <div className="space-y-6 md:space-y-8">{children}</div>
+        </div>
       </div>
     </OrgWorkspaceProvider>
   );

@@ -54,7 +54,7 @@ export function useProjectsPage(
 }
 
 /**
- * @param options.skipClientFetch — when true (SSR already provided `initialData`), the browser never calls GET /projects/:id (avoids exposing full API JSON in DevTools Network).
+ * @param options.skipClientFetch — legacy flag; duplicate GET on mount is avoided via `initialData` + `staleTime` + `refetchOnMount`.
  */
 export function useProject(
   id: string,
@@ -67,16 +67,16 @@ export function useProject(
   const { user } = useAuth();
   const ownerKey = user?.userId ?? "none";
   const orgKey = options?.organizationPublicId?.trim() ?? "";
-  const skip = options?.skipClientFetch === true;
   const hasInitial = options?.initialData !== undefined;
   return useQuery({
     queryKey: projectQueryKey(user?.userId, id, orgKey || undefined),
     queryFn: () => fetchProject(id, orgKey || undefined),
-    enabled: Boolean(id) && !skip && (hasInitial || Boolean(orgKey)),
+    /** Stay enabled with SSR `initialData` so org-realtime invalidation can refetch. */
+    enabled: Boolean(id) && Boolean(orgKey),
     initialData: options?.initialData,
     initialDataUpdatedAt: hasInitial ? Date.now() : undefined,
     staleTime: hasInitial ? Infinity : 10_000,
-    refetchOnMount: skip || hasInitial ? false : true,
+    refetchOnMount: !hasInitial,
     refetchOnWindowFocus: false,
   });
 }

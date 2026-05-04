@@ -36,12 +36,40 @@ export function OrgRealtimeSync() {
           }),
         );
       }
-      void queryClient.invalidateQueries({ queryKey: ["projects"], exact: false });
-      void queryClient.invalidateQueries({ queryKey: ["services"], exact: false });
-      void queryClient.invalidateQueries({ queryKey: ["service"], exact: false });
+      // SSR seeds `useProjectsPage` / `useServicesPage` with `staleTime: Infinity` and `enabled: false`;
+      // default invalidation only refetches *active* queries, so new services never appear until navigation.
+      void queryClient.invalidateQueries({
+        queryKey: ["projects"],
+        exact: false,
+        refetchType: "all",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["services"],
+        exact: false,
+        refetchType: "all",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["service"],
+        exact: false,
+        refetchType: "all",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["service-runtime"],
+        exact: false,
+        refetchType: "all",
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["service-volumes"],
+        exact: false,
+        refetchType: "all",
+      });
       void queryClient.invalidateQueries({ queryKey: ["webhooks"], exact: false });
       void queryClient.invalidateQueries({ queryKey: ["cron-jobs"], exact: false });
-      void queryClient.invalidateQueries({ queryKey: ["deploy-logs"], exact: false });
+      void queryClient.invalidateQueries({
+        queryKey: ["deploy-logs"],
+        exact: false,
+        refetchType: "all",
+      });
       void queryClient.invalidateQueries({ queryKey: ["remote-servers"], exact: false });
       void queryClient.invalidateQueries({ queryKey: ["traefik"], exact: false });
       void queryClient.invalidateQueries({ queryKey: ["notifications"], exact: false });

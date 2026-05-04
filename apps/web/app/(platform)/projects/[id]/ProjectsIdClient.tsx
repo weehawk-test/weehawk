@@ -38,7 +38,7 @@ import {
   defaultDatabaseImage,
   defaultDatabaseVolumePath,
 } from "@/lib/database-engines";
-import { markPendingDeletion } from "@/lib/pending-deletions";
+import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
 
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
@@ -782,6 +782,11 @@ export default function ProjectsIdClient({
   const qc = useQueryClient();
   const { user } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
+  /** After mount, safe to apply client-only pending-deletion filter (matches SSR list for hydration). */
+  const [servicesListClientReady, setServicesListClientReady] = useState(false);
+  useEffect(() => {
+    setServicesListClientReady(true);
+  }, []);
   const { page, q, localQ, setLocalQ, setPage } = useDockerListUrl(urlPage, urlQ);
 
   const { data: project, isLoading: projectLoading } = useProject(projectId, {
@@ -816,7 +821,11 @@ export default function ProjectsIdClient({
     refetch: refetchServices,
   } = useServicesPage(projectId, page, q, urlPage, urlQ, initialServicesPage);
 
-  const items = servicesPageData?.data ?? [];
+  const items = useMemo(() => {
+    const raw = servicesPageData?.data ?? [];
+    if (!servicesListClientReady) return raw;
+    return reconcileAndFilterPendingDeletions("services", raw, (item) => [item.id, item.publicId]);
+  }, [servicesListClientReady, servicesPageData?.data]);
   const total = servicesPageData?.total ?? 0;
   const limit = servicesPageData?.limit ?? SERVICES_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / limit));

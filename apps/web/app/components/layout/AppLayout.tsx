@@ -88,7 +88,11 @@ function PlatformShell({ children }: { children: ReactNode }) {
             </button>
           </header>
         ) : null}
-        <div className="max-w-6xl mx-auto p-8 max-md:px-4 max-md:py-6">{children}</div>
+        {orgWorkspace ? (
+          children
+        ) : (
+          <div className="max-w-6xl mx-auto p-8 max-md:px-4 max-md:py-6">{children}</div>
+        )}
       </main>
     </>
   );

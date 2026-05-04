@@ -220,6 +220,23 @@ export class ServicesService {
     return Math.trunc(id);
   }
 
+  /** Socket.IO: refresh service detail / lists for other org members and tabs. */
+  private emitOrgServiceRealtime(
+    service: Service,
+    action: 'created' | 'updated' | 'deleted',
+  ): void {
+    const orgId = service.project?.organizationId;
+    if (orgId == null || orgId < 1) return;
+    const publicId = service.publicId?.trim();
+    if (!publicId) return;
+    this.orgRealtime.notifyOrgDataChanged(orgId, {
+      entity: 'service',
+      action,
+      publicId,
+      resourceId: service.id,
+    });
+  }
+
   /** Traefik / ACME rows are scoped to the service's organization (tenant isolation). */
   private async traefikSettingsForService(service: Service) {
     const uid = this.integrationOwnerUserId(service);
@@ -334,14 +351,7 @@ export class ServicesService {
         where: { id: saved.id },
         relations: ['project', 'remoteServer'],
       })) ?? saved;
-    const orgId = project.organizationId;
-    if (orgId != null && orgId >= 1) {
-      this.orgRealtime.notifyOrgDataChanged(orgId, {
-        entity: 'service',
-        action: 'created',
-        publicId: hydrated.publicId,
-      });
-    }
+    this.emitOrgServiceRealtime(hydrated, 'created');
     return this.withMagicTraefikMeUrl(hydrated);
   }
 
@@ -1060,6 +1070,7 @@ export class ServicesService {
       await this._internal_systemSaveService(s);
     }
     const fresh = await this.getScopedServiceForUser(id, userId);
+    this.emitOrgServiceRealtime(fresh, 'updated');
     return this.withMagicTraefikMeUrl(fresh);
   }
 
@@ -1079,6 +1090,7 @@ export class ServicesService {
       await this._internal_systemSaveService(s);
     }
     const fresh = await this.getScopedServiceForUser(id, userId);
+    this.emitOrgServiceRealtime(fresh, 'updated');
     return this.withMagicTraefikMeUrl(fresh);
   }
 
@@ -1532,6 +1544,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       saved,
       userId,
     );
+    this.emitOrgServiceRealtime(saved, 'updated');
     return saved;
   }
 
@@ -1565,6 +1578,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       saved,
       userId,
     );
+    this.emitOrgServiceRealtime(saved, 'updated');
     return saved;
   }
 
@@ -1608,6 +1622,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       saved,
       userId,
     );
+    this.emitOrgServiceRealtime(saved, 'updated');
     return saved;
   }
 
@@ -1722,6 +1737,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
         where: { id: saved.id },
         relations: ['project', 'remoteServer'],
       })) ?? saved;
+    this.emitOrgServiceRealtime(hydrated, 'updated');
     return this.withMagicTraefikMeUrl(hydrated);
   }
 
@@ -1784,6 +1800,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     );
 
     const fresh = await this.getScopedServiceForUser(id, userId);
+    this.emitOrgServiceRealtime(fresh, 'updated');
     return {
       success: true,
       message:
@@ -1933,6 +1950,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
         where: { id: saved.id },
         relations: ['project', 'remoteServer'],
       })) ?? saved;
+    this.emitOrgServiceRealtime(hydrated, 'updated');
     return {
       success: true,
       message: 'Application stack configured for image deploy.',
@@ -2216,6 +2234,11 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       } catch {
         /* best effort — deploy already succeeded */
       }
+      const afterDeploy = await this._internal_systemFindOneService({
+        where: { id },
+        relations: ['project'],
+      });
+      if (afterDeploy) this.emitOrgServiceRealtime(afterDeploy, 'updated');
     }
     return finalResult;
   }
@@ -3119,15 +3142,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     );
     await this.executorService.stopAndRemove(id);
     await this.removeManagedSecretsForService(service);
-    const orgId = service.project.organizationId;
+    this.emitOrgServiceRealtime(service, 'deleted');
     await this._internal_systemRemoveService(service);
-    if (orgId != null && orgId >= 1) {
-      this.orgRealtime.notifyOrgDataChanged(orgId, {
-        entity: 'service',
-        action: 'deleted',
-        publicId: service.publicId,
-      });
-    }
     return { success: true };
   }
 
@@ -3293,14 +3309,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         where: { id: saved.id },
         relations: ['project', 'remoteServer', 'buildRemoteServer'],
       })) ?? saved;
-    const orgId = hydrated.project?.organizationId;
-    if (orgId != null && orgId >= 1) {
-      this.orgRealtime.notifyOrgDataChanged(orgId, {
-        entity: 'service',
-        action: 'updated',
-        publicId: hydrated.publicId,
-      });
-    }
+    this.emitOrgServiceRealtime(hydrated, 'updated');
     return this.withMagicTraefikMeUrl(hydrated);
   }
 
@@ -3377,6 +3386,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       saved,
       userId,
     );
+    this.emitOrgServiceRealtime(saved, 'updated');
     return saved;
   }
 
@@ -3476,6 +3486,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       saved,
       userId,
     );
+    this.emitOrgServiceRealtime(saved, 'updated');
     return saved;
   }
 
@@ -3949,11 +3960,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       /* best effort — auto-deploy toggle saved even if script refresh fails */
     }
 
+    const freshAuto = await this.getScopedServiceForUser(serviceId, userId);
+    this.emitOrgServiceRealtime(freshAuto, 'updated');
     return {
-      autoDeployEnabled: service.autoDeployEnabled,
-      autoDeployBranch: service.autoDeployBranch,
-      autoDeployGitProvider: service.autoDeployGitProvider ?? null,
-      autoDeployRepoId: service.autoDeployRepoId ?? null,
+      autoDeployEnabled: freshAuto.autoDeployEnabled,
+      autoDeployBranch: freshAuto.autoDeployBranch,
+      autoDeployGitProvider: freshAuto.autoDeployGitProvider ?? null,
+      autoDeployRepoId: freshAuto.autoDeployRepoId ?? null,
     };
   }
 
@@ -4082,6 +4095,8 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       );
     }
 
+    const freshResync = await this.getScopedServiceForUser(serviceId, userId);
+    this.emitOrgServiceRealtime(freshResync, 'updated');
     return { updated: true };
   }
 
@@ -4528,6 +4543,14 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       this.log.log(
         `Auto-deploy: service #${service.id} deployed successfully.`,
       );
+      const afterAd = await this._internal_systemFindOneService({
+        where: { id: service.id },
+        relations: ['project'],
+      });
+      if (afterAd) {
+        const ensuredAd = await this.ensureServicePublicId(afterAd);
+        this.emitOrgServiceRealtime(ensuredAd, 'updated');
+      }
       return { success: true, output: 'Auto-deploy completed successfully.' };
     } catch (e) {
       const msg = getErrorMessage(e);
