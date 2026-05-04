@@ -15,12 +15,20 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import type { Request as ExpressRequest } from 'express';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { GitService } from './git.service';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
 import { ExchangeGithubManifestDto } from './dto/exchange-github-manifest.dto';
 import { RedisService } from '../common/redis/redis.service';
+import { OrganizationsService } from '../organizations/organizations.service';
+import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 
 @ApiTags('Git')
 @Controller('api/git')
@@ -31,6 +39,7 @@ export class GitController {
   constructor(
     private readonly gitService: GitService,
     private readonly redisService: RedisService,
+    private readonly organizationsService: OrganizationsService,
   ) {}
 
   private replayKey(deliveryId: string): string {
@@ -74,6 +83,14 @@ return 1
     return id;
   }
 
+  private parseRequiredOrgPublicId(raw: string | undefined): string {
+    const t = raw?.trim() ?? '';
+    if (!t) {
+      throw new BadRequestException('organizationPublicId is required');
+    }
+    return parseOrganizationPublicIdParam(t);
+  }
+
   /**
    * GitHub fetches this when the user opens Register GitHub App with a manifest URL.
    * Must stay unauthenticated.
@@ -82,8 +99,18 @@ return 1
   @ApiOperation({
     summary: 'GitHub App manifest JSON (GitHub servers GET this URL)',
   })
-  getGithubManifest(@Req() req: ExpressRequest) {
-    return this.gitService.buildGithubAppManifest(req);
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: true,
+    description:
+      'Organization workspace; callback URL includes this so credentials save to the correct org.',
+  })
+  getGithubManifest(
+    @Req() req: ExpressRequest,
+    @Query('organizationPublicId') organizationPublicId?: string,
+  ) {
+    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
+    return this.gitService.buildGithubAppManifest(req, pub);
   }
 
   @Post('github/webhook')
@@ -133,10 +160,25 @@ return 1
   @UseGuards(LocalSessionGuard)
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Get Git integration settings (secrets returned as booleans only)',
+    summary:
+      'Get Git integration settings for an organization (secrets returned as booleans only)',
   })
-  async getSettings(@Req() req: { user?: { userId: number } }) {
-    return this.gitService.getSettings(this.uid(req));
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: true,
+    description: 'Organization workspace; caller must have Git integration access.',
+  })
+  async getSettings(
+    @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
+  ) {
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.getSettings(ctx.internalId);
   }
 
   @Get('gitlab/projects')
@@ -146,13 +188,21 @@ return 1
     summary:
       'List GitLab projects (requires personal or group access token in Git settings)',
   })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
   async listGitlabProjects(
     @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
   ) {
-    return this.gitService.listGitlabProjects(this.uid(req), {
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.listGitlabProjects(ctx.internalId, {
       page: page ? parseInt(page, 10) : undefined,
       perPage: perPage ? parseInt(perPage, 10) : undefined,
       search,
@@ -166,15 +216,23 @@ return 1
     summary:
       'List branch names for a GitLab project (requires GitLab token in settings)',
   })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
   async listGitlabBranches(
     @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
     @Param('projectId') projectId: string,
   ) {
     const id = parseInt(projectId, 10);
     if (!Number.isFinite(id) || id <= 0) {
       throw new BadRequestException('Invalid project id');
     }
-    return this.gitService.listGitlabBranchNames(this.uid(req), id);
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.listGitlabBranchNames(ctx.internalId, id);
   }
 
   @Get('github/repositories')
@@ -184,13 +242,21 @@ return 1
     summary:
       'List GitHub repositories accessible to the configured GitHub App (across all installations)',
   })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
   async listGithubRepositories(
     @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
   ) {
-    return this.gitService.listGithubRepositories(this.uid(req), {
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.listGithubRepositories(ctx.internalId, {
       page: page ? parseInt(page, 10) : undefined,
       perPage: perPage ? parseInt(perPage, 10) : undefined,
       search,
@@ -204,8 +270,10 @@ return 1
     summary:
       'List branch names for a repo (installation access token; repo = owner/name)',
   })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
   async listGithubBranches(
     @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
     @Query('installationId') installationId: string,
     @Query('repo') repo: string,
   ) {
@@ -219,15 +287,22 @@ return 1
         'repo query parameter is required (owner/repo)',
       );
     }
-    return this.gitService.listGithubBranchNames(this.uid(req), iid, r);
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.listGithubBranchNames(ctx.internalId, iid, r);
   }
 
   @Put('settings')
   @UseGuards(LocalSessionGuard)
   @ApiOperation({
     summary:
-      'Update GitHub App / GitLab settings (partial). Send empty string to clear a secret.',
+      'Update GitHub App / GitLab settings for an organization (partial). Send empty string to clear a secret.',
   })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
   @UsePipes(
     new ValidationPipe({
       transform: true,
@@ -237,16 +312,23 @@ return 1
   )
   async updateSettings(
     @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
     @Body() dto: UpdateGitSettingsDto,
   ) {
-    return this.gitService.updateSettings(this.uid(req), dto);
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.updateSettings(ctx.internalId, dto);
   }
 
   @Post('github/exchange')
   @UseGuards(LocalSessionGuard)
   @ApiOperation({
     summary:
-      'Exchange GitHub App manifest temporary code for credentials and save to platform settings',
+      'Exchange GitHub App manifest temporary code for credentials and save to organization settings',
   })
   @UsePipes(
     new ValidationPipe({
@@ -259,6 +341,12 @@ return 1
     @Req() req: { user?: { userId: number } },
     @Body() dto: ExchangeGithubManifestDto,
   ) {
-    return this.gitService.exchangeGithubManifestCode(this.uid(req), dto.code);
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      dto.organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.exchangeGithubManifestCode(ctx.internalId, dto.code);
   }
 }

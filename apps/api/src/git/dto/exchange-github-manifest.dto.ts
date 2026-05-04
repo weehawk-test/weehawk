@@ -5,4 +5,10 @@ export class ExchangeGithubManifestDto {
   @IsNotEmpty()
   @MaxLength(512)
   code!: string;
+
+  /** Active organization (`organizations.publicId`). */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(48)
+  organizationPublicId!: string;
 }

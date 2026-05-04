@@ -29,6 +29,12 @@ export type UpdateGitSettingsPayload = Partial<{
   gitlabGroupAccessToken: string;
 }>;
 
+function requireOrgPublicId(organizationPublicId: string): string {
+  const t = organizationPublicId.trim();
+  if (!t) throw new Error("organizationPublicId is required");
+  return t;
+}
+
 async function errorBody(res: Response): Promise<string> {
   const text = await res.text();
   try {
@@ -48,8 +54,14 @@ function createApiUrl(path: string): URL {
   return new URL(path, base);
 }
 
-export async function fetchGitSettings(accessToken: string): Promise<GitSettingsPublic> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/git/settings`, { method: "GET" });
+export async function fetchGitSettings(
+  accessToken: string,
+  organizationPublicId: string,
+): Promise<GitSettingsPublic> {
+  const org = requireOrgPublicId(organizationPublicId);
+  const u = createApiUrl("/api/git/settings");
+  u.searchParams.set("organizationPublicId", org);
+  const res = await authFetch(accessToken, u.toString(), { method: "GET" });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json() as Promise<GitSettingsPublic>;
 }
@@ -70,9 +82,12 @@ export type GitlabProjectsListResponse = {
 
 export async function fetchGitlabProjects(
   accessToken: string,
+  organizationPublicId: string,
   params?: { page?: number; perPage?: number; search?: string },
 ): Promise<GitlabProjectsListResponse> {
+  const org = requireOrgPublicId(organizationPublicId);
   const u = createApiUrl("/api/git/gitlab/projects");
+  u.searchParams.set("organizationPublicId", org);
   if (params?.page != null) u.searchParams.set("page", String(params.page));
   if (params?.perPage != null) u.searchParams.set("perPage", String(params.perPage));
   if (params?.search?.trim()) u.searchParams.set("search", params.search.trim());
@@ -83,13 +98,15 @@ export async function fetchGitlabProjects(
 
 export async function fetchGitlabBranches(
   accessToken: string,
+  organizationPublicId: string,
   projectId: number,
 ): Promise<{ branches: string[] }> {
-  const res = await authFetch(
-    accessToken,
-    `${API_BASE}/api/git/gitlab/projects/${encodeURIComponent(String(projectId))}/branches`,
-    { method: "GET" },
+  const org = requireOrgPublicId(organizationPublicId);
+  const u = createApiUrl(
+    `/api/git/gitlab/projects/${encodeURIComponent(String(projectId))}/branches`,
   );
+  u.searchParams.set("organizationPublicId", org);
+  const res = await authFetch(accessToken, u.toString(), { method: "GET" });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json() as Promise<{ branches: string[] }>;
 }
@@ -109,12 +126,14 @@ export type GithubRepositoriesListResponse = {
   page: number;
 };
 
-/** Repositories visible to the configured GitHub App (all installations). */
 export async function fetchGithubRepositories(
   accessToken: string,
+  organizationPublicId: string,
   params?: { page?: number; perPage?: number; search?: string },
 ): Promise<GithubRepositoriesListResponse> {
+  const org = requireOrgPublicId(organizationPublicId);
   const u = createApiUrl("/api/git/github/repositories");
+  u.searchParams.set("organizationPublicId", org);
   if (params?.page != null) u.searchParams.set("page", String(params.page));
   if (params?.perPage != null) u.searchParams.set("perPage", String(params.perPage));
   if (params?.search?.trim()) u.searchParams.set("search", params.search.trim());
@@ -125,9 +144,12 @@ export async function fetchGithubRepositories(
 
 export async function fetchGithubBranches(
   accessToken: string,
+  organizationPublicId: string,
   params: { installationId: number; repo: string },
 ): Promise<{ branches: string[] }> {
+  const org = requireOrgPublicId(organizationPublicId);
   const u = createApiUrl("/api/git/github/branches");
+  u.searchParams.set("organizationPublicId", org);
   u.searchParams.set("installationId", String(params.installationId));
   u.searchParams.set("repo", params.repo.trim());
   const res = await authFetch(accessToken, u.toString(), { method: "GET" });
@@ -148,9 +170,13 @@ export type GithubAppManifest = {
   default_events: string[];
 };
 
-/** No auth — GitHub’s form POST flow needs the same JSON GitHub would fetch from manifest_url. */
-export async function fetchPublicGithubAppManifest(): Promise<GithubAppManifest> {
-  const res = await fetch(`${API_BASE}/api/git/github/manifest`, {
+export async function fetchPublicGithubAppManifest(
+  organizationPublicId: string,
+): Promise<GithubAppManifest> {
+  const org = requireOrgPublicId(organizationPublicId);
+  const u = createApiUrl("/api/git/github/manifest");
+  u.searchParams.set("organizationPublicId", org);
+  const res = await fetch(u.toString(), {
     method: "GET",
     credentials: "omit",
   });
@@ -160,9 +186,13 @@ export async function fetchPublicGithubAppManifest(): Promise<GithubAppManifest>
 
 export async function updateGitSettings(
   accessToken: string,
+  organizationPublicId: string,
   payload: UpdateGitSettingsPayload,
 ): Promise<GitSettingsPublic> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/git/settings`, {
+  const org = requireOrgPublicId(organizationPublicId);
+  const u = createApiUrl("/api/git/settings");
+  u.searchParams.set("organizationPublicId", org);
+  const res = await authFetch(accessToken, u.toString(), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -171,15 +201,16 @@ export async function updateGitSettings(
   return res.json() as Promise<GitSettingsPublic>;
 }
 
-/** After GitHub App manifest registration, exchanges `code` from the redirect query string. */
 export async function exchangeGithubManifest(
   accessToken: string,
+  organizationPublicId: string,
   code: string,
 ): Promise<GitSettingsPublic> {
+  const org = requireOrgPublicId(organizationPublicId);
   const res = await authFetch(accessToken, `${API_BASE}/api/git/github/exchange`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, organizationPublicId: org }),
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json() as Promise<GitSettingsPublic>;

@@ -5,6 +5,7 @@ import Image from "next/image";
 import { ExternalLink, GitBranch, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   fetchGitSettings,
   fetchPublicGithubAppManifest,
@@ -44,9 +45,17 @@ function postManifestToGithub(manifest: GithubAppManifest): void {
   document.body.removeChild(form);
 }
 
-export function GitHubGitSettingsClient({ initialData }: { initialData: GitSettingsPublic | null }) {
+export function GitHubGitSettingsClient({
+  initialData,
+  organizationPublicId,
+}: {
+  initialData: GitSettingsPublic | null;
+  organizationPublicId: string;
+}) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
+  const orgFromCtx = useOrgWorkspace().publicId;
+  const orgPid = (organizationPublicId || orgFromCtx).trim();
   const [loading, setLoading] = useState(!initialData);
   const [registerBusy, setRegisterBusy] = useState(false);
   const [disconnectBusy, setDisconnectBusy] = useState(false);
@@ -59,7 +68,7 @@ export function GitHubGitSettingsClient({ initialData }: { initialData: GitSetti
     }
     setLoading(true);
     try {
-      const s = await fetchGitSettings(accessToken);
+      const s = await fetchGitSettings(accessToken, orgPid);
       setData(s);
     } catch (e) {
       toast({
@@ -70,7 +79,7 @@ export function GitHubGitSettingsClient({ initialData }: { initialData: GitSetti
     } finally {
       setLoading(false);
     }
-  }, [accessToken, toast]);
+  }, [accessToken, orgPid, toast]);
 
   useEffect(() => {
     if (!initialData) {
@@ -79,9 +88,17 @@ export function GitHubGitSettingsClient({ initialData }: { initialData: GitSetti
   }, [initialData, load]);
 
   const startGithubManifestRegistration = useCallback(async () => {
+    if (!orgPid) {
+      toast({
+        title: "No active organization",
+        description: "Select an organization workspace, then try again.",
+        variant: "destructive",
+      });
+      return;
+    }
     setRegisterBusy(true);
     try {
-      const manifest = await fetchPublicGithubAppManifest();
+      const manifest = await fetchPublicGithubAppManifest(orgPid);
       postManifestToGithub(manifest);
     } catch (e) {
       toast({
@@ -91,13 +108,13 @@ export function GitHubGitSettingsClient({ initialData }: { initialData: GitSetti
       });
       setRegisterBusy(false);
     }
-  }, [toast]);
+  }, [orgPid, toast]);
 
   const disconnectGithub = useCallback(async () => {
     if (!accessToken) return;
     setDisconnectBusy(true);
     try {
-      const s = await updateGitSettings(accessToken, {
+      const s = await updateGitSettings(accessToken, orgPid, {
         githubAppId: "",
         githubClientId: "",
         githubAppSlug: "",
@@ -119,7 +136,7 @@ export function GitHubGitSettingsClient({ initialData }: { initialData: GitSetti
     } finally {
       setDisconnectBusy(false);
     }
-  }, [accessToken, toast]);
+  }, [accessToken, orgPid, toast]);
 
   if (loading && !data) {
     return (

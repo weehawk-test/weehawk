@@ -13,12 +13,14 @@ import {
   registryVerifyApi,
 } from "@/lib/registry-api";
 import { RegistryBreadcrumb } from "./registry-breadcrumb";
-import { REGISTRY_ACCOUNTS_QUERY_SCOPE } from "@/lib/react-query-scope";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 
 type PresetId = "dockerhub" | "ghcr" | "gitlab" | "custom";
 
 type Props = {
   preset: PresetId;
+  organizationPublicId: string;
 };
 
 const PRESET_META: Record<
@@ -84,11 +86,13 @@ function ProviderIcon({ preset }: { preset: PresetId }) {
   return <Globe2 className="h-14 w-14 text-sky-500" />;
 }
 
-export function RegistrySettingsClient({ preset }: Props) {
+export function RegistrySettingsClient({ preset, organizationPublicId }: Props) {
   const meta = PRESET_META[preset];
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const orgFromCtx = useOrgWorkspace().publicId;
+  const orgPid = (organizationPublicId || orgFromCtx).trim();
 
   const [providerUrl, setProviderUrl] = useState(meta.defaultProviderUrl);
   const [username, setUsername] = useState("");
@@ -98,9 +102,9 @@ export function RegistrySettingsClient({ preset }: Props) {
   const [isClearingToken, setIsClearingToken] = useState(false);
 
   const accountsQ = useQuery({
-    queryKey: ["registry-accounts", REGISTRY_ACCOUNTS_QUERY_SCOPE],
-    queryFn: () => fetchRegistryAccounts(accessToken ?? ""),
-    enabled: Boolean(accessToken),
+    queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
+    queryFn: () => fetchRegistryAccounts(accessToken ?? "", orgPid),
+    enabled: Boolean(accessToken && orgPid),
   });
 
   const canAuth = useMemo(
@@ -164,13 +168,15 @@ export function RegistrySettingsClient({ preset }: Props) {
     try {
       const provider = providerUrl.trim();
       const name = preset === "custom" ? provider || "Custom registry" : meta.title;
-      await createRegistryAccountApi(accessToken, {
+      await createRegistryAccountApi(accessToken, orgPid, {
         name,
         providerUrl: provider,
         username: username.trim(),
         password,
       });
-      await queryClient.invalidateQueries({ queryKey: ["registry-accounts"] });
+      await queryClient.invalidateQueries({
+        queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
+      });
       toast({
         title: "Registry saved",
         description: "Verified and stored on the server (encrypted). Used automatically for image push.",
@@ -191,8 +197,10 @@ export function RegistrySettingsClient({ preset }: Props) {
     if (!accessToken || !visibleSavedAccount) return;
     setIsClearingToken(true);
     try {
-      await deleteRegistryAccountApi(accessToken, visibleSavedAccount.id);
-      await queryClient.invalidateQueries({ queryKey: ["registry-accounts"] });
+      await deleteRegistryAccountApi(accessToken, orgPid, visibleSavedAccount.id);
+      await queryClient.invalidateQueries({
+        queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
+      });
       toast({ title: "Secret cleared", description: "Saved access token was removed." });
     } catch (e) {
       toast({

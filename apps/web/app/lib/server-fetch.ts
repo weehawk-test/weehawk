@@ -363,9 +363,15 @@ export async function fetchTraefikSettingsSSR(
   return (await res.json()) as TraefikSettingsPayload;
 }
 
-/** Server-only: Git provider settings for Git/GitHub/GitLab screens. */
-export async function fetchGitSettingsSSR(): Promise<GitSettingsPublic | null> {
-  const res = await fetch(`${apiBase()}/api/git/settings`, {
+/** Server-only: Git provider settings for Git/GitHub/GitLab screens (organization-scoped). */
+export async function fetchGitSettingsSSR(
+  organizationPublicId: string,
+): Promise<GitSettingsPublic | null> {
+  const org = organizationPublicId.trim();
+  if (!org) return null;
+  const u = new URL(`${apiBase()}/api/git/settings`);
+  u.searchParams.set("organizationPublicId", org);
+  const res = await fetch(u.toString(), {
     headers: await cookieHeaders(),
     cache: "no-store",
   });

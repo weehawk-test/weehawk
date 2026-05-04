@@ -423,3 +423,83 @@ export class RemoteServerTenantScopedRepository<
     return this.repo.save(entity);
   }
 }
+
+function requireOrgInternalId(organizationId: number): number {
+  if (!Number.isFinite(organizationId) || organizationId < 1) {
+    throw new BadRequestException(
+      'A valid organizationId is required for scoped operations.',
+    );
+  }
+  return Math.trunc(organizationId);
+}
+
+/**
+ * Rows keyed by internal {@link Organization#id} (not user id).
+ */
+export class OrganizationInternalScopedRepository<
+  TEntity extends ObjectLiteral & {
+    id: number | string;
+    organizationId: number;
+  },
+> {
+  constructor(
+    private readonly repo: Repository<TEntity>,
+    private readonly entityLabel: string,
+  ) {}
+
+  async list(
+    organizationInternalId: number,
+    options?: Omit<FindManyOptions<TEntity>, 'where'> & {
+      where?: ObjectLiteral;
+    },
+  ): Promise<TEntity[]> {
+    const oid = requireOrgInternalId(organizationInternalId);
+    return this.repo.find({
+      ...(options ?? {}),
+      where: {
+        ...(options?.where as ObjectLiteral | undefined),
+        organizationId: oid,
+      } as any,
+    });
+  }
+
+  async findByFieldOptional<K extends keyof TEntity>(
+    field: K,
+    value: TEntity[K],
+    organizationInternalId: number,
+    options?: FindOneOptions<TEntity>,
+  ): Promise<TEntity | null> {
+    const oid = requireOrgInternalId(organizationInternalId);
+    return this.repo.findOne({
+      ...(options ?? {}),
+      where: {
+        ...(options?.where as ObjectLiteral | undefined),
+        [field]: value,
+        organizationId: oid,
+      } as any,
+    });
+  }
+
+  async saveForOrganization(
+    entity: TEntity,
+    organizationInternalId: number,
+  ): Promise<TEntity> {
+    const oid = requireOrgInternalId(organizationInternalId);
+    const e = entity as TEntity & { organizationId?: number };
+    if (e.organizationId !== undefined && e.organizationId !== oid) {
+      throw new BadRequestException(
+        'Scoped save rejected: entity organizationId does not match.',
+      );
+    }
+    e.organizationId = oid;
+    return this.repo.save(entity);
+  }
+
+  async delete(id: number, organizationInternalId: number): Promise<void> {
+    const oid = requireOrgInternalId(organizationInternalId);
+    const res = await this.repo.delete({ id, organizationId: oid } as any);
+    if ((res.affected ?? 0) < 1) {
+      throw new NotFoundException(`${this.entityLabel} #${id} not found`);
+    }
+  }
+}

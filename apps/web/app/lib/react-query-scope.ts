@@ -6,9 +6,3 @@ export function orgScopedQuerySegment(organizationPublicId: string | null | unde
   const t = organizationPublicId?.trim();
   return t ? t : null;
 }
-
-/** Git settings API is per-user; second key part stays null until the backend is org-scoped. */
-export const GIT_SETTINGS_QUERY_SCOPE = null;
-
-/** Registry accounts API is per-user; second key part stays null until the backend is org-scoped. */
-export const REGISTRY_ACCOUNTS_QUERY_SCOPE = null;

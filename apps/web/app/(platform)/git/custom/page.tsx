@@ -5,6 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Globe2, Loader2, Save } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import {
   fetchGitSettings,
   updateGitSettings,
@@ -18,6 +20,7 @@ export default function CustomGitSettingsPage() {
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const orgPid = useOrgWorkspace().publicId.trim();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<GitSettingsPublic | null>(null);
@@ -34,7 +37,7 @@ export default function CustomGitSettingsPage() {
     }
     setLoading(true);
     try {
-      const s = await fetchGitSettings(accessToken);
+      const s = await fetchGitSettings(accessToken, orgPid);
       setData(s);
       setGitBaseUrl(s.gitlab.baseUrl ?? "");
       setAccessTokenValue("");
@@ -47,7 +50,7 @@ export default function CustomGitSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, toast]);
+  }, [accessToken, orgPid, toast]);
 
   useEffect(() => {
     void load();
@@ -61,10 +64,15 @@ export default function CustomGitSettingsPage() {
         gitlabBaseUrl: gitBaseUrl.trim(),
       };
       if (accessTokenValue.trim()) payload.gitlabGroupAccessToken = accessTokenValue.trim();
-      const next = await updateGitSettings(accessToken, payload);
+      const next = await updateGitSettings(accessToken, orgPid, payload);
       setData(next);
       setAccessTokenValue("");
-      void queryClient.invalidateQueries({ queryKey: ["git-settings"] });
+      void queryClient.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) &&
+          q.queryKey[0] === "git-settings" &&
+          q.queryKey[1] === orgScopedQuerySegment(orgPid),
+      });
       toast({ title: "Custom Git settings saved" });
     } catch (e) {
       toast({
@@ -81,9 +89,16 @@ export default function CustomGitSettingsPage() {
     if (!accessToken) return;
     setSaving(true);
     try {
-      const next = await updateGitSettings(accessToken, { [field]: "" } as UpdateGitSettingsPayload);
+      const next = await updateGitSettings(accessToken, orgPid, {
+        [field]: "",
+      } as UpdateGitSettingsPayload);
       setData(next);
-      void queryClient.invalidateQueries({ queryKey: ["git-settings"] });
+      void queryClient.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) &&
+          q.queryKey[0] === "git-settings" &&
+          q.queryKey[1] === orgScopedQuerySegment(orgPid),
+      });
       toast({ title: "Secret cleared" });
     } catch (e) {
       toast({

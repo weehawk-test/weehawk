@@ -22,10 +22,19 @@ export function GithubCallbackClient() {
   useEffect(() => {
     if (ran.current) return;
     const code = searchParams.get("code");
+    const organizationPublicId = searchParams.get("organizationPublicId")?.trim() ?? "";
     if (!code?.trim()) {
       ran.current = true;
       setStatus("error");
       setMessage("Missing ?code= from GitHub. Close this tab and try creating the app again.");
+      return;
+    }
+    if (!organizationPublicId) {
+      ran.current = true;
+      setStatus("error");
+      setMessage(
+        "Missing organization in the callback URL. Register the app again from Git → GitHub in your organization workspace.",
+      );
       return;
     }
     if (!accessToken) return;
@@ -44,7 +53,7 @@ export function GithubCallbackClient() {
     void (async () => {
       try {
         if (typeof window !== "undefined") sessionStorage.setItem(dedupeKey, "1");
-        await exchangeGithubManifest(accessToken, code.trim());
+        await exchangeGithubManifest(accessToken, organizationPublicId, code.trim());
         setStatus("ok");
         toast({ title: "GitHub App connected", description: "Credentials were saved to Weehawk." });
         router.replace("/git/github");

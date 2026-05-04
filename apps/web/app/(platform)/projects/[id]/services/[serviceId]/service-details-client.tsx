@@ -133,7 +133,7 @@ import {
   type S3ProfilePublic,
 } from "@/lib/s3-api";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
-import { GIT_SETTINGS_QUERY_SCOPE } from "@/lib/react-query-scope";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { cn } from "@/lib/utils";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
@@ -1370,6 +1370,7 @@ export default function ServiceDetails({
               <ApplicationArchivePanel
                 serviceId={serviceQueryKeyId(service)}
                 projectId={projectId}
+                organizationPublicId={project?.organizationPublicId ?? ""}
                 service={service}
                 onNavigateToRemoteDeployHost={openRemoteDeployHostPanel}
               />
@@ -3311,11 +3312,13 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
 function ApplicationArchivePanel({
   serviceId,
   projectId,
+  organizationPublicId,
   service,
   onNavigateToRemoteDeployHost,
 }: {
   serviceId: string;
   projectId: string;
+  organizationPublicId: string;
   service: Service;
   onNavigateToRemoteDeployHost: () => void;
 }) {
@@ -3324,14 +3327,15 @@ function ApplicationArchivePanel({
   const { toast } = useToast();
   const { data: serviceRow } = useService(serviceId);
   const effectiveService = serviceRow ?? service;
+  const orgPid = organizationPublicId.trim();
   const hasDeployHost = useMemo(() => {
     const id = effectiveService.remoteServerId;
     return typeof id === "number" && id > 0;
   }, [effectiveService.remoteServerId]);
   const { data: gitSettings, isLoading: gitSettingsLoading } = useQuery({
-    queryKey: ["git-settings", GIT_SETTINGS_QUERY_SCOPE],
-    queryFn: () => fetchGitSettings(accessToken!),
-    enabled: Boolean(accessToken),
+    queryKey: ["git-settings", orgScopedQuerySegment(orgPid)],
+    queryFn: () => fetchGitSettings(accessToken!, orgPid),
+    enabled: Boolean(accessToken && orgPid),
   });
   const githubIntegrationReady = useMemo(() => {
     const g = gitSettings?.github;
@@ -3458,19 +3462,23 @@ function ApplicationArchivePanel({
       queryKey: [
         "gitlab-projects",
         accessToken,
+        orgScopedQuerySegment(orgPid),
         showGitlabPanel,
         Boolean(gitSettings?.gitlab.groupAccessTokenSet),
         gitlabProjectsPage,
         gitlabProjectSearchApplied,
       ],
       queryFn: () =>
-        fetchGitlabProjects(accessToken!, {
+        fetchGitlabProjects(accessToken!, orgPid, {
           page: gitlabProjectsPage,
           perPage: 20,
           search: gitlabProjectSearchApplied.trim() || undefined,
         }),
       enabled: Boolean(
-        accessToken && showGitlabPanel && gitSettings?.gitlab.groupAccessTokenSet,
+        accessToken &&
+          orgPid &&
+          showGitlabPanel &&
+          gitSettings?.gitlab.groupAccessTokenSet,
       ),
     });
   const gitlabProjectsList: GitlabProjectListItem[] =
@@ -3481,18 +3489,21 @@ function ApplicationArchivePanel({
       queryKey: [
         "github-repositories",
         accessToken,
+        orgScopedQuerySegment(orgPid),
         showGithubPanel,
         githubAppListReady,
         githubProjectsPage,
         githubProjectSearchApplied,
       ],
       queryFn: () =>
-        fetchGithubRepositories(accessToken!, {
+        fetchGithubRepositories(accessToken!, orgPid, {
           page: githubProjectsPage,
           perPage: 20,
           search: githubProjectSearchApplied.trim() || undefined,
         }),
-      enabled: Boolean(accessToken && showGithubPanel && githubAppListReady),
+      enabled: Boolean(
+        accessToken && orgPid && showGithubPanel && githubAppListReady,
+      ),
     });
   const githubReposList: GithubRepoListItem[] = githubReposData?.repositories ?? [];
 
@@ -3534,10 +3545,17 @@ function ApplicationArchivePanel({
   }, [githubBranchPickerKey]);
 
   const gitlabBranchesQ = useQuery({
-    queryKey: ["gitlab-branches", accessToken, gitlabBranchPickerProjectId],
-    queryFn: () => fetchGitlabBranches(accessToken!, gitlabBranchPickerProjectId!),
+    queryKey: [
+      "gitlab-branches",
+      accessToken,
+      orgScopedQuerySegment(orgPid),
+      gitlabBranchPickerProjectId,
+    ],
+    queryFn: () =>
+      fetchGitlabBranches(accessToken!, orgPid, gitlabBranchPickerProjectId!),
     enabled: Boolean(
       accessToken &&
+        orgPid &&
         showGitlabPanel &&
         gitlabBranchPickerProjectId != null &&
         gitSettings?.gitlab.groupAccessTokenSet,
@@ -3547,15 +3565,22 @@ function ApplicationArchivePanel({
     queryKey: [
       "github-branches",
       accessToken,
+      orgScopedQuerySegment(orgPid),
       githubBranchPickerParts?.installationId,
       githubBranchPickerParts?.fullName,
     ],
     queryFn: () =>
-      fetchGithubBranches(accessToken!, {
+      fetchGithubBranches(accessToken!, orgPid, {
         installationId: githubBranchPickerParts!.installationId,
         repo: githubBranchPickerParts!.fullName,
       }),
-    enabled: Boolean(accessToken && showGithubPanel && githubAppListReady && githubBranchPickerParts),
+    enabled: Boolean(
+      accessToken &&
+        orgPid &&
+        showGithubPanel &&
+        githubAppListReady &&
+        githubBranchPickerParts,
+    ),
   });
 
   useEffect(() => {

@@ -79,8 +79,21 @@ export type RegistryAccountRow = {
   lastVerifiedAt: string | null;
 };
 
-export async function fetchRegistryAccounts(accessToken: string): Promise<RegistryAccountRow[]> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/registry/accounts`, { method: "GET" });
+function registryAccountsQuery(organizationPublicId: string): string {
+  const t = organizationPublicId.trim();
+  if (!t) throw new Error("organizationPublicId is required");
+  return `?organizationPublicId=${encodeURIComponent(t)}`;
+}
+
+export async function fetchRegistryAccounts(
+  accessToken: string,
+  organizationPublicId: string,
+): Promise<RegistryAccountRow[]> {
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/registry/accounts${registryAccountsQuery(organizationPublicId)}`,
+    { method: "GET" },
+  );
   const text = await res.text();
   if (!res.ok) {
     throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
@@ -99,13 +112,18 @@ export type CreateRegistryAccountPayload = {
 
 export async function createRegistryAccountApi(
   accessToken: string,
+  organizationPublicId: string,
   body: CreateRegistryAccountPayload,
 ): Promise<RegistryAccountRow> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/registry/accounts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/registry/accounts${registryAccountsQuery(organizationPublicId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
   const text = await res.text();
   if (!res.ok) {
     throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
@@ -113,10 +131,18 @@ export async function createRegistryAccountApi(
   return JSON.parse(text) as RegistryAccountRow;
 }
 
-export async function deleteRegistryAccountApi(accessToken: string, id: number): Promise<void> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/registry/accounts/${id}`, {
-    method: "DELETE",
-  });
+export async function deleteRegistryAccountApi(
+  accessToken: string,
+  organizationPublicId: string,
+  id: number,
+): Promise<void> {
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/registry/accounts/${id}${registryAccountsQuery(organizationPublicId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));

@@ -15,10 +15,7 @@ import { CronJob } from '../cron-jobs/entities/cron-job.entity';
 import { Project } from '../projects/entities/project.entity';
 import { RemoteServerProvisionJob } from '../remote-servers/entities/remote-server-provision-job.entity';
 import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
-import { RegistryAccount } from '../registry/entities/registry-account.entity';
 import { S3Profile } from '../s3/entities/s3-profile.entity';
-import { GitIntegrationSettings } from '../git/entities/git-integration.entity';
-import { TraefikSettings } from '../traefik/entities/traefik-settings.entity';
 import { NotificationChannel } from '../notifications/entities/notification-channel.entity';
 import { RefreshToken } from '../token/refresh-token.entity';
 
@@ -67,10 +64,7 @@ export class UserService {
     await manager.delete(Project, { userId });
     await manager.delete(RemoteServerProvisionJob, { userId });
     await manager.delete(RemoteServer, { userId });
-    await manager.delete(RegistryAccount, { userId });
     await manager.delete(S3Profile, { userId });
-    await manager.delete(GitIntegrationSettings, { userId });
-    await manager.delete(TraefikSettings, { userId });
     await manager.delete(NotificationChannel, { userId });
     await manager.delete(RefreshToken, { userId });
   }

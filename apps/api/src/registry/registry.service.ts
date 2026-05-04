@@ -28,7 +28,7 @@ import {
   registryHostFromImageRef,
 } from './registry-host-from-image';
 import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationInternalScopedRepository } from '../common/tenant-scoped.service';
 
 export type RegistryAccountSafe = {
   id: number;
@@ -41,14 +41,14 @@ export type RegistryAccountSafe = {
 @Injectable()
 export class RegistryService {
   private readonly logger = new Logger(RegistryService.name);
-  private readonly scopedRegistryAccounts: UserIdTenantScopedRepository<RegistryAccount>;
+  private readonly scopedRegistryAccounts: OrganizationInternalScopedRepository<RegistryAccount>;
 
   constructor(
     @InjectRepository(RegistryAccount)
     private readonly registryAccountRepository: Repository<RegistryAccount>,
     private readonly configService: ConfigService,
   ) {
-    this.scopedRegistryAccounts = new UserIdTenantScopedRepository<RegistryAccount>(
+    this.scopedRegistryAccounts = new OrganizationInternalScopedRepository<RegistryAccount>(
       this.registryAccountRepository,
       'Registry account',
     );
@@ -516,15 +516,15 @@ export class RegistryService {
     };
   }
 
-  async listAccounts(userId: number): Promise<RegistryAccountSafe[]> {
-    const rows = await this.scopedRegistryAccounts.listScoped(userId, {
+  async listAccounts(organizationInternalId: number): Promise<RegistryAccountSafe[]> {
+    const rows = await this.scopedRegistryAccounts.list(organizationInternalId, {
       order: { name: 'ASC' },
     });
     return rows.map((r) => this.toSafe(r));
   }
 
   async createAccount(
-    userId: number,
+    organizationInternalId: number,
     dto: CreateRegistryAccountDto,
   ): Promise<RegistryAccountSafe> {
     const providerUrl = normalizeProviderUrl(dto.providerUrl);
@@ -543,36 +543,34 @@ export class RegistryService {
       );
 
       const enc = encryptPrivateKey(password, this.getEncryptionSecret());
-      let existing: RegistryAccount | null = null;
-      try {
-        existing = await this.scopedRegistryAccounts.findScopedBy(
-          'providerUrl',
-          providerUrl,
-          userId,
-        );
-      } catch {
-        existing = null;
-      }
+      const existing = await this.scopedRegistryAccounts.findByFieldOptional(
+        'providerUrl',
+        providerUrl,
+        organizationInternalId,
+      );
       if (existing) {
         existing.name = name;
         existing.username = username;
         existing.passwordEncrypted = enc;
         existing.lastVerifiedAt = new Date();
-        const saved = await this.scopedRegistryAccounts.saveScoped(
+        const saved = await this.scopedRegistryAccounts.saveForOrganization(
           existing,
-          userId,
+          organizationInternalId,
         );
         return this.toSafe(saved);
       }
       const created = this.registryAccountRepository.create({
-        userId,
+        organizationId: organizationInternalId,
         name,
         providerUrl,
         username,
         passwordEncrypted: enc,
         lastVerifiedAt: new Date(),
       });
-      const saved = await this.scopedRegistryAccounts.saveScoped(created, userId);
+      const saved = await this.scopedRegistryAccounts.saveForOrganization(
+        created,
+        organizationInternalId,
+      );
       return this.toSafe(saved);
     } catch (e) {
       if (
@@ -590,8 +588,11 @@ export class RegistryService {
     }
   }
 
-  async removeAccount(userId: number, id: number): Promise<{ success: true }> {
-    await this.scopedRegistryAccounts.deleteScoped(id, userId);
+  async removeAccount(
+    organizationInternalId: number,
+    id: number,
+  ): Promise<{ success: true }> {
+    await this.scopedRegistryAccounts.delete(id, organizationInternalId);
     return { success: true };
   }
 
@@ -601,9 +602,9 @@ export class RegistryService {
   async mergePushEnvForImageRef(
     imageRef: string,
     base: NodeJS.ProcessEnv,
-    userId: number | null,
+    organizationInternalId: number | null,
   ): Promise<{ env: NodeJS.ProcessEnv; cleanup: () => Promise<void> }> {
-    if (!userId || userId < 1) {
+    if (!organizationInternalId || organizationInternalId < 1) {
       return {
         env: base,
         cleanup: async () => {},
@@ -611,16 +612,11 @@ export class RegistryService {
     }
     const host = registryHostFromImageRef(imageRef);
     const normalized = normalizeProviderUrl(host);
-    let account: RegistryAccount | null = null;
-    try {
-      account = await this.scopedRegistryAccounts.findScopedBy(
-        'providerUrl',
-        normalized,
-        userId,
-      );
-    } catch {
-      account = null;
-    }
+    const account = await this.scopedRegistryAccounts.findByFieldOptional(
+      'providerUrl',
+      normalized,
+      organizationInternalId,
+    );
     if (!account) {
       return {
         env: base,
@@ -678,27 +674,22 @@ export class RegistryService {
    */
   async getRegistryAuthConfigForImageRef(
     imageRef: string,
-    userId: number | null,
+    organizationInternalId: number | null,
   ): Promise<{
     username: string;
     password: string;
     serveraddress: string;
   } | null> {
-    if (!userId || userId < 1) {
+    if (!organizationInternalId || organizationInternalId < 1) {
       return null;
     }
     const host = registryHostFromImageRef(imageRef);
     const normalized = normalizeProviderUrl(host);
-    let account: RegistryAccount | null = null;
-    try {
-      account = await this.scopedRegistryAccounts.findScopedBy(
-        'providerUrl',
-        normalized,
-        userId,
-      );
-    } catch {
-      account = null;
-    }
+    const account = await this.scopedRegistryAccounts.findByFieldOptional(
+      'providerUrl',
+      normalized,
+      organizationInternalId,
+    );
     if (!account) {
       return null;
     }

@@ -210,6 +210,13 @@ fi
         );
       }
       const ownerUserId = ownerUserIdRaw;
+      const orgInternalRaw = service.project?.organizationId;
+      if (!orgInternalRaw || orgInternalRaw < 1) {
+        throw new InternalServerErrorException(
+          'Remote Git application source requires a service linked to a project with a valid organization id.',
+        );
+      }
+      const orgInternal = orgInternalRaw;
       if (gitProviderLabel === 'gitlab') {
         const glProjectId = parseInt(
           parseConfigHeaderValue(rawConfig, 'app.git.gitlabProjectId') || '',
@@ -218,7 +225,7 @@ fi
         if (Number.isFinite(glProjectId) && glProjectId > 0) {
           cloneUrl = await this.servicesService.resolveGitlabProjectCloneUrl(
             glProjectId,
-            ownerUserId,
+            orgInternal,
           );
         } else {
           const httpUrl = parseConfigHeaderValue(
@@ -228,7 +235,7 @@ fi
           if (httpUrl) {
             cloneUrl = await this.servicesService.resolveGitlabAuthenticatedUrl(
               httpUrl,
-              ownerUserId,
+              orgInternal,
             );
           }
         }
@@ -248,10 +255,10 @@ fi
           ghInstallationId > 0
         ) {
           const ghCreds =
-            await this.servicesService.getGithubAppCredentials(ownerUserId);
+            await this.servicesService.getGithubAppCredentials(orgInternal);
           if (!ghCreds?.appId?.trim() || !ghCreds?.privateKeyPem?.trim()) {
             throw new InternalServerErrorException(
-              'GitHub App is not configured for this project owner in Weehawk (Git → GitHub: App ID and private key, while signed in as the same user who owns the project). Required to clone GitHub repositories on the deploy host.',
+              'GitHub App is not configured for this project’s organization in Weehawk (Git → GitHub under that org: App ID and private key). Required to clone GitHub repositories on the deploy host.',
             );
           }
           const slug = ghFullName.replace(/\.git$/i, '').replace(/^\/+/, '');
@@ -577,7 +584,7 @@ nixpacks build . --name ${shQ(imageTag)} --env ${shQ(`NIXPACKS_NODE_VERSION=${ni
               const pushAuth =
                 await this.registryService.getRegistryAuthConfigForImageRef(
                   registryPush,
-                  projectUserId,
+                  projectOrganizationId,
                 );
               try {
                 const pushResult =
@@ -758,7 +765,7 @@ fi
               const pushAuth =
                 await this.registryService.getRegistryAuthConfigForImageRef(
                   registryPush,
-                  projectUserId,
+                  projectOrganizationId,
                 );
               const pushResult =
                 await this.remoteServersService.pushImageUsingDockerodeSsh(
@@ -789,7 +796,7 @@ fi
           const merged = await this.registryService.mergePushEnvForImageRef(
             authImageRef,
             execOpts.env,
-            projectUserId,
+            projectOrganizationId,
           );
           stackDeployEnv = merged.env;
           stackRegistryCleanup = merged.cleanup;
@@ -941,6 +948,8 @@ fi
       service.id,
     );
     const projectUserId: number | null = service.project?.userId ?? null;
+    const projectOrganizationId: number | null =
+      service.project?.organizationId ?? null;
     const remoteId = sshTargets.remoteServerId;
     if (remoteId == null) {
       throw new BadRequestException(
@@ -989,7 +998,7 @@ fi
         const merged = await this.registryService.mergePushEnvForImageRef(
           authImageRef,
           execEnv,
-          projectUserId,
+          projectOrganizationId,
         );
         let localDockerConfigDir: string | undefined;
         const dockerCfg = merged.env.DOCKER_CONFIG;

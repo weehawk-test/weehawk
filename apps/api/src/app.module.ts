@@ -24,6 +24,8 @@ import { DevThrottlerGuard } from './common/dev-throttler.guard';
 import { existsSync } from 'fs';
 import { DataSource, type DataSourceOptions } from 'typeorm';
 import { runOrgScopeSchemaBackfill } from './database/org-scope-backfill';
+import { migrateGitIntegrationSettingsToOrganizationScope } from './database/git-integration-org-migration';
+import { migrateRegistryAccountsToOrganizationScope } from './database/registry-account-org-migration';
 
 const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
   existsSync(filePath),
@@ -82,6 +84,8 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
         const pre = new DataSource({ ...options, synchronize: false });
         await pre.initialize();
         await runOrgScopeSchemaBackfill(pre);
+        await migrateGitIntegrationSettingsToOrganizationScope(pre);
+        await migrateRegistryAccountsToOrganizationScope(pre);
         await pre.destroy();
         const ds = new DataSource(options);
         await ds.initialize();

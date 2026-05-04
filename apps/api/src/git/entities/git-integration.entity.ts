@@ -3,22 +3,22 @@ import {
   CreateDateColumn,
   Entity,
   Index,
-  PrimaryColumn,
+  PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
 /**
- * Singleton row (id = 1) for platform-wide Git source integration (GitHub App, GitLab token).
+ * Git source integration (GitHub App, GitLab token) scoped to one organization.
  * Secrets are stored encrypted at rest using app-level AES-GCM.
  */
 @Entity('git_integration_settings')
-@Index(['userId'], { unique: true })
+@Index(['organizationId'], { unique: true })
 export class GitIntegrationSettings {
-  @PrimaryColumn({ type: 'int' })
+  @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ name: 'user_id', type: 'int' })
-  userId!: number;
+  @Column({ name: 'organization_id', type: 'int' })
+  organizationId!: number;
 
   @Column({ type: 'varchar', length: 64, nullable: true })
   githubAppId!: string | null;

@@ -9,13 +9,13 @@ import {
 
 /** Platform registry login (Dokploy-style: stored encrypted, used for push without relying on host ~/.docker only). */
 @Entity('registry_accounts')
-@Index(['userId', 'providerUrl'], { unique: true })
+@Index(['organizationId', 'providerUrl'], { unique: true })
 export class RegistryAccount {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column({ name: 'user_id', type: 'int' })
-  userId!: number;
+  @Column({ name: 'organization_id', type: 'int' })
+  organizationId!: number;
 
   @Column({ type: 'varchar', length: 120 })
   name!: string;

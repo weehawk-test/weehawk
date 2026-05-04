@@ -1,5 +1,7 @@
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { RegistrySettingsClient } from "../_components/registry-settings-client";
 
-export default function RegistryGitLabPage() {
-  return <RegistrySettingsClient preset="gitlab" />;
+export default async function RegistryGitlabPage() {
+  const orgPid = (await getServerActiveOrganizationPublicId())?.trim() ?? "";
+  return <RegistrySettingsClient preset="gitlab" organizationPublicId={orgPid} />;
 }

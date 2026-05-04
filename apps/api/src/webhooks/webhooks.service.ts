@@ -319,6 +319,10 @@ export class WebhooksService implements OnApplicationBootstrap {
       if (!ownerId || ownerId < 1) {
         return null;
       }
+      const orgInternal = svc.project?.organizationId;
+      if (!orgInternal || orgInternal < 1) {
+        return null;
+      }
       const provider = svc.autoDeployGitProvider;
       const repoId = svc.autoDeployRepoId;
       const branch = svc.autoDeployBranch || 'main';
@@ -329,7 +333,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         const fullName = sep >= 0 ? repoId.slice(sep + 1) : repoId;
         const cloneUrl = `https://github.com/${fullName}.git`;
         const ghCreds =
-          await this.servicesService.getGithubAppCredentials(ownerId);
+          await this.servicesService.getGithubAppCredentials(orgInternal);
         if (ghCreds && installIdStr) {
           return {
             cloneUrl,
@@ -348,7 +352,7 @@ export class WebhooksService implements OnApplicationBootstrap {
             const authUrl =
               await this.servicesService.resolveGitlabAuthenticatedUrl(
                 repoId,
-                ownerId,
+                orgInternal,
               );
             return { cloneUrl: authUrl, branch };
           } catch {
@@ -358,12 +362,12 @@ export class WebhooksService implements OnApplicationBootstrap {
         try {
           const url = await this.servicesService.resolveGitlabProjectCloneUrl(
             projectId,
-            ownerId,
+            orgInternal,
           );
           if (url) {
             const glApi =
               await this.servicesService.getGitlabArchiveApiCredentials(
-                ownerId,
+                orgInternal,
               );
             if (glApi) {
               return {

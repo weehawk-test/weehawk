@@ -6,6 +6,8 @@ import Image from "next/image";
 import { Loader2, Save } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import {
   fetchGitSettings,
   updateGitSettings,
@@ -15,10 +17,18 @@ import {
 import { SecretHint } from "../_components/secret-hint";
 import { GitBreadcrumb } from "../_components/git-breadcrumb";
 
-export function GitLabGitSettingsClient({ initialData }: { initialData: GitSettingsPublic | null }) {
+export function GitLabGitSettingsClient({
+  initialData,
+  organizationPublicId,
+}: {
+  initialData: GitSettingsPublic | null;
+  organizationPublicId: string;
+}) {
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const orgFromCtx = useOrgWorkspace().publicId;
+  const orgPid = (organizationPublicId || orgFromCtx).trim();
   const [loading, setLoading] = useState(!initialData);
   const [saving, setSaving] = useState(false);
   const [data, setData] = useState<GitSettingsPublic | null>(initialData);
@@ -33,7 +43,7 @@ export function GitLabGitSettingsClient({ initialData }: { initialData: GitSetti
     }
     setLoading(true);
     try {
-      const s = await fetchGitSettings(accessToken);
+      const s = await fetchGitSettings(accessToken, orgPid);
       setData(s);
       setGitlabBaseUrl(s.gitlab.baseUrl ?? "https://gitlab.com");
       setGitlabGroupAccessToken("");
@@ -46,7 +56,7 @@ export function GitLabGitSettingsClient({ initialData }: { initialData: GitSetti
     } finally {
       setLoading(false);
     }
-  }, [accessToken, toast]);
+  }, [accessToken, orgPid, toast]);
 
   useEffect(() => {
     if (!initialData) {
@@ -63,10 +73,15 @@ export function GitLabGitSettingsClient({ initialData }: { initialData: GitSetti
       };
       if (gitlabGroupAccessToken.trim())
         payload.gitlabGroupAccessToken = gitlabGroupAccessToken.trim();
-      const next = await updateGitSettings(accessToken, payload);
+      const next = await updateGitSettings(accessToken, orgPid, payload);
       setData(next);
       setGitlabGroupAccessToken("");
-      void queryClient.invalidateQueries({ queryKey: ["git-settings"] });
+      void queryClient.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) &&
+          q.queryKey[0] === "git-settings" &&
+          q.queryKey[1] === orgScopedQuerySegment(orgPid),
+      });
       toast({ title: "GitLab settings saved" });
     } catch (e) {
       toast({
@@ -83,9 +98,16 @@ export function GitLabGitSettingsClient({ initialData }: { initialData: GitSetti
     if (!accessToken) return;
     setSaving(true);
     try {
-      const next = await updateGitSettings(accessToken, { [field]: "" } as UpdateGitSettingsPayload);
+      const next = await updateGitSettings(accessToken, orgPid, {
+        [field]: "",
+      } as UpdateGitSettingsPayload);
       setData(next);
-      void queryClient.invalidateQueries({ queryKey: ["git-settings"] });
+      void queryClient.invalidateQueries({
+        predicate: (q) =>
+          Array.isArray(q.queryKey) &&
+          q.queryKey[0] === "git-settings" &&
+          q.queryKey[1] === orgScopedQuerySegment(orgPid),
+      });
       toast({ title: "Secret cleared" });
     } catch (e) {
       toast({
