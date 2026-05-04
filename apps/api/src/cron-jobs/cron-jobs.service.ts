@@ -31,6 +31,7 @@ import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
 import { generatePublicId } from '../common/public-id';
 import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export type CronJobListRow = {
   id: number;
@@ -66,6 +67,7 @@ export class CronJobsService {
     private readonly executorService: ExecutorService,
     private readonly notificationsService: NotificationService,
     private readonly remoteServersService: RemoteServersService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedCronJobs = new RemoteServerTenantScopedRepository<CronJob>(
       this.cronJobRepo,
@@ -544,6 +546,12 @@ fi
       cronJobName: ensured.name,
       httpStatus: 201,
     });
+    this.orgRealtime.notifyOrgDataChanged(orgId, {
+      entity: 'cron_job',
+      action: 'created',
+      publicId: ensured.publicId,
+      resourceId: saved.id,
+    });
     this.runRemoteSyncInBackground(`create cron job ${saved.id}`, async () => {
       await this.upsertCrontabEntry(saved);
     });
@@ -683,6 +691,12 @@ fi
       cronJobName: saved.name,
       httpStatus: 200,
     });
+    this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
+      entity: 'cron_job',
+      action: 'updated',
+      publicId: saved.publicId,
+      resourceId: saved.id,
+    });
     return detail;
   }
 
@@ -719,6 +733,14 @@ fi
     });
     await this.removeCrontabEntry(existing);
     await this.scopedCronJobs.deleteScoped(existing.id, userId);
+    if (expectedOrg >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
+        entity: 'cron_job',
+        action: 'deleted',
+        publicId: ensured.publicId,
+        resourceId: existing.id,
+      });
+    }
   }
 
   private async execute(

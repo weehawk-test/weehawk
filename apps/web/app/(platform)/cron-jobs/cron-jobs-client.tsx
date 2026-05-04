@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
@@ -18,7 +18,8 @@ import {
   ScrollText,
   X,
 } from "lucide-react";
-import { useDeleteCronJob, useUpdateCronJob } from "@/hooks/use-cron-jobs";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCronJobs, useDeleteCronJob, useUpdateCronJob } from "@/hooks/use-cron-jobs";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import {
@@ -30,7 +31,7 @@ import {
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
-import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
+import { markPendingDeletion } from "@/lib/pending-deletions";
 import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsCronJobsAdd,
@@ -39,6 +40,7 @@ import {
   orgMemberAllowsCronJobsLogs,
   orgMemberAllowsCronJobsRun,
 } from "@/lib/org-workspace-permissions";
+import { ORG_DATA_CHANGED_EVENT, type OrgDataChangedDetail } from "@/lib/org-realtime-events";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -80,11 +82,11 @@ export function CronJobsClient({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [jobs, setJobs] = useState<CronJobListItem[]>(initialJobs);
-  useLayoutEffect(() => {
-    setJobs(reconcileAndFilterPendingDeletions("cron-jobs", initialJobs, (j) => [j.id, j.publicId]));
-  }, [initialJobs]);
+  const orgKeyForQuery = organizationPublicId ?? "";
+  const cronJobsQuery = useCronJobs(orgKeyForQuery || undefined, { initialData: initialJobs });
+  const jobs = cronJobsQuery.data ?? initialJobs;
   const deleteCronJob = useDeleteCronJob(organizationPublicId);
   const updateCronJob = useUpdateCronJob(organizationPublicId);
   const { toast } = useToast();
@@ -128,6 +130,29 @@ export function CronJobsClient({
     provisioningClearTimersRef.current.push(timer);
   }, [searchParams, pathname, router]);
 
+  useEffect(() => {
+    const PROVISIONING_MS = 15_000;
+    const listener = (ev: Event) => {
+      const d = (ev as CustomEvent<OrgDataChangedDetail>).detail;
+      if (d?.entity !== "cron_job") return;
+      const rid = d.resourceId;
+      if (typeof rid !== "number" || !Number.isFinite(rid) || rid < 1) return;
+      const id = Math.trunc(rid);
+      if (d.action === "deleted") {
+        setProvisioningCronJobIds((prev) => prev.filter((x) => x !== id));
+        return;
+      }
+      if (d.action !== "created" && d.action !== "updated") return;
+      setProvisioningCronJobIds((prev) => Array.from(new Set([...prev, id])));
+      const timer = window.setTimeout(() => {
+        setProvisioningCronJobIds((prev) => prev.filter((x) => x !== id));
+      }, PROVISIONING_MS);
+      provisioningClearTimersRef.current.push(timer);
+    };
+    window.addEventListener(ORG_DATA_CHANGED_EVENT, listener);
+    return () => window.removeEventListener(ORG_DATA_CHANGED_EVENT, listener);
+  }, []);
+
   const filtered =
     (jobs ?? []).filter(
       (j) =>
@@ -148,13 +173,10 @@ export function CronJobsClient({
     if (!ok) return;
     const target = jobs.find((item) => cronJobRouteId(item) === id);
     markPendingDeletion("cron-jobs", id, target?.id, target?.publicId);
-    const previous = jobs;
-    setJobs((prev) => prev.filter((item) => cronJobRouteId(item) !== id));
     toast({ title: "Cron job deleted", description: `"${name}" has been removed.` });
     deleteCronJob.mutate(id, {
       onSuccess: () => undefined,
       onError: (e: Error) => {
-        setJobs(previous);
         toast({ title: "Could not delete cron job", description: e.message, variant: "destructive" });
       },
     });
@@ -173,7 +195,10 @@ export function CronJobsClient({
       { id: j.id, isActive: !j.isActive },
       {
         onSuccess: (updated) => {
-          setJobs((prev) => prev.map((x) => (x.id === j.id ? { ...x, isActive: updated.isActive } : x)));
+          const key = ["cron-jobs", orgKeyForQuery] as const;
+          queryClient.setQueryData<CronJobListItem[]>(key, (old) =>
+            (old ?? []).map((x) => (x.id === j.id ? { ...x, isActive: updated.isActive } : x)),
+          );
           toast({
             title: updated.isActive ? "Activated" : "Deactivated",
             description: updated.isActive ? "This schedule will run again." : "This schedule is paused.",
@@ -197,7 +222,6 @@ export function CronJobsClient({
     if (!ok) return;
 
     setIsBulkDeleting(true);
-    const previous = jobs;
     const removed = new Set(ids);
     const selectedRows = jobs.filter((item) => removed.has(cronJobRouteId(item)));
     markPendingDeletion(
@@ -205,13 +229,11 @@ export function CronJobsClient({
       ...ids,
       ...selectedRows.flatMap((item) => [item.id, item.publicId]),
     );
-    setJobs((prev) => prev.filter((item) => !removed.has(cronJobRouteId(item))));
     cronJobsBulk.clear();
     toast({ title: "Cron jobs deleted", description: `${ids.length} cron job(s) removed.` });
     try {
       await Promise.all(ids.map((id) => deleteCronJob.mutateAsync(id)));
     } catch (e) {
-      setJobs(previous);
       const errorMessage = e instanceof Error ? e.message : "Could not delete selected cron jobs.";
       toast({ title: "Could not delete selected cron jobs", description: errorMessage, variant: "destructive" });
     } finally {

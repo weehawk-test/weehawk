@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -96,6 +97,7 @@ export function S3Client({
   organizationPublicId?: string | null;
 }) {
   const orgTrim = organizationPublicId?.trim();
+  const s3QueryOrg = orgTrim && orgTrim.length > 0 ? orgTrim : null;
   const s3BasePath = "/s3";
   const inOrgS3 = orgTrim != null && orgTrim !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
@@ -109,8 +111,15 @@ export function S3Client({
   const { toast } = useToast();
   const { accessToken } = useAuth();
   const confirm = useConfirm();
-  const [profiles, setProfiles] = useState<S3ProfilePublic[]>(initialProfiles);
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
+  const profilesQuery = useQuery({
+    queryKey: ["s3-profiles", s3QueryOrg],
+    queryFn: () => listS3ProfilesApi(s3QueryOrg!),
+    enabled: Boolean(accessToken && s3QueryOrg),
+    initialData: s3QueryOrg ? initialProfiles : undefined,
+  });
+  const profiles = profilesQuery.data ?? [];
+  const listLoading = Boolean(s3QueryOrg && profilesQuery.isLoading && !profilesQuery.data);
   const [search, setSearch] = useState("");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [provider, setProvider] = useState("custom");
@@ -184,26 +193,6 @@ export function S3Client({
   });
   const profileKeys = useMemo(() => filtered.map((p) => p.name), [filtered]);
   const profilesBulk = useBulkSelection(profileKeys);
-
-  const loadProfiles = async () => {
-    if (!orgTrim) {
-      setProfiles([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const list = await listS3ProfilesApi(organizationPublicId);
-      setProfiles(list);
-    } catch (e) {
-      toast({
-        title: "Load failed",
-        description: e instanceof Error ? e.message : String(e),
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const closeModal = () => {
     setIsAddOpen(false);
@@ -285,7 +274,7 @@ export function S3Client({
         description: `Saved "${res.profile.name}".`,
       });
       closeModal();
-      await loadProfiles();
+      void queryClient.invalidateQueries({ queryKey: ["s3-profiles", s3QueryOrg] });
     } catch (e) {
       toast({
         title: "Save failed",
@@ -311,7 +300,7 @@ export function S3Client({
       if (!target) throw new Error("S3 destination not found.");
       await deleteS3ProfileApi(s3ProfileRouteId(target), organizationPublicId);
       toast({ title: "Deleted", description: name });
-      await loadProfiles();
+      void queryClient.invalidateQueries({ queryKey: ["s3-profiles", s3QueryOrg] });
     } catch (e) {
       toast({
         title: "Delete failed",
@@ -343,7 +332,7 @@ export function S3Client({
       );
       profilesBulk.clear();
       toast({ title: "Destinations deleted", description: `${names.length} destination(s) removed.` });
-      await loadProfiles();
+      void queryClient.invalidateQueries({ queryKey: ["s3-profiles", s3QueryOrg] });
     } catch (e) {
       toast({
         title: "Delete failed",
@@ -409,7 +398,7 @@ export function S3Client({
         )}
       </div>
 
-      {loading ? (
+      {listLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" />
           Loading destinations...

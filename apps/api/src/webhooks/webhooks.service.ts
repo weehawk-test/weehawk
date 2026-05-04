@@ -52,6 +52,7 @@ import {
 } from '../common/on-host-redeploy-script';
 import { generatePublicId } from '../common/public-id';
 import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export type WebhookListRow = {
   id: number;
@@ -96,6 +97,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly notificationsService: NotificationService,
     private readonly remoteServersService: RemoteServersService,
     private readonly configService: ConfigService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedWebhooks = new RemoteServerTenantScopedRepository<Webhook>(
       this.webhookRepo,
@@ -725,6 +727,12 @@ export class WebhooksService implements OnApplicationBootstrap {
       webhookName: ensured.name,
       httpStatus: 201,
     });
+    this.orgRealtime.notifyOrgDataChanged(orgId, {
+      entity: 'webhook',
+      action: 'created',
+      publicId: ensured.publicId,
+      resourceId: saved.id,
+    });
     if (dto.remoteServerId != null && resolvedBashScript) {
       this.runRemoteSyncInBackground(`create webhook ${saved.id}`, async () => {
         const mergedHosts = await this.mergeHooksPublicHostsForRemoteCreate(
@@ -1046,6 +1054,12 @@ export class WebhooksService implements OnApplicationBootstrap {
       webhookName: saved.name,
       httpStatus: 200,
     });
+    this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
+      entity: 'webhook',
+      action: 'updated',
+      publicId: saved.publicId,
+      resourceId: saved.id,
+    });
     return detail;
   }
 
@@ -1081,6 +1095,14 @@ export class WebhooksService implements OnApplicationBootstrap {
       httpStatus: 200,
     });
     await this.deleteWebhookArtifacts(userId, w);
+    if (expectedOrg >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
+        entity: 'webhook',
+        action: 'deleted',
+        publicId: ensured.publicId,
+        resourceId: w.id,
+      });
+    }
   }
 
   /**
@@ -1111,6 +1133,12 @@ export class WebhooksService implements OnApplicationBootstrap {
       );
       this.assertWebhookWorkspace(ensured, projectOrganizationId);
       await this.deleteWebhookArtifacts(actingUserId, ensured);
+    }
+    if (rows.length > 0 && projectOrganizationId >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(projectOrganizationId, {
+        entity: 'webhook',
+        action: 'deleted',
+      });
     }
   }
 

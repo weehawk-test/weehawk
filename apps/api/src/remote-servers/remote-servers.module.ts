@@ -10,6 +10,7 @@ import { TraefikModule } from '../traefik/traefik.module';
 import { AuthModule } from '../auth/auth.module';
 import { OrganizationsModule } from '../organizations/organizations.module';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
+import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { OrganizationMembership } from '../organizations/entities/organization-m
     TraefikModule,
     AuthModule,
     OrganizationsModule,
+    OrgRealtimeModule,
   ],
   controllers: [RemoteServersController],
   providers: [

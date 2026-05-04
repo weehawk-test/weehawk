@@ -16,7 +16,6 @@ import {
   setActiveOrganizationPublicBrowserCookie,
 } from "@/lib/active-org-cookie";
 import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
-import { orgMemberAllowsOrgManagementSettings } from "@/lib/org-workspace-permissions";
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -43,8 +42,8 @@ export function OrgSettingsClient() {
   }, [org.name]);
 
   const nameDirty = name.trim() !== org.name.trim();
-  const canEditName =
-    org.isOwner || orgMemberAllowsOrgManagementSettings(org.workspacePermissions);
+  /** Renaming the organization is owner-only (Settings tab may still be visible for delegates). */
+  const canEditName = org.isOwner;
 
   const onSaveName = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,6 +126,11 @@ export function OrgSettingsClient() {
           <Pencil className="size-4 text-muted-foreground" aria-hidden />
           <h2 className="text-base font-semibold text-foreground">Display name</h2>
         </div>
+        {!canEditName ? (
+          <p className="mb-3 text-sm text-amber-700 dark:text-amber-400/90">
+            Only organization owners can change the display name. Contact an owner if you need it updated.
+          </p>
+        ) : null}
         {canEditName ? (
           <form onSubmit={onSaveName} className="max-w-lg space-y-4">
             <div>
@@ -156,8 +160,7 @@ export function OrgSettingsClient() {
           </form>
         ) : (
           <p className="text-sm text-muted-foreground">
-            You need the Management · Settings capability (or owner role) to rename this workspace. The current name is{" "}
-            <span className="font-medium text-foreground">{org.name}</span>.
+            Current name: <span className="font-medium text-foreground">{org.name}</span>
           </p>
         )}
       </div>

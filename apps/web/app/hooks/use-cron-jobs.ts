@@ -21,7 +21,10 @@ function cronJobQueryEnabled(id: string | number): boolean {
   return typeof id === "string" ? id.trim().length > 0 : Number.isFinite(id);
 }
 
-export function useCronJobs(organizationPublicId: string | null | undefined) {
+export function useCronJobs(
+  organizationPublicId: string | null | undefined,
+  options?: { initialData?: CronJobListItem[] },
+) {
   const { accessToken } = useAuth();
   const orgKey = organizationPublicId?.trim() ?? "";
   return useQuery({
@@ -30,6 +33,7 @@ export function useCronJobs(organizationPublicId: string | null | undefined) {
     select: (rows) =>
       reconcileAndFilterPendingDeletions("cron-jobs", rows, (item) => [item.id, item.publicId]),
     enabled: Boolean(accessToken) && Boolean(orgKey),
+    ...(options?.initialData !== undefined ? { initialData: options.initialData } : {}),
   });
 }
 

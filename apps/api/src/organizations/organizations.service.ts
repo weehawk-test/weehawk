@@ -91,6 +91,14 @@ export type OrganizationAuditLogPublicDto = {
   metadata: Record<string, unknown> | null;
 };
 
+export type OrganizationAuditLogPageDto = {
+  items: OrganizationAuditLogPublicDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 @Injectable()
 export class OrganizationsService implements OnModuleInit {
   constructor(
@@ -224,7 +232,8 @@ export class OrganizationsService implements OnModuleInit {
 
   async listAuditLogsForOrg(
     ctx: OrganizationMemberContext,
-  ): Promise<OrganizationAuditLogPublicDto[]> {
+    opts?: { page?: number; pageSize?: number },
+  ): Promise<OrganizationAuditLogPageDto> {
     if (
       !ctx.actingIsOwner &&
       !ctx.workspacePermissions[
@@ -235,16 +244,39 @@ export class OrganizationsService implements OnModuleInit {
         'You do not have permission to view the organization audit log.',
       );
     }
+    const rawPage = Number(opts?.page ?? 1);
+    const rawSize = Number(opts?.pageSize ?? 12);
+    const pageSize = Math.min(50, Math.max(1, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 12));
+    let page = Math.max(1, Number.isFinite(rawPage) ? Math.trunc(rawPage) : 1);
+
+    const total = await this.auditLogs.count({
+      where: { organizationId: ctx.internalId },
+    });
+    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+    if (totalPages > 0) {
+      page = Math.min(page, totalPages);
+    }
+
+    const skip = (page - 1) * pageSize;
     const rows = await this.auditLogs.find({
       where: { organizationId: ctx.internalId },
       order: { createdAt: 'DESC' },
-      take: 200,
+      skip,
+      take: pageSize,
     });
-    if (rows.length === 0) return [];
+    if (rows.length === 0) {
+      return {
+        items: [],
+        total,
+        page: total === 0 ? 1 : page,
+        pageSize,
+        totalPages,
+      };
+    }
     const actorIds = [...new Set(rows.map((r) => r.actorUserId))];
     const actors = await this.users.find({ where: { id: In(actorIds) } });
     const emailById = new Map(actors.map((u) => [u.id, u.email]));
-    return rows.map((r) => ({
+    const items = rows.map((r) => ({
       id: r.id,
       action: r.action,
       createdAt: r.createdAt.toISOString(),
@@ -253,6 +285,7 @@ export class OrganizationsService implements OnModuleInit {
       targetEmail: r.targetEmail,
       metadata: r.metadata,
     }));
+    return { items, total, page, pageSize, totalPages };
   }
 
   async getOnePublicForMember(
@@ -343,14 +376,9 @@ export class OrganizationsService implements OnModuleInit {
     ctx: OrganizationMemberContext,
     dto: UpdateOrganizationDto,
   ): Promise<OrganizationPublicDto> {
-    if (
-      !ctx.actingIsOwner &&
-      !ctx.workspacePermissions[
-        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_SETTINGS
-      ]
-    ) {
+    if (!ctx.actingIsOwner) {
       throw new ForbiddenException(
-        'You do not have permission to update organization settings.',
+        'Only organization owners can update organization settings.',
       );
     }
     const name = this.sanitizeCreateName(dto);
@@ -376,14 +404,9 @@ export class OrganizationsService implements OnModuleInit {
     rawEmail: string,
     permissions: Record<string, unknown>,
   ): Promise<{ message: string }> {
-    if (
-      !ctx.actingIsOwner &&
-      !ctx.workspacePermissions[
-        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS
-      ]
-    ) {
+    if (!ctx.actingIsOwner) {
       throw new ForbiddenException(
-        'You do not have permission to change member workspace permissions.',
+        'Only organization owners can change member workspace permissions.',
       );
     }
     const email = String(rawEmail ?? '')
@@ -734,55 +757,87 @@ export class OrganizationsService implements OnModuleInit {
     });
   }
 
-  async leaveOrganization(
-    ctx: OrganizationMemberContext,
+  /**
+   * Same rules as {@link leaveOrganization}, but `accountDeletion` skips the
+   * “keep at least one owned organization” check (user is deleting their account).
+   */
+  private async leaveOrganizationAsUser(
     userId: number,
-  ): Promise<{ message: string }> {
-    if (!ctx.actingIsOwner) {
-      await this.appendOrganizationAuditEvent(ctx.internalId, userId, 'member.left', {
-        metadata: { role: 'member' },
+    organizationInternalId: number,
+    options: { accountDeletion: boolean },
+  ): Promise<
+    | 'member_left'
+    | 'org_dissolved'
+    | 'owner_left_multi'
+    | 'owner_promoted_successor'
+  > {
+    const membership = await this.repo.findMembership(
+      userId,
+      organizationInternalId,
+    );
+    if (!membership) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    const actingIsOwner = membership.role === ORGANIZATION_MEMBER_ROLE.OWNER;
+
+    if (!actingIsOwner) {
+      await this.appendOrganizationAuditEvent(organizationInternalId, userId, 'member.left', {
+        metadata: {
+          role: 'member',
+          ...(options.accountDeletion ? { accountDeletion: true } : {}),
+        },
       });
-      const n = await this.repo.deleteMembership(userId, ctx.internalId);
+      const n = await this.repo.deleteMembership(userId, organizationInternalId);
       if (n === 0) {
         throw new NotFoundException('Organization not found');
       }
-      return { message: 'You left the organization.' };
+      return 'member_left';
     }
 
-    const links = await this.repo.listMembershipsForOrganization(ctx.internalId);
+    const links = await this.repo.listMembershipsForOrganization(
+      organizationInternalId,
+    );
     if (links.length === 0) {
       throw new NotFoundException('Organization not found');
     }
 
     if (links.length === 1) {
-      await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
-        userId,
-        ctx.internalId,
-      );
-      await this.deleteOrganizationAndScopedResources(ctx.internalId);
-      return {
-        message:
-          'You left and the organization was closed because you were the only member. All of its workspace data was permanently deleted.',
-      };
+      if (!options.accountDeletion) {
+        await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
+          userId,
+          organizationInternalId,
+        );
+      }
+      await this.deleteOrganizationAndScopedResources(organizationInternalId);
+      return 'org_dissolved';
     }
 
-    await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
-      userId,
-      ctx.internalId,
+    if (!options.accountDeletion) {
+      await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
+        userId,
+        organizationInternalId,
+      );
+    }
+
+    const ownerCount = await this.repo.countOwnersForOrganization(
+      organizationInternalId,
     );
 
-    const ownerCount = await this.repo.countOwnersForOrganization(ctx.internalId);
-
     if (ownerCount > 1) {
-      await this.appendOrganizationAuditEvent(ctx.internalId, userId, 'member.left', {
-        metadata: { wasOwner: true, remainingOwners: ownerCount - 1 },
+      await this.appendOrganizationAuditEvent(organizationInternalId, userId, 'member.left', {
+        metadata: {
+          wasOwner: true,
+          remainingOwners: ownerCount - 1,
+          ...(options.accountDeletion ? { accountDeletion: true } : {}),
+        },
       });
-      const n = await this.repo.deleteMembership(userId, ctx.internalId);
+      const n = await this.repo.deleteMembership(userId, organizationInternalId);
       if (n === 0) {
         throw new NotFoundException('Organization not found');
       }
-      await this.syncLegacyOwnerIdColumn(ctx.internalId);
-      return { message: 'You left the organization.' };
+      await this.syncLegacyOwnerIdColumn(organizationInternalId);
+      return 'owner_left_multi';
     }
 
     const successor = links.find((l) => l.userId !== userId);
@@ -794,24 +849,67 @@ export class OrganizationsService implements OnModuleInit {
 
     await this.repo.updateMembershipRole(
       successor.userId,
-      ctx.internalId,
+      organizationInternalId,
       ORGANIZATION_MEMBER_ROLE.OWNER,
     );
-    await this.syncLegacyOwnerIdColumn(ctx.internalId);
+    await this.syncLegacyOwnerIdColumn(organizationInternalId);
 
     const successorUser = await this.users.findOne({
       where: { id: successor.userId },
     });
-    await this.appendOrganizationAuditEvent(ctx.internalId, userId, 'member.left', {
+    await this.appendOrganizationAuditEvent(organizationInternalId, userId, 'member.left', {
       metadata: {
         wasOwner: true,
         promotedNewOwnerEmail: successorUser?.email ?? null,
+        ...(options.accountDeletion ? { accountDeletion: true } : {}),
       },
     });
 
-    const n = await this.repo.deleteMembership(userId, ctx.internalId);
+    const n = await this.repo.deleteMembership(userId, organizationInternalId);
     if (n === 0) {
       throw new NotFoundException('Organization not found');
+    }
+    return 'owner_promoted_successor';
+  }
+
+  /**
+   * Removes the user from every organization using the same semantics as leaving:
+   * promote a successor or dissolve the org when they were the only member.
+   * Skips the “must keep one owned org” rule — used only for account deletion.
+   */
+  async removeUserFromAllOrganizationsForAccountDeletion(
+    userId: number,
+  ): Promise<void> {
+    for (;;) {
+      const links = await this.repo.listMembershipsForUser(userId);
+      if (links.length === 0) {
+        return;
+      }
+      const { organizationId } = links[0];
+      await this.leaveOrganizationAsUser(userId, organizationId, {
+        accountDeletion: true,
+      });
+    }
+  }
+
+  async leaveOrganization(
+    ctx: OrganizationMemberContext,
+    userId: number,
+  ): Promise<{ message: string }> {
+    const outcome = await this.leaveOrganizationAsUser(userId, ctx.internalId, {
+      accountDeletion: false,
+    });
+    if (outcome === 'member_left') {
+      return { message: 'You left the organization.' };
+    }
+    if (outcome === 'org_dissolved') {
+      return {
+        message:
+          'You left and the organization was closed because you were the only member. All of its workspace data was permanently deleted.',
+      };
+    }
+    if (outcome === 'owner_left_multi') {
+      return { message: 'You left the organization.' };
     }
     return {
       message:
@@ -828,14 +926,9 @@ export class OrganizationsService implements OnModuleInit {
     rawEmail: string,
     role: OrganizationMemberRole,
   ): Promise<{ message: string }> {
-    if (
-      !ctx.actingIsOwner &&
-      !ctx.workspacePermissions[
-        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS
-      ]
-    ) {
+    if (!ctx.actingIsOwner) {
       throw new ForbiddenException(
-        'You do not have permission to change member roles.',
+        'Only organization owners can change member roles.',
       );
     }
     const email = String(rawEmail ?? '')

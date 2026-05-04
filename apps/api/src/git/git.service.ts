@@ -22,6 +22,7 @@ import {
 } from '../remote-servers/ssh-key-crypto';
 import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
 import type { Request } from 'express';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export type WeehawkRemoteGitMarkerV1 = {
   v: 1;
@@ -93,6 +94,7 @@ export class GitService implements OnModuleInit {
     private readonly config: ConfigService,
     @InjectRepository(GitIntegrationSettings)
     private readonly repo: Repository<GitIntegrationSettings>,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {}
 
   private static readonly REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
@@ -687,6 +689,10 @@ export class GitService implements OnModuleInit {
     }
 
     await this.repo.save(row);
+    this.orgRealtime.notifyOrgDataChanged(oid, {
+      entity: 'git_settings',
+      action: 'updated',
+    });
     return this.toPublic(row);
   }
 
@@ -1433,6 +1439,10 @@ export class GitService implements OnModuleInit {
 
       await this.repo.save(row);
       await this.refreshGithubAppSlugIfNeeded(row);
+      this.orgRealtime.notifyOrgDataChanged(oid, {
+        entity: 'git_settings',
+        action: 'github_manifest_exchanged',
+      });
       return this.toPublic(row);
     } catch (error) {
       throw this.toExternalApiException(

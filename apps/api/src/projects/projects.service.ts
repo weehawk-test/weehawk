@@ -14,6 +14,7 @@ import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 @Injectable()
 export class ProjectsService {
@@ -23,6 +24,7 @@ export class ProjectsService {
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
     private readonly organizationsService: OrganizationsService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedProjects = new UserIdTenantScopedRepository<Project>(
       this.projectRepository,
@@ -108,6 +110,11 @@ export class ProjectsService {
       'POST /api/projects',
       saved,
     );
+    this.orgRealtime.notifyOrgDataChanged(organizationId, {
+      entity: 'project',
+      action: 'created',
+      publicId: saved.publicId,
+    });
     return saved;
   }
 
@@ -272,6 +279,11 @@ export class ProjectsService {
       `PATCH /api/projects/${encodeURIComponent(idOrPublicId)}`,
       saved,
     );
+    this.orgRealtime.notifyOrgDataChanged(project.organizationId, {
+      entity: 'project',
+      action: 'updated',
+      publicId: saved.publicId,
+    });
     return saved;
   }
 
@@ -308,5 +320,10 @@ export class ProjectsService {
       `DELETE /api/projects/${encodeURIComponent(idOrPublicId)}`,
       snapshot,
     );
+    this.orgRealtime.notifyOrgDataChanged(orgId, {
+      entity: 'project',
+      action: 'deleted',
+      publicId: snapshot.publicId,
+    });
   }
 }

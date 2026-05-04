@@ -15,12 +15,14 @@ import { GotifyProvider } from './providers/gotify.provider';
 import { NtfyProvider } from './providers/ntfy.provider';
 import { PushoverProvider } from './providers/pushover.provider';
 import { RemoteServersModule } from '../remote-servers/remote-servers.module';
+import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([NotificationChannel, OrganizationMembership]),
     OrganizationsModule,
     RemoteServersModule,
+    OrgRealtimeModule,
   ],
   controllers: [NotificationsController],
   providers: [

@@ -29,6 +29,7 @@ import {
 } from './registry-host-from-image';
 import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
 import { OrganizationInternalScopedRepository } from '../common/tenant-scoped.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export type RegistryAccountSafe = {
   id: number;
@@ -47,6 +48,7 @@ export class RegistryService {
     @InjectRepository(RegistryAccount)
     private readonly registryAccountRepository: Repository<RegistryAccount>,
     private readonly configService: ConfigService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedRegistryAccounts = new OrganizationInternalScopedRepository<RegistryAccount>(
       this.registryAccountRepository,
@@ -557,6 +559,11 @@ export class RegistryService {
           existing,
           organizationInternalId,
         );
+        this.orgRealtime.notifyOrgDataChanged(organizationInternalId, {
+          entity: 'registry_account',
+          action: 'updated',
+          resourceId: saved.id,
+        });
         return this.toSafe(saved);
       }
       const created = this.registryAccountRepository.create({
@@ -571,6 +578,11 @@ export class RegistryService {
         created,
         organizationInternalId,
       );
+      this.orgRealtime.notifyOrgDataChanged(organizationInternalId, {
+        entity: 'registry_account',
+        action: 'created',
+        resourceId: saved.id,
+      });
       return this.toSafe(saved);
     } catch (e) {
       if (
@@ -593,6 +605,11 @@ export class RegistryService {
     id: number,
   ): Promise<{ success: true }> {
     await this.scopedRegistryAccounts.delete(id, organizationInternalId);
+    this.orgRealtime.notifyOrgDataChanged(organizationInternalId, {
+      entity: 'registry_account',
+      action: 'deleted',
+      resourceId: id,
+    });
     return { success: true };
   }
 

@@ -97,6 +97,9 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
   const [providerUrl, setProviderUrl] = useState(meta.defaultProviderUrl);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  /** When false, refetch/realtime updates overwrite inputs from the server (multi-tab). */
+  const [usernameTouched, setUsernameTouched] = useState(false);
+  const [providerUrlTouched, setProviderUrlTouched] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isClearingToken, setIsClearingToken] = useState(false);
@@ -131,11 +134,13 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
 
   useEffect(() => {
     if (!visibleSavedAccount) return;
-    if (!username.trim()) setUsername(visibleSavedAccount.username);
-    if (preset === "custom" && !providerUrl.trim()) {
+    if (!usernameTouched) {
+      setUsername(visibleSavedAccount.username);
+    }
+    if (preset === "custom" && !providerUrlTouched) {
       setProviderUrl(visibleSavedAccount.providerUrl);
     }
-  }, [visibleSavedAccount, username, providerUrl, preset]);
+  }, [visibleSavedAccount, usernameTouched, providerUrlTouched, preset]);
 
   const verifyConnection = async () => {
     if (!canAuth) return;
@@ -182,6 +187,8 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
         description: "Verified and stored on the server (encrypted). Used automatically for image push.",
       });
       setPassword("");
+      setUsernameTouched(false);
+      setProviderUrlTouched(false);
     } catch (e) {
       toast({
         title: "Save failed",
@@ -202,6 +209,10 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
         queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
       });
       toast({ title: "Secret cleared", description: "Saved access token was removed." });
+      setUsername("");
+      setPassword("");
+      setUsernameTouched(false);
+      setProviderUrlTouched(false);
     } catch (e) {
       toast({
         title: "Could not clear",
@@ -238,7 +249,10 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
           <input
             className={`input-field w-full font-mono ${preset !== "custom" ? "opacity-80 cursor-not-allowed" : ""}`}
             value={providerUrl}
-            onChange={(e) => setProviderUrl(e.target.value)}
+            onChange={(e) => {
+              setProviderUrlTouched(true);
+              setProviderUrl(e.target.value);
+            }}
             placeholder="docker.io or registry.example.com"
             autoComplete="off"
             readOnly={preset !== "custom"}
@@ -250,7 +264,10 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
           <input
             className="input-field w-full"
             value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            onChange={(e) => {
+              setUsernameTouched(true);
+              setUsername(e.target.value);
+            }}
             placeholder="username"
             autoComplete="username"
           />

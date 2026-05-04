@@ -1,10 +1,13 @@
 import {
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
+  ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -14,6 +17,7 @@ import {
 import {
   ApiBearerAuth,
   ApiOperation,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
@@ -199,8 +203,18 @@ export class OrganizationsController {
     summary:
       'List organization audit log (owners always; otherwise requires Management · Audit log permission)',
   })
-  listAuditLog(@OrgMemberContextParam() ctx: OrganizationMemberContext) {
-    return this.organizationsService.listAuditLogsForOrg(ctx);
+  @ApiQuery({ name: 'page', required: false, description: '1-based page index (default 1)' })
+  @ApiQuery({
+    name: 'pageSize',
+    required: false,
+    description: 'Rows per page (default 12, max 50)',
+  })
+  listAuditLog(
+    @OrgMemberContextParam() ctx: OrganizationMemberContext,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('pageSize', new DefaultValuePipe(12), ParseIntPipe) pageSize: number,
+  ) {
+    return this.organizationsService.listAuditLogsForOrg(ctx, { page, pageSize });
   }
 
   @Patch(':publicId')

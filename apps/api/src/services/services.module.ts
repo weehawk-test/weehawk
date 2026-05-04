@@ -13,6 +13,7 @@ import { GitModule } from '../git/git.module';
 import { TraefikModule } from '../traefik/traefik.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
 import { RemoteServersModule } from '../remote-servers/remote-servers.module';
+import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
     forwardRef(() => ExecutorModule),
     forwardRef(() => WebhooksModule),
     RemoteServersModule,
+    OrgRealtimeModule,
     S3Module,
     GitModule,
     TraefikModule,

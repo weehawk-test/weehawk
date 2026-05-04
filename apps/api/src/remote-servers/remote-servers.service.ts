@@ -70,6 +70,7 @@ import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.serv
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 /**
  * Bash-safe `export VAR='…'` lines so `docker stack deploy` can substitute `${VAR}` in the compose
@@ -295,6 +296,7 @@ export class RemoteServersService {
     private readonly configService: ConfigService,
     private readonly traefikService: TraefikService,
     private readonly organizationsService: OrganizationsService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedRemoteServers = new RemoteServerTenantScopedRepository<RemoteServer>(
       this.remoteServerRepository,
@@ -3347,6 +3349,13 @@ curl -fsS -o /dev/null "$U"
         },
       );
     }
+    if (organizationId >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(organizationId, {
+        entity: 'remote_server',
+        action: 'created',
+        publicId: saved.publicId,
+      });
+    }
     return this.toSafe(saved);
   }
 
@@ -3504,6 +3513,14 @@ curl -fsS -o /dev/null "$U"
         )
         .catch(() => undefined);
     }
+    const oid = saved.organizationId;
+    if (oid != null && oid >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(oid, {
+        entity: 'remote_server',
+        action: 'updated',
+        publicId: saved.publicId,
+      });
+    }
     return this.toSafe(saved);
   }
 
@@ -3575,11 +3592,12 @@ curl -fsS -o /dev/null "$U"
         `Cannot delete: ${n} service(s) still reference this remote server (deploy and/or build). Unlink them first.`,
       );
     }
+    const orgId = rs.organizationId;
     await this.scopedRemoteServers.deleteScoped(id, userId);
-    if (rs.organizationId != null) {
+    if (orgId != null) {
       void this.organizationsService
         .appendOrganizationAuditEvent(
-          rs.organizationId,
+          orgId,
           userId,
           'security.remote_server.deleted',
           {
@@ -3591,6 +3609,13 @@ curl -fsS -o /dev/null "$U"
           },
         )
         .catch(() => undefined);
+      if (orgId >= 1) {
+        this.orgRealtime.notifyOrgDataChanged(orgId, {
+          entity: 'remote_server',
+          action: 'deleted',
+          publicId: rs.publicId,
+        });
+      }
     }
   }
 

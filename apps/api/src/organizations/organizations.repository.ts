@@ -57,6 +57,13 @@ export class OrganizationsRepository {
     });
   }
 
+  async listMembershipsForUser(userId: number): Promise<OrganizationMembership[]> {
+    return this.memberships.find({
+      where: { userId },
+      order: { createdAt: 'ASC' },
+    });
+  }
+
   async countMembershipsForOrganization(organizationId: number): Promise<number> {
     return this.memberships.count({ where: { organizationId } });
   }

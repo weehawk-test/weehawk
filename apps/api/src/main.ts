@@ -3,17 +3,18 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { WsAdapter } from '@nestjs/platform-ws';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import helmet from 'helmet';
 import { createSecretKeyMiddleware } from './common/middleware/secret-key.middleware';
 import { resolveCorsOrigin } from './common/cors-origin';
 import { assertProductionSecurityConfig } from './common/production-security';
 import { HttpErrorSanitizerFilter } from './common/http-error-sanitizer.filter';
+import { registerRawTerminalWebSockets } from './raw-terminal-ws.bootstrap';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
-  app.useWebSocketAdapter(new WsAdapter(app));
+  app.useWebSocketAdapter(new IoAdapter(app));
   const configService = app.get(ConfigService);
   assertProductionSecurityConfig(configService);
 
@@ -68,6 +69,7 @@ async function bootstrap() {
     SwaggerModule.setup('swagger', app, document);
   }
 
+  registerRawTerminalWebSockets(app);
   await app.listen(process.env.PORT ?? 8080);
 }
 bootstrap();

@@ -55,3 +55,18 @@ export function wsBaseCandidates(): string[] {
   }
   return Array.from(new Set(out.filter(Boolean)));
 }
+
+/**
+ * HTTP(S) origin for Socket.IO — mirrors {@link wsBase} so path prefixes like `/api`
+ * match how terminal WebSockets are reached behind a reverse proxy.
+ */
+export function socketIoHttpBase(): string {
+  const raw = (process.env.NEXT_PUBLIC_API_URL ?? "").trim().replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(raw)) {
+    return raw;
+  }
+  if (raw.startsWith("/") && typeof window !== "undefined") {
+    return `${window.location.origin}${raw}`;
+  }
+  return normalizeApiBase(raw || "http://localhost:8080");
+}

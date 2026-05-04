@@ -51,3 +51,11 @@ export type OrganizationAuditLogEntry = {
   targetEmail: string | null;
   metadata: Record<string, unknown> | null;
 };
+
+export type OrganizationAuditLogPage = {
+  items: OrganizationAuditLogEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};

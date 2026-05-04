@@ -13,7 +13,6 @@ import { EmailService } from '../email/email.service';
 import { TokenStoreService } from '../email/token-store.service';
 import { OrganizationsRepository } from './organizations.repository';
 import { OrganizationsService } from './organizations.service';
-import { ORGANIZATION_WORKSPACE_PERMISSIONS } from './organization-workspace-permissions';
 import type {
   OrganizationMemberContext,
   OrganizationMemberPublicDto,
@@ -51,14 +50,9 @@ export class OrganizationInviteService {
     actingUserId: number,
     rawEmail: string,
   ): Promise<{ message: string; notice?: string }> {
-    if (
-      !ctx.actingIsOwner &&
-      !ctx.workspacePermissions[
-        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS
-      ]
-    ) {
+    if (!ctx.actingIsOwner) {
       throw new ForbiddenException(
-        'You do not have permission to invite organization members.',
+        'Only organization owners can invite members.',
       );
     }
     const email = String(rawEmail ?? '')

@@ -46,6 +46,7 @@ import {
 } from '../remote-servers/ssh-key-crypto';
 import { generatePublicId } from '../common/public-id';
 import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 const MAX_PROFILES = 50;
 
@@ -104,6 +105,7 @@ export class S3Service implements OnModuleInit {
     private readonly organizationsService: OrganizationsService,
     private readonly configService: ConfigService,
     private readonly remoteServersService: RemoteServersService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedProfiles = new RemoteServerTenantScopedRepository<S3Profile>(
       this.profileRepo,
@@ -660,6 +662,11 @@ export class S3Service implements OnModuleInit {
       hadExisting ? 'security.s3.profile_updated' : 'security.s3.profile_created',
       'POST /api/s3/profiles',
     );
+    this.orgRealtime.notifyOrgDataChanged(orgId, {
+      entity: 's3_profile',
+      action: hadExisting ? 'updated' : 'created',
+      resourceId: ensured.id,
+    });
     return {
       success: true,
       profile: this.toPublicProfile(ensured),
@@ -683,6 +690,7 @@ export class S3Service implements OnModuleInit {
       publicId,
       organizationPublicId,
     );
+    const orgIdForEmit = row.organizationId;
     this.logS3OrgAudit(
       row,
       userId,
@@ -690,6 +698,13 @@ export class S3Service implements OnModuleInit {
       `DELETE /api/s3/profiles/${encodeURIComponent(publicId)}`,
     );
     await this.scopedProfiles.deleteScoped(row.id, userId);
+    if (orgIdForEmit != null && orgIdForEmit >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(orgIdForEmit, {
+        entity: 's3_profile',
+        action: 'deleted',
+        resourceId: row.id,
+      });
+    }
     return { success: true, publicId: row.publicId };
   }
 

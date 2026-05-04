@@ -1,38 +1,19 @@
-import {
-  WebSocketGateway,
-  OnGatewayConnection,
-  WebSocketServer,
-} from '@nestjs/websockets';
+import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Server } from 'ws';
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import { URL } from 'url';
 import { Client } from 'ssh2';
-import {
-  isRequestOriginAllowed,
-  resolveCorsOrigin,
-} from '../common/cors-origin';
+import { isRequestOriginAllowed } from '../common/cors-origin';
 import { RemoteServersService } from './remote-servers.service';
 import { AUTH_ACCESS_COOKIE, parseCookieHeader } from '../auth/auth-cookies';
 
-@WebSocketGateway({
-  path: '/ws/remote-terminal',
-  cors: {
-    origin: resolveCorsOrigin(process.env.CORS_ORIGIN, process.env.NODE_ENV, {
-      logWarnings: false,
-    }),
-    credentials: true,
-  },
-})
-export class RemoteTerminalGateway implements OnGatewayConnection {
+@Injectable()
+export class RemoteTerminalGateway {
   constructor(
     private readonly remoteServersService: RemoteServersService,
     private readonly jwtService: JwtService,
   ) {}
-
-  @WebSocketServer()
-  server: Server;
 
   private async userIdFromWsRequest(
     req: IncomingMessage | undefined,

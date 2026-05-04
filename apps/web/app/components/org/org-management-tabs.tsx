@@ -10,7 +10,7 @@ const tabs = [
   { href: "/overview", label: "Overview", icon: Home, match: "overview" as const },
   { href: "/audit", label: "Audit log", icon: ClipboardList, match: "audit" as const },
   { href: "/members", label: "Members", icon: Users, match: "members" as const },
-  { href: "/permissions", label: "Permission", icon: Shield, match: "permissions" as const },
+  { href: "/permissions", label: "Permissions", icon: Shield, match: "permissions" as const },
   { href: "/settings", label: "Settings", icon: Settings, match: "settings" as const },
 ] as const;
 

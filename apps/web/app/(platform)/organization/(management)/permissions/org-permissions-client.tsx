@@ -25,7 +25,6 @@ import {
   ORG_WORKSPACE_S3_ADVANCED_LABELS,
   ORG_WORKSPACE_MANAGEMENT_ADVANCED_KEYS,
   ORG_WORKSPACE_MANAGEMENT_ADVANCED_LABELS,
-  orgMemberAllowsOrgManagementPermissions,
   type OrgWorkspacePermissionKey,
 } from "@/lib/org-workspace-permissions";
 import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
@@ -48,8 +47,8 @@ export function OrgPermissionsClient({
   const [members, setMembers] = useState(initialMembers);
   const [busy, setBusy] = useState<{ email: string; key: OrgWorkspacePermissionKey } | null>(null);
 
-  const canEdit =
-    org.isOwner || orgMemberAllowsOrgManagementPermissions(org.workspacePermissions);
+  /** Only owners may edit the matrix; others may view if they have the Permissions tab. */
+  const canEdit = org.isOwner;
 
   useEffect(() => {
     setMembers(initialMembers);
@@ -99,8 +98,7 @@ export function OrgPermissionsClient({
       </p>
       {!canEdit ? (
         <p className="text-sm text-amber-700 dark:text-amber-400/90">
-          You need the Management · Permissions capability (or owner role) to edit this matrix. You can still view it
-          below.
+          Only organization owners can edit permissions here. You can still view the matrix below.
         </p>
       ) : null}
 

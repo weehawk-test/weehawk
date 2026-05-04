@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Webhook, Plus, Search, Trash2, Clock, Pencil, Loader2, Copy, Check, Play, ScrollText, X } from "lucide-react";
-import { useDeleteWebhook } from "@/hooks/use-webhooks";
+import { useDeleteWebhook, useWebhooks } from "@/hooks/use-webhooks";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import {
@@ -17,7 +17,7 @@ import {
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
-import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
+import { markPendingDeletion } from "@/lib/pending-deletions";
 import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import {
   orgMemberAllowsWebhooksAdd,
@@ -26,6 +26,7 @@ import {
   orgMemberAllowsWebhooksLogs,
   orgMemberAllowsWebhooksRun,
 } from "@/lib/org-workspace-permissions";
+import { ORG_DATA_CHANGED_EVENT, type OrgDataChangedDetail } from "@/lib/org-realtime-events";
 
 function formatDateUTC(dateInput: string): string {
   const date = new Date(dateInput);
@@ -67,12 +68,9 @@ export function WebhooksClient({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
-  const [webhooks, setWebhooks] = useState<WebhookListItem[]>(initialWebhooks);
-  useLayoutEffect(() => {
-    setWebhooks(
-      reconcileAndFilterPendingDeletions("webhooks", initialWebhooks, (w) => [w.id, w.publicId]),
-    );
-  }, [initialWebhooks]);
+  const orgKeyForQuery = orgTrim ?? "";
+  const webhooksQuery = useWebhooks(orgKeyForQuery || undefined, { initialData: initialWebhooks });
+  const webhooks = webhooksQuery.data ?? initialWebhooks;
   const deleteWebhook = useDeleteWebhook(organizationPublicId);
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -116,6 +114,30 @@ export function WebhooksClient({
     provisioningClearTimersRef.current.push(timer);
   }, [searchParams, pathname, router]);
 
+  /** Same “Preparing” window as `?provisioning=` when another org member creates/updates via realtime. */
+  useEffect(() => {
+    const PROVISIONING_MS = 15_000;
+    const listener = (ev: Event) => {
+      const d = (ev as CustomEvent<OrgDataChangedDetail>).detail;
+      if (d?.entity !== "webhook") return;
+      const rid = d.resourceId;
+      if (typeof rid !== "number" || !Number.isFinite(rid) || rid < 1) return;
+      const id = Math.trunc(rid);
+      if (d.action === "deleted") {
+        setProvisioningWebhookIds((prev) => prev.filter((x) => x !== id));
+        return;
+      }
+      if (d.action !== "created" && d.action !== "updated") return;
+      setProvisioningWebhookIds((prev) => Array.from(new Set([...prev, id])));
+      const timer = window.setTimeout(() => {
+        setProvisioningWebhookIds((prev) => prev.filter((x) => x !== id));
+      }, PROVISIONING_MS);
+      provisioningClearTimersRef.current.push(timer);
+    };
+    window.addEventListener(ORG_DATA_CHANGED_EVENT, listener);
+    return () => window.removeEventListener(ORG_DATA_CHANGED_EVENT, listener);
+  }, []);
+
   const filtered =
     (webhooks ?? []).filter(
       (w) =>
@@ -136,13 +158,10 @@ export function WebhooksClient({
     if (!ok) return;
     const target = webhooks.find((item) => webhookRouteId(item) === id);
     markPendingDeletion("webhooks", id, target?.id, target?.publicId);
-    const previous = webhooks;
-    setWebhooks((prev) => prev.filter((item) => webhookRouteId(item) !== id));
     toast({ title: "Webhook deleted", description: `"${name}" has been removed.` });
     deleteWebhook.mutate(id, {
       onSuccess: () => undefined,
       onError: (e: Error) => {
-        setWebhooks(previous);
         toast({ title: "Could not delete webhook", description: e.message, variant: "destructive" });
       },
     });
@@ -160,7 +179,6 @@ export function WebhooksClient({
     if (!ok) return;
 
     setIsBulkDeleting(true);
-    const previous = webhooks;
     const removed = new Set(ids);
     const selectedRows = webhooks.filter((item) => removed.has(webhookRouteId(item)));
     markPendingDeletion(
@@ -168,13 +186,11 @@ export function WebhooksClient({
       ...ids,
       ...selectedRows.flatMap((item) => [item.id, item.publicId]),
     );
-    setWebhooks((prev) => prev.filter((item) => !removed.has(webhookRouteId(item))));
     webhooksBulk.clear();
     toast({ title: "Webhooks deleted", description: `${ids.length} webhook(s) removed.` });
     try {
       await Promise.all(ids.map((id) => deleteWebhook.mutateAsync(id)));
     } catch (e) {
-      setWebhooks(previous);
       const errorMessage = e instanceof Error ? e.message : "Could not delete selected webhooks.";
       toast({ title: "Could not delete selected webhooks", description: errorMessage, variant: "destructive" });
     } finally {

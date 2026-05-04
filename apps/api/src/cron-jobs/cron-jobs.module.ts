@@ -8,6 +8,7 @@ import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 import { CronJobsController } from './cron-jobs.controller';
 import { CronJobsService } from './cron-jobs.service';
 import { CronJob } from './entities/cron-job.entity';
+import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { CronJob } from './entities/cron-job.entity';
     NotificationsModule,
     OrganizationsModule,
     RemoteServersModule,
+    OrgRealtimeModule,
   ],
   controllers: [CronJobsController],
   providers: [CronJobsService],

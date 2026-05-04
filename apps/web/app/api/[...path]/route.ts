@@ -51,15 +51,21 @@ async function proxy(req: Request, ctx: Ctx): Promise<Response> {
   const apiKey = getServerApiKey();
   if (apiKey) headers.set("X-Weehawk-Api-Key", apiKey);
 
-  const init: RequestInit & { duplex?: "half" } = {
+  // Buffer non-GET/HEAD bodies. Forwarding `req.body` + `duplex: "half"` hits undici
+  // "expected non-null body source" when the incoming body stream is null or not usable.
+  let body: ArrayBuffer | undefined;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const buf = await req.arrayBuffer();
+    body = buf.byteLength > 0 ? buf : undefined;
+    if (body) headers.set("content-length", String(body.byteLength));
+  }
+
+  const upstream = await fetch(upstreamUrl, {
     method: req.method,
     headers,
     redirect: "manual",
-    body: req.method === "GET" || req.method === "HEAD" ? undefined : req.body,
-    duplex: req.method === "GET" || req.method === "HEAD" ? undefined : "half",
-  };
-
-  const upstream = await fetch(upstreamUrl, init);
+    body,
+  });
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

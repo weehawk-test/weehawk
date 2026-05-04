@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import { Loader2, Save } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -17,6 +17,11 @@ import {
 import { SecretHint } from "../_components/secret-hint";
 import { GitBreadcrumb } from "../_components/git-breadcrumb";
 
+const gitSettingsPredicate = (orgPid: string) => (q: { queryKey: unknown }) =>
+  Array.isArray(q.queryKey) &&
+  q.queryKey[0] === "git-settings" &&
+  q.queryKey[1] === orgScopedQuerySegment(orgPid);
+
 export function GitLabGitSettingsClient({
   initialData,
   organizationPublicId,
@@ -29,40 +34,26 @@ export function GitLabGitSettingsClient({
   const { toast } = useToast();
   const orgFromCtx = useOrgWorkspace().publicId;
   const orgPid = (organizationPublicId || orgFromCtx).trim();
-  const [loading, setLoading] = useState(!initialData);
   const [saving, setSaving] = useState(false);
-  const [data, setData] = useState<GitSettingsPublic | null>(initialData);
-
-  const [gitlabBaseUrl, setGitlabBaseUrl] = useState(initialData?.gitlab.baseUrl ?? "https://gitlab.com");
+  const [gitlabBaseUrlTouched, setGitlabBaseUrlTouched] = useState(false);
+  const [gitlabBaseUrl, setGitlabBaseUrl] = useState(
+    () => initialData?.gitlab.baseUrl ?? "https://gitlab.com",
+  );
   const [gitlabGroupAccessToken, setGitlabGroupAccessToken] = useState("");
 
-  const load = useCallback(async () => {
-    if (!accessToken) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const s = await fetchGitSettings(accessToken, orgPid);
-      setData(s);
-      setGitlabBaseUrl(s.gitlab.baseUrl ?? "https://gitlab.com");
-      setGitlabGroupAccessToken("");
-    } catch (e) {
-      toast({
-        title: "Could not load Git settings",
-        description: e instanceof Error ? e.message : String(e),
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [accessToken, orgPid, toast]);
+  const gitQ = useQuery({
+    queryKey: ["git-settings", orgScopedQuerySegment(orgPid)],
+    queryFn: () => fetchGitSettings(accessToken!, orgPid),
+    enabled: Boolean(accessToken && orgPid),
+    initialData: initialData ?? undefined,
+  });
+
+  const data = gitQ.data ?? null;
 
   useEffect(() => {
-    if (!initialData) {
-      void load();
-    }
-  }, [initialData, load]);
+    if (!data || gitlabBaseUrlTouched) return;
+    setGitlabBaseUrl(data.gitlab.baseUrl ?? "https://gitlab.com");
+  }, [data, data?.gitlab.baseUrl, data?.updatedAt, gitlabBaseUrlTouched]);
 
   const saveGitlab = async () => {
     if (!accessToken) return;
@@ -74,13 +65,11 @@ export function GitLabGitSettingsClient({
       if (gitlabGroupAccessToken.trim())
         payload.gitlabGroupAccessToken = gitlabGroupAccessToken.trim();
       const next = await updateGitSettings(accessToken, orgPid, payload);
-      setData(next);
+      queryClient.setQueryData(["git-settings", orgScopedQuerySegment(orgPid)], next);
       setGitlabGroupAccessToken("");
+      setGitlabBaseUrlTouched(false);
       void queryClient.invalidateQueries({
-        predicate: (q) =>
-          Array.isArray(q.queryKey) &&
-          q.queryKey[0] === "git-settings" &&
-          q.queryKey[1] === orgScopedQuerySegment(orgPid),
+        predicate: gitSettingsPredicate(orgPid),
       });
       toast({ title: "GitLab settings saved" });
     } catch (e) {
@@ -101,12 +90,9 @@ export function GitLabGitSettingsClient({
       const next = await updateGitSettings(accessToken, orgPid, {
         [field]: "",
       } as UpdateGitSettingsPayload);
-      setData(next);
+      queryClient.setQueryData(["git-settings", orgScopedQuerySegment(orgPid)], next);
       void queryClient.invalidateQueries({
-        predicate: (q) =>
-          Array.isArray(q.queryKey) &&
-          q.queryKey[0] === "git-settings" &&
-          q.queryKey[1] === orgScopedQuerySegment(orgPid),
+        predicate: gitSettingsPredicate(orgPid),
       });
       toast({ title: "Secret cleared" });
     } catch (e) {
@@ -120,10 +106,18 @@ export function GitLabGitSettingsClient({
     }
   };
 
-  if (loading && !data) {
+  if (gitQ.isPending && !gitQ.data) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground">
         <Loader2 className="w-8 h-8 animate-spin" />
+      </div>
+    );
+  }
+
+  if (gitQ.isError && !data) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-destructive text-sm px-4 text-center">
+        {gitQ.error instanceof Error ? gitQ.error.message : String(gitQ.error)}
       </div>
     );
   }
@@ -198,7 +192,10 @@ export function GitLabGitSettingsClient({
           <input
             className="input-field w-full"
             value={gitlabBaseUrl}
-            onChange={(e) => setGitlabBaseUrl(e.target.value)}
+            onChange={(e) => {
+              setGitlabBaseUrlTouched(true);
+              setGitlabBaseUrl(e.target.value);
+            }}
             placeholder="https://gitlab.com"
             autoComplete="off"
           />
@@ -239,7 +236,7 @@ export function GitLabGitSettingsClient({
             onClick={() => void saveGitlab()}
             className="btn-primary order-1 inline-flex w-full items-center justify-center gap-2 sm:order-2 sm:w-auto"
           >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Save GitLab
           </button>
           {data?.gitlab.groupAccessTokenSet && data.updatedAt ? (

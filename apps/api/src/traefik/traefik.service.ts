@@ -13,6 +13,7 @@ import {
   WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
 } from './traefik.constants';
 import { OrganizationsService } from '../organizations/organizations.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 @Injectable()
 export class TraefikService {
@@ -20,6 +21,7 @@ export class TraefikService {
     @InjectRepository(TraefikSettings)
     private readonly repo: Repository<TraefikSettings>,
     private readonly organizationsService: OrganizationsService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {}
 
   private async _internal_system_findOneTraefik(
@@ -135,7 +137,12 @@ export class TraefikService {
       const raw = dto.staticConfigOverride;
       current.staticConfigOverride = raw.trim() === '' ? null : raw;
     }
-    return await this._internal_system_saveTraefik(current);
+    const saved = await this._internal_system_saveTraefik(current);
+    this.orgRealtime.notifyOrgDataChanged(organizationInternalId, {
+      entity: 'traefik',
+      action: 'updated',
+    });
+    return saved;
   }
 
   /** Normalized hostname for Traefik Host() or null if unset/invalid. */

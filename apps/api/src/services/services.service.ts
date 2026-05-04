@@ -55,6 +55,7 @@ import {
 import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 import { ProjectTenantScopedRepository } from '../common/tenant-scoped.service';
 import { ProjectsService } from '../projects/projects.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 @Injectable()
 export class ServicesService {
@@ -79,6 +80,7 @@ export class ServicesService {
     private readonly traefikService: TraefikService,
     private readonly remoteServersService: RemoteServersService,
     private readonly projectsService: ProjectsService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedServices = new ProjectTenantScopedRepository<Service>(
       this.serviceRepository,
@@ -332,6 +334,14 @@ export class ServicesService {
         where: { id: saved.id },
         relations: ['project', 'remoteServer'],
       })) ?? saved;
+    const orgId = project.organizationId;
+    if (orgId != null && orgId >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(orgId, {
+        entity: 'service',
+        action: 'created',
+        publicId: hydrated.publicId,
+      });
+    }
     return this.withMagicTraefikMeUrl(hydrated);
   }
 
@@ -3109,7 +3119,15 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     );
     await this.executorService.stopAndRemove(id);
     await this.removeManagedSecretsForService(service);
+    const orgId = service.project.organizationId;
     await this._internal_systemRemoveService(service);
+    if (orgId != null && orgId >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(orgId, {
+        entity: 'service',
+        action: 'deleted',
+        publicId: service.publicId,
+      });
+    }
     return { success: true };
   }
 
@@ -3275,6 +3293,14 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         where: { id: saved.id },
         relations: ['project', 'remoteServer', 'buildRemoteServer'],
       })) ?? saved;
+    const orgId = hydrated.project?.organizationId;
+    if (orgId != null && orgId >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(orgId, {
+        entity: 'service',
+        action: 'updated',
+        publicId: hydrated.publicId,
+      });
+    }
     return this.withMagicTraefikMeUrl(hydrated);
   }
 

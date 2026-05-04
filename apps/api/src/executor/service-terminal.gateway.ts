@@ -1,38 +1,21 @@
-import {
-  WebSocketGateway,
-  OnGatewayConnection,
-  WebSocketServer,
-} from '@nestjs/websockets';
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { Server } from 'ws';
 import type { WebSocket } from 'ws';
 import type { IncomingMessage } from 'http';
 import { URL } from 'url';
 import { Client } from 'ssh2';
-import { Inject, forwardRef } from '@nestjs/common';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { ExecutorService } from './executor.service';
 import { ServicesService } from '../services/services.service';
-import {
-  isRequestOriginAllowed,
-  resolveCorsOrigin,
-} from '../common/cors-origin';
+import { isRequestOriginAllowed } from '../common/cors-origin';
 import { parseCookieHeader, AUTH_ACCESS_COOKIE } from '../auth/auth-cookies';
 
 /**
  * Interactive shell inside the service's running container on the **deploy** host (SSH + `docker exec`).
  * Replaces the old local `node-pty` + host Docker path.
  */
-@WebSocketGateway({
-  path: '/ws/service-terminal',
-  cors: {
-    origin: resolveCorsOrigin(process.env.CORS_ORIGIN, process.env.NODE_ENV, {
-      logWarnings: false,
-    }),
-    credentials: true,
-  },
-})
-export class ServiceTerminalGateway implements OnGatewayConnection {
+@Injectable()
+export class ServiceTerminalGateway {
   constructor(
     private readonly remoteServersService: RemoteServersService,
     private readonly executorService: ExecutorService,
@@ -40,9 +23,6 @@ export class ServiceTerminalGateway implements OnGatewayConnection {
     @Inject(forwardRef(() => ServicesService))
     private readonly servicesService: ServicesService,
   ) {}
-
-  @WebSocketServer()
-  server: Server;
 
   private async userIdFromWsRequest(
     req: IncomingMessage | undefined,

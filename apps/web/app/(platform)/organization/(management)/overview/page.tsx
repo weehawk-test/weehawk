@@ -41,7 +41,7 @@ export default async function OrganizationOverviewPage() {
     (org.isOwner ||
       org.workspacePermissions[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG] === true);
   const auditPreview = canViewAudit
-    ? (await fetchOrganizationAuditLogSSR(publicId)).slice(0, 3)
+    ? (await fetchOrganizationAuditLogSSR(publicId, { page: 1, pageSize: 3 })).items
     : [];
 
   return (

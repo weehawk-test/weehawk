@@ -26,6 +26,7 @@ import { withRetry } from './utils/with-retry';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { generatePublicId } from '../common/public-id';
 import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
 
@@ -63,6 +64,7 @@ export class NotificationService {
     private readonly organizationsService: OrganizationsService,
     private readonly providerRegistry: ProviderRegistryService,
     private readonly remoteServersService: RemoteServersService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
     this.scopedChannels = new RemoteServerTenantScopedRepository<NotificationChannel>(
       this.channelRepo,
@@ -344,6 +346,12 @@ export class NotificationService {
       'POST /api/notifications/channels',
       saved,
     );
+    this.orgRealtime.notifyOrgDataChanged(orgId, {
+      entity: 'notification_channel',
+      action: 'created',
+      publicId: saved.publicId,
+      resourceId: saved.id,
+    });
     return this.toChannelRow(saved, preview);
   }
 
@@ -387,6 +395,12 @@ export class NotificationService {
       `PATCH /api/notifications/channels/${encodeURIComponent(id)}`,
       saved,
     );
+    this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
+      entity: 'notification_channel',
+      action: 'updated',
+      publicId: saved.publicId,
+      resourceId: saved.id,
+    });
     return this.toChannelRow(saved, preview);
   }
 
@@ -411,6 +425,14 @@ export class NotificationService {
       ch,
     );
     await this.scopedChannels.deleteScoped(ch.id, userId);
+    if (expectedOrg >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
+        entity: 'notification_channel',
+        action: 'deleted',
+        publicId: ch.publicId,
+        resourceId: ch.id,
+      });
+    }
   }
 
   async bulkDeleteChannels(
@@ -448,6 +470,10 @@ export class NotificationService {
           },
         )
         .catch(() => undefined);
+      this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
+        entity: 'notification_channel',
+        action: 'bulk_deleted',
+      });
     }
     return { removed };
   }

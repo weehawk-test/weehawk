@@ -18,12 +18,14 @@ import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
 import { S3Profile } from '../s3/entities/s3-profile.entity';
 import { NotificationChannel } from '../notifications/entities/notification-channel.entity';
 import { RefreshToken } from '../token/refresh-token.entity';
+import { OrganizationsService } from '../organizations/organizations.service';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly organizationsService: OrganizationsService,
   ) {}
 
   async getProfile(email: string): Promise<UserProfileResponseDto> {
@@ -49,6 +51,9 @@ export class UserService {
    * then deletes the user. Used for self-service account deletion and admin delete.
    */
   async deleteUserAndRelatedRows(userId: number): Promise<void> {
+    await this.organizationsService.removeUserFromAllOrganizationsForAccountDeletion(
+      userId,
+    );
     await this.dataSource.transaction(async (manager) => {
       await this.deleteUserScopedData(manager, userId);
       await manager.delete(User, { id: userId });

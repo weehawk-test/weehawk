@@ -10,6 +10,7 @@ import { WebhooksController } from './webhooks.controller';
 import { WebhooksTriggerController } from './webhooks-trigger.controller';
 import { WebhooksService } from './webhooks.service';
 import { PublicWebhookHostGuard } from './public-webhook-host.guard';
+import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { PublicWebhookHostGuard } from './public-webhook-host.guard';
     OrganizationsModule,
     RemoteServersModule,
     NotificationsModule,
+    OrgRealtimeModule,
   ],
   controllers: [WebhooksController, WebhooksTriggerController],
   providers: [WebhooksService, PublicWebhookHostGuard],

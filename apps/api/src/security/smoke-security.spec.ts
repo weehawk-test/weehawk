@@ -1,3 +1,9 @@
+jest.mock('../org-realtime/org-realtime-emitter.service', () => ({
+  OrgRealtimeEmitter: jest.fn().mockImplementation(() => ({
+    notifyOrgDataChanged: jest.fn(),
+  })),
+}));
+
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AUTH_ACCESS_COOKIE } from '../auth/auth-cookies';
@@ -14,6 +20,7 @@ describe('Security Smoke Suite', () => {
       const svc = new GitService(
         { get: jest.fn() } as unknown as ConfigService,
         {} as never,
+        { notifyOrgDataChanged: jest.fn() } as never,
       ) as unknown as {
         fetchPinnedWithValidation: (
           url: string,
@@ -75,6 +82,7 @@ describe('Security Smoke Suite', () => {
       const svc = new RegistryService(
         {} as never,
         { get: jest.fn() } as unknown as ConfigService,
+        { notifyOrgDataChanged: jest.fn() } as never,
       ) as unknown as {
         assertRegistryCredentialsValid: (
           providerUrl: string,
@@ -243,7 +251,10 @@ describe('Security Smoke Suite', () => {
         'rsv_abc123',
         7,
       );
-      expect(remoteServersService.getSshTerminalContext).toHaveBeenCalledWith(42);
+      expect(remoteServersService.getSshTerminalContext).toHaveBeenCalledWith(
+        42,
+        7,
+      );
     });
   });
 });

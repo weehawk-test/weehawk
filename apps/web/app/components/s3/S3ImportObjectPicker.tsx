@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -102,10 +103,17 @@ export function S3ImportObjectPicker({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const orgTrim = organizationPublicId?.trim() ?? "";
+  const s3QueryOrg = orgTrim.length > 0 ? orgTrim : null;
 
   const urlMode = importPickerMode !== undefined;
 
-  const [profiles, setProfiles] = useState<S3ProfilePublic[]>(() => initialProfiles ?? []);
+  const profilesQuery = useQuery({
+    queryKey: ["s3-profiles", s3QueryOrg],
+    queryFn: () => listS3ProfilesApi(s3QueryOrg!),
+    enabled: Boolean(open && s3QueryOrg),
+    ...(initialProfiles !== undefined ? { initialData: initialProfiles } : {}),
+  });
+  const profiles = profilesQuery.data ?? [];
   const [profileName, setProfileName] = useState(defaultProfileName);
   const [internalPrefix, setInternalPrefix] = useState("");
   const [folders, setFolders] = useState<S3BucketListResponse["folders"]>([]);
@@ -127,44 +135,13 @@ export function S3ImportObjectPicker({
     : profileName;
 
   useEffect(() => {
-    if (initialProfiles !== undefined) {
-      setProfiles(initialProfiles);
-    }
-  }, [initialProfiles]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (initialProfiles !== undefined) {
-      setProfiles(initialProfiles);
-      return;
-    }
-    const org = organizationPublicId?.trim();
-    if (!org) {
-      toast({
-        title: "Organization required",
-        description: "Select an organization to list S3 profiles.",
-        variant: "destructive",
-      });
-      return;
-    }
-    let cancelled = false;
-    listS3ProfilesApi(org)
-      .then((list) => {
-        if (!cancelled) setProfiles(list);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          toast({
-            title: "Could not load S3 profiles",
-            description: e instanceof Error ? e.message : String(e),
-            variant: "destructive",
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, initialProfiles, organizationPublicId, toast]);
+    if (!open || s3QueryOrg) return;
+    toast({
+      title: "Organization required",
+      description: "Select an organization to list S3 profiles.",
+      variant: "destructive",
+    });
+  }, [open, s3QueryOrg, toast]);
 
   useEffect(() => {
     if (!open || urlMode) return;

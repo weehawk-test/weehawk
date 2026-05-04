@@ -7,6 +7,7 @@ import {
   OrganizationMobileHeader,
   OrganizationSidebar,
 } from "@/components/layout/organization-sidebar";
+import { OrgRealtimeSync } from "./org-realtime-sync";
 
 export function OrgWorkspaceShell({
   org,
@@ -19,6 +20,7 @@ export function OrgWorkspaceShell({
 
   return (
     <OrgWorkspaceProvider key={org.publicId} org={org}>
+      <OrgRealtimeSync />
       <OrganizationSidebar
         org={org}
         mobileOpen={mobileOrgNavOpen}

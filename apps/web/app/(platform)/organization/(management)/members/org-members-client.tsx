@@ -6,7 +6,6 @@ import { Loader2, UserPlus } from "lucide-react";
 import type { OrganizationMemberPublic } from "@/lib/organizations-types";
 import { inviteOrganizationMember, setOrganizationMemberRole } from "@/lib/organizations-api";
 import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
-import { orgMemberAllowsOrgManagementMembers } from "@/lib/org-workspace-permissions";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -39,8 +38,8 @@ export function OrgMembersClient({
   const [inviteOpen, setInviteOpen] = useState(false);
   const [roleUpdatingEmail, setRoleUpdatingEmail] = useState<string | null>(null);
 
-  const canInvite =
-    org.isOwner || orgMemberAllowsOrgManagementMembers(org.workspacePermissions);
+  /** Invites and role changes are owner-only (Members tab may still be visible for delegates). */
+  const canManageMembers = org.isOwner;
 
   useEffect(() => {
     setMembers(initialMembers);
@@ -58,7 +57,7 @@ export function OrgMembersClient({
 
   const onAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canInvite) return;
+    if (!canManageMembers) return;
     setError(null);
     setAdding(true);
     try {
@@ -78,7 +77,7 @@ export function OrgMembersClient({
   };
 
   const onRoleChange = async (member: OrganizationMemberPublic, nextRole: "member" | "owner") => {
-    if (!canInvite || roleUpdatingEmail) return;
+    if (!canManageMembers || roleUpdatingEmail) return;
     const isOwner = member.isOwner;
     if ((isOwner && nextRole === "owner") || (!isOwner && nextRole === "member")) return;
 
@@ -121,7 +120,7 @@ export function OrgMembersClient({
     <div className="space-y-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1">{intro}</div>
-        {canInvite ? (
+        {canManageMembers ? (
           <div className="shrink-0">
             <Dialog open={inviteOpen} onOpenChange={onOpenChange}>
               <DialogTrigger asChild>
@@ -180,9 +179,10 @@ export function OrgMembersClient({
           </div>
         ) : null}
       </div>
-      {!canInvite ? (
-        <p className="text-sm text-muted-foreground">
-          Only organization owners can invite new members. Contact an owner if you need access for someone else.
+      {!canManageMembers ? (
+        <p className="text-sm text-amber-700 dark:text-amber-400/90">
+          Only organization owners can invite members or change roles. Contact an owner if you need someone added or
+          promoted.
         </p>
       ) : null}
 
@@ -206,7 +206,7 @@ export function OrgMembersClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{m.email}</td>
                   <td className="px-4 py-3">
-                    {canInvite ? (
+                    {canManageMembers ? (
                       <select
                         key={`${m.email}-${m.isOwner}`}
                         className="input-field w-full max-w-[11rem] py-1.5 text-xs"
