@@ -19,16 +19,15 @@ import {
   ORGANIZATIONS_LIST_CHANGED_EVENT,
 } from "@/lib/organizations-api";
 import type { OrganizationPublic } from "@/lib/organizations-types";
-import { setActiveOrganizationPublicBrowserCookie } from "@/lib/active-org-cookie";
-import { isPlatformPathExemptFromOrgWorkspaceShell } from "@/lib/platform-shell-path";
+import {
+  setActiveOrganizationPublicBrowserCookie,
+  WEHAWK_ACTIVE_ORG_COOKIE,
+} from "@/lib/active-org-cookie";
 import { cn } from "@/lib/utils";
 
-/** After picking an org, stay on the current tool when already in org workspace; otherwise open Projects. */
-function targetPathAfterOrgSwitch(pathname: string | null): string {
-  const p = pathname?.trim() || "";
-  if (!p || p === "/") return "/projects";
-  if (isPlatformPathExemptFromOrgWorkspaceShell(p)) return "/projects";
-  return p;
+/** Always land on the workspace start page after switching organization. */
+function targetPathAfterOrgSwitch(): string {
+  return "/projects";
 }
 
 type WorkspaceSwitcherProps = {
@@ -90,6 +89,17 @@ const menuItemClass =
 const rowLinkClass =
   "flex w-full min-w-0 items-center gap-2 py-1.5 pl-2 pr-1.5 text-left no-underline outline-none";
 
+function readCookieValue(name: string): string {
+  if (typeof document === "undefined") return "";
+  const parts = document.cookie.split("; ");
+  for (const part of parts) {
+    const i = part.indexOf("=");
+    if (i <= 0) continue;
+    if (part.slice(0, i) === name) return decodeURIComponent(part.slice(i + 1));
+  }
+  return "";
+}
+
 export function WorkspaceSwitcher({
   currentLabel = "",
   activeOrgPublicId,
@@ -101,13 +111,21 @@ export function WorkspaceSwitcher({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [orgs, setOrgs] = useState<OrganizationPublic[]>([]);
+  const [pendingOrgPublicId, setPendingOrgPublicId] = useState("");
+  const cookieActiveOrgPublicId = readCookieValue(WEHAWK_ACTIVE_ORG_COOKIE).trim();
+  const effectiveActiveOrgPublicId =
+    pendingOrgPublicId ||
+    (activeOrgPublicId != null && activeOrgPublicId.trim() !== ""
+      ? activeOrgPublicId.trim()
+      : cookieActiveOrgPublicId);
 
   const selectOrganization = (publicId: string) => {
+    setPendingOrgPublicId(publicId.trim());
     setActiveOrganizationPublicBrowserCookie(publicId);
     /** Drop cached lists/details so UI cannot show the previous org’s data while RSC refreshes. */
     queryClient.clear();
     onNavigate?.();
-    const next = targetPathAfterOrgSwitch(pathname);
+    const next = targetPathAfterOrgSwitch();
     const runNav = () => {
       if (next !== pathname) {
         router.push(next);
@@ -122,10 +140,25 @@ export function WorkspaceSwitcher({
   const accountHint = useMemo(() => {
     if (!user) return "Account";
     if (pathname === "/profile" || pathname.startsWith("/profile/")) return "Account";
-    if (pathname.startsWith("/docker-manager")) return "Server console";
     const { displayName } = userDisplayAndInitials(user);
     return displayName;
   }, [user, pathname]);
+
+  const activeOrgLabel = useMemo(() => {
+    if (!effectiveActiveOrgPublicId) return "";
+    const fromList = orgs.find((o) => o.publicId === effectiveActiveOrgPublicId)?.name?.trim() ?? "";
+    if (fromList) return fromList;
+    return currentLabel.trim();
+  }, [effectiveActiveOrgPublicId, orgs, currentLabel]);
+
+  useEffect(() => {
+    if (!pendingOrgPublicId) return;
+    const propOrg = activeOrgPublicId?.trim() ?? "";
+    const cookieOrg = readCookieValue(WEHAWK_ACTIVE_ORG_COOKIE).trim();
+    if (pendingOrgPublicId === propOrg || pendingOrgPublicId === cookieOrg) {
+      setPendingOrgPublicId("");
+    }
+  }, [pendingOrgPublicId, activeOrgPublicId, pathname]);
 
   useEffect(() => {
     if (!user?.userId) {
@@ -151,10 +184,7 @@ export function WorkspaceSwitcher({
     };
   }, [user?.userId]);
 
-  const triggerLabel =
-    activeOrgPublicId != null && activeOrgPublicId !== "" && currentLabel.trim() !== ""
-      ? currentLabel
-      : accountHint;
+  const triggerLabel = activeOrgLabel || accountHint;
 
   return (
     <DropdownMenu>
@@ -202,7 +232,7 @@ export function WorkspaceSwitcher({
 
         <div className="px-0">
           {orgs.map((o) => {
-            const active = o.publicId === activeOrgPublicId;
+            const active = o.publicId === effectiveActiveOrgPublicId;
             const orgInitials = initialsFromOrgName(o.name);
             return (
               <DropdownMenuItem

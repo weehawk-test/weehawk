@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { OrganizationPublic } from "@/lib/organizations-types";
 import { OrgWorkspaceProvider } from "./org-workspace-context";
@@ -9,6 +10,7 @@ import {
   OrganizationSidebar,
 } from "@/components/layout/organization-sidebar";
 import { OrgRealtimeSync } from "./org-realtime-sync";
+import { isPlatformPathExemptFromOrgWorkspaceShell } from "@/lib/platform-shell-path";
 
 export function OrgWorkspaceShell({
   org,
@@ -17,6 +19,11 @@ export function OrgWorkspaceShell({
   org: OrganizationPublic;
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
+  if (isPlatformPathExemptFromOrgWorkspaceShell(pathname ?? "")) {
+    return <>{children}</>;
+  }
+
   const [mobileOrgNavOpen, setMobileOrgNavOpen] = useState(false);
 
   return (

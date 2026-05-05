@@ -59,6 +59,75 @@ function RefreshRscOnAuthChange() {
   return null;
 }
 
+function PerformanceMeasureGuard() {
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.performance?.measure) return;
+    const perf = window.performance;
+    const originalMeasure = perf.measure.bind(perf);
+
+    const isNegativeTimestampMeasureError = (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const lower = message.toLowerCase();
+      const mentionsPerformanceMeasure =
+        lower.includes("performance.measure") ||
+        lower.includes("failed to execute 'measure' on 'performance'");
+      const mentionsNegativeValue =
+        lower.includes("negative time stamp") ||
+        lower.includes("end cannot be negative") ||
+        lower.includes("given attribute end cannot be negative") ||
+        lower.includes("start cannot be negative") ||
+        lower.includes("duration cannot be negative");
+      return (
+        mentionsPerformanceMeasure && mentionsNegativeValue
+      );
+    };
+
+    const patchedMeasure: Performance["measure"] = ((...args: unknown[]) => {
+      try {
+        return originalMeasure(...(args as Parameters<Performance["measure"]>));
+      } catch (error) {
+        if (!isNegativeTimestampMeasureError(error)) throw error;
+
+        const [name, startOrOptions, endMark] = args as [string, string | PerformanceMeasureOptions | undefined, string | undefined];
+        try {
+          if (
+            typeof startOrOptions === "object" &&
+            startOrOptions != null
+          ) {
+            const safeOptions: PerformanceMeasureOptions = {
+              ...startOrOptions,
+            };
+            if (typeof safeOptions.start === "number") safeOptions.start = Math.max(0, safeOptions.start);
+            if (typeof safeOptions.end === "number") safeOptions.end = Math.max(0, safeOptions.end);
+            if (typeof safeOptions.duration === "number") safeOptions.duration = Math.max(0, safeOptions.duration);
+            return originalMeasure(name, safeOptions);
+          }
+          return originalMeasure(name, startOrOptions as string | undefined, endMark);
+        } catch (retryError) {
+          if (!isNegativeTimestampMeasureError(retryError)) throw retryError;
+          return undefined as unknown as PerformanceMeasure;
+        }
+      }
+    }) as Performance["measure"];
+
+    Object.defineProperty(perf, "measure", {
+      value: patchedMeasure,
+      configurable: true,
+      writable: true,
+    });
+
+    return () => {
+      Object.defineProperty(perf, "measure", {
+        value: originalMeasure,
+        configurable: true,
+        writable: true,
+      });
+    };
+  }, []);
+
+  return null;
+}
+
 export function Providers({
   children,
   initialUser,
@@ -72,6 +141,7 @@ export function Providers({
     <ThemeProvider initialTheme={initialTheme}>
       <AuthProvider initialUser={initialUser}>
         <UserScopedQueryClientProvider>
+          <PerformanceMeasureGuard />
           <RefreshRscOnAuthChange />
           <TooltipProvider>
             <ConfirmProvider>

@@ -12,20 +12,12 @@ import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 export default async function DockerManagerServerLayout({
   children,
   params,
-  searchParams,
 }: {
   children: ReactNode;
   params: Promise<{ serverId: string }>;
-  searchParams?: Promise<{ organizationPublicId?: string | string[] }>;
 }) {
   const { serverId } = await params;
-  const sp = searchParams ? await searchParams : {};
-  const orgRaw = sp.organizationPublicId;
-  let organizationPublicId =
-    typeof orgRaw === "string" ? orgRaw.trim() : Array.isArray(orgRaw) ? String(orgRaw[0] ?? "").trim() : "";
-  if (!organizationPublicId) {
-    organizationPublicId = (await getServerActiveOrganizationPublicId()) ?? "";
-  }
+  const organizationPublicId = (await getServerActiveOrganizationPublicId()) ?? "";
   const target = parseConsoleServerSlug(serverId);
   /** Block invalid / legacy numeric slugs before rendering any console page. */
   if (target == null || /^[0-9]+$/.test(target)) {
@@ -57,7 +49,7 @@ export default async function DockerManagerServerLayout({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm">
+      <div className="hidden rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm md:block">
         <span className="text-muted-foreground">Weehawk · </span>
         <span className="font-medium text-foreground">Deploy server · {serverId}</span>
       </div>

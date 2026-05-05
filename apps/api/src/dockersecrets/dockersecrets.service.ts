@@ -10,6 +10,7 @@ import {
   type DockerSecretListItemDto,
 } from './docker-secret-row.mapper';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
+import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 function clampPage(page: number): number {
   return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
@@ -74,7 +75,27 @@ export class DockerSecretsService {
   >();
   private readonly remoteListInflight = new Map<string, Promise<unknown[]>>();
 
-  constructor(private readonly remoteServersService: RemoteServersService) {}
+  constructor(
+    private readonly remoteServersService: RemoteServersService,
+    private readonly orgRealtime: OrgRealtimeEmitter,
+  ) {}
+
+  private async notifyOrgSecretsChanged(
+    remoteServerId: number,
+    projectUserId: number | null,
+    action: 'created' | 'updated' | 'deleted',
+  ): Promise<void> {
+    if (projectUserId == null) return;
+    const orgId = await this.remoteServersService.getOrganizationIdForUserServer(
+      remoteServerId,
+      projectUserId,
+    );
+    if (orgId == null) return;
+    this.orgRealtime.notifyOrgDataChanged(orgId, {
+      entity: 'docker_secret',
+      action,
+    });
+  }
 
   private listCacheKey(
     remoteServerId: number,
@@ -105,6 +126,7 @@ export class DockerSecretsService {
       value,
     );
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
+    await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'created');
   }
 
   async bulkImportFromEnvText(
@@ -134,6 +156,9 @@ export class DockerSecretsService {
       skipped,
     };
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
+    if (created.length > 0) {
+      await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'updated');
+    }
     return out;
   }
 
@@ -245,6 +270,7 @@ export class DockerSecretsService {
       name,
     );
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
+    await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'deleted');
     return { success: true };
   }
 
@@ -259,6 +285,7 @@ export class DockerSecretsService {
       secretName,
     );
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
+    await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'deleted');
     return { success: true };
   }
 }

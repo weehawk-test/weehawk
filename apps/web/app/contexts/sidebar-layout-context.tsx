@@ -88,6 +88,12 @@ export function SidebarLayoutProvider({
     }
   }, [mobileNavOpen]);
 
+  useEffect(() => {
+    if (!isMobileNav && mobileNavOpen) {
+      setMobileNavOpenState(false);
+    }
+  }, [isMobileNav, mobileNavOpen]);
+
   const setCollapsed = useCallback((v: boolean) => setCollapsedState(v), []);
   const toggle = useCallback(() => setCollapsedState((c) => !c), []);
 

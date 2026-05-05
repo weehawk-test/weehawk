@@ -2979,6 +2979,16 @@ done
     return row.id;
   }
 
+  async getOrganizationIdForUserServer(
+    idOrPublicId: number | string,
+    userId: number,
+  ): Promise<number | null> {
+    const row = await this.findEntityOrFail(idOrPublicId, userId);
+    return Number.isFinite(row.organizationId) && row.organizationId >= 1
+      ? row.organizationId
+      : null;
+  }
+
   /** Resolve route identifier for WS-style endpoints that use only publicId. */
   async resolveServerIdByPublicId(publicId: string): Promise<number> {
     const raw = String(publicId).trim();

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { io, type Socket } from "socket.io-client";
 import {
   KeyRound,
   Plus,
@@ -53,6 +54,7 @@ import { clearPendingDeletion, markPendingDeletion } from "@/lib/pending-deletio
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { UseMutationResult } from "@tanstack/react-query";
+import { socketIoHttpBase } from "@/lib/api";
 
 function nameMatchesQuery(name: string, q: string): boolean {
   const t = q.trim().toLowerCase();
@@ -515,6 +517,7 @@ function SecretRow({
 
 type Props = {
   remoteServerId: DockerSecretsRemoteServerId;
+  organizationPublicId?: string;
   data: PaginatedSecretsResponse | null;
   error: string | null;
   urlPage: number;
@@ -525,6 +528,7 @@ type Props = {
 
 export function DockerSecretsClient({
   remoteServerId,
+  organizationPublicId,
   data,
   error,
   urlPage,
@@ -619,6 +623,27 @@ export function DockerSecretsClient({
 
   const listError = liveError;
   const isError = !!listError;
+
+  useEffect(() => {
+    const orgId = organizationPublicId?.trim();
+    if (!orgId) return;
+    const base = socketIoHttpBase();
+    const socket: Socket = io(`${base}/org-realtime`, {
+      path: "/socket.io",
+      transports: ["websocket"],
+      withCredentials: true,
+      auth: { organizationPublicId: orgId },
+    });
+    const onDataChanged = (payload?: { entity?: string }) => {
+      if (payload?.entity !== "docker_secret") return;
+      void pagedListQuery.refetch();
+    };
+    socket.on("data_changed", onDataChanged);
+    return () => {
+      socket.off("data_changed", onDataChanged);
+      socket.disconnect();
+    };
+  }, [organizationPublicId, pagedListQuery]);
 
   const handleBulkDeleteSecrets = async () => {
     const names = bulk.selectedInFiltered;

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { DockerSecretsClient } from "@/(platform)/secrets/secrets-client";
 import { parseConsoleServerSlug } from "@/lib/console-target";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 
 export const dynamic = "force-dynamic";
 
@@ -19,10 +20,12 @@ export default async function DockerManagerSecretsPage({
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
+  const organizationPublicId = (await getServerActiveOrganizationPublicId()) || "";
 
   return (
     <DockerSecretsClient
       remoteServerId={remoteServerId}
+      organizationPublicId={organizationPublicId || undefined}
       data={null}
       error={null}
       urlPage={page}
