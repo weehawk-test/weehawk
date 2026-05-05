@@ -42,6 +42,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type S3ProfilePayload = {
+  /** When updating an existing profile, send stable `publicId` so `name` can be changed. */
+  publicId?: string;
   name: string;
   endpoint: string;
   region: string;

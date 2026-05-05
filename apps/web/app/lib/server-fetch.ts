@@ -458,7 +458,6 @@ function parseOrganizationAuditLogEntry(raw: unknown): OrganizationAuditLogEntry
     createdAt,
     actorUserId: typeof row.actorUserId === "number" ? row.actorUserId : Number(row.actorUserId ?? 0),
     actorEmail: String(row.actorEmail ?? ""),
-    targetEmail: row.targetEmail == null || row.targetEmail === "" ? null : String(row.targetEmail),
     metadata,
   };
 }

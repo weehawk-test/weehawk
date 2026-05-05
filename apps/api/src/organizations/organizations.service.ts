@@ -2,10 +2,12 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { OrganizationAuditLog } from './entities/organization-audit-log.entity';
@@ -27,6 +29,7 @@ import { S3Profile } from '../s3/entities/s3-profile.entity';
 import { TraefikSettings } from '../traefik/entities/traefik-settings.entity';
 import { RemoteServerProvisionJob } from '../remote-servers/entities/remote-server-provision-job.entity';
 import { generatePublicId } from '../common/public-id';
+import { auditHttpContextStorage } from '../common/audit-http-context.storage';
 import type { ResolveOrganizationWorkspaceOptions } from '../common/organization-workspace-scope';
 import {
   allWorkspacePermissionsAllowed,
@@ -87,7 +90,6 @@ export type OrganizationAuditLogPublicDto = {
   createdAt: string;
   actorUserId: number;
   actorEmail: string;
-  targetEmail: string | null;
   metadata: Record<string, unknown> | null;
 };
 
@@ -204,30 +206,176 @@ export class OrganizationsService implements OnModuleInit {
     };
   }
 
+  /** Merge `httpStatus` from the current HTTP response when missing from metadata. */
+  private mergeAuditMetadataWithHttpStatus(
+    metadata: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> | null {
+    const base: Record<string, unknown> =
+      metadata != null && typeof metadata === 'object' && !Array.isArray(metadata)
+        ? { ...metadata }
+        : {};
+    const explicit = base.httpStatus;
+    const hasExplicit =
+      explicit !== undefined &&
+      explicit !== null &&
+      !(typeof explicit === 'string' && explicit.trim() === '');
+    if (!hasExplicit) {
+      const res = auditHttpContextStorage.getStore()?.res;
+      const code = res?.statusCode;
+      if (
+        typeof code === 'number' &&
+        Number.isFinite(code) &&
+        code >= 100 &&
+        code <= 599
+      ) {
+        base.httpStatus = code;
+      }
+    }
+    return Object.keys(base).length > 0 ? base : null;
+  }
+
   /** Append a row to the organization audit log (best-effort callers await). */
   async appendOrganizationAuditEvent(
     organizationInternalId: number,
     actorUserId: number,
     action: string,
     options?: {
-      targetEmail?: string | null;
       metadata?: Record<string, unknown> | null;
     },
   ): Promise<void> {
-    const raw =
-      options?.targetEmail == null
-        ? null
-        : String(options.targetEmail).trim().toLowerCase();
-    const targetEmail =
-      raw && raw.length > 0 ? raw.slice(0, 255) : null;
     const row = this.auditLogs.create({
       organizationId: organizationInternalId,
       actorUserId,
       action: action.trim().slice(0, 64),
-      targetEmail,
-      metadata: options?.metadata ?? null,
+      metadata: this.mergeAuditMetadataWithHttpStatus(options?.metadata),
     });
     await this.auditLogs.save(row);
+  }
+
+  private static tryParseOrganizationPublicIdForAudit(
+    raw: unknown,
+  ): string | null {
+    try {
+      return parseOrganizationPublicIdParam(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  private static shouldSkipHttpFailureAuditPath(urlPath: string): boolean {
+    if (!urlPath.startsWith('/api/')) {
+      return true;
+    }
+    if (
+      urlPath.startsWith('/api/webhooks') ||
+      urlPath.startsWith('/api/cron-jobs')
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  private static summarizeHttpException(exception: HttpException): string {
+    const r = exception.getResponse();
+    if (typeof r === 'string') {
+      return r.trim().slice(0, 400);
+    }
+    if (r && typeof r === 'object' && 'message' in r) {
+      const m = (r as { message: unknown }).message;
+      if (typeof m === 'string') return m.trim().slice(0, 400);
+      if (Array.isArray(m)) {
+        return m
+          .map((x) => String(x))
+          .join('; ')
+          .trim()
+          .slice(0, 400);
+      }
+    }
+    return exception.message.trim().slice(0, 400);
+  }
+
+  /**
+   * When an org-scoped API call returns 4xx, append a row so the audit log includes
+   * denied / validation failures, not only successful mutations.
+   */
+  async appendOrganizationSecurityFailureAuditIfApplicable(
+    req: Request,
+    exception: HttpException,
+  ): Promise<void> {
+    const status = exception.getStatus();
+    if (!Number.isFinite(status) || status < 400 || status >= 500) {
+      return;
+    }
+    const userIdRaw = (req as Request & { user?: { userId?: number } }).user
+      ?.userId;
+    if (
+      typeof userIdRaw !== 'number' ||
+      !Number.isFinite(userIdRaw) ||
+      userIdRaw < 1
+    ) {
+      return;
+    }
+    const userId = Math.trunc(userIdRaw);
+
+    const q = req.query as Record<string, unknown> | undefined;
+    const b = req.body as Record<string, unknown> | undefined;
+    const rawOrg = q?.['organizationPublicId'] ?? b?.['organizationPublicId'];
+    const orgPublicId =
+      OrganizationsService.tryParseOrganizationPublicIdForAudit(rawOrg);
+    if (!orgPublicId) {
+      return;
+    }
+
+    const path =
+      typeof req.path === 'string' && req.path.length > 0
+        ? req.path
+        : new URL(req.url, 'http://localhost').pathname;
+    if (OrganizationsService.shouldSkipHttpFailureAuditPath(path)) {
+      return;
+    }
+
+    const org = await this.repo.findByPublicId(orgPublicId);
+    if (!org) {
+      return;
+    }
+
+    const member = await this.repo.findMembership(userId, org.id);
+    const isMember = Boolean(member);
+    const reason: string = !isMember
+      ? 'not_organization_member'
+      : status === 403
+        ? 'forbidden'
+        : status === 404
+          ? 'not_found'
+          : status === 422
+            ? 'validation'
+            : status === 409
+              ? 'conflict'
+              : 'client_error';
+
+    const method = String(req.method ?? 'GET').toUpperCase();
+    const fullPath =
+      typeof req.originalUrl === 'string' && req.originalUrl.length > 0
+        ? req.originalUrl.split('?')[0] ?? path
+        : path;
+    const endpoint = `${method} ${fullPath}`.slice(0, 512);
+    const errorSummary =
+      OrganizationsService.summarizeHttpException(exception);
+
+    await this.appendOrganizationAuditEvent(
+      org.id,
+      userId,
+      'security.http.request_rejected',
+      {
+        metadata: {
+          endpoint,
+          httpStatus: status,
+          organizationPublicId: orgPublicId,
+          reason,
+          errorSummary,
+        },
+      },
+    );
   }
 
   async listAuditLogsForOrg(
@@ -282,7 +430,6 @@ export class OrganizationsService implements OnModuleInit {
       createdAt: r.createdAt.toISOString(),
       actorUserId: r.actorUserId,
       actorEmail: emailById.get(r.actorUserId) ?? '(unknown)',
-      targetEmail: r.targetEmail,
       metadata: r.metadata,
     }));
     return { items, total, page, pageSize, totalPages };
@@ -387,8 +534,20 @@ export class OrganizationsService implements OnModuleInit {
     const previousName = orgRow.name;
     orgRow.name = name;
     await this.repo.saveOrganization(orgRow);
+    const prevT = previousName.trim();
+    const nextT = name.trim();
+    const organizationUpdateTarget =
+      prevT === nextT
+        ? nextT
+        : `${nextT} (was: ${prevT})`.slice(0, 400);
     await this.appendOrganizationAuditEvent(ctx.internalId, ctx.actingUserId, 'org.updated', {
-      metadata: { previousName, name },
+      metadata: {
+        endpoint: `PATCH /api/organizations/${encodeURIComponent(ctx.publicId)}`,
+        organizationPublicId: ctx.publicId,
+        organizationUpdateTarget,
+        previousName,
+        name,
+      },
     });
     const memberCount = await this.repo.countMembershipsForOrganization(ctx.internalId);
     const nextCtx: OrganizationMemberContext = { ...ctx, name };
@@ -461,8 +620,11 @@ export class OrganizationsService implements OnModuleInit {
       ctx.actingUserId,
       'member.permissions_updated',
       {
-        targetEmail: email,
-        metadata: { patch },
+        metadata: {
+          endpoint: `PATCH /api/organizations/${encodeURIComponent(ctx.publicId)}/members/permissions`,
+          patch,
+          targetEmail: email,
+        },
       },
     );
     return { message: 'Member workspace permissions updated.' };
@@ -779,11 +941,25 @@ export class OrganizationsService implements OnModuleInit {
       throw new NotFoundException('Organization not found');
     }
 
+    const orgPublicIdForAudit =
+      await this.getPublicIdByInternalId(organizationInternalId);
+    const memberLeftEndpoint =
+      orgPublicIdForAudit != null && orgPublicIdForAudit.trim() !== ''
+        ? `DELETE /api/organizations/${encodeURIComponent(orgPublicIdForAudit)}/membership`
+        : 'DELETE /api/organizations/:publicId/membership';
+
     const actingIsOwner = membership.role === ORGANIZATION_MEMBER_ROLE.OWNER;
 
     if (!actingIsOwner) {
       await this.appendOrganizationAuditEvent(organizationInternalId, userId, 'member.left', {
         metadata: {
+          endpoint: memberLeftEndpoint,
+          memberLeftSummary: options.accountDeletion
+            ? 'Left as member (account deletion)'
+            : 'Left as member',
+          ...(orgPublicIdForAudit != null && orgPublicIdForAudit.trim() !== ''
+            ? { organizationPublicId: orgPublicIdForAudit }
+            : {}),
           role: 'member',
           ...(options.accountDeletion ? { accountDeletion: true } : {}),
         },
@@ -825,10 +1001,18 @@ export class OrganizationsService implements OnModuleInit {
     );
 
     if (ownerCount > 1) {
+      const ro = ownerCount - 1;
       await this.appendOrganizationAuditEvent(organizationInternalId, userId, 'member.left', {
         metadata: {
+          endpoint: memberLeftEndpoint,
+          memberLeftSummary: options.accountDeletion
+            ? `Owner left; ${ro} owner(s) remain (account deletion)`
+            : `Owner left; ${ro} owner(s) remain`,
+          ...(orgPublicIdForAudit != null && orgPublicIdForAudit.trim() !== ''
+            ? { organizationPublicId: orgPublicIdForAudit }
+            : {}),
           wasOwner: true,
-          remainingOwners: ownerCount - 1,
+          remainingOwners: ro,
           ...(options.accountDeletion ? { accountDeletion: true } : {}),
         },
       });
@@ -857,10 +1041,23 @@ export class OrganizationsService implements OnModuleInit {
     const successorUser = await this.users.findOne({
       where: { id: successor.userId },
     });
+    const succEmail = successorUser?.email?.trim() ?? '';
     await this.appendOrganizationAuditEvent(organizationInternalId, userId, 'member.left', {
       metadata: {
+        endpoint: memberLeftEndpoint,
+        memberLeftSummary:
+          succEmail !== ''
+            ? options.accountDeletion
+              ? `Owner left; ownership transferred to ${succEmail} (account deletion)`
+              : `Owner left; ownership transferred to ${succEmail}`
+            : options.accountDeletion
+              ? 'Owner left; ownership transferred (account deletion)'
+              : 'Owner left; ownership transferred',
+        ...(orgPublicIdForAudit != null && orgPublicIdForAudit.trim() !== ''
+          ? { organizationPublicId: orgPublicIdForAudit }
+          : {}),
         wasOwner: true,
-        promotedNewOwnerEmail: successorUser?.email ?? null,
+        promotedNewOwnerEmail: succEmail !== '' ? succEmail : null,
         ...(options.accountDeletion ? { accountDeletion: true } : {}),
       },
     });
@@ -998,8 +1195,11 @@ export class OrganizationsService implements OnModuleInit {
       actingUserId,
       'member.role_changed',
       {
-        targetEmail: email,
-        metadata: { newRole: role },
+        metadata: {
+          endpoint: `PATCH /api/organizations/${encodeURIComponent(ctx.publicId)}/ownership`,
+          newRole: role,
+          targetEmail: email,
+        },
       },
     );
 
@@ -1132,7 +1332,13 @@ export class OrganizationsService implements OnModuleInit {
       organizationInternalId,
       userId,
       'member.joined',
-      { targetEmail: user.email.trim().toLowerCase() },
+      {
+        metadata: {
+          endpoint: 'POST /api/organizations/invitations/accept',
+          organizationPublicId: org.publicId?.trim() || null,
+          targetEmail: user.email.trim().toLowerCase(),
+        },
+      },
     );
     return {
       email: user.email,

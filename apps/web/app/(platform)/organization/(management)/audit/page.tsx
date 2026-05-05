@@ -3,13 +3,8 @@ import { ClipboardList } from "lucide-react";
 import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
 import { requireOrgManagementTabForActiveOrg } from "@/lib/org-management-page-guard";
 import { fetchOrganizationAuditLogSSR } from "@/lib/server-fetch";
-import {
-  organizationAuditActionLabel,
-  organizationAuditEndpoint,
-  organizationAuditHttpStatus,
-  organizationAuditTargetSummary,
-} from "@/lib/organization-audit-log-labels";
 import { ORGANIZATION_MANAGEMENT_BASE } from "@/lib/org-nav-utils";
+import { OrganizationAuditResizableTable } from "@/components/org/organization-audit-resizable-table";
 
 const PAGE_SIZE = 12;
 
@@ -62,45 +57,7 @@ export default async function OrganizationAuditPage({
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/30 shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-left text-sm">
-              <thead className="border-b border-border/60 bg-muted/40 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3">When</th>
-                  <th className="px-4 py-3">Actor</th>
-                  <th className="px-4 py-3">Event</th>
-                  <th className="px-4 py-3">API</th>
-                  <th className="whitespace-nowrap px-4 py-3">HTTP</th>
-                  <th className="px-4 py-3">Target</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                {entries.map((e) => (
-                  <tr key={e.id} className="hover:bg-muted/20">
-                    <td className="whitespace-nowrap px-4 py-3 tabular-nums text-muted-foreground">
-                      <time dateTime={e.createdAt}>
-                        {new Date(e.createdAt).toLocaleString(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })}
-                      </time>
-                    </td>
-                    <td className="max-w-[220px] truncate px-4 py-3 font-mono text-xs text-foreground">{e.actorEmail}</td>
-                    <td className="px-4 py-3 text-foreground">{organizationAuditActionLabel(e.action)}</td>
-                    <td className="max-w-[260px] truncate px-4 py-3 font-mono text-[11px] text-muted-foreground">
-                      {organizationAuditEndpoint(e.metadata)}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs tabular-nums text-muted-foreground">
-                      {organizationAuditHttpStatus(e.metadata)}
-                    </td>
-                    <td className="max-w-[220px] truncate px-4 py-3 font-mono text-xs text-muted-foreground">
-                      {organizationAuditTargetSummary(e.targetEmail, e.metadata)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <OrganizationAuditResizableTable entries={entries} />
           {totalPages > 1 ? (
             <div className="flex flex-col gap-3 border-t border-border/60 bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground tabular-nums sm:text-sm">

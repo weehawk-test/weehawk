@@ -48,7 +48,6 @@ export type OrganizationAuditLogEntry = {
   createdAt: string;
   actorUserId: number;
   actorEmail: string;
-  targetEmail: string | null;
   metadata: Record<string, unknown> | null;
 };
 

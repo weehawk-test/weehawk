@@ -73,6 +73,7 @@ export function registryLogoutApi(accessToken: string | null, body: RegistryLogo
 
 export type RegistryAccountRow = {
   id: number;
+  publicId: string;
   name: string;
   providerUrl: string;
   username: string;
@@ -134,11 +135,13 @@ export async function createRegistryAccountApi(
 export async function deleteRegistryAccountApi(
   accessToken: string,
   organizationPublicId: string,
-  id: number,
+  accountPublicId: string,
 ): Promise<void> {
+  const id = accountPublicId.trim();
+  if (!id) throw new Error("Registry account publicId is required");
   const res = await authFetch(
     accessToken,
-    `${API_BASE}/api/registry/accounts/${id}${registryAccountsQuery(organizationPublicId)}`,
+    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}${registryAccountsQuery(organizationPublicId)}`,
     {
       method: "DELETE",
     },

@@ -112,7 +112,6 @@ export class TraefikController {
         userId,
         'domains.acme_email_updated',
         {
-          targetEmail: after.acmeEmail,
           metadata: {
             endpoint,
             previousAcmeEmail: before.acmeEmail,

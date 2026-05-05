@@ -1,6 +1,9 @@
 import { fetchS3BucketObjectsSSR } from "@/lib/server-fetch";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { normalizeS3PrefixParam } from "@/lib/s3-prefix-param";
 import { S3ImportPickerClient } from "@/components/s3/S3ImportPickerClient";
+
+export const dynamic = "force-dynamic";
 
 export default async function S3ImportPickerPage({
   searchParams,
@@ -18,8 +21,9 @@ export default async function S3ImportPickerPage({
     );
   }
 
+  const orgPid = await getServerActiveOrganizationPublicId();
   const prefixParam = normalizeS3PrefixParam(sp.prefix);
-  const initialList = await fetchS3BucketObjectsSSR(profileId, prefixParam);
+  const initialList = await fetchS3BucketObjectsSSR(profileId, prefixParam, orgPid);
 
   return (
     <div className="min-h-0 p-3 sm:p-4">
@@ -29,6 +33,7 @@ export default async function S3ImportPickerPage({
         initialPrefix={prefixParam}
         initialList={initialList}
         requireTarGz={requireTarGz}
+        organizationPublicId={orgPid ?? undefined}
       />
     </div>
   );

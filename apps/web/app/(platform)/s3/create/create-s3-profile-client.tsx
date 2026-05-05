@@ -180,6 +180,11 @@ export function CreateS3ProfileClient({
             <div className="min-w-0">
               <h1 className="text-2xl font-bold text-foreground">Add S3 destination</h1>
               <p className="text-sm text-muted-foreground mt-1">Save a reusable S3 destination profile.</p>
+              {!orgTrim ? (
+                <p className="text-sm text-destructive mt-2">
+                  Choose an organization in the workspace switcher to enable Save (profiles are scoped to the active org).
+                </p>
+              ) : null}
             </div>
             <Link href="/s3" aria-label="Close">
               <button

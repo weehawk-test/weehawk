@@ -105,7 +105,12 @@ export class OrganizationInviteService {
       ctx.internalId,
       actingUserId,
       'member.invited',
-      { targetEmail: email },
+      {
+        metadata: {
+          endpoint: `POST /api/organizations/${encodeURIComponent(ctx.publicId)}/members`,
+          targetEmail: email,
+        },
+      },
     );
     return { message: 'Invitation email sent.' };
   }

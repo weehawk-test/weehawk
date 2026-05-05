@@ -1,4 +1,6 @@
 import {
+  BeforeInsert,
+  BeforeUpdate,
   Column,
   CreateDateColumn,
   Entity,
@@ -6,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { generatePublicId } from '../../common/public-id';
 
 /** Platform registry login (Dokploy-style: stored encrypted, used for push without relying on host ~/.docker only). */
 @Entity('registry_accounts')
@@ -13,6 +16,10 @@ import {
 export class RegistryAccount {
   @PrimaryGeneratedColumn()
   id!: number;
+
+  /** Stable external id for APIs and audit logs (not the numeric primary key). */
+  @Column({ name: 'public_id', type: 'varchar', length: 40, unique: true })
+  publicId!: string;
 
   @Column({ name: 'organization_id', type: 'int' })
   organizationId!: number;
@@ -39,4 +46,12 @@ export class RegistryAccount {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
+
+  @BeforeInsert()
+  @BeforeUpdate()
+  ensurePublicId(): void {
+    if (!this.publicId?.trim()) {
+      this.publicId = generatePublicId('reg');
+    }
+  }
 }

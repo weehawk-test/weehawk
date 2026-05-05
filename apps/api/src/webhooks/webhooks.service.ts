@@ -893,7 +893,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_EDIT],
     );
-    const endpoint = `PATCH /api/webhooks/${encodeURIComponent(String(idOrPublicId))}`;
+    const endpointForDenial = `PATCH /api/webhooks/${encodeURIComponent(String(idOrPublicId))}`;
     let w: Webhook;
     try {
       w = await this.resolveEntity(userId, idOrPublicId);
@@ -903,11 +903,12 @@ export class WebhooksService implements OnApplicationBootstrap {
         expectedOrg,
         userId,
         'security.webhook.updated',
-        endpoint,
+        endpointForDenial,
         e,
       );
       throw e;
     }
+    const endpoint = `PATCH /api/webhooks/${encodeURIComponent(w.publicId)}`;
 
     const beforeRemote = w.remoteServerId;
     const beforeBash = w.bashScript;
@@ -1073,7 +1074,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.WEBHOOKS_DELETE],
     );
-    const endpoint = `DELETE /api/webhooks/${encodeURIComponent(String(idOrPublicId))}`;
+    const endpointForDenial = `DELETE /api/webhooks/${encodeURIComponent(String(idOrPublicId))}`;
     let w: Webhook;
     try {
       w = await this.resolveEntity(userId, idOrPublicId);
@@ -1083,12 +1084,13 @@ export class WebhooksService implements OnApplicationBootstrap {
         expectedOrg,
         userId,
         'security.webhook.deleted',
-        endpoint,
+        endpointForDenial,
         e,
       );
       throw e;
     }
     const ensured = await this.ensurePublicId(w);
+    const endpoint = `DELETE /api/webhooks/${encodeURIComponent(ensured.publicId)}`;
     this.logSecurityAudit(expectedOrg, userId, 'security.webhook.deleted', endpoint, {
       webhookPublicId: ensured.publicId,
       webhookName: ensured.name,

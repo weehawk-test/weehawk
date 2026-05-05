@@ -204,7 +204,7 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
     if (!accessToken || !visibleSavedAccount) return;
     setIsClearingToken(true);
     try {
-      await deleteRegistryAccountApi(accessToken, orgPid, visibleSavedAccount.id);
+      await deleteRegistryAccountApi(accessToken, orgPid, visibleSavedAccount.publicId);
       await queryClient.invalidateQueries({
         queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
       });

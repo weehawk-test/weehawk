@@ -22,9 +22,6 @@ export class OrganizationAuditLog {
   @Column({ type: 'varchar', length: 64 })
   action!: string;
 
-  @Column({ name: 'target_email', type: 'varchar', length: 255, nullable: true })
-  targetEmail!: string | null;
-
   @Column({ type: 'simple-json', nullable: true })
   metadata!: Record<string, unknown> | null;
 

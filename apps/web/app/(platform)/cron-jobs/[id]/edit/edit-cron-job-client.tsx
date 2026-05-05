@@ -62,7 +62,7 @@ export function EditCronJobClient({
 }: Props) {
   const router = useRouter();
   const { toast } = useToast();
-  const updateMutation = useUpdateCronJob();
+  const updateMutation = useUpdateCronJob(organizationPublicId);
   const cronJobsHref = useMemo(
     () => workspaceRoute(organizationPublicId, "/cron-jobs"),
     [organizationPublicId],

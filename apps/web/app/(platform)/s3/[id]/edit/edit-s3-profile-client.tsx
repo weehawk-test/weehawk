@@ -76,7 +76,9 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
     if (!orgTrim) return null;
     const forcePathStyle = inferS3ForcePathStyle(form.endpoint);
     const secret = (form.secretAccessKey ?? "").trim();
+    const pid = profile.publicId?.trim();
     const base = {
+      ...(pid ? { publicId: pid } : {}),
       name: form.name.trim(),
       endpoint: form.endpoint.trim(),
       region: form.region.trim(),
@@ -87,7 +89,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
     };
     if (!secret) return base;
     return { ...base, secretAccessKey: secret };
-  }, [form, orgTrim]);
+  }, [form, orgTrim, profile.publicId]);
 
   const onTest = async () => {
     if (!canSubmit || !payloadForApi) return;
@@ -181,7 +183,12 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div>
                 <label className="text-sm font-medium mb-1.5 block">Name</label>
-                <input className="input-field" value={form.name} disabled readOnly />
+                <input
+                  className="input-field"
+                  value={form.name}
+                  onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="prod-backups"
+                />
               </div>
               <div>
                 <label className="text-sm font-medium mb-1.5 block">Region</label>

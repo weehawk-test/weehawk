@@ -1,5 +1,9 @@
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { CreateS3ProfileClient } from "./create-s3-profile-client";
 
-export default function CreateS3ProfilePage() {
-  return <CreateS3ProfileClient />;
+export const dynamic = "force-dynamic";
+
+export default async function CreateS3ProfilePage() {
+  const orgPid = await getServerActiveOrganizationPublicId();
+  return <CreateS3ProfileClient organizationPublicId={orgPid ?? undefined} />;
 }

@@ -2989,6 +2989,63 @@ done
       : null;
   }
 
+  /** Org audit metadata after a user-scoped remote server action succeeds. */
+  async resolveRemoteServerAuditFields(
+    idOrPublicId: number | string,
+    userId: number,
+  ): Promise<{
+    organizationInternalId: number;
+    publicId: string | null;
+    name: string;
+  } | null> {
+    try {
+      const rs = await this.findEntityOrFail(idOrPublicId, userId);
+      if (!Number.isFinite(rs.organizationId) || rs.organizationId < 1) {
+        return null;
+      }
+      const ensured = await this.ensurePublicId(rs);
+      return {
+        organizationInternalId: Math.trunc(rs.organizationId),
+        publicId: ensured.publicId ?? null,
+        name: ensured.name,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Interactive WebSocket SSH terminal (`/ws/remote-terminal`): log when an
+   * interactive shell is successfully allocated (distinct from one-shot
+   * {@link RemoteServersService.runRemoteTerminalCommand} / `security.remote_terminal.exec`).
+   */
+  auditRemoteTerminalInteractiveSessionOpened(
+    remoteServerId: number,
+    userId: number,
+  ): void {
+    void (async () => {
+      const ctx = await this.resolveRemoteServerAuditFields(
+        remoteServerId,
+        userId,
+      );
+      if (ctx == null) {
+        return;
+      }
+      await this.organizationsService.appendOrganizationAuditEvent(
+        ctx.organizationInternalId,
+        userId,
+        'security.remote_terminal.session_opened',
+        {
+          metadata: {
+            endpoint: 'WS /ws/remote-terminal',
+            remoteServerPublicId: ctx.publicId,
+            remoteServerName: ctx.name,
+          },
+        },
+      );
+    })().catch(() => undefined);
+  }
+
   /** Resolve route identifier for WS-style endpoints that use only publicId. */
   async resolveServerIdByPublicId(publicId: string): Promise<number> {
     const raw = String(publicId).trim();

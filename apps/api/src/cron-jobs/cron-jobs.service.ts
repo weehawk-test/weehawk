@@ -601,7 +601,7 @@ fi
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_EDIT],
     );
-    const endpoint = `PATCH /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}`;
+    const endpointForDenial = `PATCH /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}`;
     let job: CronJob;
     try {
       job = await this.resolveEntity(userId, idOrPublicId);
@@ -611,11 +611,12 @@ fi
         expectedOrg,
         userId,
         'security.cron_job.updated',
-        endpoint,
+        endpointForDenial,
         e,
       );
       throw e;
     }
+    const endpoint = `PATCH /api/cron-jobs/${encodeURIComponent(job.publicId)}`;
     const previousJob = this.cronJobRepo.create({ ...job });
 
     if (dto.name !== undefined) job.name = dto.name.trim();
@@ -710,7 +711,7 @@ fi
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_DELETE],
     );
-    const endpoint = `DELETE /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}`;
+    const endpointForDenial = `DELETE /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}`;
     let existing: CronJob;
     try {
       existing = await this.resolveEntity(userId, idOrPublicId);
@@ -720,12 +721,13 @@ fi
         expectedOrg,
         userId,
         'security.cron_job.deleted',
-        endpoint,
+        endpointForDenial,
         e,
       );
       throw e;
     }
     const ensured = await this.ensurePublicId(existing);
+    const endpoint = `DELETE /api/cron-jobs/${encodeURIComponent(ensured.publicId)}`;
     this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.deleted', endpoint, {
       cronJobPublicId: ensured.publicId,
       cronJobName: ensured.name,
@@ -798,7 +800,7 @@ fi
       organizationPublicId,
       [ORGANIZATION_WORKSPACE_PERMISSIONS.CRON_JOBS_RUN],
     );
-    const endpoint = `POST /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}/run`;
+    const endpointForDenial = `POST /api/cron-jobs/${encodeURIComponent(String(idOrPublicId))}/run`;
     let job: CronJob;
     try {
       job = await this.resolveEntity(userId, idOrPublicId);
@@ -808,12 +810,13 @@ fi
         expectedOrg,
         userId,
         'security.cron_job.run_now',
-        endpoint,
+        endpointForDenial,
         e,
       );
       throw e;
     }
     const ensuredForGate = await this.ensurePublicId(job);
+    const endpoint = `POST /api/cron-jobs/${encodeURIComponent(ensuredForGate.publicId)}/run`;
     if (!job.isActive) {
       this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.run_now', endpoint, {
         cronJobPublicId: ensuredForGate.publicId,

@@ -6,7 +6,6 @@ import {
   Delete,
   Get,
   Param,
-  ParseIntPipe,
   Post,
   Body,
   UseGuards,
@@ -100,11 +99,30 @@ export class RegistryAccountsController {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
       },
     );
-    return this.registryService.createAccount(ctx.internalId, dto);
+    const upsert = await this.registryService.createAccount(ctx.internalId, dto);
+    const action =
+      upsert.upsertKind === 'created'
+        ? 'security.registry.account_created'
+        : 'security.registry.account_updated';
+    void this.organizationsService
+      .appendOrganizationAuditEvent(ctx.internalId, userId, action, {
+        metadata: {
+          endpoint: 'POST /api/registry/accounts',
+          registryAccountPublicId: upsert.account.publicId,
+          registryAccountId: upsert.account.id,
+          registryAccountName: upsert.account.name,
+          registryProviderUrl: upsert.account.providerUrl,
+        },
+      })
+      .catch(() => undefined);
+    return upsert.account;
   }
 
-  @Delete(':id')
-  @ApiOperation({ summary: 'Remove a saved registry account' })
+  @Delete(':accountRef')
+  @ApiOperation({
+    summary:
+      'Remove a saved registry account (use account publicId, or legacy numeric id)',
+  })
   @ApiQuery({
     name: 'organizationPublicId',
     required: true,
@@ -113,7 +131,7 @@ export class RegistryAccountsController {
   async remove(
     @Req() req: { user?: { userId: number } },
     @Query('organizationPublicId') organizationPublicId: string,
-    @Param('id', ParseIntPipe) id: number,
+    @Param('accountRef') accountRef: string,
   ) {
     const userId = this.uid(req);
     const pub = this.parseRequiredOrgPublicId(organizationPublicId);
@@ -124,6 +142,26 @@ export class RegistryAccountsController {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
       },
     );
-    return this.registryService.removeAccount(ctx.internalId, id);
+    const out = await this.registryService.removeAccount(
+      ctx.internalId,
+      accountRef,
+    );
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        ctx.internalId,
+        userId,
+        'security.registry.account_deleted',
+        {
+          metadata: {
+            endpoint: `DELETE /api/registry/accounts/${out.removed.publicId}`,
+            registryAccountPublicId: out.removed.publicId,
+            registryAccountId: out.removed.id,
+            registryAccountName: out.removed.name,
+            registryProviderUrl: out.removed.providerUrl,
+          },
+        },
+      )
+      .catch(() => undefined);
+    return { success: true as const };
   }
 }

@@ -91,6 +91,50 @@ return 1
     return parseOrganizationPublicIdParam(t);
   }
 
+  /** Audit metadata for Git settings updates — no secret values. */
+  private static gitSettingsUpdateAuditMetadata(
+    dto: UpdateGitSettingsDto,
+  ): Record<string, unknown> {
+    const fieldsUpdated: string[] = [];
+    if (dto.githubAppId !== undefined) fieldsUpdated.push('githubAppId');
+    if (dto.githubClientId !== undefined) fieldsUpdated.push('githubClientId');
+    if (dto.githubAppSlug !== undefined) fieldsUpdated.push('githubAppSlug');
+    if (dto.gitlabBaseUrl !== undefined) fieldsUpdated.push('gitlabBaseUrl');
+    const secretsTouched: string[] = [];
+    if (dto.githubClientSecret !== undefined) {
+      secretsTouched.push('githubClientSecret');
+    }
+    if (dto.githubPrivateKey !== undefined) {
+      secretsTouched.push('githubPrivateKey');
+    }
+    if (dto.githubWebhookSecret !== undefined) {
+      secretsTouched.push('githubWebhookSecret');
+    }
+    if (dto.gitlabGroupAccessToken !== undefined) {
+      secretsTouched.push('gitlabGroupAccessToken');
+    }
+    const touchedGithub =
+      fieldsUpdated.some((f) => f.startsWith('github')) ||
+      secretsTouched.some((s) => s.startsWith('github'));
+    const touchedGitlab =
+      fieldsUpdated.includes('gitlabBaseUrl') ||
+      secretsTouched.includes('gitlabGroupAccessToken');
+    let gitTarget: string | undefined;
+    if (touchedGithub && touchedGitlab) {
+      gitTarget = 'GitHub / GitLab';
+    } else if (touchedGithub) {
+      gitTarget = 'GitHub';
+    } else if (touchedGitlab) {
+      gitTarget = 'GitLab';
+    }
+    return {
+      endpoint: 'PUT /api/git/settings',
+      fieldsUpdated,
+      secretsTouched,
+      ...(gitTarget != null ? { gitTarget } : {}),
+    };
+  }
+
   /**
    * GitHub fetches this when the user opens Register GitHub App with a manifest URL.
    * Must stay unauthenticated.
@@ -321,7 +365,18 @@ return 1
       userId,
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
-    return this.gitService.updateSettings(ctx.internalId, dto);
+    const result = await this.gitService.updateSettings(ctx.internalId, dto);
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        ctx.internalId,
+        userId,
+        'security.git.settings_updated',
+        {
+          metadata: GitController.gitSettingsUpdateAuditMetadata(dto),
+        },
+      )
+      .catch(() => undefined);
+    return result;
   }
 
   @Post('github/exchange')
@@ -347,6 +402,25 @@ return 1
       userId,
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
-    return this.gitService.exchangeGithubManifestCode(ctx.internalId, dto.code);
+    const result = await this.gitService.exchangeGithubManifestCode(
+      ctx.internalId,
+      dto.code,
+    );
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        ctx.internalId,
+        userId,
+        'security.git.github_manifest_exchanged',
+        {
+          metadata: {
+            endpoint: 'POST /api/git/github/exchange',
+            gitTarget: 'GitHub',
+            githubAppId: result.github.appId,
+            githubAppSlug: result.github.appSlug,
+          },
+        },
+      )
+      .catch(() => undefined);
+    return result;
   }
 }

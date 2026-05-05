@@ -388,11 +388,12 @@ export class NotificationService {
     }
     const saved = await this.scopedChannels.saveScoped(ch, userId);
     const preview = await this.providerRegistry.get(saved.type).preview(saved);
+    const channelPathId = encodeURIComponent(saved.publicId!.trim());
     this.logNotificationChannelAudit(
       expectedOrg,
       userId,
       'security.notification_channel.updated',
-      `PATCH /api/notifications/channels/${encodeURIComponent(id)}`,
+      `PATCH /api/notifications/channels/${channelPathId}`,
       saved,
     );
     this.orgRealtime.notifyOrgDataChanged(expectedOrg, {
@@ -417,11 +418,12 @@ export class NotificationService {
     const ch = await this.findChannelForUser(userId, id);
     if (!ch) throw new NotFoundException('Channel not found');
     this.assertChannelWorkspace(ch, expectedOrg);
+    const channelPathId = encodeURIComponent(ch.publicId!.trim());
     this.logNotificationChannelAudit(
       expectedOrg,
       userId,
       'security.notification_channel.deleted',
-      `DELETE /api/notifications/channels/${encodeURIComponent(id)}`,
+      `DELETE /api/notifications/channels/${channelPathId}`,
       ch,
     );
     await this.scopedChannels.deleteScoped(ch.id, userId);
@@ -509,6 +511,7 @@ export class NotificationService {
           success: false as const,
           message: (result.description ?? '').trim() || 'Test failed',
         };
+    const testPathId = encodeURIComponent(channel.publicId!.trim());
     void this.organizationsService
       .appendOrganizationAuditEvent(
         expectedOrg,
@@ -516,7 +519,7 @@ export class NotificationService {
         'security.notification_channel.tested',
         {
           metadata: {
-            endpoint: `POST /api/notifications/channels/${encodeURIComponent(channelId)}/test`,
+            endpoint: `POST /api/notifications/channels/${testPathId}/test`,
             success: out.success,
             notificationChannelPublicId: channel.publicId?.trim() || null,
             notificationChannelName: channel.name,

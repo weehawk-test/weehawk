@@ -56,6 +56,7 @@ import { generatePublicId, isLikelyNumericId } from '../common/public-id';
 import { ProjectTenantScopedRepository } from '../common/tenant-scoped.service';
 import { ProjectsService } from '../projects/projects.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
+import { OrganizationsService } from '../organizations/organizations.service';
 
 @Injectable()
 export class ServicesService {
@@ -81,6 +82,7 @@ export class ServicesService {
     private readonly remoteServersService: RemoteServersService,
     private readonly projectsService: ProjectsService,
     private readonly orgRealtime: OrgRealtimeEmitter,
+    private readonly organizationsService: OrganizationsService,
   ) {
     this.scopedServices = new ProjectTenantScopedRepository<Service>(
       this.serviceRepository,
@@ -237,6 +239,40 @@ export class ServicesService {
     });
   }
 
+  private logServiceSecurityAudit(
+    organizationId: number | null | undefined,
+    userId: number,
+    action: string,
+    endpoint: string,
+    service: Pick<Service, 'publicId' | 'appName'>,
+    project: Pick<Project, 'publicId' | 'name'>,
+    extra?: Record<string, unknown>,
+  ): void {
+    if (
+      typeof organizationId !== 'number' ||
+      !Number.isFinite(organizationId) ||
+      organizationId < 1
+    ) {
+      return;
+    }
+    const svcPid = service.publicId?.trim();
+    if (!svcPid) {
+      return;
+    }
+    void this.organizationsService
+      .appendOrganizationAuditEvent(organizationId, userId, action, {
+        metadata: {
+          endpoint,
+          servicePublicId: svcPid,
+          serviceAppName: service.appName,
+          projectPublicId: project.publicId?.trim() || null,
+          projectName: project.name,
+          ...(extra ?? {}),
+        },
+      })
+      .catch(() => undefined);
+  }
+
   /** Traefik / ACME rows are scoped to the service's organization (tenant isolation). */
   private async traefikSettingsForService(service: Service) {
     const uid = this.integrationOwnerUserId(service);
@@ -352,6 +388,17 @@ export class ServicesService {
         relations: ['project', 'remoteServer'],
       })) ?? saved;
     this.emitOrgServiceRealtime(hydrated, 'created');
+    const proj = hydrated.project;
+    if (proj) {
+      this.logServiceSecurityAudit(
+        proj.organizationId,
+        userId,
+        'security.service.created',
+        'POST /api/services',
+        hydrated,
+        proj,
+      );
+    }
     return this.withMagicTraefikMeUrl(hydrated);
   }
 
@@ -3144,6 +3191,18 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     await this.removeManagedSecretsForService(service);
     this.emitOrgServiceRealtime(service, 'deleted');
     await this._internal_systemRemoveService(service);
+    const proj = service.project;
+    const svcPid = service.publicId?.trim();
+    if (proj && svcPid) {
+      this.logServiceSecurityAudit(
+        proj.organizationId,
+        userId,
+        'security.service.deleted',
+        `DELETE /api/services/${encodeURIComponent(svcPid)}`,
+        service,
+        proj,
+      );
+    }
     return { success: true };
   }
 

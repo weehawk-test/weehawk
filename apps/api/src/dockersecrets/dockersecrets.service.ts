@@ -11,6 +11,7 @@ import {
 } from './docker-secret-row.mapper';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
+import { OrganizationsService } from '../organizations/organizations.service';
 
 function clampPage(page: number): number {
   return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
@@ -78,7 +79,38 @@ export class DockerSecretsService {
   constructor(
     private readonly remoteServersService: RemoteServersService,
     private readonly orgRealtime: OrgRealtimeEmitter,
+    private readonly organizationsService: OrganizationsService,
   ) {}
+
+  private appendDockerSwarmSecretAudit(
+    remoteServerId: number,
+    actorUserId: number,
+    action: string,
+    metadata: Record<string, unknown>,
+  ): void {
+    void (async () => {
+      const ctx =
+        await this.remoteServersService.resolveRemoteServerAuditFields(
+          remoteServerId,
+          actorUserId,
+        );
+      if (ctx == null) {
+        return;
+      }
+      await this.organizationsService.appendOrganizationAuditEvent(
+        ctx.organizationInternalId,
+        actorUserId,
+        action,
+        {
+          metadata: {
+            ...metadata,
+            remoteServerPublicId: ctx.publicId,
+            remoteServerName: ctx.name,
+          },
+        },
+      );
+    })().catch(() => undefined);
+  }
 
   private async notifyOrgSecretsChanged(
     remoteServerId: number,
@@ -127,6 +159,17 @@ export class DockerSecretsService {
     );
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
     await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'created');
+    if (projectUserId != null) {
+      this.appendDockerSwarmSecretAudit(
+        remoteServerId,
+        projectUserId,
+        'security.remote_docker.swarm_secret_created',
+        {
+          endpoint: 'POST /api/docker-secrets',
+          secretName: name.trim().slice(0, 256),
+        },
+      );
+    }
   }
 
   async bulkImportFromEnvText(
@@ -158,6 +201,20 @@ export class DockerSecretsService {
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
     if (created.length > 0) {
       await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'updated');
+    }
+    if (projectUserId != null) {
+      this.appendDockerSwarmSecretAudit(
+        remoteServerId,
+        projectUserId,
+        'security.remote_docker.swarm_secrets_bulk_imported',
+        {
+          endpoint: 'POST /api/docker-secrets/bulk-import',
+          bulkImportMessage: out.message.slice(0, 500),
+          bulkCreatedCount: created.length,
+          bulkSkippedCount: skipped.length,
+          bulkFailedCount: failed.length,
+        },
+      );
     }
     return out;
   }
@@ -271,6 +328,17 @@ export class DockerSecretsService {
     );
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
     await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'deleted');
+    if (projectUserId != null) {
+      this.appendDockerSwarmSecretAudit(
+        remoteServerId,
+        projectUserId,
+        'security.remote_docker.swarm_secret_deleted',
+        {
+          endpoint: `DELETE /api/docker-secrets/${encodeURIComponent(name)}`,
+          secretName: name.trim().slice(0, 256),
+        },
+      );
+    }
     return { success: true };
   }
 
@@ -286,6 +354,17 @@ export class DockerSecretsService {
     );
     this.invalidateRemoteListCache(remoteServerId, projectUserId);
     await this.notifyOrgSecretsChanged(remoteServerId, projectUserId, 'deleted');
+    if (projectUserId != null) {
+      this.appendDockerSwarmSecretAudit(
+        remoteServerId,
+        projectUserId,
+        'security.remote_docker.swarm_secret_deleted',
+        {
+          endpoint: `DELETE /api/docker-secrets/${encodeURIComponent(secretName)}`,
+          secretName: secretName.trim().slice(0, 256),
+        },
+      );
+    }
     return { success: true };
   }
 }

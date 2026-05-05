@@ -14,11 +14,13 @@ import { TraefikModule } from '../traefik/traefik.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
 import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
+import { OrganizationsModule } from '../organizations/organizations.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Service, RemoteServer]),
     ProjectsModule,
+    OrganizationsModule,
     forwardRef(() => ExecutorModule),
     forwardRef(() => WebhooksModule),
     RemoteServersModule,

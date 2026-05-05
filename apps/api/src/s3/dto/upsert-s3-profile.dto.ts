@@ -2,6 +2,16 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpsertS3ProfileDto {
+  @ApiPropertyOptional({
+    description:
+      'Stable profile id (`s3_…`). When set, this row is updated (allows changing `name`). Omit to create or upsert by `name` only.',
+    example: 's3_ab12cd34',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(48)
+  publicId?: string;
+
   @ApiProperty({ example: 'prod-backups' })
   @IsString()
   @IsNotEmpty()

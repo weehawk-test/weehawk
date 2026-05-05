@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { AuditHttpContextInterceptor } from './common/audit-http-context.interceptor';
+import { OrganizationHttpFailureAuditInterceptor } from './organizations/organization-http-failure-audit.interceptor';
 import { ServicesModule } from './services/services.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -24,8 +26,10 @@ import { DevThrottlerGuard } from './common/dev-throttler.guard';
 import { existsSync } from 'fs';
 import { DataSource, type DataSourceOptions } from 'typeorm';
 import { runOrgScopeSchemaBackfill } from './database/org-scope-backfill';
+import { migrateOrganizationAuditLogTargetEmailToMetadata } from './database/organization-audit-log-target-email-migration';
 import { migrateGitIntegrationSettingsToOrganizationScope } from './database/git-integration-org-migration';
 import { migrateRegistryAccountsToOrganizationScope } from './database/registry-account-org-migration';
+import { migrateRegistryAccountPublicIds } from './database/registry-account-public-id-migration';
 
 const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
   existsSync(filePath),
@@ -84,8 +88,10 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
         const pre = new DataSource({ ...options, synchronize: false });
         await pre.initialize();
         await runOrgScopeSchemaBackfill(pre);
+        await migrateOrganizationAuditLogTargetEmailToMetadata(pre);
         await migrateGitIntegrationSettingsToOrganizationScope(pre);
         await migrateRegistryAccountsToOrganizationScope(pre);
+        await migrateRegistryAccountPublicIds(pre);
         await pre.destroy();
         const ds = new DataSource(options);
         await ds.initialize();
@@ -111,6 +117,14 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
     {
       provide: APP_GUARD,
       useClass: DevThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditHttpContextInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: OrganizationHttpFailureAuditInterceptor,
     },
   ],
 })

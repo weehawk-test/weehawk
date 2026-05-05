@@ -117,6 +117,11 @@ export class RemoteTerminalGateway {
                     return;
                   }
 
+                  this.remoteServersService.auditRemoteTerminalInteractiveSessionOpened(
+                    ctx.remoteServerId,
+                    userId,
+                  );
+
                   stream.on('data', (d: Buffer) => {
                     if (client.readyState === 1) {
                       client.send(d, { binary: true });

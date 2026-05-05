@@ -35,11 +35,13 @@ export function S3ImportPickerClient({
   initialPrefix,
   initialList,
   requireTarGz,
+  organizationPublicId = null,
 }: {
   profileId: string;
   initialPrefix: string;
   initialList: S3BucketListResponse | null;
   requireTarGz: boolean;
+  organizationPublicId?: string | null;
 }) {
   const { toast } = useToast();
   const [prefix, setPrefix] = useState(initialPrefix);
@@ -69,7 +71,10 @@ export function S3ImportPickerClient({
   const loadPrefix = async (targetPrefix: string) => {
     setRefreshing(true);
     try {
-      const r = await listS3BucketObjectsApi(profileId, { prefix: targetPrefix });
+      const r = await listS3BucketObjectsApi(profileId, {
+        prefix: targetPrefix,
+        organizationPublicId,
+      });
       setPrefix(targetPrefix);
       setFolders(r.folders);
       setObjects(r.objects);
@@ -93,6 +98,7 @@ export function S3ImportPickerClient({
       const r = await listS3BucketObjectsApi(profileId, {
         prefix,
         continuationToken: nextToken,
+        organizationPublicId,
       });
       setObjects((prev) => [...prev, ...r.objects]);
       setNextToken(r.isTruncated ? r.continuationToken : undefined);

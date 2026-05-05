@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -604,11 +605,32 @@ export class S3Service implements OnModuleInit {
       dto.organizationPublicId,
     );
     const base = this.normalizeProfileFields(dto);
-    let row: S3Profile | null = await this.findProfileByNameInWorkspace(
-      userId,
-      base.name,
-      orgId,
-    );
+    const dtoPublicId = dto.publicId?.trim();
+
+    let row: S3Profile | null = null;
+    if (dtoPublicId) {
+      try {
+        const found = await this.scopedProfiles.findScopedBy(
+          'publicId',
+          dtoPublicId,
+          userId,
+        );
+        this.assertS3ProfileWorkspace(found, orgId);
+        row = found;
+      } catch (e) {
+        if (e instanceof NotFoundException) {
+          throw new NotFoundException('S3 profile not found');
+        }
+        throw e;
+      }
+    } else {
+      row = await this.findProfileByNameInWorkspace(
+        userId,
+        base.name,
+        orgId,
+      );
+    }
+
     const hadExisting = row != null;
     await this.requireOrgS3Subs(
       userId,
@@ -622,6 +644,19 @@ export class S3Service implements OnModuleInit {
     const secretAccessKey = this.resolveSecretForSave(dto, row);
     const n: NormalizedS3Credentials = { ...base, secretAccessKey };
     if (row) {
+      if (n.name !== row.name) {
+        const other = await this.findProfileByNameInWorkspace(
+          userId,
+          n.name,
+          orgId,
+        );
+        if (other && other.id !== row.id) {
+          throw new ConflictException(
+            'An S3 destination with this name already exists.',
+          );
+        }
+      }
+      row.name = n.name;
       row.endpoint = n.endpoint;
       row.region = n.region;
       row.bucket = n.bucket;

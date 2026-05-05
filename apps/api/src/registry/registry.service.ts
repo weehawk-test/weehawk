@@ -27,16 +27,23 @@ import {
   normalizeProviderUrl,
   registryHostFromImageRef,
 } from './registry-host-from-image';
+import { isLikelyNumericId } from '../common/public-id';
 import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
 import { OrganizationInternalScopedRepository } from '../common/tenant-scoped.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export type RegistryAccountSafe = {
   id: number;
+  publicId: string;
   name: string;
   providerUrl: string;
   username: string;
   lastVerifiedAt: string | null;
+};
+
+export type RegistryAccountUpsertResult = {
+  account: RegistryAccountSafe;
+  upsertKind: 'created' | 'updated';
 };
 
 @Injectable()
@@ -511,11 +518,42 @@ export class RegistryService {
   toSafe(row: RegistryAccount): RegistryAccountSafe {
     return {
       id: row.id,
+      publicId: row.publicId,
       name: row.name,
       providerUrl: row.providerUrl,
       username: row.username,
       lastVerifiedAt: row.lastVerifiedAt?.toISOString() ?? null,
     };
+  }
+
+  private async registryAccountRowForOrgRef(
+    organizationInternalId: number,
+    accountRef: string,
+  ): Promise<RegistryAccount> {
+    const t = accountRef.trim();
+    if (!t) {
+      throw new BadRequestException('Registry account id is required');
+    }
+    if (isLikelyNumericId(t)) {
+      const id = parseInt(t, 10);
+      if (!Number.isFinite(id) || id < 1) {
+        throw new BadRequestException('Invalid registry account id');
+      }
+      const row = await this.registryAccountRepository.findOne({
+        where: { id, organizationId: organizationInternalId },
+      });
+      if (!row) {
+        throw new NotFoundException(`Registry account #${id} not found`);
+      }
+      return row;
+    }
+    const row = await this.registryAccountRepository.findOne({
+      where: { publicId: t, organizationId: organizationInternalId },
+    });
+    if (!row) {
+      throw new NotFoundException('Registry account not found');
+    }
+    return row;
   }
 
   async listAccounts(organizationInternalId: number): Promise<RegistryAccountSafe[]> {
@@ -528,7 +566,7 @@ export class RegistryService {
   async createAccount(
     organizationInternalId: number,
     dto: CreateRegistryAccountDto,
-  ): Promise<RegistryAccountSafe> {
+  ): Promise<RegistryAccountUpsertResult> {
     const providerUrl = normalizeProviderUrl(dto.providerUrl);
     if (!providerUrl) {
       throw new BadRequestException('providerUrl is required');
@@ -564,7 +602,7 @@ export class RegistryService {
           action: 'updated',
           resourceId: saved.id,
         });
-        return this.toSafe(saved);
+        return { account: this.toSafe(saved), upsertKind: 'updated' };
       }
       const created = this.registryAccountRepository.create({
         organizationId: organizationInternalId,
@@ -583,7 +621,7 @@ export class RegistryService {
         action: 'created',
         resourceId: saved.id,
       });
-      return this.toSafe(saved);
+      return { account: this.toSafe(saved), upsertKind: 'created' };
     } catch (e) {
       if (
         e instanceof UnauthorizedException ||
@@ -602,15 +640,20 @@ export class RegistryService {
 
   async removeAccount(
     organizationInternalId: number,
-    id: number,
-  ): Promise<{ success: true }> {
-    await this.scopedRegistryAccounts.delete(id, organizationInternalId);
+    accountRef: string,
+  ): Promise<{ success: true; removed: RegistryAccountSafe }> {
+    const row = await this.registryAccountRowForOrgRef(
+      organizationInternalId,
+      accountRef,
+    );
+    const removed = this.toSafe(row);
+    await this.scopedRegistryAccounts.delete(row.id, organizationInternalId);
     this.orgRealtime.notifyOrgDataChanged(organizationInternalId, {
       entity: 'registry_account',
       action: 'deleted',
-      resourceId: id,
+      resourceId: row.id,
     });
-    return { success: true };
+    return { success: true, removed };
   }
 
   /**
