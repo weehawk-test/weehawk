@@ -7,7 +7,7 @@ export default async function OrganizationsIndexRedirect() {
   const orgs = await fetchOrganizationsListSSR();
   const d = pickDefaultWorkspaceOrganization(orgs);
   if (d?.publicId) {
-    redirect("/projects");
+    redirect("/home");
   }
   redirect("/organizations/create");
 }

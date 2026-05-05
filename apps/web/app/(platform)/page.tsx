@@ -1,15 +1,19 @@
 import { redirect } from "next/navigation";
 
-/** Canonical project list lives at `/projects`; `/` keeps bookmarks working. */
+/** Workspace root now lands on `/home`; `/` keeps bookmarks working. */
 export default async function HomeRedirectPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; q?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
   const params = new URLSearchParams();
-  if (sp.page) params.set("page", sp.page);
-  if (sp.q) params.set("q", sp.q);
+  for (const [key, value] of Object.entries(sp)) {
+    if (typeof value === "string") params.set(key, value);
+    else if (Array.isArray(value)) {
+      for (const item of value) params.append(key, item);
+    }
+  }
   const qs = params.toString();
-  redirect(qs ? `/projects?${qs}` : "/projects");
+  redirect(qs ? `/home?${qs}` : "/home");
 }

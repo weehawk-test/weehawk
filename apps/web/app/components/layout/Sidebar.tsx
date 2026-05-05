@@ -95,11 +95,11 @@ export function Sidebar() {
   /** Under `/docker-manager/:id/...` show only Docker nav for that server (not General / Integrations / …). */
   const isConsoleServerSidebar = /^\/docker-manager\/[^/]+/.test(location);
   const consoleLogoHref =
-    consoleNavBase != null ? `${consoleNavBase}/images` : "/";
+    consoleNavBase != null ? `${consoleNavBase}/images` : "/home";
 
   const isActive = (href: string) => {
-    if (href === "/") {
-      return location === "/" || location === "/projects" || location.startsWith("/projects/");
+    if (href === "/home") {
+      return location === "/" || location === "/home";
     }
     if (href === "/notifications") return location.startsWith("/notifications");
     if (href === "/registry") {
@@ -152,7 +152,7 @@ export function Sidebar() {
         {!railMode ? (
           <div className="flex min-w-0 items-start gap-2">
             <Link
-              href={isConsoleServerSidebar ? consoleLogoHref : "/"}
+              href={isConsoleServerSidebar ? consoleLogoHref : "/home"}
               scroll={false}
               className="relative size-10 shrink-0 self-center overflow-hidden rounded-xl border border-primary/20 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5"
             >
@@ -193,7 +193,7 @@ export function Sidebar() {
             <Tooltip delayDuration={0}>
               <TooltipTrigger asChild>
                 <Link
-                  href={isConsoleServerSidebar ? consoleLogoHref : "/"}
+                  href={isConsoleServerSidebar ? consoleLogoHref : "/home"}
                   scroll={false}
                   className="flex justify-center rounded-xl p-1 hover:bg-accent/60 transition-colors"
                 >

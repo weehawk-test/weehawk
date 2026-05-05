@@ -647,11 +647,7 @@ export function RemoteServerSettingsClient({
                     <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
                       {row.hasPrivateKey && allowOrgDocker ? (
                         <Link
-                          href={`/docker-manager/${remoteServerRouteId(row)}/images${
-                            organizationPublicId?.trim()
-                              ? `?organizationPublicId=${encodeURIComponent(organizationPublicId.trim())}`
-                              : ""
-                          }`}
+                          href={`/docker-manager/${remoteServerRouteId(row)}/images`}
                           scroll={false}
                           className="btn-secondary col-span-2 inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs sm:col-span-1 sm:min-h-0 sm:w-auto sm:py-1.5"
                           title="Open Docker console for this host (full Docker UI)"

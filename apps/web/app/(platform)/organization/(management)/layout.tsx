@@ -22,10 +22,10 @@ export default async function OrganizationManagementLayout({
     !org.isOwner &&
     !org.workspacePermissions[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT]
   ) {
-    redirect("/projects");
+    redirect("/home");
   }
   if (!org.isOwner && !orgMemberHasAnyOrgManagementTab(org.workspacePermissions)) {
-    redirect("/projects");
+    redirect("/home");
   }
 
   const allowedTabMatches = allowedOrgManagementTabMatches(org.workspacePermissions, org.isOwner);

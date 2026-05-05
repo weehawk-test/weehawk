@@ -11,7 +11,7 @@ export default function ConsoleNotFoundPage() {
         This console host does not exist or is not available.
       </p>
       <Link href="/" className="btn-primary inline-flex items-center justify-center">
-        Return to dashboard
+        Return Home
       </Link>
     </div>
   );

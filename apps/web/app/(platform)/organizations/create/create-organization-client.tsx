@@ -28,7 +28,7 @@ export function CreateOrganizationClient() {
       });
       setActiveOrganizationPublicBrowserCookie(org.publicId);
       notifyOrganizationsListChanged();
-      router.replace("/projects");
+      router.replace("/home");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create organization");

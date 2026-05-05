@@ -2,6 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import type { OrgWorkspacePermissionKey } from "@/lib/org-workspace-permissions";
 import {
   Webhook,
+  House,
   FolderKanban,
   KeyRound,
   ImageIcon,
@@ -60,7 +61,13 @@ export function buildMainNavSections(): MainNavSection[] {
     {
       label: "General",
       items: [
-        { href: "/", label: "Projects", icon: FolderKanban, orgPermission: ORG_WORKSPACE_PERMISSIONS.PROJECTS },
+        { href: "/home", label: "Home", icon: House },
+        {
+          href: "/projects",
+          label: "Projects",
+          icon: FolderKanban,
+          orgPermission: ORG_WORKSPACE_PERMISSIONS.PROJECTS,
+        },
         {
           href: "/remote-server",
           label: "Servers",

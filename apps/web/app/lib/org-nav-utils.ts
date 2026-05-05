@@ -1,7 +1,6 @@
 /** Prefix for main nav: flat workspace paths (active org comes from cookie). */
 export function prefixOrgHref(_orgBaseUnused: string, href: string): string {
   if (href.startsWith("http")) return href;
-  if (href === "/") return "/projects";
   return href;
 }
 
@@ -20,9 +19,6 @@ export function isOrgManagementSectionActive(pathname: string, _orgBaseUnused: s
 
 /** Active state for sidebar rows under flat org workspace URLs. */
 export function orgPersonalNavIsActive(pathname: string, _orgBaseUnused: string, personalHref: string): boolean {
-  if (personalHref === "/") {
-    return pathname === "/projects" || pathname.startsWith("/projects/");
-  }
   if (personalHref === "/notifications") return pathname.startsWith("/notifications");
   if (personalHref === "/registry") {
     return pathname === "/registry" || pathname.startsWith("/registry/");

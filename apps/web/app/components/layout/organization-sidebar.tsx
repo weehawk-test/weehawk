@@ -94,7 +94,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
     pathname.startsWith("/secrets/");
 
   const isConsoleOrgSidebar = /^\/docker-manager\/[^/]+/u.test(pathname);
-  const consoleLogoHref = consoleNavBase != null ? `${consoleNavBase}/images` : "/projects";
+  const consoleLogoHref = consoleNavBase != null ? `${consoleNavBase}/images` : "/home";
 
   const closeMobile = () => onMobileOpenChange(false);
 
@@ -141,7 +141,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
           {!railMode ? (
             <div className="flex min-w-0 items-start gap-2">
               <Link
-                href={isConsoleOrgSidebar ? consoleLogoHref : "/projects"}
+                href={isConsoleOrgSidebar ? consoleLogoHref : "/home"}
                 scroll={false}
                 onClick={closeMobile}
                 className="relative size-10 shrink-0 self-center overflow-hidden rounded-xl border border-primary/20 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background transition-colors hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:shadow-[0_0_15px_rgba(255,255,255,0.08)] dark:ring-white/5"
@@ -188,7 +188,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
               <Tooltip delayDuration={0}>
                 <TooltipTrigger asChild>
                   <Link
-                    href={isConsoleOrgSidebar ? consoleLogoHref : "/projects"}
+                    href={isConsoleOrgSidebar ? consoleLogoHref : "/home"}
                     scroll={false}
                     className="flex justify-center rounded-xl p-1 transition-colors hover:bg-accent/60"
                     onClick={closeMobile}
@@ -517,7 +517,7 @@ export function OrganizationMobileHeader({
         <Menu className="size-5" />
       </button>
       <Link
-        href="/projects"
+        href="/home"
         scroll={false}
         className="relative size-9 shrink-0 overflow-hidden rounded-lg border border-primary/20 bg-card/40 shadow-sm ring-1 ring-border/70 outline-none ring-offset-background transition-colors hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:ring-white/5"
         aria-label="Weehawk home"

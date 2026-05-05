@@ -46,7 +46,7 @@ export default async function ResourceNotFoundPage({ searchParams }: Props) {
         This item does not exist or you do not have access to it.
       </p>
       <Link href="/" className="btn-primary inline-flex items-center justify-center">
-        Return to dashboard
+        Return Home
       </Link>
     </div>
   );

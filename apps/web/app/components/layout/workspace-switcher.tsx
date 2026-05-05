@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 
 /** Always land on the workspace start page after switching organization. */
 function targetPathAfterOrgSwitch(): string {
-  return "/projects";
+  return "/home";
 }
 
 type WorkspaceSwitcherProps = {

@@ -78,7 +78,7 @@ export function OrgSettingsClient() {
       if (next?.publicId?.trim()) {
         setActiveOrganizationPublicBrowserCookie(next.publicId);
         queueMicrotask(() => {
-          router.push("/projects");
+          router.push("/home");
           router.refresh();
         });
       } else {
