@@ -112,15 +112,21 @@ export function WorkspaceSwitcher({
   const queryClient = useQueryClient();
   const [orgs, setOrgs] = useState<OrganizationPublic[]>([]);
   const [pendingOrgPublicId, setPendingOrgPublicId] = useState("");
+  const [pendingOrgLabel, setPendingOrgLabel] = useState("");
   const cookieActiveOrgPublicId = readCookieValue(WEHAWK_ACTIVE_ORG_COOKIE).trim();
   const effectiveActiveOrgPublicId =
     pendingOrgPublicId ||
-    (activeOrgPublicId != null && activeOrgPublicId.trim() !== ""
-      ? activeOrgPublicId.trim()
-      : cookieActiveOrgPublicId);
+    (cookieActiveOrgPublicId !== ""
+      ? cookieActiveOrgPublicId
+      : activeOrgPublicId != null && activeOrgPublicId.trim() !== ""
+        ? activeOrgPublicId.trim()
+        : "");
 
   const selectOrganization = (publicId: string) => {
-    setPendingOrgPublicId(publicId.trim());
+    const nextId = publicId.trim();
+    const nextOrg = orgs.find((o) => o.publicId === nextId) ?? null;
+    setPendingOrgPublicId(nextId);
+    setPendingOrgLabel(nextOrg?.name?.trim() ?? "");
     setActiveOrganizationPublicBrowserCookie(publicId);
     /** Drop cached lists/details so UI cannot show the previous org’s data while RSC refreshes. */
     queryClient.clear();
@@ -129,6 +135,9 @@ export function WorkspaceSwitcher({
     const runNav = () => {
       if (next !== pathname) {
         router.push(next);
+        queueMicrotask(() => {
+          void router.refresh();
+        });
       } else {
         router.refresh();
       }
@@ -145,11 +154,27 @@ export function WorkspaceSwitcher({
   }, [user, pathname]);
 
   const activeOrgLabel = useMemo(() => {
+    if (pendingOrgPublicId && pendingOrgLabel) return pendingOrgLabel;
+    const propId = activeOrgPublicId?.trim() ?? "";
+    const propLabel = currentLabel.trim();
+    if (
+      propId &&
+      propLabel &&
+      effectiveActiveOrgPublicId !== "" &&
+      propId === effectiveActiveOrgPublicId
+    ) {
+      return propLabel;
+    }
     if (!effectiveActiveOrgPublicId) return "";
-    const fromList = orgs.find((o) => o.publicId === effectiveActiveOrgPublicId)?.name?.trim() ?? "";
-    if (fromList) return fromList;
-    return currentLabel.trim();
-  }, [effectiveActiveOrgPublicId, orgs, currentLabel]);
+    return orgs.find((o) => o.publicId === effectiveActiveOrgPublicId)?.name?.trim() ?? "";
+  }, [
+    pendingOrgPublicId,
+    pendingOrgLabel,
+    activeOrgPublicId,
+    currentLabel,
+    effectiveActiveOrgPublicId,
+    orgs,
+  ]);
 
   useEffect(() => {
     if (!pendingOrgPublicId) return;
@@ -157,6 +182,7 @@ export function WorkspaceSwitcher({
     const cookieOrg = readCookieValue(WEHAWK_ACTIVE_ORG_COOKIE).trim();
     if (pendingOrgPublicId === propOrg || pendingOrgPublicId === cookieOrg) {
       setPendingOrgPublicId("");
+      setPendingOrgLabel("");
     }
   }, [pendingOrgPublicId, activeOrgPublicId, pathname]);
 
