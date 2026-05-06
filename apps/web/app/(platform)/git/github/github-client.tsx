@@ -10,6 +10,7 @@ import {
   fetchGitSettings,
   fetchPublicGithubAppManifest,
   updateGitSettings,
+  deleteGitAccount,
   type GithubAppManifest,
   type GitSettingsPublic,
 } from "@/lib/git-api";
@@ -48,9 +49,11 @@ function postManifestToGithub(manifest: GithubAppManifest): void {
 export function GitHubGitSettingsClient({
   initialData,
   organizationPublicId,
+  hideBreadcrumb = false,
 }: {
   initialData: GitSettingsPublic | null;
   organizationPublicId: string;
+  hideBreadcrumb?: boolean;
 }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
@@ -59,6 +62,9 @@ export function GitHubGitSettingsClient({
   const [loading, setLoading] = useState(!initialData);
   const [registerBusy, setRegisterBusy] = useState(false);
   const [disconnectBusy, setDisconnectBusy] = useState(false);
+  const [switchBusy, setSwitchBusy] = useState(false);
+  const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
+  const [accountName, setAccountName] = useState("");
   const [data, setData] = useState<GitSettingsPublic | null>(initialData);
 
   const load = useCallback(async () => {
@@ -98,6 +104,12 @@ export function GitHubGitSettingsClient({
     }
     setRegisterBusy(true);
     try {
+      if (accountName.trim() && accessToken) {
+        await updateGitSettings(accessToken, orgPid, {
+          accountName: accountName.trim(),
+          createNewAccount: true,
+        });
+      }
       const manifest = await fetchPublicGithubAppManifest(orgPid);
       postManifestToGithub(manifest);
     } catch (e) {
@@ -108,7 +120,46 @@ export function GitHubGitSettingsClient({
       });
       setRegisterBusy(false);
     }
-  }, [orgPid, toast]);
+  }, [accountName, accessToken, orgPid, toast]);
+
+  const setActiveAccount = useCallback(async (accountPublicId: string) => {
+    if (!accessToken) return;
+    setSwitchBusy(true);
+    try {
+      const s = await updateGitSettings(accessToken, orgPid, {
+        accountPublicId,
+        githubAppSlug: data?.github.appSlug ?? undefined,
+      });
+      setData(s);
+      toast({ title: "Active GitHub account changed" });
+    } catch (e) {
+      toast({
+        title: "Could not switch account",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setSwitchBusy(false);
+    }
+  }, [accessToken, data?.github.appSlug, orgPid, toast]);
+
+  const removeAccount = useCallback(async (accountPublicId: string) => {
+    if (!accessToken) return;
+    setDeletingAccountId(accountPublicId);
+    try {
+      const s = await deleteGitAccount(accessToken, orgPid, accountPublicId);
+      setData(s);
+      toast({ title: "GitHub account removed" });
+    } catch (e) {
+      toast({
+        title: "Could not remove account",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingAccountId(null);
+    }
+  }, [accessToken, orgPid, toast]);
 
   const disconnectGithub = useCallback(async () => {
     if (!accessToken) return;
@@ -155,7 +206,7 @@ export function GitHubGitSettingsClient({
 
   return (
     <div className="w-full space-y-8 pb-12">
-      <GitBreadcrumb current="github" />
+      {!hideBreadcrumb ? <GitBreadcrumb current="github" /> : null}
 
       <div className="flex items-start gap-4">
         <div className="rounded-2xl border border-zinc-200/90 bg-white p-3 shadow-md shadow-zinc-900/5 dark:border-white/10 dark:bg-zinc-950 dark:shadow-lg shrink-0">
@@ -180,6 +231,55 @@ export function GitHubGitSettingsClient({
       <div className="relative overflow-hidden rounded-2xl border border-blue-500/25 bg-gradient-to-br from-blue-500/10 via-card/50 to-transparent p-6 md:p-8">
         <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-blue-400/20 blur-3xl pointer-events-none" />
         <div className="relative space-y-5">
+          {data?.githubAccounts?.length ? (
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">GitHub accounts</label>
+              <select
+                className="input-field w-full md:max-w-sm"
+                value={data.github.activePublicId ?? ""}
+                onChange={(e) => void setActiveAccount(e.target.value)}
+                disabled={switchBusy}
+              >
+                {data.githubAccounts.map((a) => (
+                  <option key={a.publicId} value={a.publicId}>
+                    {a.name}{a.isActive ? " (active)" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-2 space-y-2 md:max-w-md">
+                {data.githubAccounts.map((a) => (
+                  <div key={a.publicId} className="flex items-center justify-between rounded-md border border-border/60 px-3 py-2">
+                    <div className="text-sm">
+                      <span className="font-medium">{a.name}</span>
+                      {a.isActive ? <span className="ml-2 text-xs text-emerald-400">active</span> : null}
+                    </div>
+                    {!a.isActive ? (
+                      <button
+                        type="button"
+                        className="text-xs text-destructive hover:underline disabled:opacity-50"
+                        disabled={deletingAccountId === a.publicId}
+                        onClick={() => void removeAccount(a.publicId)}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div className="space-y-1 md:max-w-sm">
+            <label className="text-xs font-medium text-muted-foreground">
+              New account name (optional)
+            </label>
+            <input
+              className="input-field w-full"
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+              placeholder="Team GitHub App"
+              autoComplete="off"
+            />
+          </div>
           <h2 className="text-lg font-semibold">1. Create GitHub App on GitHub</h2>
           <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">
             Sends your app settings to GitHub using the standard manifest POST. After you submit on

@@ -11,6 +11,7 @@ import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import {
   fetchGitSettings,
   updateGitSettings,
+  deleteGitAccount,
   type GitSettingsPublic,
   type UpdateGitSettingsPayload,
 } from "@/lib/git-api";
@@ -25,9 +26,11 @@ const gitSettingsPredicate = (orgPid: string) => (q: { queryKey: unknown }) =>
 export function GitLabGitSettingsClient({
   initialData,
   organizationPublicId,
+  hideBreadcrumb = false,
 }: {
   initialData: GitSettingsPublic | null;
   organizationPublicId: string;
+  hideBreadcrumb?: boolean;
 }) {
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
@@ -35,7 +38,9 @@ export function GitLabGitSettingsClient({
   const orgFromCtx = useOrgWorkspace().publicId;
   const orgPid = (organizationPublicId || orgFromCtx).trim();
   const [saving, setSaving] = useState(false);
+  const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [gitlabBaseUrlTouched, setGitlabBaseUrlTouched] = useState(false);
+  const [accountName, setAccountName] = useState("");
   const [gitlabBaseUrl, setGitlabBaseUrl] = useState(
     () => initialData?.gitlab.baseUrl ?? "https://gitlab.com",
   );
@@ -61,12 +66,14 @@ export function GitLabGitSettingsClient({
     try {
       const payload: UpdateGitSettingsPayload = {
         gitlabBaseUrl: gitlabBaseUrl.trim() || "https://gitlab.com",
+        ...(accountName.trim() ? { accountName: accountName.trim(), createNewAccount: true } : {}),
       };
       if (gitlabGroupAccessToken.trim())
         payload.gitlabGroupAccessToken = gitlabGroupAccessToken.trim();
       const next = await updateGitSettings(accessToken, orgPid, payload);
       queryClient.setQueryData(["git-settings", orgScopedQuerySegment(orgPid)], next);
       setGitlabGroupAccessToken("");
+      setAccountName("");
       setGitlabBaseUrlTouched(false);
       void queryClient.invalidateQueries({
         predicate: gitSettingsPredicate(orgPid),
@@ -75,6 +82,46 @@ export function GitLabGitSettingsClient({
     } catch (e) {
       toast({
         title: "Save failed",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeAccount = async (accountPublicId: string) => {
+    if (!accessToken) return;
+    setDeletingAccountId(accountPublicId);
+    try {
+      const next = await deleteGitAccount(accessToken, orgPid, accountPublicId);
+      queryClient.setQueryData(["git-settings", orgScopedQuerySegment(orgPid)], next);
+      setGitlabBaseUrl(next.gitlab.baseUrl ?? "https://gitlab.com");
+      setGitlabBaseUrlTouched(false);
+      toast({ title: "GitLab account removed" });
+    } catch (e) {
+      toast({
+        title: "Could not remove account",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingAccountId(null);
+    }
+  };
+
+  const setActiveAccount = async (accountPublicId: string) => {
+    if (!accessToken) return;
+    setSaving(true);
+    try {
+      const next = await updateGitSettings(accessToken, orgPid, { accountPublicId });
+      queryClient.setQueryData(["git-settings", orgScopedQuerySegment(orgPid)], next);
+      setGitlabBaseUrl(next.gitlab.baseUrl ?? "https://gitlab.com");
+      setGitlabBaseUrlTouched(false);
+      toast({ title: "Active GitLab account changed" });
+    } catch (e) {
+      toast({
+        title: "Could not switch account",
         description: e instanceof Error ? e.message : String(e),
         variant: "destructive",
       });
@@ -124,7 +171,7 @@ export function GitLabGitSettingsClient({
 
   return (
     <div className="w-full space-y-8 pb-12">
-      <GitBreadcrumb current="gitlab" />
+      {!hideBreadcrumb ? <GitBreadcrumb current="gitlab" /> : null}
 
       <div className="flex items-start gap-4">
         <div className="rounded-2xl border border-zinc-200/90 bg-white p-3 shadow-md shadow-zinc-900/5 dark:border-orange-500/25 dark:bg-gradient-to-br dark:from-orange-950/50 dark:to-zinc-950 dark:shadow-lg shrink-0">
@@ -183,9 +230,57 @@ export function GitLabGitSettingsClient({
 
       <div className="glass-panel rounded-2xl p-6 md:p-8 space-y-5">
         <h2 className="text-base font-semibold">GitLab connection</h2>
+        {data?.gitlabAccounts?.length ? (
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">GitLab accounts</label>
+            <select
+              className="input-field w-full"
+              value={data.gitlab.activePublicId ?? ""}
+              onChange={(e) => void setActiveAccount(e.target.value)}
+              disabled={saving}
+            >
+              {data.gitlabAccounts.map((a) => (
+                <option key={a.publicId} value={a.publicId}>
+                  {a.name}{a.isActive ? " (active)" : ""}
+                </option>
+              ))}
+            </select>
+            <div className="mt-2 space-y-2">
+              {data.gitlabAccounts.map((a) => (
+                <div key={a.publicId} className="flex items-center justify-between rounded-md border border-border/60 px-3 py-2">
+                  <div className="text-sm">
+                    <span className="font-medium">{a.name}</span>
+                    {a.isActive ? <span className="ml-2 text-xs text-emerald-400">active</span> : null}
+                  </div>
+                  {!a.isActive ? (
+                    <button
+                      type="button"
+                      className="text-xs text-destructive hover:underline disabled:opacity-50"
+                      disabled={deletingAccountId === a.publicId}
+                      onClick={() => void removeAccount(a.publicId)}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <p className="text-xs text-muted-foreground leading-relaxed -mt-2">
           This token is sent as <code className="text-[10px]">PRIVATE-TOKEN</code> to GitLab&apos;s API and used for authenticated <code className="text-[10px]">git clone</code> when needed.
         </p>
+
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">New account name (optional)</label>
+          <input
+            className="input-field w-full"
+            value={accountName}
+            onChange={(e) => setAccountName(e.target.value)}
+            placeholder="Prod GitLab token"
+            autoComplete="off"
+          />
+        </div>
 
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground">GitLab base URL</label>

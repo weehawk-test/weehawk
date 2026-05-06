@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Delete,
   Req,
   UnauthorizedException,
   Body,
@@ -422,5 +423,25 @@ return 1
       )
       .catch(() => undefined);
     return result;
+  }
+
+  @Delete('accounts/:accountPublicId')
+  @UseGuards(LocalSessionGuard)
+  @ApiOperation({
+    summary: 'Delete saved Git account by public id',
+  })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
+  async deleteAccount(
+    @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
+    @Param('accountPublicId') accountPublicId: string,
+  ) {
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    return this.gitService.removeAccount(ctx.internalId, accountPublicId);
   }
 }

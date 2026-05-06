@@ -43,7 +43,7 @@ export function GithubCallbackClient() {
     if (typeof window !== "undefined" && sessionStorage.getItem(dedupeKey) === "1") {
       ran.current = true;
       setStatus("ok");
-      router.replace("/git/github");
+      router.replace("/git");
       return;
     }
 
@@ -56,7 +56,7 @@ export function GithubCallbackClient() {
         await exchangeGithubManifest(accessToken, organizationPublicId, code.trim());
         setStatus("ok");
         toast({ title: "GitHub App connected", description: "Credentials were saved to Weehawk." });
-        router.replace("/git/github");
+        router.replace("/git");
       } catch (e) {
         if (typeof window !== "undefined") sessionStorage.removeItem(dedupeKey);
         setStatus("error");
@@ -90,7 +90,7 @@ export function GithubCallbackClient() {
           <XCircle className="w-12 h-12 text-destructive/80 mx-auto" />
           <p className="text-sm text-destructive/90">{message ?? "Something went wrong."}</p>
           <Link
-            href="/git/github"
+            href="/git"
             className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
           >
             <ArrowLeft className="w-4 h-4" /> Back to GitHub settings

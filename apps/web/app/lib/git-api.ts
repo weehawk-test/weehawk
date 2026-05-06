@@ -3,6 +3,7 @@ import { authFetch } from "./auth-fetch";
 
 export type GitSettingsPublic = {
   github: {
+    activePublicId: string | null;
     appId: string | null;
     clientId: string | null;
     clientSecretSet: boolean;
@@ -12,13 +13,19 @@ export type GitSettingsPublic = {
     installAppUrl: string | null;
   };
   gitlab: {
+    activePublicId: string | null;
     baseUrl: string | null;
     groupAccessTokenSet: boolean;
   };
+  githubAccounts: { publicId: string; name: string; isActive: boolean; createdAt: string | null }[];
+  gitlabAccounts: { publicId: string; name: string; isActive: boolean; createdAt: string | null }[];
   updatedAt: string | null;
 };
 
 export type UpdateGitSettingsPayload = Partial<{
+  accountPublicId: string;
+  accountName: string;
+  createNewAccount: boolean;
   githubAppId: string;
   githubClientId: string;
   githubAppSlug: string;
@@ -196,6 +203,23 @@ export async function updateGitSettings(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json() as Promise<GitSettingsPublic>;
+}
+
+export async function deleteGitAccount(
+  accessToken: string,
+  organizationPublicId: string,
+  accountPublicId: string,
+): Promise<GitSettingsPublic> {
+  const org = requireOrgPublicId(organizationPublicId);
+  const pid = accountPublicId.trim();
+  if (!pid) throw new Error("accountPublicId is required");
+  const u = createApiUrl(`/api/git/accounts/${encodeURIComponent(pid)}`);
+  u.searchParams.set("organizationPublicId", org);
+  const res = await authFetch(accessToken, u.toString(), {
+    method: "DELETE",
   });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json() as Promise<GitSettingsPublic>;

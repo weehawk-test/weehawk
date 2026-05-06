@@ -36,6 +36,7 @@ export type WeehawkRemoteGitMarkerV1 = {
 
 export type GitSettingsPublic = {
   github: {
+    activePublicId: string | null;
     appId: string | null;
     clientId: string | null;
     clientSecretSet: boolean;
@@ -47,11 +48,26 @@ export type GitSettingsPublic = {
     installAppUrl: string | null;
   };
   gitlab: {
+    activePublicId: string | null;
     baseUrl: string | null;
     groupAccessTokenSet: boolean;
   };
+  githubAccounts: {
+    publicId: string;
+    name: string;
+    isActive: boolean;
+    createdAt: string | null;
+  }[];
+  gitlabAccounts: {
+    publicId: string;
+    name: string;
+    isActive: boolean;
+    createdAt: string | null;
+  }[];
   updatedAt: string | null;
 };
+
+type GitProvider = 'github' | 'gitlab';
 
 /** GitLab project row from GET /api/v4/projects (subset). */
 export type GitlabProjectListItem = {
@@ -393,13 +409,31 @@ export class GitService implements OnModuleInit {
     return this.repo.save(row);
   }
 
-  private async settingsRowForOrganization(
+  private async providerSettingsRowForOrganization(
     organizationId: number,
+    provider: GitProvider,
   ): Promise<GitIntegrationSettings> {
-    let row = await this.repo.findOne({ where: { organizationId } });
-    if (row) return this.migrateRowSecrets(row);
-    row = this.repo.create({
+    const active = await this.repo.findOne({
+      where: { organizationId, provider, isActive: true },
+      order: { updatedAt: 'DESC' },
+    });
+    if (active) return this.migrateRowSecrets(active);
+    const latest = await this.repo.findOne({
+      where: { organizationId, provider },
+      order: { updatedAt: 'DESC' },
+    });
+    if (latest) {
+      if (!latest.isActive) {
+        latest.isActive = true;
+        await this.repo.save(latest);
+      }
+      return this.migrateRowSecrets(latest);
+    }
+    const created = this.repo.create({
       organizationId,
+      provider,
+      name: 'Default account',
+      isActive: true,
       githubAppId: null,
       githubClientId: null,
       githubAppSlug: null,
@@ -411,50 +445,57 @@ export class GitService implements OnModuleInit {
       gitlabApplicationSecret: null,
       gitlabGroupAccessToken: null,
     });
-    try {
-      const saved = await this.repo.save(row);
-      return this.migrateRowSecrets(saved);
-    } catch (error) {
-      /**
-       * Concurrent first-use requests (e.g. rapid callback retries) can race on the unique
-       * organization row and trigger a duplicate-key error. In that case re-read and continue.
-       */
-      const code =
-        typeof error === 'object' &&
-        error != null &&
-        'code' in error &&
-        typeof (error as { code?: unknown }).code === 'string'
-          ? (error as { code: string }).code
-          : '';
-      const errno =
-        typeof error === 'object' &&
-        error != null &&
-        'errno' in error &&
-        typeof (error as { errno?: unknown }).errno === 'number'
-          ? (error as { errno: number }).errno
-          : 0;
-      if (code === '23505' || errno === 19) {
-        const existing = await this.repo.findOne({ where: { organizationId } });
-        if (existing) return this.migrateRowSecrets(existing);
-      }
-      throw error;
-    }
+    const saved = await this.repo.save(created);
+    return this.migrateRowSecrets(saved);
   }
 
-  private toPublic(row: GitIntegrationSettings): GitSettingsPublic {
-    const slug = row.githubAppSlug?.trim() || null;
+  private async providerSettingsRowForOrganizationOptional(
+    organizationId: number,
+    provider: GitProvider,
+  ): Promise<GitIntegrationSettings | null> {
+    const active = await this.repo.findOne({
+      where: { organizationId, provider, isActive: true },
+      order: { updatedAt: 'DESC' },
+    });
+    if (active) return this.migrateRowSecrets(active);
+    const latest = await this.repo.findOne({
+      where: { organizationId, provider },
+      order: { updatedAt: 'DESC' },
+    });
+    if (!latest) return null;
+    if (!latest.isActive) {
+      latest.isActive = true;
+      await this.repo.save(latest);
+    }
+    return this.migrateRowSecrets(latest);
+  }
+
+  private toPublic(
+    githubRow: GitIntegrationSettings | null,
+    gitlabRow: GitIntegrationSettings | null,
+    githubAccounts: GitIntegrationSettings[],
+    gitlabAccounts: GitIntegrationSettings[],
+  ): GitSettingsPublic {
+    const slug = githubRow?.githubAppSlug?.trim() || null;
+    const updatedAtCandidate = [
+      githubRow?.updatedAt ?? null,
+      gitlabRow?.updatedAt ?? null,
+    ]
+      .filter((d): d is Date => d instanceof Date)
+      .sort((a, b) => b.getTime() - a.getTime())[0];
     return {
       github: {
-        appId: row.githubAppId,
-        clientId: row.githubClientId,
+        activePublicId: githubRow?.publicId ?? null,
+        appId: githubRow?.githubAppId ?? null,
+        clientId: githubRow?.githubClientId ?? null,
         clientSecretSet: Boolean(
-          this.decryptSecretOrPlain(row.githubClientSecret)?.trim(),
+          this.decryptSecretOrPlain(githubRow?.githubClientSecret)?.trim(),
         ),
         privateKeySet: Boolean(
-          this.decryptSecretOrPlain(row.githubPrivateKey)?.trim(),
+          this.decryptSecretOrPlain(githubRow?.githubPrivateKey)?.trim(),
         ),
         webhookSecretSet: Boolean(
-          this.decryptSecretOrPlain(row.githubWebhookSecret)?.trim(),
+          this.decryptSecretOrPlain(githubRow?.githubWebhookSecret)?.trim(),
         ),
         appSlug: slug,
         installAppUrl: slug
@@ -462,20 +503,54 @@ export class GitService implements OnModuleInit {
           : null,
       },
       gitlab: {
-        baseUrl: row.gitlabBaseUrl,
+        activePublicId: gitlabRow?.publicId ?? null,
+        baseUrl: gitlabRow?.gitlabBaseUrl ?? null,
         groupAccessTokenSet: Boolean(
-          this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim(),
+          this.decryptSecretOrPlain(gitlabRow?.gitlabGroupAccessToken)?.trim(),
         ),
       },
-      updatedAt: row.updatedAt?.toISOString() ?? null,
+      githubAccounts: githubAccounts
+        .filter((a) => Boolean(a.publicId))
+        .map((a) => ({
+        publicId: String(a.publicId),
+        name: a.name,
+        isActive: a.publicId === githubRow?.publicId,
+        createdAt: a.createdAt?.toISOString() ?? null,
+      })),
+      gitlabAccounts: gitlabAccounts
+        .filter((a) => Boolean(a.publicId))
+        .map((a) => ({
+        publicId: String(a.publicId),
+        name: a.name,
+        isActive: a.publicId === gitlabRow?.publicId,
+        createdAt: a.createdAt?.toISOString() ?? null,
+      })),
+      updatedAt: updatedAtCandidate?.toISOString() ?? null,
     };
   }
 
   async getSettings(organizationInternalId: number): Promise<GitSettingsPublic> {
     const oid = this.requireOrganizationInternalId(organizationInternalId);
-    const row = await this.settingsRowForOrganization(oid);
-    await this.refreshGithubAppSlugIfNeeded(row);
-    return this.toPublic(row);
+    const githubRow = await this.providerSettingsRowForOrganizationOptional(
+      oid,
+      'github',
+    );
+    const gitlabRow = await this.providerSettingsRowForOrganizationOptional(
+      oid,
+      'gitlab',
+    );
+    const githubAccounts = await this.repo.find({
+      where: { organizationId: oid, provider: 'github' },
+      order: { updatedAt: 'DESC' },
+    });
+    const gitlabAccounts = await this.repo.find({
+      where: { organizationId: oid, provider: 'gitlab' },
+      order: { updatedAt: 'DESC' },
+    });
+    if (githubRow) {
+      await this.refreshGithubAppSlugIfNeeded(githubRow);
+    }
+    return this.toPublic(githubRow, gitlabRow, githubAccounts, gitlabAccounts);
   }
 
   /** Fills `githubAppSlug` via GET /app when credentials exist but slug is missing (older rows). */
@@ -523,6 +598,58 @@ export class GitService implements OnModuleInit {
     const t = incoming.trim();
     if (t === '') return null;
     return this.encryptSecret(t);
+  }
+
+  private async resolveRowForUpdate(
+    organizationId: number,
+    provider: GitProvider,
+    dto: UpdateGitSettingsDto,
+  ): Promise<GitIntegrationSettings> {
+    if (dto.accountPublicId?.trim()) {
+      const byPublicId = await this.repo.findOne({
+        where: {
+          organizationId,
+          provider,
+          publicId: dto.accountPublicId.trim(),
+        },
+      });
+      if (!byPublicId) {
+        throw new BadRequestException('Git account not found');
+      }
+      await this.repo.update(
+        { organizationId, provider, isActive: true },
+        { isActive: false },
+      );
+      byPublicId.isActive = true;
+      return byPublicId;
+    }
+    if (dto.createNewAccount === true) {
+      const accountName = dto.accountName?.trim() ?? '';
+      if (!accountName) {
+        throw new BadRequestException('accountName is required when creating a new account.');
+      }
+      await this.repo.update(
+        { organizationId, provider, isActive: true },
+        { isActive: false },
+      );
+      return this.repo.create({
+        organizationId,
+        provider,
+        name: accountName,
+        isActive: true,
+        githubAppId: null,
+        githubClientId: null,
+        githubAppSlug: null,
+        githubClientSecret: null,
+        githubPrivateKey: null,
+        githubWebhookSecret: null,
+        gitlabBaseUrl: null,
+        gitlabApplicationId: null,
+        gitlabApplicationSecret: null,
+        gitlabGroupAccessToken: null,
+      });
+    }
+    return this.providerSettingsRowForOrganization(organizationId, provider);
   }
 
   private async assertPublicHttpEndpoint(
@@ -638,7 +765,26 @@ export class GitService implements OnModuleInit {
     dto: UpdateGitSettingsDto,
   ): Promise<GitSettingsPublic> {
     const oid = this.requireOrganizationInternalId(organizationInternalId);
-    const row = await this.settingsRowForOrganization(oid);
+    const touchesGithub =
+      dto.githubAppId !== undefined ||
+      dto.githubClientId !== undefined ||
+      dto.githubAppSlug !== undefined ||
+      dto.githubClientSecret !== undefined ||
+      dto.githubPrivateKey !== undefined ||
+      dto.githubWebhookSecret !== undefined;
+    let provider: GitProvider = touchesGithub ? 'github' : 'gitlab';
+    if (!touchesGithub && dto.accountPublicId?.trim()) {
+      const byPublic = await this.repo.findOne({
+        where: { organizationId: oid, publicId: dto.accountPublicId.trim() },
+      });
+      if (byPublic?.provider === 'github' || byPublic?.provider === 'gitlab') {
+        provider = byPublic.provider;
+      }
+    }
+    const row = await this.resolveRowForUpdate(oid, provider, dto);
+    if (dto.accountName !== undefined && dto.accountName.trim()) {
+      row.name = dto.accountName.trim();
+    }
 
     if (dto.githubAppId !== undefined) {
       const v = dto.githubAppId.trim();
@@ -693,14 +839,63 @@ export class GitService implements OnModuleInit {
       entity: 'git_settings',
       action: 'updated',
     });
-    return this.toPublic(row);
+    const githubRow = await this.providerSettingsRowForOrganizationOptional(
+      oid,
+      'github',
+    );
+    const gitlabRow = await this.providerSettingsRowForOrganizationOptional(
+      oid,
+      'gitlab',
+    );
+    const githubAccounts = await this.repo.find({
+      where: { organizationId: oid, provider: 'github' },
+      order: { updatedAt: 'DESC' },
+    });
+    const gitlabAccounts = await this.repo.find({
+      where: { organizationId: oid, provider: 'gitlab' },
+      order: { updatedAt: 'DESC' },
+    });
+    return this.toPublic(githubRow, gitlabRow, githubAccounts, gitlabAccounts);
+  }
+
+  async removeAccount(
+    organizationInternalId: number,
+    accountPublicId: string,
+  ): Promise<GitSettingsPublic> {
+    const oid = this.requireOrganizationInternalId(organizationInternalId);
+    const pid = accountPublicId.trim();
+    if (!pid) throw new BadRequestException('accountPublicId is required');
+    const row = await this.repo.findOne({
+      where: { organizationId: oid, publicId: pid },
+    });
+    if (!row) throw new BadRequestException('Git account not found');
+    const provider = row.provider;
+    await this.repo.remove(row);
+    const active = await this.repo.findOne({
+      where: { organizationId: oid, provider, isActive: true },
+    });
+    if (!active) {
+      const fallback = await this.repo.findOne({
+        where: { organizationId: oid, provider },
+        order: { updatedAt: 'DESC' },
+      });
+      if (fallback) {
+        fallback.isActive = true;
+        await this.repo.save(fallback);
+      }
+    }
+    this.orgRealtime.notifyOrgDataChanged(oid, {
+      entity: 'git_settings',
+      action: 'updated',
+    });
+    return this.getSettings(oid);
   }
 
   private async gitlabSettingsRow(
     organizationInternalId: number,
   ): Promise<GitIntegrationSettings> {
     const oid = this.requireOrganizationInternalId(organizationInternalId);
-    return this.settingsRowForOrganization(oid);
+    return this.providerSettingsRowForOrganization(oid, 'gitlab');
   }
 
   /**
@@ -1415,7 +1610,7 @@ export class GitService implements OnModuleInit {
       const pem = data['pem'];
       const webhookSecret = data['webhook_secret'];
 
-      const row = await this.settingsRowForOrganization(oid);
+      const row = await this.providerSettingsRowForOrganization(oid, 'github');
 
       if (typeof id === 'number' || typeof id === 'string') {
         row.githubAppId = String(id);
@@ -1443,7 +1638,23 @@ export class GitService implements OnModuleInit {
         entity: 'git_settings',
         action: 'github_manifest_exchanged',
       });
-      return this.toPublic(row);
+      const githubRow = await this.providerSettingsRowForOrganizationOptional(
+        oid,
+        'github',
+      );
+      const gitlabRow = await this.providerSettingsRowForOrganizationOptional(
+        oid,
+        'gitlab',
+      );
+      const githubAccounts = await this.repo.find({
+        where: { organizationId: oid, provider: 'github' },
+        order: { updatedAt: 'DESC' },
+      });
+      const gitlabAccounts = await this.repo.find({
+        where: { organizationId: oid, provider: 'gitlab' },
+        order: { updatedAt: 'DESC' },
+      });
+      return this.toPublic(githubRow, gitlabRow, githubAccounts, gitlabAccounts);
     } catch (error) {
       throw this.toExternalApiException(
         'GitHub',
@@ -1458,7 +1669,10 @@ export class GitService implements OnModuleInit {
   private async githubAppCredentialsRow(
     organizationInternalId: number,
   ): Promise<GitIntegrationSettings> {
-    const row = await this.gitlabSettingsRow(organizationInternalId);
+    const row = await this.providerSettingsRowForOrganization(
+      organizationInternalId,
+      'github',
+    );
     const appId = row.githubAppId?.trim();
     const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
     if (!appId || !pem) {
@@ -1480,7 +1694,10 @@ export class GitService implements OnModuleInit {
     organizationInternalId: number,
   ): Promise<{ appId: string; privateKeyPem: string } | null> {
     try {
-      const row = await this.gitlabSettingsRow(organizationInternalId);
+      const row = await this.providerSettingsRowForOrganization(
+        organizationInternalId,
+        'github',
+      );
       const appId = row.githubAppId?.trim();
       const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
       if (!appId || !pem) return null;

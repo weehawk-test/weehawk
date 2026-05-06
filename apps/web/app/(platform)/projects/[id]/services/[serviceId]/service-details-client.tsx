@@ -4488,7 +4488,7 @@ function ApplicationArchivePanel({
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
               <p className="text-xs font-medium text-foreground">GitHub — deploy from repository</p>
               <Link
-                href="/git/github"
+                href="/git"
                 scroll={false}
                 className="inline-flex items-center gap-1 text-[11px] text-sky-700 hover:text-sky-900 dark:text-sky-300/90 dark:hover:text-sky-200 hover:underline"
               >
@@ -4726,7 +4726,7 @@ function ApplicationArchivePanel({
             ) : (
               <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-border bg-muted/50 dark:bg-black/15 px-3 py-2">
                 Complete{" "}
-                <Link href="/git/github" className="text-sky-700 hover:text-sky-900 dark:text-sky-300/90 hover:underline">
+                <Link href="/git" className="text-sky-700 hover:text-sky-900 dark:text-sky-300/90 hover:underline">
                   Git → GitHub
                 </Link>{" "}
                 (register the app via manifest) so the API has the App ID and private key. Until then, use a public repo HTTPS URL below (no auth).
@@ -4873,7 +4873,7 @@ function ApplicationArchivePanel({
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
               <p className="text-xs font-medium text-foreground">GitLab — deploy from repository</p>
               <Link
-                href="/git/gitlab"
+                href="/git"
                 scroll={false}
                 className="inline-flex items-center gap-1 text-[11px] text-orange-300/90 hover:text-orange-200 hover:underline"
               >
@@ -5108,7 +5108,7 @@ function ApplicationArchivePanel({
             ) : (
               <p className="text-[11px] text-muted-foreground leading-relaxed rounded-lg border border-border bg-muted/50 dark:bg-black/15 px-3 py-2">
                 Save a <strong className="text-foreground/90">personal or group access token</strong> on{" "}
-                <Link href="/git/gitlab" className="text-orange-300/90 hover:underline">
+                <Link href="/git" className="text-orange-300/90 hover:underline">
                   Git → GitLab
                 </Link>{" "}
                 to load your projects here. Until then, use the manual HTTPS URL below (works for public repos without a token).

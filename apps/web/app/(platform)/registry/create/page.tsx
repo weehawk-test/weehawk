@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FlaskConical, Globe2, Loader2 } from "lucide-react";
+import { FlaskConical, Globe2, Loader2, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
@@ -46,6 +46,7 @@ export default function RegistryCreatePage() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testRemoteId, setTestRemoteId] = useState<string>("");
+  const isBusy = isSaving || isVerifying;
 
   const remoteServersQ = useQuery({
     queryKey: ["remote-servers", orgScopedQuerySegment(orgPid)],
@@ -136,14 +137,38 @@ export default function RegistryCreatePage() {
     }
   };
 
+  const closeModal = () => {
+    if (isBusy) return;
+    router.push("/registry");
+  };
+
   return (
-    <div className="fixed inset-0 z-[70] modal-scrim flex items-center justify-center px-4 py-6 md:px-6 md:py-8">
-      <div className="w-full max-w-2xl glass-panel rounded-xl border border-primary/25 p-5 sm:p-6">
-        <div className="mb-4">
-          <h1 className="text-base font-semibold">Add Registry Account</h1>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Add Docker Hub, GHCR, GitLab, or custom registry credentials.
-          </p>
+    <div
+      className="fixed inset-0 z-[70] modal-scrim flex items-center justify-center px-4 py-6 md:px-6 md:py-8"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) closeModal();
+      }}
+    >
+      <div
+        className="w-full max-w-2xl glass-panel rounded-xl border border-primary/25 p-5 sm:p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-base font-semibold">Add Registry Account</h1>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Add Docker Hub, GHCR, GitLab, or custom registry credentials.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={closeModal}
+            disabled={isBusy}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
         <div className="space-y-3">

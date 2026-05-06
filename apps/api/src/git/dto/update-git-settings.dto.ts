@@ -1,7 +1,21 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** Partial update: omit a field to leave unchanged; send empty string to clear a secret or optional value. */
 export class UpdateGitSettingsDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  accountPublicId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  accountName?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  createNewAccount?: boolean;
+
   @IsOptional()
   @IsString()
   @MaxLength(64)
