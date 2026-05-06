@@ -306,7 +306,7 @@ export function GitPageClient({
                     className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-primary opacity-0 transition-opacity group-hover:opacity-100 hover:bg-primary/10"
                     title="Install GitHub App"
                   >
-                    احتياط
+                    Fallback
                     <ExternalLink className="h-3 w-3" />
                   </a>
                 ) : null}

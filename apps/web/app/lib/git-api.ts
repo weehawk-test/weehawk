@@ -182,6 +182,7 @@ export type GithubAppManifest = {
   url: string;
   description: string;
   hook_attributes: { url: string };
+  setup_url?: string;
   redirect_url: string;
   callback_urls: string[];
   public: boolean;

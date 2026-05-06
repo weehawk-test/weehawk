@@ -17,7 +17,6 @@ export function GithubCallbackClient() {
   const { toast } = useToast();
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState<string | null>(null);
-  const [installUrl, setInstallUrl] = useState<string | null>(null);
   const ran = useRef(false);
 
   useEffect(() => {
@@ -56,11 +55,10 @@ export function GithubCallbackClient() {
         if (typeof window !== "undefined") sessionStorage.setItem(dedupeKey, "1");
         const next = await exchangeGithubManifest(accessToken, organizationPublicId, code.trim());
         const nextInstallUrl = next.github.installAppUrl?.trim() || "";
-        setInstallUrl(nextInstallUrl || null);
         setStatus("ok");
         toast({ title: "GitHub App connected", description: "Credentials were saved to Weehawk." });
         if (nextInstallUrl && typeof window !== "undefined") {
-          window.location.assign(nextInstallUrl);
+          window.location.replace(nextInstallUrl);
           return;
         }
         router.replace("/git");
@@ -90,14 +88,6 @@ export function GithubCallbackClient() {
         <>
           <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto" />
           <p className="text-sm text-muted-foreground">Redirecting to GitHub app installation…</p>
-          {installUrl ? (
-            <a
-              href={installUrl}
-              className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
-            >
-              احتياط: إذا لم يتم التحويل تلقائيًا، اضغط هنا لإكمال التثبيت
-            </a>
-          ) : null}
         </>
       ) : null}
       {status === "error" ? (

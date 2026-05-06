@@ -83,6 +83,8 @@ export type GithubAppManifestJson = {
   name: string;
   url: string;
   hook_attributes: { url: string };
+  /** Opened by GitHub after app installation when setup is required. */
+  setup_url?: string;
   redirect_url: string;
   /** GitHub expects `callback_urls` (array); singular `callback_url` is ignored. */
   callback_urls: string[];
@@ -1376,6 +1378,7 @@ export class GitService implements OnModuleInit {
     const api = this.resolveManifestApiBase(req, web);
     const orgQ = `?organizationPublicId=${encodeURIComponent(organizationPublicId.trim())}`;
     const callback = `${web}/git/github/callback${orgQ}`;
+    const setupUrl = `${web}/git`;
     const prod =
       (this.config.get<string>('NODE_ENV') ?? process.env.NODE_ENV ?? '')
         .toLowerCase()
@@ -1396,6 +1399,7 @@ export class GitService implements OnModuleInit {
       hook_attributes: {
         url: `${api}/api/git/github/webhook`,
       },
+      setup_url: setupUrl,
       redirect_url: callback,
       callback_urls: [callback],
       public: false,
@@ -1703,6 +1707,16 @@ export class GitService implements OnModuleInit {
       const slugRaw = data['slug'];
       if (typeof slugRaw === 'string' && slugRaw.trim()) {
         row.githubAppSlug = slugRaw.trim();
+      }
+      const appNameRaw = data['name'];
+      const resolvedAppName =
+        (typeof appNameRaw === 'string' && appNameRaw.trim()
+          ? appNameRaw.trim()
+          : typeof slugRaw === 'string' && slugRaw.trim()
+            ? slugRaw.trim()
+            : null);
+      if (resolvedAppName) {
+        row.name = resolvedAppName;
       }
       if (typeof clientSecret === 'string' && clientSecret.trim()) {
         row.githubClientSecret = this.encryptSecret(clientSecret.trim());
