@@ -15,6 +15,12 @@ import {
 import { RegistryBreadcrumb } from "./registry-breadcrumb";
 import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import {
+  orgMemberAllowsRegistryAdd,
+  orgMemberAllowsRegistryDelete,
+  orgMemberAllowsRegistryEdit,
+  orgMemberAllowsRegistryTest,
+} from "@/lib/org-workspace-permissions";
 
 type PresetId = "dockerhub" | "ghcr" | "gitlab" | "custom";
 
@@ -91,8 +97,13 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const orgFromCtx = useOrgWorkspace().publicId;
+  const orgCtx = useOrgWorkspace();
+  const orgFromCtx = orgCtx.publicId;
   const orgPid = (organizationPublicId || orgFromCtx).trim();
+  const canRegistryAdd = orgMemberAllowsRegistryAdd(orgCtx.workspacePermissions);
+  const canRegistryDelete = orgMemberAllowsRegistryDelete(orgCtx.workspacePermissions);
+  const canRegistryEdit = orgMemberAllowsRegistryEdit(orgCtx.workspacePermissions);
+  const canRegistryTest = orgMemberAllowsRegistryTest(orgCtx.workspacePermissions);
 
   const [providerUrl, setProviderUrl] = useState(meta.defaultProviderUrl);
   const [username, setUsername] = useState("");
@@ -287,7 +298,7 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
             <button
               type="button"
               className="text-[11px] text-destructive/80 hover:text-destructive disabled:opacity-50"
-              disabled={isClearingToken || isSaving || isVerifying}
+              disabled={isClearingToken || isSaving || isVerifying || !canRegistryDelete}
               onClick={() => void clearAccessToken()}
             >
               Clear access token
@@ -299,7 +310,7 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
           <button
             type="button"
             onClick={() => void verifyConnection()}
-            disabled={!canAuth || isVerifying || isSaving}
+            disabled={!canAuth || isVerifying || isSaving || !canRegistryTest}
             className="btn-secondary inline-flex items-center gap-2 border border-primary/35 text-primary disabled:opacity-50"
           >
             {isVerifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -308,7 +319,7 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
           <button
             type="button"
             onClick={() => void saveRegistry()}
-            disabled={!canAuth || isVerifying || isSaving || isClearingToken}
+            disabled={!canAuth || isVerifying || isSaving || isClearingToken || !canRegistryAdd}
             className="btn-primary inline-flex items-center gap-2 disabled:opacity-50"
           >
             {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}

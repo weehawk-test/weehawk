@@ -23,6 +23,10 @@ import {
   ORG_WORKSPACE_NOTIFICATIONS_ADVANCED_LABELS,
   ORG_WORKSPACE_S3_ADVANCED_KEYS,
   ORG_WORKSPACE_S3_ADVANCED_LABELS,
+  ORG_WORKSPACE_REGISTRY_ADVANCED_KEYS,
+  ORG_WORKSPACE_REGISTRY_ADVANCED_LABELS,
+  ORG_WORKSPACE_GIT_ADVANCED_KEYS,
+  ORG_WORKSPACE_GIT_ADVANCED_LABELS,
   ORG_WORKSPACE_MANAGEMENT_ADVANCED_KEYS,
   ORG_WORKSPACE_MANAGEMENT_ADVANCED_LABELS,
   type OrgWorkspacePermissionKey,
@@ -170,7 +174,7 @@ export function OrgPermissionsClient({
                             <PopoverTrigger asChild>
                               <button
                                 type="button"
-                                disabled={m.isOwner}
+                                disabled={!canEdit || m.isOwner || !projectsAllowed}
                                 className="inline-flex items-center justify-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                               >
                                 Advanced
@@ -249,7 +253,7 @@ export function OrgPermissionsClient({
                             <PopoverTrigger asChild>
                               <button
                                 type="button"
-                                disabled={m.isOwner}
+                                disabled={!canEdit || m.isOwner || !remoteAllowed}
                                 className="inline-flex items-center justify-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                               >
                                 Advanced
@@ -328,7 +332,7 @@ export function OrgPermissionsClient({
                             <PopoverTrigger asChild>
                               <button
                                 type="button"
-                                disabled={m.isOwner}
+                                disabled={!canEdit || m.isOwner || !domainsAllowed}
                                 className="inline-flex items-center justify-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                               >
                                 Advanced
@@ -407,7 +411,7 @@ export function OrgPermissionsClient({
                             <PopoverTrigger asChild>
                               <button
                                 type="button"
-                                disabled={m.isOwner}
+                                disabled={!canEdit || m.isOwner || !webhooksAllowed}
                                 className="inline-flex items-center justify-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                               >
                                 Advanced
@@ -749,6 +753,163 @@ export function OrgPermissionsClient({
                                     >
                                       <span className="text-foreground">
                                         {ORG_WORKSPACE_S3_ADVANCED_LABELS[subKey]}
+                                      </span>
+                                      <span className="inline-flex items-center gap-0.5">
+                                        <input
+                                          type="checkbox"
+                                          className="size-3.5 rounded border-border accent-primary disabled:opacity-50"
+                                          checked={subAllowed}
+                                          disabled={subDisabled}
+                                          onChange={(ev) => {
+                                            void onToggle(m, subKey, ev.target.checked);
+                                          }}
+                                        />
+                                        {subBusy ? (
+                                          <Loader2
+                                            className="size-3.5 animate-spin text-muted-foreground"
+                                            aria-hidden
+                                          />
+                                        ) : null}
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </td>
+                    );
+                  }
+
+                  if (key === ORG_WORKSPACE_PERMISSIONS.REGISTRY) {
+                    const registryAllowed = m.workspacePermissions[ORG_WORKSPACE_PERMISSIONS.REGISTRY];
+                    const disabled = !canEdit || m.isOwner;
+                    return (
+                      <td key={key} className="px-2 py-1.5 align-top text-center">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <div className={PERM_CHECKBOX_ROW_CLASS}>
+                            <label className="inline-flex cursor-pointer items-center gap-1">
+                              <input
+                                type="checkbox"
+                                className="size-4 rounded border-border accent-primary disabled:opacity-50"
+                                checked={registryAllowed}
+                                disabled={disabled}
+                                onChange={(ev) => {
+                                  void onToggle(m, key, ev.target.checked);
+                                }}
+                              />
+                              {busy?.email === m.email && busy.key === key ? (
+                                <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden />
+                              ) : null}
+                            </label>
+                          </div>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                disabled={m.isOwner}
+                                className="inline-flex items-center justify-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                              >
+                                Advanced
+                                <ChevronDown className="size-3 shrink-0 opacity-70" aria-hidden />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto min-w-[12rem] p-2.5" align="center" sideOffset={6}>
+                              <p className="mb-2 border-b border-border/60 pb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                Registry actions
+                              </p>
+                              <div className="space-y-1.5">
+                                {ORG_WORKSPACE_REGISTRY_ADVANCED_KEYS.map((subKey) => {
+                                  const subAllowed = m.workspacePermissions[subKey];
+                                  const subDisabled =
+                                    disabled || !registryAllowed || busy?.email === m.email;
+                                  const subBusy = busy?.email === m.email && busy.key === subKey;
+                                  return (
+                                    <label
+                                      key={subKey}
+                                      className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/15 px-2 py-1.5 text-xs"
+                                    >
+                                      <span className="text-foreground">
+                                        {ORG_WORKSPACE_REGISTRY_ADVANCED_LABELS[subKey]}
+                                      </span>
+                                      <span className="inline-flex items-center gap-0.5">
+                                        <input
+                                          type="checkbox"
+                                          className="size-3.5 rounded border-border accent-primary disabled:opacity-50"
+                                          checked={subAllowed}
+                                          disabled={subDisabled}
+                                          onChange={(ev) => {
+                                            void onToggle(m, subKey, ev.target.checked);
+                                          }}
+                                        />
+                                        {subBusy ? (
+                                          <Loader2
+                                            className="size-3.5 animate-spin text-muted-foreground"
+                                            aria-hidden
+                                          />
+                                        ) : null}
+                                      </span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </td>
+                    );
+                  }
+
+                  if (key === ORG_WORKSPACE_PERMISSIONS.GIT) {
+                    const gitAllowed = m.workspacePermissions[ORG_WORKSPACE_PERMISSIONS.GIT];
+                    const disabled = !canEdit || m.isOwner;
+                    return (
+                      <td key={key} className="px-2 py-1.5 align-top text-center">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <div className={PERM_CHECKBOX_ROW_CLASS}>
+                            <label className="inline-flex cursor-pointer items-center gap-1">
+                              <input
+                                type="checkbox"
+                                className="size-4 rounded border-border accent-primary disabled:opacity-50"
+                                checked={gitAllowed}
+                                disabled={disabled}
+                                onChange={(ev) => {
+                                  void onToggle(m, key, ev.target.checked);
+                                }}
+                              />
+                              {busy?.email === m.email && busy.key === key ? (
+                                <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden />
+                              ) : null}
+                            </label>
+                          </div>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                disabled={m.isOwner}
+                                className="inline-flex items-center justify-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                              >
+                                Advanced
+                                <ChevronDown className="size-3 shrink-0 opacity-70" aria-hidden />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto min-w-[14rem] p-2.5" align="center" sideOffset={6}>
+                              <p className="mb-2 border-b border-border/60 pb-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                Git actions
+                              </p>
+                              <div className="space-y-1.5">
+                                {ORG_WORKSPACE_GIT_ADVANCED_KEYS.map((subKey) => {
+                                  const subAllowed = m.workspacePermissions[subKey];
+                                  const subDisabled = disabled || !gitAllowed || busy?.email === m.email;
+                                  const subBusy = busy?.email === m.email && busy.key === subKey;
+                                  return (
+                                    <label
+                                      key={subKey}
+                                      className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-border/50 bg-muted/15 px-2 py-1.5 text-xs"
+                                    >
+                                      <span className="text-foreground">
+                                        {ORG_WORKSPACE_GIT_ADVANCED_LABELS[subKey]}
                                       </span>
                                       <span className="inline-flex items-center gap-0.5">
                                         <input

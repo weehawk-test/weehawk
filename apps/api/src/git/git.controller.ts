@@ -247,7 +247,12 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [
+          ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_PROVIDERS,
+        ],
+      },
     );
     return this.gitService.listGitlabProjects(ctx.internalId, {
       accountPublicId,
@@ -279,7 +284,12 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [
+          ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_PROVIDERS,
+        ],
+      },
     );
     return this.gitService.listGitlabBranchNames(ctx.internalId, id, accountPublicId);
   }
@@ -304,7 +314,12 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [
+          ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_PROVIDERS,
+        ],
+      },
     );
     return this.gitService.listGithubRepositories(ctx.internalId, {
       accountPublicId,
@@ -343,7 +358,10 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_EDIT],
+      },
     );
     return this.gitService.listGithubBranchNames(ctx.internalId, iid, r, accountPublicId);
   }
@@ -371,7 +389,10 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_ADD],
+      },
     );
     const before = await this.gitService.getSettings(ctx.internalId);
     const result = await this.gitService.updateSettings(ctx.internalId, dto);
@@ -441,7 +462,10 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_ADD],
+      },
     );
     const result = await this.gitService.createAccount(ctx.internalId, {
       provider: dto.provider,
@@ -488,7 +512,10 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       dto.organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_ADD],
+      },
     );
     const result = await this.gitService.exchangeGithubManifestCode(
       ctx.internalId,
@@ -527,7 +554,10 @@ return 1
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
+        requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_DELETE],
+      },
     );
     const before = await this.gitService.getSettings(ctx.internalId);
     const target = [

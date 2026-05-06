@@ -17,6 +17,11 @@ import {
   ORG_DATA_CHANGED_EVENT,
   type OrgDataChangedDetail,
 } from "@/lib/org-realtime-events";
+import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
+import {
+  orgMemberAllowsGitAdd,
+  orgMemberAllowsGitDelete,
+} from "@/lib/org-workspace-permissions";
 
 type Provider = "github" | "gitlab";
 
@@ -53,6 +58,9 @@ export function GitPageClient({
   const [orgName, setOrgName] = useState("");
   const [gitlabAccountName, setGitlabAccountName] = useState("");
   const [gitlabToken, setGitlabToken] = useState("");
+  const org = useOrgWorkspace();
+  const canGitAdd = orgMemberAllowsGitAdd(org.workspacePermissions);
+  const canGitDelete = orgMemberAllowsGitDelete(org.workspacePermissions);
 
   const githubAccounts = settings?.githubAccounts ?? [];
   const gitlabAccounts = settings?.gitlabAccounts ?? [];
@@ -234,7 +242,8 @@ export function GitPageClient({
           <button
             type="button"
             onClick={() => setOpenProvider("github")}
-            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            disabled={!canGitAdd}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-opacity enabled:hover:bg-slate-800 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100 dark:enabled:hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Image
               src="/deployment-sources/github.svg"
@@ -248,7 +257,8 @@ export function GitPageClient({
           <button
             type="button"
             onClick={() => setOpenProvider("gitlab")}
-            className="inline-flex items-center gap-2 rounded-md border border-violet-400/20 bg-violet-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-violet-500"
+            disabled={!canGitAdd}
+            className="inline-flex items-center gap-2 rounded-md border border-violet-400/20 bg-violet-600/80 px-4 py-2 text-sm font-medium text-white transition-opacity enabled:hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Image
               src="/deployment-sources/gitlab.svg"
@@ -313,7 +323,7 @@ export function GitPageClient({
                 <button
                   type="button"
                   onClick={() => void removeAccount(acc.publicId)}
-                  disabled={deletingAccountId === acc.publicId}
+                  disabled={deletingAccountId === acc.publicId || !canGitDelete}
                   className="inline-flex items-center rounded-md p-1.5 text-destructive/80 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
                   title="Remove account"
                 >
@@ -393,7 +403,7 @@ export function GitPageClient({
                 <button
                   type="button"
                   onClick={() => void startGithubManifestRegistration()}
-                  disabled={registerBusy}
+                  disabled={registerBusy || !canGitAdd}
                   className="btn-primary text-sm disabled:opacity-50"
                 >
                   {registerBusy ? "Starting..." : "Create GitHub App"}
@@ -448,7 +458,7 @@ export function GitPageClient({
                 <button
                   type="button"
                   onClick={() => void saveGitlabSettings()}
-                  disabled={gitlabSaving || !gitlabAccountName.trim()}
+                  disabled={gitlabSaving || !gitlabAccountName.trim() || !canGitAdd}
                   className="btn-primary text-sm disabled:opacity-50"
                 >
                   {gitlabSaving ? "Saving..." : "Save GitLab"}

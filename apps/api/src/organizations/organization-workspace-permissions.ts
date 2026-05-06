@@ -66,7 +66,23 @@ export const ORGANIZATION_WORKSPACE_PERMISSIONS = {
   /** Sub-capability: update or delete profiles and delete bucket objects. */
   S3_EDIT: 's3_edit',
   REGISTRY: 'registry',
+  /** Sub-capability: create saved registry credentials. */
+  REGISTRY_ADD: 'registry_add',
+  /** Sub-capability: update or delete saved registry credentials. */
+  REGISTRY_EDIT: 'registry_edit',
+  /** Sub-capability: delete saved registry credentials. */
+  REGISTRY_DELETE: 'registry_delete',
+  /** Sub-capability: run registry credential tests on remote servers. */
+  REGISTRY_TEST: 'registry_test',
   GIT: 'git',
+  /** Sub-capability: add Git provider accounts / integrations. */
+  GIT_ADD: 'git_add',
+  /** Sub-capability: update Git integration settings. */
+  GIT_EDIT: 'git_edit',
+  /** Sub-capability: delete Git accounts/integrations. */
+  GIT_DELETE: 'git_delete',
+  /** Sub-capability: access provider catalogs (Available Providers, repos, branches). */
+  GIT_PROVIDERS: 'git_providers',
   ORGANIZATION_MANAGEMENT: 'organization_management',
   /** Sub-capability: organization management · Overview tab. */
   ORGANIZATION_MANAGEMENT_OVERVIEW: 'organization_management_overview',
@@ -155,6 +171,24 @@ export const ORGANIZATION_S3_SUB_PERMISSIONS: readonly OrganizationWorkspacePerm
   ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT,
 ];
 
+/** Sub-capabilities under {@link ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY}. */
+export const ORGANIZATION_REGISTRY_SUB_PERMISSIONS: readonly OrganizationWorkspacePermission[] =
+  [
+    ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_ADD,
+    ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_EDIT,
+    ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_DELETE,
+    ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_TEST,
+  ];
+
+/** Sub-capabilities under {@link ORGANIZATION_WORKSPACE_PERMISSIONS.GIT}. */
+export const ORGANIZATION_GIT_SUB_PERMISSIONS: readonly OrganizationWorkspacePermission[] =
+  [
+    ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_ADD,
+    ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_EDIT,
+    ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_DELETE,
+    ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_PROVIDERS,
+  ];
+
 /** Sub-capabilities under {@link ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT}. */
 export const ORGANIZATION_MANAGEMENT_SUB_PERMISSIONS: readonly OrganizationWorkspacePermission[] =
   [
@@ -190,6 +224,12 @@ const PARENT_BY_SUB_WORKSPACE_PERMISSION = new Map<
   ),
   ...ORGANIZATION_S3_SUB_PERMISSIONS.map(
     (k) => [k, ORGANIZATION_WORKSPACE_PERMISSIONS.S3] as const,
+  ),
+  ...ORGANIZATION_REGISTRY_SUB_PERMISSIONS.map(
+    (k) => [k, ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY] as const,
+  ),
+  ...ORGANIZATION_GIT_SUB_PERMISSIONS.map(
+    (k) => [k, ORGANIZATION_WORKSPACE_PERMISSIONS.GIT] as const,
   ),
   ...ORGANIZATION_MANAGEMENT_SUB_PERMISSIONS.map(
     (k) =>

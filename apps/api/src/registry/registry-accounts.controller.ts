@@ -100,6 +100,9 @@ export class RegistryAccountsController {
       userId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
+        requireAllWorkspaceAreas: [
+          ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_ADD,
+        ],
       },
     );
     const upsert = await this.registryService.createAccount(ctx.internalId, dto);
@@ -139,6 +142,9 @@ export class RegistryAccountsController {
       userId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
+        requireAllWorkspaceAreas: [
+          ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_DELETE,
+        ],
       },
     );
     const out = await this.registryService.removeAccount(
@@ -186,6 +192,9 @@ export class RegistryAccountsController {
       userId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
+        requireAllWorkspaceAreas: [
+          ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_EDIT,
+        ],
       },
     );
     const updated = await this.registryService.updateAccount(
@@ -234,6 +243,9 @@ export class RegistryAccountsController {
       userId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
+        requireAllWorkspaceAreas: [
+          ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY_TEST,
+        ],
       },
     );
     return this.registryService.testSavedAccountFromRemote(

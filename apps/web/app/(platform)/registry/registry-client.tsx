@@ -20,6 +20,12 @@ import {
   updateRegistryAccountApi,
   type RegistryAccountRow,
 } from "@/lib/registry-api";
+import {
+  orgMemberAllowsRegistryAdd,
+  orgMemberAllowsRegistryDelete,
+  orgMemberAllowsRegistryEdit,
+  orgMemberAllowsRegistryTest,
+} from "@/lib/org-workspace-permissions";
 
 function providerLabel(providerUrl: string): string {
   const p = providerUrl.toLowerCase();
@@ -40,7 +46,12 @@ export function RegistryClient({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const confirm = useConfirm();
-  const orgPid = useOrgWorkspace().publicId.trim();
+  const org = useOrgWorkspace();
+  const orgPid = org.publicId.trim();
+  const canRegistryAdd = orgMemberAllowsRegistryAdd(org.workspacePermissions);
+  const canRegistryDelete = orgMemberAllowsRegistryDelete(org.workspacePermissions);
+  const canRegistryEdit = orgMemberAllowsRegistryEdit(org.workspacePermissions);
+  const canRegistryTest = orgMemberAllowsRegistryTest(org.workspacePermissions);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isTesting, setIsTesting] = useState(false);
@@ -219,7 +230,13 @@ export function RegistryClient({
             Manage registry accounts. Verify and store credentials for image pull/push.
           </p>
         </div>
-        <Link href="/registry/create" className="btn-primary inline-flex items-center gap-2 shrink-0">
+        <Link
+          href="/registry/create"
+          aria-disabled={!canRegistryAdd}
+          className={`btn-primary inline-flex items-center gap-2 shrink-0 ${
+            !canRegistryAdd ? "pointer-events-none opacity-50" : ""
+          }`}
+        >
           <Plus className="w-4 h-4" />
           Add Registry
         </Link>
@@ -251,7 +268,7 @@ export function RegistryClient({
               <button
                 type="button"
                 onClick={() => void handleBulkDelete()}
-                disabled={Boolean(deletingId)}
+                disabled={Boolean(deletingId) || !canRegistryDelete}
                 className="btn-secondary border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-2 text-sm"
               >
                 <Trash2 className="w-4 h-4" />
@@ -309,7 +326,7 @@ export function RegistryClient({
                       type="button"
                       className="p-2 rounded-md hover:bg-destructive/20 text-destructive transition-colors opacity-0 group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
                       onClick={() => void handleDeleteOne(acc.publicId, acc.name || providerLabel(acc.providerUrl))}
-                      disabled={Boolean(deletingId)}
+                      disabled={Boolean(deletingId) || !canRegistryDelete}
                       title="Delete"
                     >
                       {deletingId === acc.publicId ? (
@@ -344,7 +361,8 @@ export function RegistryClient({
                     <button
                       type="button"
                       onClick={() => openEdit(acc)}
-                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 text-xs"
+                      disabled={!canRegistryEdit}
+                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 text-xs disabled:pointer-events-none disabled:opacity-50"
                     >
                       <Pencil className="w-3 h-3" />
                       Edit
@@ -355,7 +373,8 @@ export function RegistryClient({
                         setTestingId(acc.publicId);
                         setShowTestModal(true);
                       }}
-                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 text-xs"
+                      disabled={!canRegistryTest}
+                      className="text-primary hover:underline cursor-pointer font-medium flex items-center gap-1 text-xs disabled:pointer-events-none disabled:opacity-50"
                     >
                       <FlaskConical className="w-3 h-3" />
                       Test
@@ -447,7 +466,12 @@ export function RegistryClient({
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" className="btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
-              <button type="button" className="btn-primary" onClick={() => void saveEdit()} disabled={isEditing}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => void saveEdit()}
+                disabled={isEditing || !canRegistryEdit}
+              >
                 {isEditing ? "Saving..." : "Save"}
               </button>
             </div>

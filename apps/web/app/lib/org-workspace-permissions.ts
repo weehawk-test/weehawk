@@ -36,7 +36,15 @@ export const ORG_WORKSPACE_PERMISSIONS = {
   S3_ADD: "s3_add",
   S3_EDIT: "s3_edit",
   REGISTRY: "registry",
+  REGISTRY_ADD: "registry_add",
+  REGISTRY_EDIT: "registry_edit",
+  REGISTRY_DELETE: "registry_delete",
+  REGISTRY_TEST: "registry_test",
   GIT: "git",
+  GIT_ADD: "git_add",
+  GIT_EDIT: "git_edit",
+  GIT_DELETE: "git_delete",
+  GIT_PROVIDERS: "git_providers",
   ORGANIZATION_MANAGEMENT: "organization_management",
   ORGANIZATION_MANAGEMENT_OVERVIEW: "organization_management_overview",
   ORGANIZATION_MANAGEMENT_AUDIT_LOG: "organization_management_audit_log",
@@ -108,6 +116,31 @@ export const ORG_S3_ADVANCED_PERMISSION_KEYS: readonly OrgWorkspacePermissionKey
   ORG_WORKSPACE_PERMISSIONS.S3_EDIT,
 ];
 
+/** Keys shown under Registry → Advanced (not separate table columns). */
+export const ORG_REGISTRY_ADVANCED_PERMISSION_KEYS: readonly OrgWorkspacePermissionKey[] = [
+  ORG_WORKSPACE_PERMISSIONS.REGISTRY_ADD,
+  ORG_WORKSPACE_PERMISSIONS.REGISTRY_EDIT,
+  ORG_WORKSPACE_PERMISSIONS.REGISTRY_DELETE,
+  ORG_WORKSPACE_PERMISSIONS.REGISTRY_TEST,
+];
+
+/**
+ * Git sub-permissions enforced by the API; never shown as standalone matrix columns.
+ * Only {@link ORG_GIT_ADVANCED_PERMISSION_KEYS} appear in the Git → Advanced popover.
+ */
+const ORG_GIT_SUB_PERMISSION_KEYS_EXCLUDED_FROM_TABLE: readonly OrgWorkspacePermissionKey[] = [
+  ORG_WORKSPACE_PERMISSIONS.GIT_ADD,
+  ORG_WORKSPACE_PERMISSIONS.GIT_EDIT,
+  ORG_WORKSPACE_PERMISSIONS.GIT_DELETE,
+  ORG_WORKSPACE_PERMISSIONS.GIT_PROVIDERS,
+];
+
+/** Keys shown under Git → Advanced (not separate table columns). */
+export const ORG_GIT_ADVANCED_PERMISSION_KEYS: readonly OrgWorkspacePermissionKey[] = [
+  ORG_WORKSPACE_PERMISSIONS.GIT_ADD,
+  ORG_WORKSPACE_PERMISSIONS.GIT_DELETE,
+];
+
 /** Keys under Management → Advanced in the permissions matrix. */
 export const ORG_MANAGEMENT_ADVANCED_PERMISSION_KEYS: readonly OrgWorkspacePermissionKey[] = [
   ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW,
@@ -125,6 +158,8 @@ const TABLE_COLUMN_EXCLUDED_ADVANCED_KEYS = new Set<OrgWorkspacePermissionKey>([
   ...ORG_CRON_JOBS_ADVANCED_PERMISSION_KEYS,
   ...ORG_NOTIFICATIONS_ADVANCED_PERMISSION_KEYS,
   ...ORG_S3_ADVANCED_PERMISSION_KEYS,
+  ...ORG_REGISTRY_ADVANCED_PERMISSION_KEYS,
+  ...ORG_GIT_SUB_PERMISSION_KEYS_EXCLUDED_FROM_TABLE,
   ...ORG_MANAGEMENT_ADVANCED_PERMISSION_KEYS,
 ]);
 
@@ -161,12 +196,20 @@ export const ORG_WORKSPACE_PERMISSION_LABELS: Record<OrgWorkspacePermissionKey, 
   [ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS_ADD]: "Notifications · Add",
   [ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS_EDIT]: "Notifications · Edit",
   [ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS_TEST]: "Notifications · Test",
-  [ORG_WORKSPACE_PERMISSIONS.S3]: "S3 destinations",
+  [ORG_WORKSPACE_PERMISSIONS.S3]: "S3",
   [ORG_WORKSPACE_PERMISSIONS.S3_BROWSE]: "S3 · Browse",
   [ORG_WORKSPACE_PERMISSIONS.S3_ADD]: "S3 · Add",
   [ORG_WORKSPACE_PERMISSIONS.S3_EDIT]: "S3 · Edit",
   [ORG_WORKSPACE_PERMISSIONS.REGISTRY]: "Registry",
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_ADD]: "Registry · Add",
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_EDIT]: "Registry · Edit",
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_DELETE]: "Registry · Delete",
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_TEST]: "Registry · Test",
   [ORG_WORKSPACE_PERMISSIONS.GIT]: "Git",
+  [ORG_WORKSPACE_PERMISSIONS.GIT_ADD]: "Git · Add",
+  [ORG_WORKSPACE_PERMISSIONS.GIT_EDIT]: "Git · Edit",
+  [ORG_WORKSPACE_PERMISSIONS.GIT_DELETE]: "Git · Delete",
+  [ORG_WORKSPACE_PERMISSIONS.GIT_PROVIDERS]: "Git · Providers",
   [ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT]: "Management",
   [ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW]: "Management · Overview",
   [ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG]: "Management · Audit log",
@@ -348,6 +391,46 @@ export function orgMemberAllowsS3Edit(p: OrganizationWorkspacePermissions): bool
   return p[ORG_WORKSPACE_PERMISSIONS.S3_EDIT];
 }
 
+export function orgMemberAllowsRegistryAdd(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.REGISTRY]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.REGISTRY_ADD];
+}
+
+export function orgMemberAllowsRegistryEdit(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.REGISTRY]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.REGISTRY_EDIT];
+}
+
+export function orgMemberAllowsRegistryDelete(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.REGISTRY]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.REGISTRY_DELETE];
+}
+
+export function orgMemberAllowsRegistryTest(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.REGISTRY]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.REGISTRY_TEST];
+}
+
+export function orgMemberAllowsGitAdd(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.GIT]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.GIT_ADD];
+}
+
+export function orgMemberAllowsGitEdit(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.GIT]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.GIT_EDIT];
+}
+
+export function orgMemberAllowsGitDelete(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.GIT]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.GIT_DELETE];
+}
+
+export function orgMemberAllowsGitProviders(p: OrganizationWorkspacePermissions): boolean {
+  if (!p[ORG_WORKSPACE_PERMISSIONS.GIT]) return false;
+  return p[ORG_WORKSPACE_PERMISSIONS.GIT_PROVIDERS];
+}
+
 export function orgMemberAllowsOrgManagementOverview(
   p: OrganizationWorkspacePermissions,
 ): boolean {
@@ -433,7 +516,7 @@ export function allowedOrgManagementTabMatches(
 
 /**
  * Parent columns that show an **Advanced** popover in the org permissions matrix.
- * Others (e.g. Registry, Git) are simple checkboxes and are listed last in the table.
+ * Others remain simple checkboxes and are listed last in the table.
  */
 export const ORG_WORKSPACE_PERMISSION_TABLE_ADVANCED_PARENT_KEYS: readonly OrgWorkspacePermissionKey[] = [
   ORG_WORKSPACE_PERMISSIONS.PROJECTS,
@@ -443,6 +526,8 @@ export const ORG_WORKSPACE_PERMISSION_TABLE_ADVANCED_PARENT_KEYS: readonly OrgWo
   ORG_WORKSPACE_PERMISSIONS.CRON_JOBS,
   ORG_WORKSPACE_PERMISSIONS.NOTIFICATIONS,
   ORG_WORKSPACE_PERMISSIONS.S3,
+  ORG_WORKSPACE_PERMISSIONS.REGISTRY,
+  ORG_WORKSPACE_PERMISSIONS.GIT,
   ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
 ];
 
@@ -536,6 +621,26 @@ export const ORG_WORKSPACE_S3_ADVANCED_LABELS = {
   [ORG_WORKSPACE_PERMISSIONS.S3_ADD]: "Add",
   [ORG_WORKSPACE_PERMISSIONS.S3_EDIT]: "Edit",
 } as Record<(typeof ORG_WORKSPACE_S3_ADVANCED_KEYS)[number], string>;
+
+export const ORG_WORKSPACE_REGISTRY_ADVANCED_KEYS: readonly OrgWorkspacePermissionKey[] = [
+  ...ORG_REGISTRY_ADVANCED_PERMISSION_KEYS,
+];
+
+export const ORG_WORKSPACE_REGISTRY_ADVANCED_LABELS = {
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_ADD]: "Add",
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_EDIT]: "Edit",
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_DELETE]: "Delete",
+  [ORG_WORKSPACE_PERMISSIONS.REGISTRY_TEST]: "Test",
+} as Record<(typeof ORG_WORKSPACE_REGISTRY_ADVANCED_KEYS)[number], string>;
+
+export const ORG_WORKSPACE_GIT_ADVANCED_KEYS: readonly OrgWorkspacePermissionKey[] = [
+  ...ORG_GIT_ADVANCED_PERMISSION_KEYS,
+];
+
+export const ORG_WORKSPACE_GIT_ADVANCED_LABELS = {
+  [ORG_WORKSPACE_PERMISSIONS.GIT_ADD]: "Add (GitHub, GitLab)",
+  [ORG_WORKSPACE_PERMISSIONS.GIT_DELETE]: "Delete",
+} as Record<(typeof ORG_WORKSPACE_GIT_ADVANCED_KEYS)[number], string>;
 
 export const ORG_WORKSPACE_MANAGEMENT_ADVANCED_KEYS: readonly OrgWorkspacePermissionKey[] = [
   ...ORG_MANAGEMENT_ADVANCED_PERMISSION_KEYS,
