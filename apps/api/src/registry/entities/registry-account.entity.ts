@@ -12,7 +12,7 @@ import { generatePublicId } from '../../common/public-id';
 
 /** Platform registry login (Dokploy-style: stored encrypted, used for push without relying on host ~/.docker only). */
 @Entity('registry_accounts')
-@Index(['organizationId', 'providerUrl'], { unique: true })
+@Index(['organizationId', 'providerUrl'])
 export class RegistryAccount {
   @PrimaryGeneratedColumn()
   id!: number;

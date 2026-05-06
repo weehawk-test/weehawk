@@ -5,6 +5,7 @@ import {
   Controller,
   Delete,
   Get,
+  Patch,
   Param,
   Post,
   Body,
@@ -20,6 +21,8 @@ import {
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { RegistryService } from './registry.service';
 import { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
+import { UpdateRegistryAccountDto } from './dto/update-registry-account.dto';
+import { TestRegistryAccountDto } from './dto/test-registry-account.dto';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
@@ -100,12 +103,8 @@ export class RegistryAccountsController {
       },
     );
     const upsert = await this.registryService.createAccount(ctx.internalId, dto);
-    const action =
-      upsert.upsertKind === 'created'
-        ? 'security.registry.account_created'
-        : 'security.registry.account_updated';
     void this.organizationsService
-      .appendOrganizationAuditEvent(ctx.internalId, userId, action, {
+      .appendOrganizationAuditEvent(ctx.internalId, userId, 'security.registry.account_created', {
         metadata: {
           endpoint: 'POST /api/registry/accounts',
           registryAccountPublicId: upsert.account.publicId,
@@ -163,5 +162,85 @@ export class RegistryAccountsController {
       )
       .catch(() => undefined);
     return { success: true as const };
+  }
+
+  @Patch(':accountRef')
+  @ApiOperation({
+    summary: 'Update a saved registry account (name/provider/username/password)',
+  })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: true,
+    description: 'Organization workspace.',
+  })
+  async update(
+    @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
+    @Param('accountRef') accountRef: string,
+    @Body() dto: UpdateRegistryAccountDto,
+  ) {
+    const userId = this.uid(req);
+    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
+    const ctx = await this.organizationsService.requireMemberContext(
+      pub,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
+      },
+    );
+    const updated = await this.registryService.updateAccount(
+      ctx.internalId,
+      accountRef,
+      dto,
+    );
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        ctx.internalId,
+        userId,
+        'security.registry.account_updated',
+        {
+          metadata: {
+            endpoint: `PATCH /api/registry/accounts/${updated.publicId}`,
+            registryAccountPublicId: updated.publicId,
+            registryAccountId: updated.id,
+            registryAccountName: updated.name,
+            registryProviderUrl: updated.providerUrl,
+          },
+        },
+      )
+      .catch(() => undefined);
+    return updated;
+  }
+
+  @Post(':accountRef/test')
+  @ApiOperation({
+    summary: 'Test a saved registry account on a selected deploy server',
+  })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: true,
+    description: 'Organization workspace.',
+  })
+  async testSavedAccount(
+    @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
+    @Param('accountRef') accountRef: string,
+    @Body() dto: TestRegistryAccountDto,
+  ) {
+    const userId = this.uid(req);
+    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
+    const ctx = await this.organizationsService.requireMemberContext(
+      pub,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
+      },
+    );
+    return this.registryService.testSavedAccountFromRemote(
+      ctx.internalId,
+      accountRef,
+      dto.remoteServerRef,
+      userId,
+    );
   }
 }

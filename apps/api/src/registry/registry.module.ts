@@ -6,12 +6,14 @@ import { RegistryService } from './registry.service';
 import { RegistryAccount } from './entities/registry-account.entity';
 import { OrganizationsModule } from '../organizations/organizations.module';
 import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
+import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([RegistryAccount]),
     OrganizationsModule,
     OrgRealtimeModule,
+    RemoteServersModule,
   ],
   controllers: [RegistryController, RegistryAccountsController],
   providers: [RegistryService],

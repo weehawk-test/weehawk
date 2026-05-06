@@ -111,6 +111,8 @@ export type CreateRegistryAccountPayload = {
   password: string;
 };
 
+export type UpdateRegistryAccountPayload = Partial<CreateRegistryAccountPayload>;
+
 export async function createRegistryAccountApi(
   accessToken: string,
   organizationPublicId: string,
@@ -150,4 +152,54 @@ export async function deleteRegistryAccountApi(
     const text = await res.text();
     throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
   }
+}
+
+export async function updateRegistryAccountApi(
+  accessToken: string,
+  organizationPublicId: string,
+  accountPublicId: string,
+  body: UpdateRegistryAccountPayload,
+): Promise<RegistryAccountRow> {
+  const id = accountPublicId.trim();
+  if (!id) throw new Error("Registry account publicId is required");
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}${registryAccountsQuery(organizationPublicId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
+  }
+  return JSON.parse(text) as RegistryAccountRow;
+}
+
+export async function testSavedRegistryAccountApi(
+  accessToken: string,
+  organizationPublicId: string,
+  accountPublicId: string,
+  remoteServerRef: string,
+): Promise<{ success: boolean; output: string }> {
+  const id = accountPublicId.trim();
+  const remote = remoteServerRef.trim();
+  if (!id) throw new Error("Registry account publicId is required");
+  if (!remote) throw new Error("Remote server is required");
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}/test${registryAccountsQuery(organizationPublicId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ remoteServerRef: remote }),
+    },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(parseErrorMessage(text || res.statusText || `HTTP ${res.status}`));
+  }
+  return JSON.parse(text) as { success: boolean; output: string };
 }

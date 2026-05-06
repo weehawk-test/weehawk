@@ -4495,13 +4495,13 @@ curl -fsS -o /dev/null "$U"
             resolve({ stdout, stderr });
           } else {
             const stderrSafe = stderr.trim().slice(0, 4000);
+            const stdoutSafe = stdout.trim().slice(0, 4000);
             this.logger.error(
               `Remote command failed (exit=${code}) in execSshBashScriptCollectOutputOnClient.`,
-              stderrSafe || '(no stderr)',
+              stderrSafe || stdoutSafe || '(no stderr/stdout)',
             );
-            reject(
-              new InternalServerErrorException('Remote command failed'),
-            );
+            const detail = stderrSafe || stdoutSafe || `exit code ${code}`;
+            reject(new BadRequestException(`Remote command failed: ${detail}`));
           }
         });
         stream.on('data', (d: Buffer) => {

@@ -4361,7 +4361,7 @@ function ApplicationArchivePanel({
           <label className="text-xs font-medium text-muted-foreground block">Source</label>
           <p className="text-[11px] text-muted-foreground/90 max-w-xl leading-relaxed">
             {deployTarget === "source"
-              ? "Choose GitHub or GitLab (or paste an HTTPS URL). On deploy, the remote host clones your repo and builds from your Dockerfile or an auto-generated one."
+              ? "Use GitHub/GitLab to build from source, or choose Docker Image to deploy directly from a registry."
               : "Use a Docker image directly from your registry (or Docker Hub) and skip build-from-source on deploy."}
           </p>
         </div>
@@ -5303,14 +5303,15 @@ function ApplicationArchivePanel({
             <option value="dockerfile">Dockerfile — docker build from Dockerfile in build path</option>
             <option value="nixpacks">Nixpacks — auto-detect stack, build on deploy host</option>
           </select>
-          <p className="text-[11px] text-muted-foreground leading-relaxed">
-            Dockerfile: your repo must include a <code className="text-[10px]">Dockerfile</code> under the build path; it is used when building on the deploy host after Git clone.
-            Nixpacks: runs <code className="text-[10px]">nixpacks build</code> on the remote host — install the CLI via that host&apos;s{" "}
-            <Link href="/remote-server" className="font-medium text-primary underline-offset-2 hover:underline">
-              Installs &amp; maintenance
-            </Link>{" "}
-            → Nixpacks CLI only.
-          </p>
+          {appBuildStrategy === "nixpacks" ? (
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Nixpacks requires installation on the remote host via{" "}
+              <Link href="/remote-server" className="font-medium text-primary underline-offset-2 hover:underline">
+                Installs &amp; maintenance
+              </Link>
+              .
+            </p>
+          ) : null}
         </div>
         </>
         )}

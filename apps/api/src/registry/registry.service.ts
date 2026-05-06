@@ -23,6 +23,7 @@ import {
 } from '../remote-servers/ssh-key-crypto';
 import { RegistryAccount } from './entities/registry-account.entity';
 import type { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
+import type { UpdateRegistryAccountDto } from './dto/update-registry-account.dto';
 import {
   normalizeProviderUrl,
   registryHostFromImageRef,
@@ -31,6 +32,7 @@ import { isLikelyNumericId } from '../common/public-id';
 import { isRemoteSshIpBlocked } from '../remote-servers/remote-ssh-host-policy';
 import { OrganizationInternalScopedRepository } from '../common/tenant-scoped.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
+import { RemoteServersService } from '../remote-servers/remote-servers.service';
 
 export type RegistryAccountSafe = {
   id: number;
@@ -43,7 +45,7 @@ export type RegistryAccountSafe = {
 
 export type RegistryAccountUpsertResult = {
   account: RegistryAccountSafe;
-  upsertKind: 'created' | 'updated';
+  upsertKind: 'created';
 };
 
 @Injectable()
@@ -56,6 +58,7 @@ export class RegistryService {
     private readonly registryAccountRepository: Repository<RegistryAccount>,
     private readonly configService: ConfigService,
     private readonly orgRealtime: OrgRealtimeEmitter,
+    private readonly remoteServersService: RemoteServersService,
   ) {
     this.scopedRegistryAccounts = new OrganizationInternalScopedRepository<RegistryAccount>(
       this.registryAccountRepository,
@@ -576,41 +579,16 @@ export class RegistryService {
     const password = dto.password;
 
     try {
-      await this.assertRegistryCredentialsValid(
-        providerUrl,
-        username,
-        password,
-      );
-
       const enc = encryptPrivateKey(password, this.getEncryptionSecret());
-      const existing = await this.scopedRegistryAccounts.findByFieldOptional(
-        'providerUrl',
-        providerUrl,
-        organizationInternalId,
-      );
-      if (existing) {
-        existing.name = name;
-        existing.username = username;
-        existing.passwordEncrypted = enc;
-        existing.lastVerifiedAt = new Date();
-        const saved = await this.scopedRegistryAccounts.saveForOrganization(
-          existing,
-          organizationInternalId,
-        );
-        this.orgRealtime.notifyOrgDataChanged(organizationInternalId, {
-          entity: 'registry_account',
-          action: 'updated',
-          resourceId: saved.id,
-        });
-        return { account: this.toSafe(saved), upsertKind: 'updated' };
-      }
       const created = this.registryAccountRepository.create({
         organizationId: organizationInternalId,
         name,
         providerUrl,
         username,
         passwordEncrypted: enc,
-        lastVerifiedAt: new Date(),
+        // Account creation no longer enforces connectivity test.
+        // Verification is available as an explicit optional action from the UI.
+        lastVerifiedAt: null,
       });
       const saved = await this.scopedRegistryAccounts.saveForOrganization(
         created,
@@ -654,6 +632,86 @@ export class RegistryService {
       resourceId: row.id,
     });
     return { success: true, removed };
+  }
+
+  async updateAccount(
+    organizationInternalId: number,
+    accountRef: string,
+    dto: UpdateRegistryAccountDto,
+  ): Promise<RegistryAccountSafe> {
+    const row = await this.registryAccountRowForOrgRef(organizationInternalId, accountRef);
+    if (dto.name !== undefined) row.name = dto.name.trim();
+    if (dto.providerUrl !== undefined) row.providerUrl = normalizeProviderUrl(dto.providerUrl);
+    if (dto.username !== undefined) row.username = dto.username.trim();
+    if (dto.password !== undefined && dto.password.trim().length > 0) {
+      row.passwordEncrypted = encryptPrivateKey(dto.password, this.getEncryptionSecret());
+      row.lastVerifiedAt = null;
+    }
+    const saved = await this.scopedRegistryAccounts.saveForOrganization(
+      row,
+      organizationInternalId,
+    );
+    this.orgRealtime.notifyOrgDataChanged(organizationInternalId, {
+      entity: 'registry_account',
+      action: 'updated',
+      resourceId: saved.id,
+    });
+    return this.toSafe(saved);
+  }
+
+  private shSingleQuote(value: string): string {
+    return `'${String(value ?? '').replace(/'/g, `'\\''`)}'`;
+  }
+
+  async testSavedAccountFromRemote(
+    organizationInternalId: number,
+    accountRef: string,
+    remoteServerRef: string,
+    userId: number,
+  ): Promise<{ success: boolean; output: string }> {
+    const row = await this.registryAccountRowForOrgRef(organizationInternalId, accountRef);
+    let password: string;
+    try {
+      password = decryptPrivateKey(row.passwordEncrypted, this.getEncryptionSecret());
+    } catch {
+      throw new BadRequestException('Could not decrypt stored registry secret.');
+    }
+    const resolvedRemoteServerId = await this.remoteServersService.resolveServerIdForUser(
+      remoteServerRef,
+      userId,
+    );
+    const providerQ = this.shSingleQuote(row.providerUrl);
+    const userQ = this.shSingleQuote(row.username);
+    const passQ = this.shSingleQuote(password);
+    const cmd = [
+      'set -euo pipefail',
+      "TMP_OUT='/tmp/weehawk_registry_login_out.txt'",
+      'rm -f "$TMP_OUT"',
+      `if ! (printf %s ${passQ} | docker login ${providerQ} -u ${userQ} --password-stdin >"$TMP_OUT" 2>&1); then`,
+      '  cat "$TMP_OUT" 2>/dev/null || true',
+      '  exit 21',
+      'fi',
+      'cat "$TMP_OUT" 2>/dev/null || true',
+      'if ! grep -qi "login succeeded" "$TMP_OUT"; then',
+      "  echo 'Registry login did not report success.'",
+      '  exit 22',
+      'fi',
+      `docker logout ${providerQ} >/dev/null 2>&1 || true`,
+      "echo 'Registry credentials are valid'",
+    ].join('\n');
+    const out = await this.remoteServersService.runTerminalCommand(
+      resolvedRemoteServerId,
+      userId,
+      cmd,
+    );
+    if (!out.success) return out;
+    if (!/login succeeded/i.test(out.output)) {
+      return {
+        success: false,
+        output: 'Registry login did not report success on the selected host.',
+      };
+    }
+    return out;
   }
 
   /**

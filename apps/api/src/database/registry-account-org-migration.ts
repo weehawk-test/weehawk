@@ -280,7 +280,10 @@ export async function migrateRegistryAccountsToOrganizationScope(
     const provQuoted = qIdent(providerCol);
     const orgQuoted = qIdent('organization_id');
     await ds.query(
-      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_registry_accounts_organization_id_provider"
+      `DROP INDEX IF EXISTS "UQ_registry_accounts_organization_id_provider"`,
+    );
+    await ds.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_registry_accounts_organization_id_provider"
        ON registry_accounts (${orgQuoted}, ${provQuoted})`,
     );
     try {
@@ -315,7 +318,10 @@ export async function migrateRegistryAccountsToOrganizationScope(
       }
     }
     await ds.query(
-      `CREATE UNIQUE INDEX IF NOT EXISTS "UQ_registry_accounts_organization_id_provider"
+      `DROP INDEX IF EXISTS "UQ_registry_accounts_organization_id_provider"`,
+    );
+    await ds.query(
+      `CREATE INDEX IF NOT EXISTS "IDX_registry_accounts_organization_id_provider"
        ON registry_accounts (organization_id, ${qIdent(providerCol)})`,
     );
     try {
