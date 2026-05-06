@@ -13,11 +13,16 @@ import Link from "next/link";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
 import { useCreateWebhook } from "@/hooks/use-webhooks";
 import type { NotificationChannel } from "@/lib/notifications-api";
-import type { RemoteServerRow } from "@/lib/remote-servers-api";
+import {
+  fetchRemoteServers,
+  updateRemoteServerApi,
+  type RemoteServerRow,
+} from "@/lib/remote-servers-api";
 import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import { X, Loader2, Type, AlignLeft, ChevronsUpDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { workspaceRoute } from "@/lib/workspace-paths";
+import { useAuth } from "@/contexts/auth-context";
 
 type Props = {
   initialChannels: NotificationChannel[];
@@ -37,20 +42,36 @@ function renderHighlightedScript(script: string): ReactNode[] {
   });
 }
 
+function upsertHostInDomainsJson(host: string, previousRaw: string | null | undefined): string {
+  const cleanHost = host.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+  if (!cleanHost) return JSON.stringify([]);
+  const currentHosts = hostsFromRemoteServerDomainsJson(previousRaw ?? null);
+  const has = currentHosts.some((h) => h.toLowerCase() === cleanHost.toLowerCase());
+  const nextHosts = has ? currentHosts : [...currentHosts, cleanHost];
+  if (previousRaw != null && String(previousRaw).trim()) {
+    try {
+      const parsed = JSON.parse(String(previousRaw)) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return JSON.stringify({ ...(parsed as Record<string, unknown>), domains: nextHosts });
+      }
+    } catch {
+      // Keep array fallback.
+    }
+  }
+  return JSON.stringify(nextHosts);
+}
+
 export function CreateWebhookClient({
   initialChannels,
   initialRemoteServers,
   organizationPublicId = null,
 }: Props) {
   const router = useRouter();
+  const { accessToken } = useAuth();
   const { toast } = useToast();
   const createMutation = useCreateWebhook();
   const webhooksHref = useMemo(
     () => workspaceRoute(organizationPublicId, "/webhooks"),
-    [organizationPublicId],
-  );
-  const domainsHref = useMemo(
-    () => workspaceRoute(organizationPublicId, "/domains"),
     [organizationPublicId],
   );
   const [name, setName] = useState("");
@@ -61,6 +82,9 @@ export function CreateWebhookClient({
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [notifyChannelId, setNotifyChannelId] = useState("");
   const [notifyMessage, setNotifyMessage] = useState("");
+  const [showQuickAddHostname, setShowQuickAddHostname] = useState(false);
+  const [quickAddHostname, setQuickAddHostname] = useState("");
+  const [addingHostname, setAddingHostname] = useState(false);
   const showNotificationFields = notificationEnabled;
   const scriptLines = Math.max(1, bashScript.split("\n").length);
   const SCRIPT_MIN_HEIGHT = 180;
@@ -68,10 +92,8 @@ export function CreateWebhookClient({
   const [scriptEditorHeight, setScriptEditorHeight] = useState(SCRIPT_MIN_HEIGHT);
   const scriptHighlightRef = useRef<HTMLPreElement | null>(null);
   const scriptLineNumbersRef = useRef<HTMLDivElement | null>(null);
-  const deployServers = useMemo(
-    () => filterSshDeployServers(initialRemoteServers),
-    [initialRemoteServers],
-  );
+  const [remoteServers, setRemoteServers] = useState<RemoteServerRow[]>(initialRemoteServers);
+  const deployServers = useMemo(() => filterSshDeployServers(remoteServers), [remoteServers]);
   const selectedDeployServer = useMemo(
     () => deployServers.find((s) => String(s.id) === remoteServerId) ?? null,
     [deployServers, remoteServerId],
@@ -80,6 +102,52 @@ export function CreateWebhookClient({
     () => hostsFromRemoteServerDomainsJson(selectedDeployServer?.domainsJson ?? null),
     [selectedDeployServer?.domainsJson],
   );
+  const addHostnameFromWebhook = async () => {
+    const clean = quickAddHostname.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+    if (!clean) {
+      toast({ title: "Hostname required", description: "Enter a hostname like app.example.com.", variant: "destructive" });
+      return;
+    }
+    if (!selectedDeployServer) {
+      toast({ title: "Deploy server required", description: "Choose a deploy server first.", variant: "destructive" });
+      return;
+    }
+    if (!accessToken?.trim()) {
+      toast({ title: "Authentication required", variant: "destructive" });
+      return;
+    }
+    if (serverHostnames.some((h) => h.toLowerCase() === clean.toLowerCase())) {
+      setHooksPublicHost(clean);
+      setQuickAddHostname("");
+      setShowQuickAddHostname(false);
+      return;
+    }
+    try {
+      setAddingHostname(true);
+      const orgTrim = organizationPublicId?.trim() || undefined;
+      const servers = await fetchRemoteServers(accessToken, orgTrim);
+      const target = servers.find((s) => s.id === selectedDeployServer.id);
+      if (!target) throw new Error("Remote server not found");
+      const routeId = target.publicId?.trim() || String(target.id);
+      const nextJson = upsertHostInDomainsJson(clean, target.domainsJson ?? null);
+      const updated = await updateRemoteServerApi(accessToken, routeId, { domainsJson: nextJson }, orgTrim);
+      setRemoteServers((prev) =>
+        prev.map((row) => (row.id === updated.id ? { ...row, domainsJson: updated.domainsJson } : row)),
+      );
+      setHooksPublicHost(clean);
+      setQuickAddHostname("");
+      setShowQuickAddHostname(false);
+      toast({ title: "Hostname added", description: `${clean} added to this deploy server.` });
+    } catch (e) {
+      toast({
+        title: "Could not add hostname",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setAddingHostname(false);
+    }
+  };
   const submit = () => {
     if (!name.trim()) {
       toast({ title: "Name required", variant: "destructive" });
@@ -245,43 +313,38 @@ export function CreateWebhookClient({
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Hostname</label>
-                  <select
-                    className="input-field"
-                    value={hooksPublicHost}
-                    onChange={(e) => setHooksPublicHost(e.target.value)}
-                    required
-                    disabled={!remoteServerId || serverHostnames.length === 0}
-                  >
-                    <option value="" disabled>
-                      {!remoteServerId
-                        ? "Select a deploy server first"
-                        : serverHostnames.length === 0
-                          ? "No hostnames — add them on the Domains page"
-                          : "Select a hostname…"}
-                    </option>
-                    {serverHostnames.map((h) => (
-                      <option key={h} value={h}>
-                        {h}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <select
+                      className="input-field"
+                      value={hooksPublicHost}
+                      onChange={(e) => setHooksPublicHost(e.target.value)}
+                      required
+                      disabled={!remoteServerId || serverHostnames.length === 0}
+                    >
+                      <option value="" disabled>
+                        {!remoteServerId
+                          ? "Select a deploy server first"
+                          : serverHostnames.length === 0
+                            ? "No hostnames — add one below"
+                            : "Select a hostname…"}
                       </option>
-                    ))}
-                  </select>
-                  {!remoteServerId ? (
-                    <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                      Set this webhook&apos;s deploy server above, then add hostnames on{" "}
-                      <Link href={domainsHref} className="text-primary hover:underline">
-                        Domains
-                      </Link>
-                      .
-                    </p>
-                  ) : serverHostnames.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">
-                      Add hostnames on{" "}
-                      <Link href={domainsHref} className="text-primary hover:underline">
-                        Domains
-                      </Link>{" "}
-                      first.
-                    </p>
-                  ) : null}
+                      {serverHostnames.map((h) => (
+                        <option key={h} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-[11px] text-muted-foreground px-1">or</span>
+                    <button
+                      type="button"
+                      className="btn-secondary shrink-0 text-xs"
+                      disabled={!remoteServerId}
+                      onClick={() => setShowQuickAddHostname(true)}
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {null}
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Bash script</label>
@@ -388,6 +451,65 @@ echo "Webhook done"`}
                 </button>
               </div>
             </div>
+            {showQuickAddHostname && selectedDeployServer ? (
+              <div
+                className="fixed inset-0 z-[150] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+                onClick={() => {
+                  if (addingHostname) return;
+                  setShowQuickAddHostname(false);
+                  setQuickAddHostname("");
+                }}
+              >
+                <div
+                  className="w-full max-w-md rounded-xl border border-border bg-card p-4 shadow-2xl space-y-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <p className="text-sm font-medium text-foreground">Add hostname</p>
+                  <input
+                    className="input-field w-full font-mono text-sm"
+                    placeholder="app.example.com"
+                    value={quickAddHostname}
+                    onChange={(e) => setQuickAddHostname(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void addHostnameFromWebhook();
+                      }
+                    }}
+                    disabled={addingHostname}
+                    autoComplete="off"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      disabled={addingHostname}
+                      onClick={() => {
+                        setShowQuickAddHostname(false);
+                        setQuickAddHostname("");
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary inline-flex items-center gap-1.5 text-xs"
+                      disabled={addingHostname}
+                      onClick={() => void addHostnameFromWebhook()}
+                    >
+                      {addingHostname ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Saving…
+                        </>
+                      ) : (
+                        "Save"
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

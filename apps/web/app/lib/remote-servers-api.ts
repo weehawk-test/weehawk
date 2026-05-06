@@ -146,8 +146,13 @@ export async function updateRemoteServerApi(
     publicIpv4: string | null;
     domainsJson?: string | null;
   }>,
+  organizationPublicId?: string | null,
 ): Promise<RemoteServerRow> {
-  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}`, {
+  const org =
+    organizationPublicId != null && String(organizationPublicId).trim() !== ""
+      ? `?organizationPublicId=${encodeURIComponent(String(organizationPublicId).trim())}`
+      : "";
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}${org}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),

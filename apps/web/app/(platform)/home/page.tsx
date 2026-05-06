@@ -57,7 +57,7 @@ export default async function HomePage() {
       <div>
         <h1 className="text-3xl font-bold text-foreground">Home</h1>
         <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Quick overview for <span className="font-medium text-foreground">{orgName}</span>. Track projects,
+          Quick overview for <span className="font-medium text-foreground">{orgName}</span>. See stats for projects,
           servers, services, members, cron jobs, and webhooks from one place.
         </p>
       </div>
@@ -73,7 +73,7 @@ export default async function HomePage() {
               <p className="text-2xl font-bold tabular-nums text-foreground">{projects.length}</p>
             </div>
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">Open and manage projects in this workspace.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Total projects in this organization.</p>
         </div>
 
         <div className="rounded-2xl border border-border/80 bg-card/30 p-5">
@@ -86,7 +86,7 @@ export default async function HomePage() {
               <p className="text-2xl font-bold tabular-nums text-foreground">{servers.length}</p>
             </div>
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">Manage remote servers and Docker console access.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Total servers in this organization.</p>
         </div>
 
         <div className="rounded-2xl border border-border/80 bg-card/30 p-5">
@@ -99,7 +99,7 @@ export default async function HomePage() {
               <p className="text-2xl font-bold tabular-nums text-foreground">{servicesCount}</p>
             </div>
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">Total services across all organization projects.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Total services in this organization.</p>
         </div>
 
         <div className="rounded-2xl border border-border/80 bg-card/30 p-5">
@@ -112,7 +112,7 @@ export default async function HomePage() {
               <p className="text-2xl font-bold tabular-nums text-foreground">{memberCount}</p>
             </div>
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">View team members and roles in this organization.</p>
+          <p className="mt-3 text-xs text-muted-foreground">Total members in this organization.</p>
         </div>
       </div>
 

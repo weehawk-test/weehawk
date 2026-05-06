@@ -917,6 +917,10 @@ export default function ProjectsIdClient({
     }
   };
 
+  const projectsHref = organizationPublicId?.trim()
+    ? `/projects?organizationPublicId=${encodeURIComponent(organizationPublicId.trim())}`
+    : "/projects";
+
   if (!project) {
     if (projectLoading) return null;
     return (
@@ -925,7 +929,7 @@ export default function ProjectsIdClient({
           <p className="text-muted-foreground">
             {initialProjectError ? initialProjectError : "Project not found."}
           </p>
-          <Link href="/" className="btn-secondary mt-4 inline-flex items-center gap-2">
+          <Link href={projectsHref} className="btn-secondary mt-4 inline-flex items-center gap-2">
             <FolderKanban className="w-4 h-4" /> Projects
           </Link>
         </div>
@@ -947,7 +951,7 @@ export default function ProjectsIdClient({
       ) : null}
 
       <div className="flex items-center gap-2 text-sm text-muted-foreground mb-8">
-        <Link href="/">
+        <Link href={projectsHref}>
           <span className="hover:text-foreground cursor-pointer flex items-center gap-1 transition-colors">
             <FolderKanban className="w-3.5 h-3.5" /> Projects
           </span>

@@ -68,6 +68,7 @@ import {
   type GitlabProjectListItem,
   type GitlabProjectsListResponse,
 } from "@/lib/git-api";
+import { fetchRegistryAccounts } from "@/lib/registry-api";
 import {
   applyDatabaseApi,
   streamServiceLogs,
@@ -135,6 +136,7 @@ import {
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
 import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import { hostsFromRemoteServerDomainsJson } from "@/lib/remote-server-domains-json";
+import { fetchRemoteServers, updateRemoteServerApi } from "@/lib/remote-servers-api";
 import { cn } from "@/lib/utils";
 const MAX_LIVE_LOG_CHARS = 512 * 1024;
 
@@ -675,6 +677,34 @@ function nextUniqueRouterDraft(service: Service, routes: TraefikRouteRule[]): st
 function parseSingleHostname(raw: string): string[] {
   const t = raw.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
   return t ? [t] : [];
+}
+
+function upsertHostInDomainsJson(
+  host: string,
+  previousRaw: string | null | undefined,
+): { nextJson: string; nextHosts: string[] } {
+  const cleanHost = host.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+  if (!cleanHost) return { nextJson: JSON.stringify([]), nextHosts: [] };
+
+  const currentHosts = hostsFromRemoteServerDomainsJson(previousRaw ?? null);
+  const dedup = new Set(currentHosts.map((h) => h.toLowerCase()));
+  const nextHosts = [...currentHosts];
+  if (!dedup.has(cleanHost.toLowerCase())) nextHosts.push(cleanHost);
+
+  if (previousRaw != null && String(previousRaw).trim()) {
+    try {
+      const parsed = JSON.parse(String(previousRaw)) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return {
+          nextJson: JSON.stringify({ ...(parsed as Record<string, unknown>), domains: nextHosts }),
+          nextHosts,
+        };
+      }
+    } catch {
+      // Keep array format fallback.
+    }
+  }
+  return { nextJson: JSON.stringify(nextHosts), nextHosts };
 }
 
 /** Backend port Traefik forwards to (container port). 1–65535, or null = use compose default. */
@@ -1516,7 +1546,10 @@ export default function ServiceDetails({
           {activeTab === "domain" && !isStackOrComposeService && (
             <motion.div key="domain" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}>
-              <DomainsPanel service={service} />
+              <DomainsPanel
+                service={service}
+                organizationPublicId={project?.organizationPublicId?.trim() || null}
+              />
             </motion.div>
           )}
 
@@ -3392,10 +3425,32 @@ function ApplicationArchivePanel({
   const [deployTarget, setDeployTarget] = useState<"source" | "image">("source");
   /** Only one of GitHub / GitLab deploy panels open at a time (accordion). */
   const [gitRepoDeployPanel, setGitRepoDeployPanel] = useState<"github" | "gitlab" | null>(null);
+  const [showDockerImagePanel, setShowDockerImagePanel] = useState(false);
   const showGithubPanel = gitRepoDeployPanel === "github";
   const showGitlabPanel = gitRepoDeployPanel === "gitlab";
   const [imageRef, setImageRef] = useState("");
   const [savingImage, setSavingImage] = useState(false);
+  const { data: registryAccounts, isLoading: registryAccountsLoading } = useQuery({
+    queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
+    queryFn: () => fetchRegistryAccounts(accessToken!, orgPid),
+    enabled: Boolean(accessToken && orgPid),
+  });
+  const registryConfigured = (registryAccounts?.length ?? 0) > 0;
+  const registryConfiguredText = useMemo(() => {
+    if (!registryConfigured || !registryAccounts?.length) return "No registry account configured yet.";
+    const labels = Array.from(
+      new Set(
+        registryAccounts.map((acc) => {
+          const url = acc.providerUrl.toLowerCase();
+          if (url.includes("gitlab")) return "GitLab";
+          if (url.includes("docker.io") || url.includes("hub.docker.com")) return "Docker Hub";
+          if (url.includes("ghcr.io") || url.includes("github")) return "GitHub Container Registry";
+          return acc.name.trim() || acc.providerUrl;
+        }),
+      ),
+    );
+    return `Configured registries: ${labels.join(", ")}.`;
+  }, [registryConfigured, registryAccounts]);
 
   const autoDeployQ = useQuery({
     queryKey: ["auto-deploy", serviceId],
@@ -4303,53 +4358,26 @@ function ApplicationArchivePanel({
           </div>
         )}
         <div className="sm:col-span-2 space-y-2">
-          <label className="text-xs font-medium text-muted-foreground block">Deploy from</label>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setDeployTarget("source")}
-              className={`rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                deployTarget === "source"
-                  ? "border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100"
-                  : "border-border bg-muted/55 dark:bg-black/25 text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Source code
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeployTarget("image")}
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-                deployTarget === "image"
-                  ? "border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100"
-                  : "border-border bg-muted/55 dark:bg-black/25 text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Container className="h-3.5 w-3.5 shrink-0 opacity-90" />
-              Pre-built image
-            </button>
-          </div>
+          <label className="text-xs font-medium text-muted-foreground block">Source</label>
           <p className="text-[11px] text-muted-foreground/90 max-w-xl leading-relaxed">
             {deployTarget === "source"
-              ? "Connect GitHub or GitLab (or paste an HTTPS URL). On deploy, the remote host clones your repo and builds from your Dockerfile or an auto-generated one."
-              : "Point at an image already in a registry (or Docker Hub). Deploy pulls the image and skips building from source."}
+              ? "Choose GitHub or GitLab (or paste an HTTPS URL). On deploy, the remote host clones your repo and builds from your Dockerfile or an auto-generated one."
+              : "Use a Docker image directly from your registry (or Docker Hub) and skip build-from-source on deploy."}
           </p>
         </div>
-        {deployTarget === "source" && (
         <div className="sm:col-span-2 space-y-3">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Source</label>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 sm:items-stretch max-w-md">
+          <div className="grid gap-2 sm:grid-cols-3 sm:items-stretch max-w-2xl">
             <button
               type="button"
               aria-expanded={showGithubPanel}
               aria-controls="github-deploy-panel"
-              onClick={() =>
-                setGitRepoDeployPanel((cur) => (cur === "github" ? null : "github"))
-              }
+              onClick={() => {
+                setDeployTarget("source");
+                setGitRepoDeployPanel((cur) => (cur === "github" ? null : "github"));
+                setShowDockerImagePanel(false);
+              }}
               className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50 ${
-                showGithubPanel
+                deployTarget === "source" && showGithubPanel
                   ? "border-sky-500/50 bg-sky-500/10 hover:bg-sky-500/15"
                   : "border-border bg-muted/55 dark:bg-black/25 hover:border-sky-500/35 hover:bg-accent/50"
               }`}
@@ -4377,11 +4405,13 @@ function ApplicationArchivePanel({
               type="button"
               aria-expanded={showGitlabPanel}
               aria-controls="gitlab-deploy-panel"
-              onClick={() =>
-                setGitRepoDeployPanel((cur) => (cur === "gitlab" ? null : "gitlab"))
-              }
+              onClick={() => {
+                setDeployTarget("source");
+                setGitRepoDeployPanel((cur) => (cur === "gitlab" ? null : "gitlab"));
+                setShowDockerImagePanel(false);
+              }}
               className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 ${
-                showGitlabPanel
+                deployTarget === "source" && showGitlabPanel
                   ? "border-orange-500/50 bg-orange-500/10 hover:bg-orange-500/15"
                   : "border-border bg-muted/55 dark:bg-black/25 hover:border-orange-500/35 hover:bg-accent/50"
               }`}
@@ -4404,10 +4434,53 @@ function ApplicationArchivePanel({
               <span className="text-[9px] text-muted-foreground/80">
                 {showGitlabPanel ? "Hide" : "Open"} settings
               </span>
-                       </button>
+            </button>
+            <button
+              type="button"
+              aria-expanded={showDockerImagePanel}
+              aria-controls="docker-image-deploy-panel"
+              onClick={() => {
+                if (deployTarget === "image") {
+                  const nextOpen = !showDockerImagePanel;
+                  setShowDockerImagePanel(nextOpen);
+                  if (!nextOpen) {
+                    setDeployTarget("source");
+                    setGitRepoDeployPanel(null);
+                  }
+                  return;
+                }
+                setDeployTarget("image");
+                setGitRepoDeployPanel(null);
+                setShowDockerImagePanel(true);
+              }}
+              className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-0.5 rounded-lg border px-2 py-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${
+                deployTarget === "image"
+                  ? "border-cyan-500/50 bg-cyan-500/10 hover:bg-cyan-500/15"
+                  : "border-border bg-muted/55 dark:bg-black/25 hover:border-cyan-500/35 hover:bg-accent/50"
+              }`}
+            >
+              <Image
+                src="/registry/docker-hub.svg"
+                alt=""
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain"
+              />
+              <span className="text-xs font-medium text-foreground">Docker Image</span>
+              <span
+                className={`text-[10px] leading-tight ${
+                  registryConfigured ? "text-emerald-400/90" : "text-muted-foreground"
+                }`}
+              >
+                {registryAccountsLoading ? "…" : registryConfigured ? "Configured" : "Configure"}
+              </span>
+              <span className="text-[9px] text-muted-foreground/80">
+                {showDockerImagePanel ? "Hide" : "Open"} settings
+              </span>
+            </button>
           </div>
 
-          {showGithubPanel ? (
+          {deployTarget === "source" && showGithubPanel ? (
           <div
             id="github-deploy-panel"
             className="rounded-xl border border-sky-500/25 bg-gradient-to-br from-sky-500/[0.07] via-transparent to-transparent p-4 space-y-3"
@@ -4792,7 +4865,7 @@ function ApplicationArchivePanel({
           </div>
           ) : null}
 
-          {showGitlabPanel ? (
+          {deployTarget === "source" && showGitlabPanel ? (
           <div
             id="gitlab-deploy-panel"
             className="rounded-xl border border-orange-500/25 bg-gradient-to-br from-orange-500/[0.07] via-transparent to-transparent p-4 space-y-3"
@@ -5174,8 +5247,33 @@ function ApplicationArchivePanel({
             </Collapsible>
           </div>
           ) : null}
+          {deployTarget === "image" && showDockerImagePanel ? (
+            <div
+              id="docker-image-deploy-panel"
+              className="rounded-xl border border-cyan-500/25 bg-gradient-to-br from-cyan-500/[0.07] via-transparent to-transparent p-4 space-y-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+                <p className="text-xs font-medium text-foreground">Docker Image — deploy from registry</p>
+                <Link
+                  href="/registry"
+                  scroll={false}
+                  className="inline-flex items-center gap-1 text-[11px] text-cyan-700 hover:text-cyan-900 dark:text-cyan-300/90 dark:hover:text-cyan-200 hover:underline"
+                >
+                  Registry settings
+                  <ExternalLink className="h-3 w-3 opacity-80" />
+                </Link>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Configure your registry account for private images, then set the image reference below.
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {registryAccountsLoading
+                  ? "Checking registry configuration..."
+                  : registryConfiguredText}
+              </p>
+            </div>
+          ) : null}
         </div>
-        )}
         {deployTarget === "image" && (
         <div className="sm:col-span-2 space-y-2">
           <label className="text-xs font-medium text-muted-foreground block mb-1.5">Image reference</label>
@@ -5183,7 +5281,7 @@ function ApplicationArchivePanel({
             className="input-field font-mono text-sm w-full max-w-xl"
             value={imageRef}
             onChange={(e) => setImageRef(e.target.value)}
-            placeholder="e.g. nginx:1.27-alpine or registry.example.com/my/app:v1"
+            placeholder="e.g. nginx:1.27"
             autoComplete="off"
             spellCheck={false}
           />
@@ -5680,8 +5778,16 @@ function EnvFilePanel({ service }: { service: Service }) {
 
 // ─── DomainsPanel ─────────────────────────────────────────────────────────────
 
-function DomainsPanel({ service }: { service: Service }) {
+function DomainsPanel({
+  service,
+  organizationPublicId,
+}: {
+  service: Service;
+  organizationPublicId?: string | null;
+}) {
+  const { accessToken } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const saveRoutesMutation = useUpdateService();
   const { data: projectServices } = useServices(service.projectId);
 
@@ -5698,21 +5804,77 @@ function DomainsPanel({ service }: { service: Service }) {
   const [draftPath, setDraftPath] = useState("");
   const [draftHost, setDraftHost] = useState("");
   const [draftInternalPort, setDraftInternalPort] = useState("");
+  const [showQuickAddHostname, setShowQuickAddHostname] = useState(false);
+  const [quickAddHostname, setQuickAddHostname] = useState("");
 
   const deployServer = service.remoteServer;
-  const serverHostnames = useMemo(
+  const [serverHostnames, setServerHostnames] = useState<string[]>(() =>
+    hostsFromRemoteServerDomainsJson(deployServer?.domainsJson ?? null),
+  );
+  const addHostnameMutation = useMutation({
+    mutationFn: async (host: string) => {
+      if (!accessToken?.trim()) throw new Error("Authentication required.");
+      if (!deployServer) throw new Error("Set a deploy server first.");
+      const { nextJson, nextHosts } = upsertHostInDomainsJson(host, deployServer.domainsJson ?? null);
+      const orgTrim = organizationPublicId?.trim() || undefined;
+      const remoteServers = await fetchRemoteServers(accessToken, orgTrim);
+      const targetServer = remoteServers.find((row) => row.id === deployServer.id);
+      if (!targetServer) {
+        throw new Error("Remote server not found in this organization.");
+      }
+      const remoteServerRouteId = targetServer.publicId?.trim() || String(targetServer.id);
+      await updateRemoteServerApi(
+        accessToken,
+        remoteServerRouteId,
+        { domainsJson: nextJson },
+        organizationPublicId,
+      );
+      return { host, nextHosts };
+    },
+    onMutate: async (host: string) => {
+      const cleanHost = host.trim();
+      const previousHostnames = [...serverHostnames];
+      const exists = previousHostnames.some((h) => h.toLowerCase() === cleanHost.toLowerCase());
+      if (!exists) {
+        setServerHostnames((prev) => [...prev, cleanHost]);
+      }
+      setDraftHost(cleanHost);
+      setQuickAddHostname("");
+      setShowQuickAddHostname(false);
+      return { previousHostnames, cleanHost };
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["services"] });
+      toast({ title: "Hostname added", description: "Saved in background." });
+    },
+    onError: (e: Error, _host, ctx) => {
+      if (ctx?.previousHostnames) {
+        setServerHostnames(ctx.previousHostnames);
+      }
+      if (ctx?.cleanHost && draftHost.toLowerCase() === ctx.cleanHost.toLowerCase()) {
+        setDraftHost("");
+      }
+      toast({ title: "Could not add hostname", description: e.message, variant: "destructive" });
+    },
+  });
+
+  useEffect(() => {
+    setServerHostnames(hostsFromRemoteServerDomainsJson(deployServer?.domainsJson ?? null));
+  }, [deployServer?.domainsJson]);
+
+  const displayHostnames = useMemo(
     () => hostsFromRemoteServerDomainsJson(deployServer?.domainsJson ?? null),
     [deployServer?.domainsJson],
   );
 
   const hostnameSelectOptions = useMemo(() => {
-    const list = [...serverHostnames];
+    const list = [...(serverHostnames.length > 0 ? serverHostnames : displayHostnames)];
     const cur = draftHost.trim();
     if (cur && !list.some((h) => h.toLowerCase() === cur.toLowerCase())) {
       list.unshift(cur);
     }
     return list;
-  }, [serverHostnames, draftHost]);
+  }, [serverHostnames, displayHostnames, draftHost]);
 
   const resetDraft = () => {
     setDraftRouter("");
@@ -5869,6 +6031,34 @@ function DomainsPanel({ service }: { service: Service }) {
       setDialogOpen(false);
       resetDraft();
     });
+  };
+
+  const submitQuickAddHostname = () => {
+    const host = quickAddHostname.trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").trim();
+    if (!host) {
+      toast({
+        title: "Hostname required",
+        description: "Enter a hostname like app.example.com.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!deployServer) {
+      toast({
+        title: "Deploy server required",
+        description: "Set a deploy server on the Remote tab first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (serverHostnames.some((h) => h.toLowerCase() === host.toLowerCase())) {
+      setDraftHost(host);
+      setQuickAddHostname("");
+      setShowQuickAddHostname(false);
+      toast({ title: "Already exists", description: "Hostname already exists on this deploy server." });
+      return;
+    }
+    addHostnameMutation.mutate(host);
   };
 
   const deleteDomain = (index: number) => {
@@ -6029,25 +6219,37 @@ function DomainsPanel({ service }: { service: Service }) {
             </label>
             <div className="space-y-1.5">
               <span className="text-[11px] text-muted-foreground">Hostname</span>
-              <select
-                className="input-field w-full min-w-0 font-mono text-sm"
-                value={draftHost}
-                onChange={(e) => setDraftHost(e.target.value)}
-                disabled={!deployServer || hostnameSelectOptions.length === 0}
-              >
-                <option value="">
-                  {!deployServer
-                    ? "Set a deploy server on the Remote tab first"
-                    : hostnameSelectOptions.length === 0
-                      ? "No hostnames for this server — add on Domains"
-                      : "Select hostname"}
-                </option>
-                {hostnameSelectOptions.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <select
+                  className="input-field w-full min-w-0 font-mono text-sm"
+                  value={draftHost}
+                  onChange={(e) => setDraftHost(e.target.value)}
+                  disabled={!deployServer || hostnameSelectOptions.length === 0}
+                >
+                  <option value="">
+                    {!deployServer
+                      ? "Set a deploy server on the Remote tab first"
+                      : hostnameSelectOptions.length === 0
+                        ? "No hostnames for this server — add one below"
+                        : "Select hostname"}
                   </option>
-                ))}
-              </select>
+                  {hostnameSelectOptions.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-muted-foreground px-1">or</span>
+                <button
+                  type="button"
+                  className="btn-secondary inline-flex min-w-[84px] shrink-0 items-center justify-center gap-1.5 text-xs"
+                  disabled={!deployServer}
+                  onClick={() => setShowQuickAddHostname(true)}
+                  aria-label="Add hostname"
+                >
+                  Add
+                </button>
+              </div>
               {!deployServer ? (
                 <p className="text-[11px] text-muted-foreground">
                   Set deploy server under <strong>Remote</strong>, then add hostnames on{" "}
@@ -6102,6 +6304,65 @@ function DomainsPanel({ service }: { service: Service }) {
               {saveRoutesMutation.isPending ? "Saving…" : "Save"}
             </button>
           </DialogFooter>
+          {showQuickAddHostname && deployServer ? (
+            <div
+              className="fixed inset-0 z-[150] flex items-center justify-center bg-black/30 backdrop-blur-sm p-4"
+              onClick={() => {
+                if (addHostnameMutation.isPending) return;
+                setShowQuickAddHostname(false);
+                setQuickAddHostname("");
+              }}
+            >
+              <div
+                className="w-full max-w-md rounded-xl border border-border bg-card p-4 shadow-2xl space-y-3"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <p className="text-sm font-medium text-foreground">Add hostname</p>
+                <input
+                  className="input-field w-full font-mono text-sm"
+                  placeholder="app.example.com"
+                  value={quickAddHostname}
+                  onChange={(e) => setQuickAddHostname(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      submitQuickAddHostname();
+                    }
+                  }}
+                  disabled={addHostnameMutation.isPending}
+                  autoComplete="off"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    disabled={addHostnameMutation.isPending}
+                    onClick={() => {
+                      setShowQuickAddHostname(false);
+                      setQuickAddHostname("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary inline-flex items-center gap-1.5 text-xs"
+                    disabled={addHostnameMutation.isPending}
+                    onClick={submitQuickAddHostname}
+                  >
+                    {addHostnameMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Saving…
+                      </>
+                    ) : (
+                      "Save"
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
