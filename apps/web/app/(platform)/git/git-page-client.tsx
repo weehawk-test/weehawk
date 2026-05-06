@@ -1,17 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { Clock3, GitBranch, Search, Trash2, X } from "lucide-react";
+import { Clock3, ExternalLink, GitBranch, Search, Trash2, X } from "lucide-react";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import {
+  createGitAccount,
   deleteGitAccount,
+  fetchGitSettings,
   fetchPublicGithubAppManifest,
-  updateGitSettings,
   type GitSettingsPublic,
 } from "@/lib/git-api";
+import {
+  ORG_DATA_CHANGED_EVENT,
+  type OrgDataChangedDetail,
+} from "@/lib/org-realtime-events";
 
 type Provider = "github" | "gitlab";
 
@@ -51,6 +56,7 @@ export function GitPageClient({
 
   const githubAccounts = settings?.githubAccounts ?? [];
   const gitlabAccounts = settings?.gitlabAccounts ?? [];
+  const githubInstallUrl = settings?.github.installAppUrl?.trim() || "";
   const allAccounts = [
     ...githubAccounts.map((a) => ({ ...a, provider: "github" as const })),
     ...gitlabAccounts.map((a) => ({ ...a, provider: "gitlab" as const })),
@@ -68,20 +74,56 @@ export function GitPageClient({
     [allAccounts, query],
   );
 
+  useEffect(() => {
+    if (!accessToken || !organizationPublicId) return;
+    let cancelled = false;
+    const refreshSettings = async () => {
+      try {
+        const next = await fetchGitSettings(accessToken, organizationPublicId);
+        if (!cancelled) setSettings(next);
+      } catch {
+        // Keep current view; user-facing actions already show explicit toasts.
+      }
+    };
+    const onOrgDataChanged = (event: Event) => {
+      const detail = (event as CustomEvent<OrgDataChangedDetail>).detail;
+      if (detail?.entity && detail.entity !== "git_settings") return;
+      void refreshSettings();
+    };
+    window.addEventListener(ORG_DATA_CHANGED_EVENT, onOrgDataChanged as EventListener);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ORG_DATA_CHANGED_EVENT, onOrgDataChanged as EventListener);
+    };
+  }, [accessToken, organizationPublicId]);
+
   const startGithubManifestRegistration = async () => {
     if (!organizationPublicId) return;
     setRegisterBusy(true);
     try {
+      const orgSlug = orgName.trim().replace(/^@+/, "");
+      if (isOrganization && !orgSlug) {
+        toast({
+          title: "Organization name is required",
+          description: "Enter your GitHub organization handle to continue.",
+          variant: "destructive",
+        });
+        setRegisterBusy(false);
+        return;
+      }
       if (isOrganization && orgName.trim() && accessToken) {
-        await updateGitSettings(accessToken, organizationPublicId, {
-          accountName: orgName.trim(),
-          createNewAccount: true,
+        await createGitAccount(accessToken, organizationPublicId, {
+          provider: "github",
+          accountName: orgSlug,
         });
       }
       const manifest = await fetchPublicGithubAppManifest(organizationPublicId);
       const form = document.createElement("form");
       form.method = "POST";
-      form.action = "https://github.com/settings/apps/new";
+      form.action =
+        isOrganization && orgSlug
+          ? `https://github.com/organizations/${encodeURIComponent(orgSlug)}/settings/apps/new`
+          : "https://github.com/settings/apps/new";
       form.target = "_self";
       const input = document.createElement("input");
       input.type = "hidden";
@@ -113,11 +155,11 @@ export function GitPageClient({
     }
     setGitlabSaving(true);
     try {
-      const next = await updateGitSettings(accessToken, organizationPublicId, {
+      const next = await createGitAccount(accessToken, organizationPublicId, {
+        provider: "gitlab",
+        accountName: gitlabAccountName.trim(),
         gitlabBaseUrl: "https://gitlab.com",
         ...(gitlabToken.trim() ? { gitlabGroupAccessToken: gitlabToken.trim() } : {}),
-        accountName: gitlabAccountName.trim(),
-        createNewAccount: true,
       });
       setGitlabToken("");
       setGitlabAccountName("");
@@ -256,6 +298,18 @@ export function GitPageClient({
                 </div>
               </div>
               <div className="ml-3 flex items-center gap-2">
+                {acc.provider === "github" && githubInstallUrl ? (
+                  <a
+                    href={githubInstallUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-primary opacity-0 transition-opacity group-hover:opacity-100 hover:bg-primary/10"
+                    title="Install GitHub App"
+                  >
+                    احتياط
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => void removeAccount(acc.publicId)}
@@ -330,13 +384,12 @@ export function GitPageClient({
               {isOrganization ? (
                 <input
                   className="input-field mb-4 w-full"
-                  placeholder="Organization name"
+                  placeholder="GitHub organization handle (e.g. weehawk)"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
                 />
               ) : null}
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-muted-foreground">Unsure if you already have an app?</span>
+              <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => void startGithubManifestRegistration()}

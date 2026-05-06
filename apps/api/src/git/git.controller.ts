@@ -26,6 +26,7 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { GitService } from './git.service';
 import { UpdateGitSettingsDto } from './dto/update-git-settings.dto';
 import { ExchangeGithubManifestDto } from './dto/exchange-github-manifest.dto';
+import { CreateGitAccountDto } from './dto/create-git-account.dto';
 import { RedisService } from '../common/redis/redis.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
@@ -237,6 +238,7 @@ return 1
   async listGitlabProjects(
     @Req() req: { user?: { userId: number } },
     @Query('organizationPublicId') organizationPublicId: string,
+    @Query('accountPublicId') accountPublicId?: string,
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
@@ -248,6 +250,7 @@ return 1
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
     return this.gitService.listGitlabProjects(ctx.internalId, {
+      accountPublicId,
       page: page ? parseInt(page, 10) : undefined,
       perPage: perPage ? parseInt(perPage, 10) : undefined,
       search,
@@ -266,6 +269,7 @@ return 1
     @Req() req: { user?: { userId: number } },
     @Query('organizationPublicId') organizationPublicId: string,
     @Param('projectId') projectId: string,
+    @Query('accountPublicId') accountPublicId?: string,
   ) {
     const id = parseInt(projectId, 10);
     if (!Number.isFinite(id) || id <= 0) {
@@ -277,7 +281,7 @@ return 1
       userId,
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
-    return this.gitService.listGitlabBranchNames(ctx.internalId, id);
+    return this.gitService.listGitlabBranchNames(ctx.internalId, id, accountPublicId);
   }
 
   @Get('github/repositories')
@@ -291,6 +295,7 @@ return 1
   async listGithubRepositories(
     @Req() req: { user?: { userId: number } },
     @Query('organizationPublicId') organizationPublicId: string,
+    @Query('accountPublicId') accountPublicId?: string,
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
@@ -302,6 +307,7 @@ return 1
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
     return this.gitService.listGithubRepositories(ctx.internalId, {
+      accountPublicId,
       page: page ? parseInt(page, 10) : undefined,
       perPage: perPage ? parseInt(perPage, 10) : undefined,
       search,
@@ -321,6 +327,7 @@ return 1
     @Query('organizationPublicId') organizationPublicId: string,
     @Query('installationId') installationId: string,
     @Query('repo') repo: string,
+    @Query('accountPublicId') accountPublicId?: string,
   ) {
     const iid = parseInt(installationId, 10);
     if (!Number.isFinite(iid) || iid <= 0) {
@@ -338,7 +345,7 @@ return 1
       userId,
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
-    return this.gitService.listGithubBranchNames(ctx.internalId, iid, r);
+    return this.gitService.listGithubBranchNames(ctx.internalId, iid, r, accountPublicId);
   }
 
   @Put('settings')
@@ -366,6 +373,7 @@ return 1
       userId,
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
+    const before = await this.gitService.getSettings(ctx.internalId);
     const result = await this.gitService.updateSettings(ctx.internalId, dto);
     void this.organizationsService
       .appendOrganizationAuditEvent(
@@ -374,6 +382,85 @@ return 1
         'security.git.settings_updated',
         {
           metadata: GitController.gitSettingsUpdateAuditMetadata(dto),
+        },
+      )
+      .catch(() => undefined);
+    if (dto.createNewAccount) {
+      const beforeIds = new Set<string>([
+        ...before.githubAccounts.map((a) => a.publicId),
+        ...before.gitlabAccounts.map((a) => a.publicId),
+      ]);
+      const created = [
+        ...result.githubAccounts
+          .filter((a) => !beforeIds.has(a.publicId))
+          .map((a) => ({ ...a, provider: 'github' as const })),
+        ...result.gitlabAccounts
+          .filter((a) => !beforeIds.has(a.publicId))
+          .map((a) => ({ ...a, provider: 'gitlab' as const })),
+      ];
+      for (const account of created) {
+        void this.organizationsService
+          .appendOrganizationAuditEvent(
+            ctx.internalId,
+            userId,
+            'security.git.account_created',
+            {
+              metadata: {
+                endpoint: 'PUT /api/git/settings',
+                gitAccountPublicId: account.publicId,
+                gitAccountName: account.name,
+                gitProvider: account.provider,
+              },
+            },
+          )
+          .catch(() => undefined);
+      }
+    }
+    return result;
+  }
+
+  @Post('accounts')
+  @UseGuards(LocalSessionGuard)
+  @ApiOperation({
+    summary: 'Create a new Git account for the organization',
+  })
+  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  async createAccount(
+    @Req() req: { user?: { userId: number } },
+    @Query('organizationPublicId') organizationPublicId: string,
+    @Body() dto: CreateGitAccountDto,
+  ) {
+    const userId = this.uid(req);
+    const ctx = await this.organizationsService.requireMemberContext(
+      organizationPublicId,
+      userId,
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
+    );
+    const result = await this.gitService.createAccount(ctx.internalId, {
+      provider: dto.provider,
+      accountName: dto.accountName,
+      gitlabBaseUrl: dto.gitlabBaseUrl,
+      gitlabGroupAccessToken: dto.gitlabGroupAccessToken,
+    });
+    const created = dto.accountName.trim();
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        ctx.internalId,
+        userId,
+        'security.git.account_created',
+        {
+          metadata: {
+            endpoint: 'POST /api/git/accounts',
+            gitProvider: dto.provider,
+            gitAccountName: created,
+          },
         },
       )
       .catch(() => undefined);
@@ -442,6 +529,27 @@ return 1
       userId,
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
-    return this.gitService.removeAccount(ctx.internalId, accountPublicId);
+    const before = await this.gitService.getSettings(ctx.internalId);
+    const target = [
+      ...before.githubAccounts.map((a) => ({ ...a, provider: 'github' as const })),
+      ...before.gitlabAccounts.map((a) => ({ ...a, provider: 'gitlab' as const })),
+    ].find((a) => a.publicId === accountPublicId.trim());
+    const result = await this.gitService.removeAccount(ctx.internalId, accountPublicId);
+    void this.organizationsService
+      .appendOrganizationAuditEvent(
+        ctx.internalId,
+        userId,
+        'security.git.account_deleted',
+        {
+          metadata: {
+            endpoint: `DELETE /api/git/accounts/${accountPublicId.trim()}`,
+            gitAccountPublicId: accountPublicId.trim(),
+            ...(target != null ? { gitAccountName: target.name } : {}),
+            ...(target != null ? { gitProvider: target.provider } : {}),
+          },
+        },
+      )
+      .catch(() => undefined);
+    return result;
   }
 }

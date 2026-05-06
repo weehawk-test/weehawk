@@ -772,7 +772,12 @@ export class GitService implements OnModuleInit {
       dto.githubClientSecret !== undefined ||
       dto.githubPrivateKey !== undefined ||
       dto.githubWebhookSecret !== undefined;
-    let provider: GitProvider = touchesGithub ? 'github' : 'gitlab';
+    let provider: GitProvider =
+      dto.provider === 'github' || dto.provider === 'gitlab'
+        ? dto.provider
+        : touchesGithub
+          ? 'github'
+          : 'gitlab';
     if (!touchesGithub && dto.accountPublicId?.trim()) {
       const byPublic = await this.repo.findOne({
         where: { organizationId: oid, publicId: dto.accountPublicId.trim() },
@@ -858,6 +863,64 @@ export class GitService implements OnModuleInit {
     return this.toPublic(githubRow, gitlabRow, githubAccounts, gitlabAccounts);
   }
 
+  async createAccount(
+    organizationInternalId: number,
+    params: {
+      provider: GitProvider;
+      accountName: string;
+      gitlabBaseUrl?: string;
+      gitlabGroupAccessToken?: string;
+    },
+  ): Promise<GitSettingsPublic> {
+    const oid = this.requireOrganizationInternalId(organizationInternalId);
+    const accountName = params.accountName.trim();
+    if (!accountName) {
+      throw new BadRequestException('accountName is required');
+    }
+    await this.repo.update(
+      { organizationId: oid, provider: params.provider, isActive: true },
+      { isActive: false },
+    );
+    const row = this.repo.create({
+      organizationId: oid,
+      provider: params.provider,
+      name: accountName,
+      isActive: true,
+      githubAppId: null,
+      githubClientId: null,
+      githubAppSlug: null,
+      githubClientSecret: null,
+      githubPrivateKey: null,
+      githubWebhookSecret: null,
+      gitlabBaseUrl: null,
+      gitlabApplicationId: null,
+      gitlabApplicationSecret: null,
+      gitlabGroupAccessToken: null,
+    });
+    if (params.provider === 'gitlab') {
+      const base = params.gitlabBaseUrl?.trim() || 'https://gitlab.com';
+      row.gitlabBaseUrl = (
+        await this.assertPublicHttpEndpoint(
+          this.normalizeGitlabWebBase(base),
+          'GitLab base URL',
+        )
+      ).url;
+      if (params.gitlabGroupAccessToken !== undefined) {
+        row.gitlabGroupAccessToken = this.applySecret(
+          row.gitlabGroupAccessToken,
+          params.gitlabGroupAccessToken,
+        );
+      }
+    }
+    await this.repo.save(row);
+    this.orgRealtime.notifyOrgDataChanged(oid, {
+      entity: 'git_settings',
+      action: 'created',
+      publicId: row.publicId,
+    });
+    return this.getSettings(oid);
+  }
+
   async removeAccount(
     organizationInternalId: number,
     accountPublicId: string,
@@ -893,8 +956,19 @@ export class GitService implements OnModuleInit {
 
   private async gitlabSettingsRow(
     organizationInternalId: number,
+    accountPublicId?: string,
   ): Promise<GitIntegrationSettings> {
     const oid = this.requireOrganizationInternalId(organizationInternalId);
+    const accountPid = accountPublicId?.trim();
+    if (accountPid) {
+      const row = await this.repo.findOne({
+        where: { organizationId: oid, provider: 'gitlab', publicId: accountPid },
+      });
+      if (!row) {
+        throw new BadRequestException('GitLab account not found.');
+      }
+      return this.migrateRowSecrets(row);
+    }
     return this.providerSettingsRowForOrganization(oid, 'gitlab');
   }
 
@@ -967,6 +1041,7 @@ export class GitService implements OnModuleInit {
   async listGitlabProjects(
     organizationInternalId: number,
     params: {
+      accountPublicId?: string;
       page?: number;
       perPage?: number;
       search?: string;
@@ -977,7 +1052,10 @@ export class GitService implements OnModuleInit {
     page: number;
   }> {
     try {
-      const row = await this.gitlabSettingsRow(organizationInternalId);
+      const row = await this.gitlabSettingsRow(
+        organizationInternalId,
+        params.accountPublicId,
+      );
       const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
       if (!token) {
         throw new BadRequestException(
@@ -1056,9 +1134,13 @@ export class GitService implements OnModuleInit {
   async listGitlabBranchNames(
     organizationInternalId: number,
     projectId: number,
+    accountPublicId?: string,
   ): Promise<{ branches: string[] }> {
     try {
-      const row = await this.gitlabSettingsRow(organizationInternalId);
+      const row = await this.gitlabSettingsRow(
+        organizationInternalId,
+        accountPublicId,
+      );
       const token = this.decryptSecretOrPlain(row.gitlabGroupAccessToken)?.trim();
       if (!token) {
         throw new BadRequestException(
@@ -1668,11 +1750,22 @@ export class GitService implements OnModuleInit {
 
   private async githubAppCredentialsRow(
     organizationInternalId: number,
+    accountPublicId?: string,
   ): Promise<GitIntegrationSettings> {
-    const row = await this.providerSettingsRowForOrganization(
-      organizationInternalId,
-      'github',
-    );
+    let row: GitIntegrationSettings;
+    const oid = this.requireOrganizationInternalId(organizationInternalId);
+    const accountPid = accountPublicId?.trim();
+    if (accountPid) {
+      const selected = await this.repo.findOne({
+        where: { organizationId: oid, provider: 'github', publicId: accountPid },
+      });
+      if (!selected) {
+        throw new BadRequestException('GitHub account not found.');
+      }
+      row = await this.migrateRowSecrets(selected);
+    } else {
+      row = await this.providerSettingsRowForOrganization(oid, 'github');
+    }
     const appId = row.githubAppId?.trim();
     const pem = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
     if (!appId || !pem) {
@@ -1889,6 +1982,7 @@ export class GitService implements OnModuleInit {
   async listGithubRepositories(
     organizationInternalId: number,
     params: {
+      accountPublicId?: string;
       page?: number;
       perPage?: number;
       search?: string;
@@ -1899,7 +1993,10 @@ export class GitService implements OnModuleInit {
     page: number;
   }> {
     try {
-      const row = await this.githubAppCredentialsRow(organizationInternalId);
+      const row = await this.githubAppCredentialsRow(
+        organizationInternalId,
+        params.accountPublicId,
+      );
       const appId = row.githubAppId?.trim();
       const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
       if (!appId || !privateKey) {
@@ -2034,6 +2131,7 @@ export class GitService implements OnModuleInit {
     organizationInternalId: number,
     installationId: number,
     fullName: string,
+    accountPublicId?: string,
   ): Promise<{ branches: string[] }> {
     try {
       const fn = fullName.trim();
@@ -2042,7 +2140,10 @@ export class GitService implements OnModuleInit {
           'repo must look like owner/name (letters, numbers, ._-).',
         );
       }
-      const row = await this.githubAppCredentialsRow(organizationInternalId);
+      const row = await this.githubAppCredentialsRow(
+        organizationInternalId,
+        accountPublicId,
+      );
       const appId = row.githubAppId?.trim();
       const privateKey = this.decryptSecretOrPlain(row.githubPrivateKey)?.trim();
       if (!appId || !privateKey) {

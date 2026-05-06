@@ -23,6 +23,7 @@ export type GitSettingsPublic = {
 };
 
 export type UpdateGitSettingsPayload = Partial<{
+  provider: "github" | "gitlab";
   accountPublicId: string;
   accountName: string;
   createNewAccount: boolean;
@@ -90,11 +91,14 @@ export type GitlabProjectsListResponse = {
 export async function fetchGitlabProjects(
   accessToken: string,
   organizationPublicId: string,
-  params?: { page?: number; perPage?: number; search?: string },
+  params?: { accountPublicId?: string; page?: number; perPage?: number; search?: string },
 ): Promise<GitlabProjectsListResponse> {
   const org = requireOrgPublicId(organizationPublicId);
   const u = createApiUrl("/api/git/gitlab/projects");
   u.searchParams.set("organizationPublicId", org);
+  if (params?.accountPublicId?.trim()) {
+    u.searchParams.set("accountPublicId", params.accountPublicId.trim());
+  }
   if (params?.page != null) u.searchParams.set("page", String(params.page));
   if (params?.perPage != null) u.searchParams.set("perPage", String(params.perPage));
   if (params?.search?.trim()) u.searchParams.set("search", params.search.trim());
@@ -107,12 +111,14 @@ export async function fetchGitlabBranches(
   accessToken: string,
   organizationPublicId: string,
   projectId: number,
+  accountPublicId?: string,
 ): Promise<{ branches: string[] }> {
   const org = requireOrgPublicId(organizationPublicId);
   const u = createApiUrl(
     `/api/git/gitlab/projects/${encodeURIComponent(String(projectId))}/branches`,
   );
   u.searchParams.set("organizationPublicId", org);
+  if (accountPublicId?.trim()) u.searchParams.set("accountPublicId", accountPublicId.trim());
   const res = await authFetch(accessToken, u.toString(), { method: "GET" });
   if (!res.ok) throw new Error(await errorBody(res));
   return res.json() as Promise<{ branches: string[] }>;
@@ -136,11 +142,14 @@ export type GithubRepositoriesListResponse = {
 export async function fetchGithubRepositories(
   accessToken: string,
   organizationPublicId: string,
-  params?: { page?: number; perPage?: number; search?: string },
+  params?: { accountPublicId?: string; page?: number; perPage?: number; search?: string },
 ): Promise<GithubRepositoriesListResponse> {
   const org = requireOrgPublicId(organizationPublicId);
   const u = createApiUrl("/api/git/github/repositories");
   u.searchParams.set("organizationPublicId", org);
+  if (params?.accountPublicId?.trim()) {
+    u.searchParams.set("accountPublicId", params.accountPublicId.trim());
+  }
   if (params?.page != null) u.searchParams.set("page", String(params.page));
   if (params?.perPage != null) u.searchParams.set("perPage", String(params.perPage));
   if (params?.search?.trim()) u.searchParams.set("search", params.search.trim());
@@ -152,11 +161,14 @@ export async function fetchGithubRepositories(
 export async function fetchGithubBranches(
   accessToken: string,
   organizationPublicId: string,
-  params: { installationId: number; repo: string },
+  params: { installationId: number; repo: string; accountPublicId?: string },
 ): Promise<{ branches: string[] }> {
   const org = requireOrgPublicId(organizationPublicId);
   const u = createApiUrl("/api/git/github/branches");
   u.searchParams.set("organizationPublicId", org);
+  if (params.accountPublicId?.trim()) {
+    u.searchParams.set("accountPublicId", params.accountPublicId.trim());
+  }
   u.searchParams.set("installationId", String(params.installationId));
   u.searchParams.set("repo", params.repo.trim());
   const res = await authFetch(accessToken, u.toString(), { method: "GET" });
@@ -201,6 +213,28 @@ export async function updateGitSettings(
   u.searchParams.set("organizationPublicId", org);
   const res = await authFetch(accessToken, u.toString(), {
     method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await errorBody(res));
+  return res.json() as Promise<GitSettingsPublic>;
+}
+
+export async function createGitAccount(
+  accessToken: string,
+  organizationPublicId: string,
+  payload: {
+    provider: "github" | "gitlab";
+    accountName: string;
+    gitlabBaseUrl?: string;
+    gitlabGroupAccessToken?: string;
+  },
+): Promise<GitSettingsPublic> {
+  const org = requireOrgPublicId(organizationPublicId);
+  const u = createApiUrl("/api/git/accounts");
+  u.searchParams.set("organizationPublicId", org);
+  const res = await authFetch(accessToken, u.toString(), {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });

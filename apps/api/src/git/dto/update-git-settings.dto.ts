@@ -1,7 +1,11 @@
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** Partial update: omit a field to leave unchanged; send empty string to clear a secret or optional value. */
 export class UpdateGitSettingsDto {
+  @IsOptional()
+  @IsIn(['github', 'gitlab'])
+  provider?: 'github' | 'gitlab';
+
   @IsOptional()
   @IsString()
   @MaxLength(40)

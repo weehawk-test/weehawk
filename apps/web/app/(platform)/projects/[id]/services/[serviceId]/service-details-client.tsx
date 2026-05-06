@@ -3379,11 +3379,35 @@ function ApplicationArchivePanel({
       Boolean(g.clientSecretSet || g.privateKeySet)
     );
   }, [gitSettings]);
-  const gitlabAccessTokenConfigured = Boolean(gitSettings?.gitlab.groupAccessTokenSet);
-  /** List + clone private repos via GitHub App installation token (needs App ID + private key). */
-  const githubAppListReady = Boolean(
-    gitSettings?.github.appId?.trim() && gitSettings?.github.privateKeySet,
-  );
+  const githubAccountOptions = gitSettings?.githubAccounts ?? [];
+  const gitlabAccountOptions = gitSettings?.gitlabAccounts ?? [];
+  const [selectedGithubAccountPublicId, setSelectedGithubAccountPublicId] = useState("");
+  const [selectedGitlabAccountPublicId, setSelectedGitlabAccountPublicId] = useState("");
+  useEffect(() => {
+    if (!githubAccountOptions.length) {
+      setSelectedGithubAccountPublicId("");
+      return;
+    }
+    const preferred = gitSettings?.github.activePublicId ?? githubAccountOptions[0]?.publicId ?? "";
+    setSelectedGithubAccountPublicId((cur) => {
+      if (cur && githubAccountOptions.some((a) => a.publicId === cur)) return cur;
+      return preferred;
+    });
+  }, [gitSettings?.github.activePublicId, githubAccountOptions]);
+  useEffect(() => {
+    if (!gitlabAccountOptions.length) {
+      setSelectedGitlabAccountPublicId("");
+      return;
+    }
+    const preferred = gitSettings?.gitlab.activePublicId ?? gitlabAccountOptions[0]?.publicId ?? "";
+    setSelectedGitlabAccountPublicId((cur) => {
+      if (cur && gitlabAccountOptions.some((a) => a.publicId === cur)) return cur;
+      return preferred;
+    });
+  }, [gitSettings?.gitlab.activePublicId, gitlabAccountOptions]);
+  const gitlabAccessTokenConfigured = Boolean(selectedGitlabAccountPublicId);
+  /** With multi-account support, we fetch using the currently selected GitHub account. */
+  const githubAppListReady = Boolean(selectedGithubAccountPublicId);
   const [buildPath, setBuildPath] = useState(".");
   const [appBuildStrategy, setAppBuildStrategy] = useState<"dockerfile" | "nixpacks">("dockerfile");
   const [replicas, setReplicas] = useState("1");
@@ -3520,11 +3544,13 @@ function ApplicationArchivePanel({
         orgScopedQuerySegment(orgPid),
         showGitlabPanel,
         Boolean(gitSettings?.gitlab.groupAccessTokenSet),
+        selectedGitlabAccountPublicId,
         gitlabProjectsPage,
         gitlabProjectSearchApplied,
       ],
       queryFn: () =>
         fetchGitlabProjects(accessToken!, orgPid, {
+          accountPublicId: selectedGitlabAccountPublicId || undefined,
           page: gitlabProjectsPage,
           perPage: 20,
           search: gitlabProjectSearchApplied.trim() || undefined,
@@ -3533,6 +3559,7 @@ function ApplicationArchivePanel({
         accessToken &&
           orgPid &&
           showGitlabPanel &&
+          Boolean(selectedGitlabAccountPublicId) &&
           gitSettings?.gitlab.groupAccessTokenSet,
       ),
     });
@@ -3547,17 +3574,23 @@ function ApplicationArchivePanel({
         orgScopedQuerySegment(orgPid),
         showGithubPanel,
         githubAppListReady,
+        selectedGithubAccountPublicId,
         githubProjectsPage,
         githubProjectSearchApplied,
       ],
       queryFn: () =>
         fetchGithubRepositories(accessToken!, orgPid, {
+          accountPublicId: selectedGithubAccountPublicId || undefined,
           page: githubProjectsPage,
           perPage: 20,
           search: githubProjectSearchApplied.trim() || undefined,
         }),
       enabled: Boolean(
-        accessToken && orgPid && showGithubPanel && githubAppListReady,
+        accessToken &&
+          orgPid &&
+          showGithubPanel &&
+          githubAppListReady &&
+          Boolean(selectedGithubAccountPublicId),
       ),
     });
   const githubReposList: GithubRepoListItem[] = githubReposData?.repositories ?? [];
@@ -3605,14 +3638,21 @@ function ApplicationArchivePanel({
       accessToken,
       orgScopedQuerySegment(orgPid),
       gitlabBranchPickerProjectId,
+      selectedGitlabAccountPublicId,
     ],
     queryFn: () =>
-      fetchGitlabBranches(accessToken!, orgPid, gitlabBranchPickerProjectId!),
+      fetchGitlabBranches(
+        accessToken!,
+        orgPid,
+        gitlabBranchPickerProjectId!,
+        selectedGitlabAccountPublicId || undefined,
+      ),
     enabled: Boolean(
       accessToken &&
         orgPid &&
         showGitlabPanel &&
         gitlabBranchPickerProjectId != null &&
+        Boolean(selectedGitlabAccountPublicId) &&
         gitSettings?.gitlab.groupAccessTokenSet,
     ),
   });
@@ -3623,9 +3663,11 @@ function ApplicationArchivePanel({
       orgScopedQuerySegment(orgPid),
       githubBranchPickerParts?.installationId,
       githubBranchPickerParts?.fullName,
+      selectedGithubAccountPublicId,
     ],
     queryFn: () =>
       fetchGithubBranches(accessToken!, orgPid, {
+        accountPublicId: selectedGithubAccountPublicId || undefined,
         installationId: githubBranchPickerParts!.installationId,
         repo: githubBranchPickerParts!.fullName,
       }),
@@ -3634,6 +3676,7 @@ function ApplicationArchivePanel({
         orgPid &&
         showGithubPanel &&
         githubAppListReady &&
+        Boolean(selectedGithubAccountPublicId) &&
         githubBranchPickerParts,
     ),
   });
@@ -4496,11 +4539,37 @@ function ApplicationArchivePanel({
                 <ExternalLink className="h-3 w-3 opacity-80" />
               </Link>
             </div>
+            <div className="w-full space-y-1">
+              <label className="block text-[10px] font-medium text-muted-foreground">
+                GitHub account
+              </label>
+              <select
+                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground shadow-sm outline-none transition focus:border-cyan-500/60 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                value={selectedGithubAccountPublicId}
+                onChange={(e) => {
+                  setSelectedGithubAccountPublicId(e.target.value);
+                  setGithubProjectsPage(1);
+                  setGithubProjectSearchApplied("");
+                  setGithubProjectSearchInput("");
+                }}
+                disabled={githubAccountOptions.length === 0}
+              >
+                {githubAccountOptions.length === 0 ? (
+                  <option value="">No GitHub accounts</option>
+                ) : (
+                  githubAccountOptions.map((account) => (
+                    <option key={account.publicId} value={account.publicId}>
+                      {account.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
 
             {githubAppListReady ? (
               <div className="space-y-2">
                 <p className="text-[11px] font-medium text-foreground">Repositories your GitHub App can access</p>
-                <div className="flex flex-wrap gap-2 items-center max-w-xl">
+                <div className="flex w-full flex-wrap items-center gap-2">
                   <input
                     className="input-field font-mono text-xs flex-1 min-w-[10rem]"
                     value={githubProjectSearchInput}
@@ -4881,13 +4950,39 @@ function ApplicationArchivePanel({
                 <ExternalLink className="h-3 w-3 opacity-80" />
               </Link>
             </div>
+            <div className="w-full space-y-1">
+              <label className="block text-[10px] font-medium text-muted-foreground">
+                GitLab account
+              </label>
+              <select
+                className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground shadow-sm outline-none transition focus:border-cyan-500/60 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                value={selectedGitlabAccountPublicId}
+                onChange={(e) => {
+                  setSelectedGitlabAccountPublicId(e.target.value);
+                  setGitlabProjectsPage(1);
+                  setGitlabProjectSearchApplied("");
+                  setGitlabProjectSearchInput("");
+                }}
+                disabled={gitlabAccountOptions.length === 0}
+              >
+                {gitlabAccountOptions.length === 0 ? (
+                  <option value="">No GitLab accounts</option>
+                ) : (
+                  gitlabAccountOptions.map((account) => (
+                    <option key={account.publicId} value={account.publicId}>
+                      {account.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
 
             {gitSettings?.gitlab.groupAccessTokenSet ? (
               <div className="space-y-2">
                 <div>
                   <p className="text-[11px] font-medium text-foreground">Projects you can fetch</p>
                 </div>
-                <div className="flex flex-wrap gap-2 items-center max-w-xl">
+                <div className="flex w-full flex-wrap items-center gap-2">
                   <input
                     className="input-field font-mono text-xs flex-1 min-w-[10rem]"
                     value={gitlabProjectSearchInput}
