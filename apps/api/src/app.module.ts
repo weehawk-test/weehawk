@@ -36,6 +36,7 @@ import { migrateProjectsOrganizationOwnership } from './database/project-org-mig
 import { migrateRemoteServersOrganizationOwnership } from './database/remote-server-org-migration';
 import { migrateS3ProfilesOrganizationOwnership } from './database/s3-profile-org-migration';
 import { migrateWebhooksOrganizationOwnership } from './database/webhook-org-migration';
+import { migrateRemoteServerProvisionJobsOrganizationId } from './database/remote-server-provision-job-org-migration';
 
 const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
   existsSync(filePath),
@@ -104,6 +105,7 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
         await migrateRemoteServersOrganizationOwnership(pre);
         await migrateS3ProfilesOrganizationOwnership(pre);
         await migrateWebhooksOrganizationOwnership(pre);
+        await migrateRemoteServerProvisionJobsOrganizationId(pre);
         await pre.destroy();
         const ds = new DataSource(options);
         await ds.initialize();

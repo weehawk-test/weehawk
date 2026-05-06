@@ -8,11 +8,19 @@ import {
 
 @Entity('remote_server_provision_jobs')
 export class RemoteServerProvisionJob {
+  /**
+   * Opaque primary key: DB-generated UUID (not a serial). Avoids predictable IDs if a row is
+   * ever addressed without a full access check; APIs should still enforce org/workspace auth.
+   */
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
   @Column({ name: 'remote_server_id', type: 'int' })
   remoteServerId!: number;
+
+  /** Organization scope (mirrors `remote_servers.organization_id`). */
+  @Column({ name: 'organization_id', type: 'int' })
+  organizationId!: number;
 
   @Column({ name: 'user_id', type: 'int' })
   userId!: number;

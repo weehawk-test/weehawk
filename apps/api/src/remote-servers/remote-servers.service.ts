@@ -3351,6 +3351,17 @@ curl -fsS -o /dev/null "$U"
     return rs;
   }
 
+  /**
+   * Any org member who can access the remote servers workspace may read provision job status/logs
+   * (weaker than {@link assertRemoteServerProvisionEnqueueAllowed}, which requires install/maintain).
+   */
+  async assertRemoteServerWorkspaceVisible(
+    remoteServerId: number,
+    userId: number,
+  ): Promise<RemoteServer> {
+    return this.findEntityOrFail(remoteServerId, userId);
+  }
+
   private async findEntityOrFail(
     id: number | string,
     userId: number,

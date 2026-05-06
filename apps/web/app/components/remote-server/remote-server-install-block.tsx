@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Clock, Loader2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -75,9 +75,17 @@ export function RemoteServerInstallBlock({
   const [purgeAck, setPurgeAck] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobLogDismissed, setJobLogDismissed] = useState(false);
+  const jobLogPreRef = useRef<HTMLPreElement | null>(null);
+  /** When true, user scrolled away from the bottom — do not jump the log on poll updates. */
+  const jobLogUserScrolledAwayRef = useRef(false);
+  const jobLogWasDismissedRef = useRef(jobLogDismissed);
 
   useEffect(() => {
     if (jobId) setJobLogDismissed(false);
+  }, [jobId]);
+
+  useEffect(() => {
+    jobLogUserScrolledAwayRef.current = false;
   }, [jobId]);
 
   const orgForProvision = organizationPublicIdForProvision.trim();
@@ -109,6 +117,22 @@ export function RemoteServerInstallBlock({
       return false;
     },
   });
+
+  useLayoutEffect(() => {
+    if (jobLogWasDismissedRef.current && !jobLogDismissed) {
+      jobLogUserScrolledAwayRef.current = false;
+    }
+    jobLogWasDismissedRef.current = jobLogDismissed;
+  }, [jobLogDismissed]);
+
+  useLayoutEffect(() => {
+    if (jobLogDismissed) return;
+    const el = jobLogPreRef.current;
+    const log = jobQ.data?.log;
+    if (!el || !log) return;
+    if (jobLogUserScrolledAwayRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [jobQ.data?.log, jobLogDismissed]);
 
   const openInstallFlow = (which: Exclude<InstallDialog, null>) => {
     setInstallMenuOpen(false);
@@ -457,7 +481,16 @@ export function RemoteServerInstallBlock({
               <p className="text-[11px] text-red-400 whitespace-pre-wrap">{jobQ.data.errorMessage}</p>
             ) : null}
             {jobQ.data.log ? (
-              <pre className="min-w-0 max-w-full text-[10px] font-mono whitespace-pre-wrap break-words max-h-56 overflow-x-hidden overflow-y-auto text-slate-700 dark:text-zinc-300 leading-snug">
+              <pre
+                ref={jobLogPreRef}
+                onScroll={(e) => {
+                  const t = e.currentTarget;
+                  const nearBottom =
+                    t.scrollHeight - t.scrollTop - t.clientHeight <= 80;
+                  jobLogUserScrolledAwayRef.current = !nearBottom;
+                }}
+                className="min-w-0 max-w-full text-[10px] font-mono whitespace-pre-wrap break-words max-h-56 overflow-x-hidden overflow-y-auto text-slate-700 dark:text-zinc-300 leading-snug"
+              >
                 {jobQ.data.log}
               </pre>
             ) : (

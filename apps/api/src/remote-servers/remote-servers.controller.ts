@@ -7,6 +7,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -72,7 +73,7 @@ export class RemoteServersController {
       'Get remote server provision job status (Docker / Swarm / weehawk network); poll until done or error',
   })
   getProvisionJob(
-    @Param('jobId') jobId: string,
+    @Param('jobId', new ParseUUIDPipe({ version: '4' })) jobId: string,
     @Req() req: { user?: { userId: number } },
   ) {
     return this.remoteServerProvisionService.getJob(jobId, this.uid(req));

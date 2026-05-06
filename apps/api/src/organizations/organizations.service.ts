@@ -944,16 +944,7 @@ export class OrganizationsService implements OnModuleInit {
       await em.delete(NotificationChannel, { organizationId });
       await em.delete(S3Profile, { organizationId });
 
-      const servers = await em.find(RemoteServer, {
-        where: { organizationId },
-        select: { id: true },
-      });
-      const serverIds = servers.map((s) => s.id);
-      if (serverIds.length > 0) {
-        await em.delete(RemoteServerProvisionJob, {
-          remoteServerId: In(serverIds),
-        });
-      }
+      await em.delete(RemoteServerProvisionJob, { organizationId });
       await em.delete(RemoteServer, { organizationId });
       await em.delete(OrganizationMembership, { organizationId });
       await em.delete(Organization, { id: organizationId });

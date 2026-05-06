@@ -3,7 +3,9 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Client } from 'ssh2';
@@ -20,9 +22,11 @@ import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 
 const MAX_LOG_CHARS = 512_000;
+const DEFAULT_FINAL_LOG_MAX_CHARS = 32_768;
+const DEFAULT_RETENTION_DAYS = 14;
 
 @Injectable()
-export class RemoteServerProvisionService {
+export class RemoteServerProvisionService implements OnApplicationBootstrap {
   private readonly logger = new Logger(RemoteServerProvisionService.name);
   private isProcessing = false;
 
@@ -32,7 +36,61 @@ export class RemoteServerProvisionService {
     private readonly remoteServersService: RemoteServersService,
     private readonly traefikService: TraefikService,
     private readonly organizationsService: OrganizationsService,
+    private readonly configService: ConfigService,
   ) {}
+
+  onApplicationBootstrap(): void {
+    const run = () =>
+      void this.purgeStaleCompletedJobs().catch((e) =>
+        this.logger.warn(
+          `purgeStaleCompletedJobs: ${e instanceof Error ? e.message : String(e)}`,
+        ),
+      );
+    setTimeout(run, 60_000);
+    setInterval(run, 86_400_000);
+  }
+
+  private getFinalLogMaxChars(): number {
+    const raw = this.configService.get<string>(
+      'WEEHAWK_PROVISION_JOB_FINAL_LOG_MAX_CHARS',
+    );
+    const n =
+      raw != null && raw.trim() !== '' ? Number(raw) : DEFAULT_FINAL_LOG_MAX_CHARS;
+    return Number.isFinite(n) && n >= 256 ? Math.trunc(n) : DEFAULT_FINAL_LOG_MAX_CHARS;
+  }
+
+  private getRetentionDays(): number {
+    const raw = this.configService.get<string>(
+      'WEEHAWK_PROVISION_JOB_RETENTION_DAYS',
+    );
+    const n =
+      raw != null && raw.trim() !== '' ? Number(raw) : DEFAULT_RETENTION_DAYS;
+    return Number.isFinite(n) && n >= 1 ? Math.trunc(n) : DEFAULT_RETENTION_DAYS;
+  }
+
+  private trimLogForPersistence(log: string): string {
+    const max = this.getFinalLogMaxChars();
+    if (log.length <= max) return log;
+    const head = '[… earlier provision log truncated …]\n';
+    const tailBudget = max - head.length;
+    return head + (tailBudget > 0 ? log.slice(-tailBudget) : '');
+  }
+
+  private async purgeStaleCompletedJobs(): Promise<void> {
+    const days = this.getRetentionDays();
+    const cutoff = new Date(Date.now() - days * 86_400_000);
+    const res = await this.jobRepo
+      .createQueryBuilder()
+      .delete()
+      .from(RemoteServerProvisionJob)
+      .where('status IN (:...st)', { st: ['done', 'error'] })
+      .andWhere('updatedAt < :cutoff', { cutoff })
+      .execute();
+    const n = res.affected ?? 0;
+    if (n > 0) {
+      this.logger.log(`Purged ${n} completed remote provision job row(s) older than ${days}d.`);
+    }
+  }
 
   /** Same bash the worker runs over SSH — for UI preview. */
   async getProvisionScriptPreview(
@@ -84,6 +142,7 @@ export class RemoteServerProvisionService {
       );
     const row = this.jobRepo.create({
       remoteServerId,
+      organizationId: rs.organizationId,
       userId,
       status: 'pending',
       log: '',
@@ -122,6 +181,7 @@ export class RemoteServerProvisionService {
       );
     const row = this.jobRepo.create({
       remoteServerId,
+      organizationId: rs.organizationId,
       userId,
       status: 'pending',
       log: '',
@@ -160,6 +220,7 @@ export class RemoteServerProvisionService {
       );
     const row = this.jobRepo.create({
       remoteServerId,
+      organizationId: rs.organizationId,
       userId,
       status: 'pending',
       log: '',
@@ -200,10 +261,14 @@ export class RemoteServerProvisionService {
     createdAt: Date;
     updatedAt: Date;
   }> {
-    const job = await this.jobRepo.findOne({ where: { id: jobId, userId } });
+    const job = await this.jobRepo.findOne({ where: { id: jobId } });
     if (!job) {
       throw new NotFoundException('Provision job not found');
     }
+    await this.remoteServersService.assertRemoteServerWorkspaceVisible(
+      job.remoteServerId,
+      userId,
+    );
     return {
       id: job.id,
       remoteServerId: job.remoteServerId,
@@ -250,7 +315,7 @@ export class RemoteServerProvisionService {
     const ownerId = job.userId;
 
     await this.jobRepo.update(
-      { id: job.id, userId: ownerId },
+      { id: job.id },
       { status: 'running', log: '', errorMessage: null },
     );
 
@@ -260,10 +325,7 @@ export class RemoteServerProvisionService {
     const appendLog = async (chunk: string) => {
       if (!chunk) return;
       logBuf = (logBuf + chunk).slice(-MAX_LOG_CHARS);
-      await this.jobRepo.update(
-        { id: job.id, userId: ownerId },
-        { log: logBuf },
-      );
+      await this.jobRepo.update({ id: job.id }, { log: logBuf });
     };
 
     try {
@@ -311,15 +373,23 @@ export class RemoteServerProvisionService {
         (s) => void appendLog(s),
       );
       await this.jobRepo.update(
-        { id: job.id, userId: ownerId },
-        { status: 'done', errorMessage: null },
+        { id: job.id },
+        {
+          status: 'done',
+          errorMessage: null,
+          log: this.trimLogForPersistence(logBuf),
+        },
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.logger.warn(`Remote server job ${jobId} failed: ${msg}`);
       await this.jobRepo.update(
-        { id: job.id, userId: ownerId },
-        { status: 'error', errorMessage: msg },
+        { id: job.id },
+        {
+          status: 'error',
+          errorMessage: msg,
+          log: this.trimLogForPersistence(logBuf),
+        },
       );
     }
   }
