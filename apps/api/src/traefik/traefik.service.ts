@@ -44,19 +44,21 @@ export class TraefikService {
     organizationInternalId: number | null | undefined,
     userId: number,
   ): Promise<number> {
-    const uid =
-      typeof userId === 'number' && Number.isFinite(userId) && userId >= 1
-        ? Math.trunc(userId)
-        : 0;
-    if (uid < 1) {
-      throw new InternalServerErrorException('Valid user id required for Traefik tenant.');
-    }
     if (
       organizationInternalId != null &&
       Number.isFinite(organizationInternalId) &&
       organizationInternalId >= 1
     ) {
       return Math.trunc(organizationInternalId);
+    }
+    const uid =
+      typeof userId === 'number' && Number.isFinite(userId) && userId >= 1
+        ? Math.trunc(userId)
+        : 0;
+    if (uid < 1) {
+      throw new InternalServerErrorException(
+        'Valid user id required for Traefik tenant when organization is unknown.',
+      );
     }
     const first =
       await this.organizationsService.getFirstOrganizationInternalIdForUser(uid);

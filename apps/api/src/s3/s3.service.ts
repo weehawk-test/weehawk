@@ -46,7 +46,7 @@ import {
   encryptPrivateKey,
 } from '../remote-servers/ssh-key-crypto';
 import { generatePublicId } from '../common/public-id';
-import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationResourceScopedRepository } from '../common/tenant-scoped.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 const MAX_PROFILES = 50;
@@ -95,7 +95,7 @@ function createS3Client(input: NormalizedS3Credentials): S3Client {
 @Injectable()
 export class S3Service implements OnModuleInit {
   private readonly logger = new Logger(S3Service.name);
-  private readonly scopedProfiles: RemoteServerTenantScopedRepository<S3Profile>;
+  private readonly scopedProfiles: OrganizationResourceScopedRepository<S3Profile>;
 
   constructor(
     @InjectRepository(S3Profile)
@@ -108,7 +108,7 @@ export class S3Service implements OnModuleInit {
     private readonly remoteServersService: RemoteServersService,
     private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
-    this.scopedProfiles = new RemoteServerTenantScopedRepository<S3Profile>(
+    this.scopedProfiles = new OrganizationResourceScopedRepository<S3Profile>(
       this.profileRepo,
       this.membershipRepo,
       'S3 profile',
@@ -355,7 +355,7 @@ export class S3Service implements OnModuleInit {
         userId,
       );
       this.assertS3ProfileWorkspace(byPublicId, expectedOrg);
-      return this.ensureProfilePublicId(byPublicId);
+      return this.ensureProfilePublicId(byPublicId, userId);
     } catch {
       const byName = await this.scopedProfiles.findScopedBy(
         'name',
@@ -363,14 +363,17 @@ export class S3Service implements OnModuleInit {
         userId,
       );
       this.assertS3ProfileWorkspace(byName, expectedOrg);
-      return this.ensureProfilePublicId(byName);
+      return this.ensureProfilePublicId(byName, userId);
     }
   }
 
-  private async ensureProfilePublicId(row: S3Profile): Promise<S3Profile> {
+  private async ensureProfilePublicId(
+    row: S3Profile,
+    actingUserId: number,
+  ): Promise<S3Profile> {
     if (row.publicId?.trim()) return row;
     row.publicId = generatePublicId('s3');
-    return this.scopedProfiles.saveScoped(row, row.userId);
+    return this.scopedProfiles.saveScoped(row, actingUserId);
   }
 
   private async findProfileByPublicIdOrThrow(
@@ -392,7 +395,7 @@ export class S3Service implements OnModuleInit {
       userId,
     );
     this.assertS3ProfileWorkspace(row, expectedOrg);
-    return this.ensureProfilePublicId(row);
+    return this.ensureProfilePublicId(row, userId);
   }
 
   private async findProfileByNameInWorkspace(
@@ -470,7 +473,6 @@ export class S3Service implements OnModuleInit {
         continue;
       }
       const row = this.profileRepo.create({
-        userId: 1,
         organizationId: legacyOrgId,
         workspaceKey: `o:${legacyOrgId}`,
         name,
@@ -594,7 +596,7 @@ export class S3Service implements OnModuleInit {
       },
     );
     const rowsWithPublicId = await Promise.all(
-      rows.map((p) => this.ensureProfilePublicId(p)),
+      rows.map((p) => this.ensureProfilePublicId(p, userId)),
     );
     return rowsWithPublicId.map((p) => this.toPublicProfile(p));
   }
@@ -665,7 +667,6 @@ export class S3Service implements OnModuleInit {
       row.forcePathStyle = n.forcePathStyle;
     } else {
       row = this.profileRepo.create({
-        userId,
         organizationId: orgId,
         workspaceKey: `o:${orgId}`,
         name: n.name,
@@ -690,7 +691,7 @@ export class S3Service implements OnModuleInit {
     const saved =
       (await this.findProfileByNameInWorkspace(userId, n.name, orgId)) ??
       row;
-    const ensured = await this.ensureProfilePublicId(saved);
+    const ensured = await this.ensureProfilePublicId(saved, userId);
     this.logS3OrgAudit(
       ensured,
       userId,

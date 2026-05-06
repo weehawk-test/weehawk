@@ -10,8 +10,8 @@ import { AUTH_ACCESS_COOKIE } from '../auth/auth-cookies';
 import { GitService } from '../git/git.service';
 import { RegistryService } from '../registry/registry.service';
 import {
+  OrganizationResourceScopedRepository,
   ProjectTenantScopedRepository,
-  UserIdTenantScopedRepository,
 } from '../common/tenant-scoped.service';
 
 describe('Security Smoke Suite', () => {
@@ -145,24 +145,28 @@ describe('Security Smoke Suite', () => {
   });
 
   describe('Resource Access Check', () => {
-    it('scopes findScoped for Service and RemoteServer by userId', async () => {
+    it('scopes findScoped for RemoteServer by organization membership and Service by project org', async () => {
+      const membershipRepo = {
+        findOne: jest.fn().mockResolvedValue({ id: 1 }),
+      };
+      const remoteQb = {
+        select: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({ id: 10 }),
+      };
       const remoteRepo = {
-        findOne: jest.fn().mockResolvedValue({ id: 10, userId: 77 }),
+        createQueryBuilder: jest.fn().mockReturnValue(remoteQb),
+        findOne: jest.fn().mockResolvedValue({ id: 10, organizationId: 1 }),
       };
       const scopedRemote =
-        new UserIdTenantScopedRepository<{ id: number; userId: number }>(
-          remoteRepo as never,
-          'Remote server',
-        );
+        new OrganizationResourceScopedRepository<{
+          id: number;
+          organizationId: number;
+        }>(remoteRepo as never, membershipRepo as never, 'Remote server');
       await scopedRemote.findScoped(10, 77);
-      expect(remoteRepo.findOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            id: 10,
-            userId: 77,
-          }),
-        }),
-      );
+      expect(remoteRepo.createQueryBuilder).toHaveBeenCalledWith('e');
+      expect(remoteQb.getRawOne).toHaveBeenCalled();
 
       const qb = {
         select: jest.fn().mockReturnThis(),
@@ -182,7 +186,7 @@ describe('Security Smoke Suite', () => {
       await scopedService.findScoped(4, 77);
       expect(serviceRepo.createQueryBuilder).toHaveBeenCalledWith('e');
       expect(qb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining('projects'),
+        expect.stringContaining('organization_id'),
         expect.objectContaining({ userId: 77 }),
       );
       expect(serviceRepo.findOne).toHaveBeenCalledWith(

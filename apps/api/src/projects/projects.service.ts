@@ -9,8 +9,9 @@ import { Repository } from 'typeorm';
 import { Project } from './entities/project.entity';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { generatePublicId, isLikelyNumericId } from '../common/public-id';
-import { UserIdTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationResourceScopedRepository } from '../common/tenant-scoped.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
@@ -18,16 +19,19 @@ import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service
 
 @Injectable()
 export class ProjectsService {
-  private readonly scopedProjects: UserIdTenantScopedRepository<Project>;
+  private readonly scopedProjects: OrganizationResourceScopedRepository<Project>;
 
   constructor(
     @InjectRepository(Project)
     private readonly projectRepository: Repository<Project>,
+    @InjectRepository(OrganizationMembership)
+    private readonly membershipRepository: Repository<OrganizationMembership>,
     private readonly organizationsService: OrganizationsService,
     private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
-    this.scopedProjects = new UserIdTenantScopedRepository<Project>(
+    this.scopedProjects = new OrganizationResourceScopedRepository<Project>(
       this.projectRepository,
+      this.membershipRepository,
       'Project',
     );
   }
@@ -98,7 +102,6 @@ export class ProjectsService {
     const project = this.projectRepository.create({
       name: nameTrim,
       description: createProjectDto.description,
-      userId,
       publicId: generatePublicId('prj'),
       organizationId,
     });

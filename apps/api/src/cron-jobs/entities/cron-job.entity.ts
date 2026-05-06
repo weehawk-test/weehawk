@@ -19,9 +19,6 @@ export class CronJob {
   @Column({ type: 'varchar', length: 200 })
   name!: string;
 
-  @Column({ name: 'user_id', type: 'int' })
-  userId!: number;
-
   @Column({ name: 'organization_id', type: 'int' })
   organizationId!: number;
 

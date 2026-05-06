@@ -30,6 +30,12 @@ import { migrateOrganizationAuditLogTargetEmailToMetadata } from './database/org
 import { migrateGitIntegrationSettingsToOrganizationScope } from './database/git-integration-org-migration';
 import { migrateRegistryAccountsToOrganizationScope } from './database/registry-account-org-migration';
 import { migrateRegistryAccountPublicIds } from './database/registry-account-public-id-migration';
+import { migrateCronJobsOrganizationOwnership } from './database/cron-job-org-migration';
+import { migrateNotificationChannelsOrganizationOwnership } from './database/notification-channel-org-migration';
+import { migrateProjectsOrganizationOwnership } from './database/project-org-migration';
+import { migrateRemoteServersOrganizationOwnership } from './database/remote-server-org-migration';
+import { migrateS3ProfilesOrganizationOwnership } from './database/s3-profile-org-migration';
+import { migrateWebhooksOrganizationOwnership } from './database/webhook-org-migration';
 
 const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
   existsSync(filePath),
@@ -92,6 +98,12 @@ const ENV_FILE_PATHS = ['apps/api/.env', '.env'].filter((filePath) =>
         await migrateGitIntegrationSettingsToOrganizationScope(pre);
         await migrateRegistryAccountsToOrganizationScope(pre);
         await migrateRegistryAccountPublicIds(pre);
+        await migrateCronJobsOrganizationOwnership(pre);
+        await migrateNotificationChannelsOrganizationOwnership(pre);
+        await migrateProjectsOrganizationOwnership(pre);
+        await migrateRemoteServersOrganizationOwnership(pre);
+        await migrateS3ProfilesOrganizationOwnership(pre);
+        await migrateWebhooksOrganizationOwnership(pre);
         await pre.destroy();
         const ds = new DataSource(options);
         await ds.initialize();

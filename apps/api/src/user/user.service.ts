@@ -10,13 +10,7 @@ import { User } from '../auth/entities/user.entity';
 import { UserProfileResponseDto } from '../auth/dto/user-profile-response.dto';
 import { UpdateProfileRequestDto } from '../auth/dto/update-profile-request.dto';
 import { AuthProvider } from '../auth/entities/auth-provider.enum';
-import { Webhook } from '../webhooks/entities/webhook.entity';
-import { CronJob } from '../cron-jobs/entities/cron-job.entity';
-import { Project } from '../projects/entities/project.entity';
 import { RemoteServerProvisionJob } from '../remote-servers/entities/remote-server-provision-job.entity';
-import { RemoteServer } from '../remote-servers/entities/remote-server.entity';
-import { S3Profile } from '../s3/entities/s3-profile.entity';
-import { NotificationChannel } from '../notifications/entities/notification-channel.entity';
 import { RefreshToken } from '../token/refresh-token.entity';
 import { OrganizationsService } from '../organizations/organizations.service';
 
@@ -47,8 +41,8 @@ export class UserService {
   }
 
   /**
-   * Removes all rows scoped to this user (projects, services via FK cascade, integrations, etc.)
-   * then deletes the user. Used for self-service account deletion and admin delete.
+   * Removes legacy per-user rows (provision jobs, refresh tokens, etc.),
+   * then deletes the user. Organization-owned resources (projects, remote servers, S3 profiles, webhooks, …) are not deleted here.
    */
   async deleteUserAndRelatedRows(userId: number): Promise<void> {
     await this.organizationsService.removeUserFromAllOrganizationsForAccountDeletion(
@@ -64,13 +58,7 @@ export class UserService {
     manager: EntityManager,
     userId: number,
   ): Promise<void> {
-    await manager.delete(Webhook, { userId });
-    await manager.delete(CronJob, { userId });
-    await manager.delete(Project, { userId });
     await manager.delete(RemoteServerProvisionJob, { userId });
-    await manager.delete(RemoteServer, { userId });
-    await manager.delete(S3Profile, { userId });
-    await manager.delete(NotificationChannel, { userId });
     await manager.delete(RefreshToken, { userId });
   }
 

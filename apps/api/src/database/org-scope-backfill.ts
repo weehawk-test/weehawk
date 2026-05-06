@@ -50,6 +50,89 @@ async function resolveDefaultOrgId(
   return m?.organizationId ?? null;
 }
 
+/** Backfill may run before `projects.user_id` is dropped; use SQL so legacy column is still readable. */
+async function loadProjectsMissingOrgWithLegacyUserId(
+  ds: DataSource,
+): Promise<Array<{ id: number; userId: number }>> {
+  const type = ds.options.type;
+  try {
+    if (type === 'postgres' || type === 'sqlite') {
+      const rows = (await ds.query(
+        `SELECT id, user_id FROM projects WHERE organization_id IS NULL`,
+      )) as Array<{ id: number; user_id: string | number }>;
+      return (Array.isArray(rows) ? rows : []).map((r) => ({
+        id: Number(r.id),
+        userId: Number(r.user_id),
+      }));
+    }
+  } catch (e) {
+    log.warn(
+      `Could not read legacy projects.user_id for org backfill: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  return [];
+}
+
+/** Backfill may run before `remote_servers.user_id` is dropped; use SQL so legacy column is still readable. */
+async function loadRemoteServersMissingOrgWithLegacyUserId(
+  ds: DataSource,
+): Promise<Array<{ id: number; userId: number }>> {
+  try {
+    const rows = (await ds.query(
+      `SELECT id, user_id FROM remote_servers WHERE organization_id IS NULL`,
+    )) as Array<{ id: number; user_id: string | number }>;
+    return (Array.isArray(rows) ? rows : []).map((r) => ({
+      id: Number(r.id),
+      userId: Number(r.user_id),
+    }));
+  } catch (e) {
+    log.warn(
+      `Could not read legacy remote_servers.user_id for org backfill: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  return [];
+}
+
+/** Backfill may run before `s3_profiles.user_id` is dropped; use SQL so legacy column is still readable. */
+async function loadS3ProfilesMissingOrgWithLegacyUserId(
+  ds: DataSource,
+): Promise<Array<{ id: number; userId: number }>> {
+  try {
+    const rows = (await ds.query(
+      `SELECT id, user_id FROM s3_profiles WHERE organization_id IS NULL`,
+    )) as Array<{ id: number; user_id: string | number }>;
+    return (Array.isArray(rows) ? rows : []).map((r) => ({
+      id: Number(r.id),
+      userId: Number(r.user_id),
+    }));
+  } catch (e) {
+    log.warn(
+      `Could not read legacy s3_profiles.user_id for org backfill: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  return [];
+}
+
+/** Backfill may run before `webhooks.user_id` is dropped; use SQL so legacy column is still readable. */
+async function loadWebhooksMissingOrgWithLegacyUserId(
+  ds: DataSource,
+): Promise<Array<{ id: number; userId: number }>> {
+  try {
+    const rows = (await ds.query(
+      `SELECT id, user_id FROM webhooks WHERE organization_id IS NULL`,
+    )) as Array<{ id: number; user_id: string | number }>;
+    return (Array.isArray(rows) ? rows : []).map((r) => ({
+      id: Number(r.id),
+      userId: Number(r.user_id),
+    }));
+  } catch (e) {
+    log.warn(
+      `Could not read legacy webhooks.user_id for org backfill: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  return [];
+}
+
 /**
  * Migrates legacy rows with NULL `organization_id` before NOT NULL constraints.
  * Safe to run on every startup (no-ops when nothing left to fix).
@@ -70,7 +153,7 @@ export async function runOrgScopeSchemaBackfill(ds: DataSource): Promise<void> {
   const nchRepo = ds.getRepository(NotificationChannel);
   const svcRepo = ds.getRepository(Service);
 
-  for (const p of await projectRepo.find({ where: { organizationId: IsNull() } })) {
+  for (const p of await loadProjectsMissingOrgWithLegacyUserId(ds)) {
     const oid = await resolveDefaultOrgId(ds, p.userId);
     if (oid == null) {
       log.warn(
@@ -78,11 +161,13 @@ export async function runOrgScopeSchemaBackfill(ds: DataSource): Promise<void> {
       );
       continue;
     }
-    p.organizationId = oid;
-    await projectRepo.save(p);
+    const row = await projectRepo.findOne({ where: { id: p.id } });
+    if (!row) continue;
+    row.organizationId = oid;
+    await projectRepo.save(row);
   }
 
-  for (const r of await rsRepo.find({ where: { organizationId: IsNull() } })) {
+  for (const r of await loadRemoteServersMissingOrgWithLegacyUserId(ds)) {
     const oid = await resolveDefaultOrgId(ds, r.userId);
     if (oid == null) {
       log.warn(
@@ -90,11 +175,13 @@ export async function runOrgScopeSchemaBackfill(ds: DataSource): Promise<void> {
       );
       continue;
     }
-    r.organizationId = oid;
-    await rsRepo.save(r);
+    const row = await rsRepo.findOne({ where: { id: r.id } });
+    if (!row) continue;
+    row.organizationId = oid;
+    await rsRepo.save(row);
   }
 
-  for (const row of await s3Repo.find({ where: { organizationId: IsNull() } })) {
+  for (const row of await loadS3ProfilesMissingOrgWithLegacyUserId(ds)) {
     const oid = await resolveDefaultOrgId(ds, row.userId);
     if (oid == null) {
       log.warn(
@@ -102,9 +189,11 @@ export async function runOrgScopeSchemaBackfill(ds: DataSource): Promise<void> {
       );
       continue;
     }
-    row.organizationId = oid;
-    row.workspaceKey = `o:${oid}`;
-    await s3Repo.save(row);
+    const s3Row = await s3Repo.findOne({ where: { id: row.id } });
+    if (!s3Row) continue;
+    s3Row.organizationId = oid;
+    s3Row.workspaceKey = `o:${oid}`;
+    await s3Repo.save(s3Row);
   }
 
   for (const ch of await nchRepo.find({
@@ -117,10 +206,9 @@ export async function runOrgScopeSchemaBackfill(ds: DataSource): Promise<void> {
       });
       oid = rs?.organizationId ?? null;
     }
-    if (oid == null) oid = await resolveDefaultOrgId(ds, ch.userId);
     if (oid == null) {
       log.warn(
-        `NotificationChannel ${ch.id}: cannot resolve org; assign manually.`,
+        `NotificationChannel ${ch.id}: cannot resolve org from remote server; assign manually.`,
       );
       continue;
     }
@@ -131,23 +219,25 @@ export async function runOrgScopeSchemaBackfill(ds: DataSource): Promise<void> {
   for (const job of await cronRepo.find({
     where: { organizationId: IsNull() },
   })) {
-    let oid: number | null = null;
     const rs = await rsRepo.findOne({ where: { id: job.remoteServerId } });
-    oid = rs?.organizationId ?? null;
-    if (oid == null) oid = await resolveDefaultOrgId(ds, job.userId);
+    const oid = rs?.organizationId ?? null;
     if (oid == null) {
-      log.warn(`CronJob ${job.id}: cannot resolve org; assign manually.`);
+      log.warn(
+        `CronJob ${job.id}: cannot resolve org from remote server; assign manually.`,
+      );
       continue;
     }
     job.organizationId = oid;
     await cronRepo.save(job);
   }
 
-  for (const w of await whRepo.find({ where: { organizationId: IsNull() } })) {
+  for (const w of await loadWebhooksMissingOrgWithLegacyUserId(ds)) {
     let oid: number | null = null;
-    if (w.serviceId != null) {
+    const whRow = await whRepo.findOne({ where: { id: w.id } });
+    if (!whRow) continue;
+    if (whRow.serviceId != null) {
       const svc = await svcRepo.findOne({
-        where: { id: w.serviceId },
+        where: { id: whRow.serviceId },
         relations: ['project'],
       });
       oid = svc?.project?.organizationId ?? null;
@@ -157,8 +247,8 @@ export async function runOrgScopeSchemaBackfill(ds: DataSource): Promise<void> {
       log.warn(`Webhook ${w.id}: cannot resolve org; assign manually.`);
       continue;
     }
-    w.organizationId = oid;
-    await whRepo.save(w);
+    whRow.organizationId = oid;
+    await whRepo.save(whRow);
   }
 
   for (const row of await s3Repo.find()) {

@@ -66,7 +66,7 @@ import {
   assertPublicRemoteIpv4Literal,
   assertPublicRemoteSshHost,
 } from './remote-ssh-host-policy';
-import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationResourceScopedRepository } from '../common/tenant-scoped.service';
 import { OrganizationMembership } from '../organizations/entities/organization-membership.entity';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
@@ -286,7 +286,7 @@ export class RemoteServersService {
 
   /** Observed host key from last verifier run (trust-on-first-use), keyed by remote server id. */
   private readonly pendingSshHostKeyByServerId = new Map<number, string>();
-  private readonly scopedRemoteServers: RemoteServerTenantScopedRepository<RemoteServer>;
+  private readonly scopedRemoteServers: OrganizationResourceScopedRepository<RemoteServer>;
 
   constructor(
     @InjectRepository(RemoteServer)
@@ -298,7 +298,7 @@ export class RemoteServersService {
     private readonly organizationsService: OrganizationsService,
     private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
-    this.scopedRemoteServers = new RemoteServerTenantScopedRepository<RemoteServer>(
+    this.scopedRemoteServers = new OrganizationResourceScopedRepository<RemoteServer>(
       this.remoteServerRepository,
       this.organizationMembershipRepository,
       'Remote server',
@@ -341,19 +341,14 @@ export class RemoteServersService {
     }
   }
 
-  private async resolveProjectUserId(service: Service): Promise<number | null> {
-    const scope = await this.resolveProjectScope(service);
-    return scope.userId;
-  }
-
   private async resolveProjectScope(service: Service): Promise<{
     userId: number | null;
     organizationId: number | null;
   }> {
     const p = service.project;
-    if (p?.userId != null) {
+    if (p?.organizationId != null) {
       return {
-        userId: p.userId,
+        userId: null,
         organizationId: p.organizationId,
       };
     }
@@ -367,10 +362,10 @@ export class RemoteServersService {
       .getRepository(Project)
       .findOne({
         where: { id: projectId },
-        select: { userId: true, organizationId: true },
+        select: { organizationId: true },
       });
     return {
-      userId: project?.userId ?? null,
+      userId: null,
       organizationId: project?.organizationId ?? null,
     };
   }
@@ -1513,16 +1508,14 @@ rm -rf ${inDirQ}
         'Remote server not found for webhook agent provisioning.',
       );
     }
-    const userForTraefikTenant =
-      projectUserId != null && projectUserId >= 1
-        ? projectUserId
-        : serverRow.userId;
     const traefikSettings =
-      rule && userForTraefikTenant >= 1
+      rule &&
+      serverRow.organizationId != null &&
+      serverRow.organizationId >= 1
         ? await this.traefikService.getSettingsForOrganization(
             await this.traefikService.resolveOrganizationInternalIdForTraefik(
               serverRow.organizationId,
-              userForTraefikTenant,
+              0,
             ),
           )
         : null;
@@ -2962,6 +2955,24 @@ done
     return this.toSafe(rs);
   }
 
+  /**
+   * Resolve a deploy server for building a webhook trigger URL when the caller may lack a user
+   * (e.g. org-owned project context). Uses membership-scoped lookup when `actingUserId` is set.
+   */
+  async findSafeForRemoteWebhookTrigger(
+    remoteServerId: number,
+    actingUserId: number | null,
+  ): Promise<RemoteServerSafe> {
+    if (actingUserId != null && actingUserId >= 1) {
+      return this.findOne(remoteServerId, actingUserId);
+    }
+    const rs = await this._internal_system_findRemoteServerByIdOrFail(
+      remoteServerId,
+      'remote webhook trigger URL without user context',
+    );
+    return this.toSafe(rs);
+  }
+
   private async ensurePublicId(row: RemoteServer): Promise<RemoteServer> {
     if (row.publicId) return row;
     row.publicId = generatePublicId('rsv');
@@ -3192,6 +3203,59 @@ curl -fsS -o /dev/null "$U"
     }
   }
 
+  /**
+   * Same as {@link deliverNotificationChannelViaDeployHost} for organization-owned automation
+   * (e.g. cron) where there is no acting user: resolves the deploy host by id and verifies it
+   * belongs to {@link organizationInternalId}.
+   */
+  async deliverNotificationChannelForOrganization(
+    remoteServerId: number,
+    organizationInternalId: number,
+    runtime: NotificationChannelRuntimeConfig,
+    plainText: string,
+  ): Promise<ProviderSendResult> {
+    const cred = buildRemoteNotificationCredentialEnvLines(runtime);
+    if (cred.length === 1 && cred[0] === 'WEEHAWK_NOTIFY_ENABLED=0') {
+      return {
+        ok: false,
+        description:
+          'This channel type cannot be sent from a deploy host. Use a supported provider (Telegram, Slack, Discord, etc.) or clear the deploy server on the channel.',
+      };
+    }
+    const rs = await this._internal_system_findRemoteServerByIdOrFail(
+      remoteServerId,
+      'organization-scoped notification delivery',
+    );
+    if (rs.organizationId !== organizationInternalId) {
+      return {
+        ok: false,
+        description: 'Remote server is not in this organization.',
+      };
+    }
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const tag = `WHNK_MSG_${randomBytes(16).toString('hex')}`;
+    const exportsBlock = cred.map((line) => `export ${line}`).join('\n');
+    const strictBash = remoteNotifyDispatchFunctionsBashStrict('Notification');
+    const script = [
+      'set -euo pipefail',
+      exportsBlock,
+      strictBash,
+      `MSG=$(cat <<'${tag}'`,
+      plainText.replace(/\r\n/g, '\n'),
+      tag,
+      ')',
+      'send_notification "$MSG"',
+      '',
+    ].join('\n');
+    try {
+      await this.execSshBashScriptCollectOutput(rs, pem, script);
+      return { ok: true, response: 'delivered-via-deploy-host' };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, description: msg };
+    }
+  }
+
   /** For WebSocket remote terminal. */
   async getSshTerminalContext(id: number, userId: number): Promise<{
     remoteServerId: number;
@@ -3377,7 +3441,6 @@ curl -fsS -o /dev/null "$U"
 
     const entity = this.remoteServerRepository.create({
       publicId: generatePublicId('rsv'),
-      userId,
       organizationId,
       name: dto.name.trim(),
       host: hostTrimmed,
@@ -3628,11 +3691,11 @@ curl -fsS -o /dev/null "$U"
 
   private async _internal_system_findRemoteServerHostKeyRowByIdOrNull(
     remoteServerId: number,
-  ): Promise<Pick<RemoteServer, 'id' | 'userId' | 'sshHostKeySha256'> | null> {
+  ): Promise<Pick<RemoteServer, 'id' | 'sshHostKeySha256'> | null> {
     // SYSTEM-LEVEL BYPASS: Required for [TOFU host-key persistence without acting user context].
     return this.remoteServerRepository.findOne({
       where: { id: remoteServerId },
-      select: { id: true, userId: true, sshHostKeySha256: true },
+      select: { id: true, sshHostKeySha256: true },
     });
   }
 

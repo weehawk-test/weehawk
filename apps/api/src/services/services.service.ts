@@ -201,17 +201,6 @@ export class ServicesService {
     return this.ensureServicePublicId(service);
   }
 
-  /** Legacy project owner account id (still used for some tenancy checks). */
-  private integrationOwnerUserId(service: Service): number {
-    const id = service.project?.userId;
-    if (!id || !Number.isFinite(id) || id < 1) {
-      throw new InternalServerErrorException(
-        'Service is missing project owner user id (required for Git integration).',
-      );
-    }
-    return Math.trunc(id);
-  }
-
   /** Git provider credentials are scoped to the service's organization. */
   private integrationOrganizationInternalId(service: Service): number {
     const id = service.project?.organizationId;
@@ -292,12 +281,11 @@ export class ServicesService {
 
   /** Traefik / ACME rows are scoped to the service's organization (tenant isolation). */
   private async traefikSettingsForService(service: Service) {
-    const uid = this.integrationOwnerUserId(service);
-    const orgInternal = service.project?.organizationId ?? null;
+    const orgInternal = this.integrationOrganizationInternalId(service);
     const resolved =
       await this.traefikService.resolveOrganizationInternalIdForTraefik(
         orgInternal,
-        uid,
+        0,
       );
     return this.traefikService.getSettingsForOrganization(resolved);
   }
@@ -348,14 +336,12 @@ export class ServicesService {
     if (remoteServerId != null) {
       await this.assertDeployRemoteServer(
         remoteServerId,
-        project.userId,
         project.organizationId ?? null,
       );
     }
     if (buildRemoteServerId != null) {
       await this.assertBuildRemoteServer(
         buildRemoteServerId,
-        project.userId,
         project.organizationId ?? null,
       );
     }
@@ -2289,21 +2275,19 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       );
     }
     if (finalResult.success) {
-      const ownerId =
-        options?.enforceOwnership === false
-          ? (
-              await this._internal_systemFindOneService({
-                where: { id },
-                relations: ['project'],
-              })
-            )?.project?.userId
-          : options?.actingUserId;
-      if (!ownerId || ownerId < 1) {
-        throw new NotFoundException(`Service #${id} not found`);
+      if (options?.enforceOwnership === false) {
+        await this.serviceRepository.update(id, {
+          lastDeployedAt: new Date(),
+        });
+      } else {
+        const actingUserId = options?.actingUserId;
+        if (!actingUserId || actingUserId < 1) {
+          throw new NotFoundException(`Service #${id} not found`);
+        }
+        await this.scopedServices.updateScoped(id, actingUserId, {
+          lastDeployedAt: new Date(),
+        });
       }
-      await this.scopedServices.updateScoped(id, ownerId, {
-        lastDeployedAt: new Date(),
-      });
       try {
         const sshTargets = await this.getDockerSshTargetIds(id);
         if (sshTargets.remoteServerId != null) {
@@ -2444,9 +2428,13 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    */
   async syncRemoteDeploymentMirror(
     id: number,
-    userId: number,
+    userId: number | null,
   ): Promise<{ ok: boolean }> {
-    await this.getScopedServiceForUser(id, userId);
+    if (userId != null && userId >= 1) {
+      await this.getScopedServiceForUser(id, userId);
+    } else {
+      await this.internalFindOneById(id);
+    }
     const r = await this.executorService.syncRemoteDeploymentMirror(id, userId);
     try {
       await this.webhooksService.refreshGeneratedOnHostRedeployScriptsForService(
@@ -2465,7 +2453,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
    */
   private async pushApplicationMirrorToDeployHostIfConfigured(
     serviceId: number,
-    userId: number,
+    userId: number | null,
   ): Promise<
     | { status: 'synced' }
     | { status: 'skipped'; reason: 'no_deploy_host' }
@@ -2965,12 +2953,17 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     return await this.executorService.getServiceVolumeMounts(id);
   }
 
-  async findAll(_userId: number) {
-    const rows = await this._internal_systemFindServices({
-      where: { project: { userId: _userId } },
-      relations: ['project', 'remoteServer'],
-      order: { createdAt: 'DESC' },
-    });
+  async findAll(userId: number) {
+    const rows = await this.serviceRepository
+      .createQueryBuilder('service')
+      .innerJoinAndSelect('service.project', 'project')
+      .leftJoinAndSelect('service.remoteServer', 'remoteServer')
+      .where(
+        'project.organizationId IN (SELECT m.organization_id FROM organization_memberships m WHERE m.user_id = :uid)',
+        { uid: userId },
+      )
+      .orderBy('service.createdAt', 'DESC')
+      .getMany();
     const ensured = await this.ensureServicePublicIds(rows);
     return Promise.all(ensured.map((s) => this.withMagicTraefikMeUrl(s)));
   }
@@ -3045,7 +3038,6 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
   private async assertDeployRemoteServer(
     remoteId: number,
-    projectUserId: number | null,
     projectOrganizationId: number | null,
   ): Promise<void> {
     const rs = await this._internal_systemFindOneRemoteServerBy({ id: remoteId });
@@ -3072,7 +3064,6 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
   private async assertBuildRemoteServer(
     remoteId: number,
-    projectUserId: number | null,
     projectOrganizationId: number | null,
   ): Promise<void> {
     const rs = await this._internal_systemFindOneRemoteServerBy({ id: remoteId });
@@ -3217,7 +3208,6 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     await this.webhooksService.removeAllForService(
       userId,
       id,
-      service.project.userId,
       service.project.organizationId,
     );
     await this.executorService.stopAndRemove(id);
@@ -3249,7 +3239,6 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (updateServiceDto.remoteServerId !== null) {
         await this.assertDeployRemoteServer(
           updateServiceDto.remoteServerId,
-          service.project?.userId ?? null,
           service.project.organizationId,
         );
       }
@@ -3267,7 +3256,6 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       if (updateServiceDto.buildRemoteServerId !== null) {
         await this.assertBuildRemoteServer(
           updateServiceDto.buildRemoteServerId,
-          service.project?.userId ?? null,
           service.project.organizationId,
         );
       }
@@ -3345,10 +3333,16 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         seen.add(name);
       }
       if (seen.size > 0) {
+        const projOrgId = updated.project?.organizationId;
+        if (!projOrgId || projOrgId < 1) {
+          throw new BadRequestException(
+            'Cannot validate Traefik routes: project organization is missing.',
+          );
+        }
         const siblings = await this.serviceRepository
           .createQueryBuilder('service')
           .innerJoin('service.project', 'project')
-          .where('project.userId = :userId', { userId })
+          .where('project.organizationId = :orgId', { orgId: projOrgId })
           .getMany();
         const routeOwnerByName = new Map<string, string>();
         for (const svc of siblings) {
@@ -4224,7 +4218,6 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
   ): Promise<string | null> {
     const webhooks = await this.webhooksService.findWebhooksForService(
       service.id,
-      service.project.userId,
       service.project.organizationId,
     );
     for (const w of webhooks) {
@@ -4557,14 +4550,6 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     }
 
     try {
-      const ownerId = service.project?.userId;
-      if (!ownerId || ownerId < 1) {
-        return {
-          success: false,
-          output:
-            'Auto-deploy cannot resolve Git metadata: the service has no valid project owner user id.',
-        };
-      }
       const orgInternal = service.project?.organizationId;
       if (!orgInternal || orgInternal < 1) {
         return {
@@ -4600,7 +4585,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       const mirrorResult =
         await this.pushApplicationMirrorToDeployHostIfConfigured(
           service.id,
-          ownerId,
+          null,
         );
       if (mirrorResult.status === 'failed') {
         const warnMsg = `Auto-deploy mirror sync failed for ${servicePublicLabel}: ${sanitizeUserMessage(mirrorResult.message)}`;
@@ -4629,7 +4614,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         };
       }
 
-      await this.scopedServices.updateScoped(service.id, ownerId, {
+      await this.serviceRepository.update(service.id, {
         lastDeployedAt: new Date(),
       });
       emit('[auto-deploy] Deploy completed successfully.\n');

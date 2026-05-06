@@ -19,11 +19,8 @@ export class RemoteServer {
   @Column({ type: 'varchar', length: 120 })
   name!: string;
 
-  @Column({ name: 'user_id', type: 'int' })
-  userId!: number;
-
   /**
-   * Optional org scope: internal FK only; APIs should expose org `publicId` when wiring org-scoped servers.
+   * Organization scope: internal FK only; APIs should expose org `publicId` when wiring org-scoped servers.
    */
   @Column({ name: 'organization_id', type: 'int' })
   organizationId!: number;

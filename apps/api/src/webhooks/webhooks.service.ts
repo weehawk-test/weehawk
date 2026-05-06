@@ -28,6 +28,7 @@ import {
 import { NotificationService } from '../notifications/notification.service';
 import { ExecutorService } from '../executor/executor.service';
 import { ServicesService } from '../services/services.service';
+import { Service } from '../services/entities/service.entity';
 import { getErrorMessage } from '../utils/error-message';
 import {
   RemoteServersService,
@@ -51,7 +52,7 @@ import {
   onHostWebhookBundleEnvLines,
 } from '../common/on-host-redeploy-script';
 import { generatePublicId } from '../common/public-id';
-import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationResourceScopedRepository } from '../common/tenant-scoped.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export type WebhookListRow = {
@@ -82,7 +83,7 @@ export type WebhookDetailRow = WebhookListRow & {
 @Injectable()
 export class WebhooksService implements OnApplicationBootstrap {
   private readonly logger = new Logger(WebhooksService.name);
-  private readonly scopedWebhooks: RemoteServerTenantScopedRepository<Webhook>;
+  private readonly scopedWebhooks: OrganizationResourceScopedRepository<Webhook>;
 
   constructor(
     @InjectRepository(Webhook)
@@ -99,7 +100,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     private readonly configService: ConfigService,
     private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
-    this.scopedWebhooks = new RemoteServerTenantScopedRepository<Webhook>(
+    this.scopedWebhooks = new OrganizationResourceScopedRepository<Webhook>(
       this.webhookRepo,
       this.membershipRepo,
       'Webhook',
@@ -209,10 +210,16 @@ export class WebhooksService implements OnApplicationBootstrap {
     return this.webhookRepo.find(options);
   }
 
-  private async ensurePublicId(w: Webhook): Promise<Webhook> {
-    if (w.publicId) return w;
+  private async ensurePublicId(
+    w: Webhook,
+    actingUserId: number | null,
+  ): Promise<Webhook> {
+    if (w.publicId?.trim()) return w;
     w.publicId = generatePublicId('whk');
-    return this.scopedWebhooks.saveScoped(w, w.userId);
+    if (actingUserId != null && actingUserId >= 1) {
+      return this.scopedWebhooks.saveScoped(w, actingUserId);
+    }
+    return this._internal_system_saveWebhook(w);
   }
 
   private async resolveEntity(
@@ -222,10 +229,10 @@ export class WebhooksService implements OnApplicationBootstrap {
     const raw = String(idOrPublicId).trim();
     if (/^\d+$/.test(raw)) {
       const row = await this.scopedWebhooks.findScoped(Number(raw), userId);
-      return this.ensurePublicId(row);
+      return this.ensurePublicId(row, userId);
     }
     const row = await this.scopedWebhooks.findScopedBy('publicId', raw, userId);
-    return this.ensurePublicId(row);
+    return this.ensurePublicId(row, userId);
   }
 
   private allowPrivateHooksPublicHosts(): boolean {
@@ -293,6 +300,88 @@ export class WebhooksService implements OnApplicationBootstrap {
    * - **GitHub**: returns plain URL + App credentials (appId, installationId, PEM)
    *   so the bash script can generate a fresh installation token on every run.
    */
+  private async resolveAutoDeployCloneInfoFromService(svc: Service): Promise<{
+    cloneUrl: string;
+    branch: string;
+    githubAppId?: string;
+    githubInstallationId?: string;
+    githubPrivateKeyPem?: string;
+    gitlabProjectId?: string;
+    gitlabApiBase?: string;
+    gitlabPrivateToken?: string;
+  } | null> {
+    if (!svc.autoDeployGitProvider || !svc.autoDeployRepoId) {
+      return null;
+    }
+    const orgInternal = svc.project?.organizationId;
+    if (!orgInternal || orgInternal < 1) {
+      return null;
+    }
+    const provider = svc.autoDeployGitProvider;
+    const repoId = svc.autoDeployRepoId;
+    const branch = svc.autoDeployBranch || 'main';
+
+    if (provider === 'github') {
+      const sep = repoId.indexOf(':');
+      const installIdStr = sep >= 0 ? repoId.slice(0, sep) : '';
+      const fullName = sep >= 0 ? repoId.slice(sep + 1) : repoId;
+      const cloneUrl = `https://github.com/${fullName}.git`;
+      const ghCreds =
+        await this.servicesService.getGithubAppCredentials(orgInternal);
+      if (ghCreds && installIdStr) {
+        return {
+          cloneUrl,
+          branch,
+          githubAppId: ghCreds.appId,
+          githubInstallationId: installIdStr,
+          githubPrivateKeyPem: ghCreds.privateKeyPem,
+        };
+      }
+      return { cloneUrl, branch };
+    }
+    if (provider === 'gitlab') {
+      const projectId = parseInt(repoId, 10);
+      if (!Number.isFinite(projectId)) {
+        try {
+          const authUrl =
+            await this.servicesService.resolveGitlabAuthenticatedUrl(
+              repoId,
+              orgInternal,
+            );
+          return { cloneUrl: authUrl, branch };
+        } catch {
+          return { cloneUrl: repoId, branch };
+        }
+      }
+      try {
+        const url = await this.servicesService.resolveGitlabProjectCloneUrl(
+          projectId,
+          orgInternal,
+        );
+        if (url) {
+          const glApi =
+            await this.servicesService.getGitlabArchiveApiCredentials(
+              orgInternal,
+            );
+          if (glApi) {
+            return {
+              cloneUrl: url,
+              branch,
+              gitlabProjectId: String(projectId),
+              gitlabApiBase: glApi.apiBase,
+              gitlabPrivateToken: glApi.privateToken,
+            };
+          }
+          return { cloneUrl: url, branch };
+        }
+      } catch {
+        /* fall through */
+      }
+      return null;
+    }
+    return null;
+  }
+
   private async resolveAutoDeployCloneInfo(
     serviceId: number | null | undefined,
     userId: number,
@@ -312,82 +401,7 @@ export class WebhooksService implements OnApplicationBootstrap {
         serviceId,
         userId,
       );
-      // Redeploy webhooks need clone credentials whenever a Git repo is linked, even if push-trigger
-      // auto-deploy is disabled — otherwise on-host Dockerfile/Nixpacks runs never pull fresh source.
-      if (!svc.autoDeployGitProvider || !svc.autoDeployRepoId) {
-        return null;
-      }
-      const ownerId = svc.project?.userId;
-      if (!ownerId || ownerId < 1) {
-        return null;
-      }
-      const orgInternal = svc.project?.organizationId;
-      if (!orgInternal || orgInternal < 1) {
-        return null;
-      }
-      const provider = svc.autoDeployGitProvider;
-      const repoId = svc.autoDeployRepoId;
-      const branch = svc.autoDeployBranch || 'main';
-
-      if (provider === 'github') {
-        const sep = repoId.indexOf(':');
-        const installIdStr = sep >= 0 ? repoId.slice(0, sep) : '';
-        const fullName = sep >= 0 ? repoId.slice(sep + 1) : repoId;
-        const cloneUrl = `https://github.com/${fullName}.git`;
-        const ghCreds =
-          await this.servicesService.getGithubAppCredentials(orgInternal);
-        if (ghCreds && installIdStr) {
-          return {
-            cloneUrl,
-            branch,
-            githubAppId: ghCreds.appId,
-            githubInstallationId: installIdStr,
-            githubPrivateKeyPem: ghCreds.privateKeyPem,
-          };
-        }
-        return { cloneUrl, branch };
-      }
-      if (provider === 'gitlab') {
-        const projectId = parseInt(repoId, 10);
-        if (!Number.isFinite(projectId)) {
-          try {
-            const authUrl =
-              await this.servicesService.resolveGitlabAuthenticatedUrl(
-                repoId,
-                orgInternal,
-              );
-            return { cloneUrl: authUrl, branch };
-          } catch {
-            return { cloneUrl: repoId, branch };
-          }
-        }
-        try {
-          const url = await this.servicesService.resolveGitlabProjectCloneUrl(
-            projectId,
-            orgInternal,
-          );
-          if (url) {
-            const glApi =
-              await this.servicesService.getGitlabArchiveApiCredentials(
-                orgInternal,
-              );
-            if (glApi) {
-              return {
-                cloneUrl: url,
-                branch,
-                gitlabProjectId: String(projectId),
-                gitlabApiBase: glApi.apiBase,
-                gitlabPrivateToken: glApi.privateToken,
-              };
-            }
-            return { cloneUrl: url, branch };
-          }
-        } catch {
-          /* fall through */
-        }
-        return null;
-      }
-      return null;
+      return this.resolveAutoDeployCloneInfoFromService(svc);
     } catch {
       return null;
     }
@@ -497,6 +511,45 @@ export class WebhooksService implements OnApplicationBootstrap {
     return buildRemoteNotificationEnvLinesFromChannel(true, ch, notifyMessage);
   }
 
+  private async buildRemoteWebhookNotificationEnvLinesForOrganization(
+    organizationInternalId: number,
+    notifyOnTrigger: boolean,
+    notifyChannelId: number | null | undefined,
+    notifyMessage: string | null | undefined,
+  ): Promise<string[]> {
+    if (!notifyOnTrigger || !notifyChannelId || !notifyMessage?.trim()) {
+      return buildRemoteNotificationEnvLinesFromChannel(false, null, null);
+    }
+    const ch =
+      await this.notificationsService.getChannelRuntimeConfigForOrganization(
+        organizationInternalId,
+        notifyChannelId,
+      );
+    return buildRemoteNotificationEnvLinesFromChannel(true, ch, notifyMessage);
+  }
+
+  private async mergeRemoteWebhookNotificationAndBundleEnvForOrgWebhook(
+    w: Webhook,
+  ): Promise<string[]> {
+    const base =
+      await this.buildRemoteWebhookNotificationEnvLinesForOrganization(
+        w.organizationId,
+        w.notifyOnTrigger,
+        w.notifyChannelId,
+        w.notifyMessage,
+      );
+    if (w.serviceId == null || w.serviceId < 1) {
+      return base;
+    }
+    try {
+      const svc = await this.servicesService.internalFindOneById(w.serviceId);
+      const autoDeploy = await this.resolveAutoDeployCloneInfoFromService(svc);
+      return [...base, ...onHostWebhookBundleEnvLines(svc, autoDeploy)];
+    } catch {
+      return base;
+    }
+  }
+
   private async collectHooksPublicHostsForRemoteServer(
     remoteServerId: number,
   ): Promise<string[]> {
@@ -562,8 +615,11 @@ export class WebhooksService implements OnApplicationBootstrap {
     };
   }
 
-  private async toListRow(userId: number, w: Webhook): Promise<WebhookListRow> {
-    const row = await this.ensurePublicId(w);
+  private async toListRow(
+    userId: number | null,
+    w: Webhook,
+  ): Promise<WebhookListRow> {
+    const row = await this.ensurePublicId(w, userId);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, row);
     return {
       ...this.baseListFields(row),
@@ -574,8 +630,9 @@ export class WebhooksService implements OnApplicationBootstrap {
   private async toDetailRow(
     w: Webhook,
     remoteTriggerUrl: string | null = null,
+    actingUserId: number | null = null,
   ): Promise<WebhookDetailRow> {
-    const row = await this.ensurePublicId(w);
+    const row = await this.ensurePublicId(w, actingUserId);
     return {
       ...this.baseListFields(row),
       remoteTriggerUrl,
@@ -600,7 +657,7 @@ export class WebhooksService implements OnApplicationBootstrap {
   }
 
   private async resolveRemoteTriggerUrl(
-    userId: number,
+    userId: number | null,
     w: Webhook,
   ): Promise<string | null> {
     if (w.remoteServerId == null || !w.bashScript?.trim()) {
@@ -619,7 +676,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       );
     }
     try {
-      const rs = await this.remoteServersService.findOne(
+      const rs = await this.remoteServersService.findSafeForRemoteWebhookTrigger(
         w.remoteServerId,
         userId,
       );
@@ -705,7 +762,6 @@ export class WebhooksService implements OnApplicationBootstrap {
 
     const w = this.webhookRepo.create({
       publicId: generatePublicId('whk'),
-      userId,
       organizationId: orgId,
       secretToken,
       name: dto.name.trim(),
@@ -721,7 +777,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       hiddenFromWebhooksList: dto.hiddenFromWebhooksList === true,
     });
     const saved = await this.scopedWebhooks.saveScoped(w, userId);
-    const ensured = await this.ensurePublicId(saved);
+    const ensured = await this.ensurePublicId(saved, userId);
     this.logSecurityAudit(orgId, userId, 'security.webhook.created', 'POST /api/webhooks', {
       webhookPublicId: ensured.publicId,
       webhookName: ensured.name,
@@ -754,7 +810,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           );
         await this.remoteServersService.writeRemoteWebhookScript(
           dto.remoteServerId!,
-          userId,
+          null,
           secretToken,
           resolvedBashScript,
           notificationEnvLines,
@@ -762,7 +818,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       });
     }
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
-    return await this.toDetailRow(saved, remoteTriggerUrl);
+    return await this.toDetailRow(saved, remoteTriggerUrl, userId);
   }
 
   /**
@@ -777,23 +833,16 @@ export class WebhooksService implements OnApplicationBootstrap {
     const rows = await this._internal_system_findWebhooks({
       where: { serviceId },
     });
-    const userId = service.project?.userId ?? 0;
     for (const w of rows) {
       if (w.remoteServerId == null) continue;
       if (!looksLikeGeneratedOnHostRedeployScript(w.bashScript)) continue;
       w.bashScript = canonical;
-      await this.scopedWebhooks.saveScoped(w, userId);
+      await this._internal_system_saveWebhook(w);
       const notificationEnvLines =
-        await this.mergeRemoteWebhookNotificationAndBundleEnv(
-          userId,
-          w.notifyOnTrigger,
-          w.notifyChannelId,
-          w.notifyMessage,
-          w.serviceId,
-        );
+        await this.mergeRemoteWebhookNotificationAndBundleEnvForOrgWebhook(w);
       await this.remoteServersService.writeRemoteWebhookScript(
         w.remoteServerId,
-        userId,
+        null,
         w.secretToken,
         canonical,
         notificationEnvLines,
@@ -830,14 +879,13 @@ export class WebhooksService implements OnApplicationBootstrap {
    */
   async findWebhooksForService(
     serviceId: number,
-    projectUserId: number,
     projectOrganizationId: number,
   ): Promise<WebhookListRow[]> {
     const rows = await this._internal_system_findWebhooks({
       where: { serviceId, organizationId: projectOrganizationId },
       order: { createdAt: 'DESC' },
     });
-    return await Promise.all(rows.map((w) => this.toListRow(projectUserId, w)));
+    return await Promise.all(rows.map((w) => this.toListRow(null, w)));
   }
 
   async findOne(
@@ -852,7 +900,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     const w = await this.resolveEntity(userId, idOrPublicId);
     this.assertWebhookWorkspace(w, expectedOrg);
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, w);
-    return await this.toDetailRow(w, remoteTriggerUrl);
+    return await this.toDetailRow(w, remoteTriggerUrl, userId);
   }
 
   async readLastRunLog(
@@ -1039,7 +1087,7 @@ export class WebhooksService implements OnApplicationBootstrap {
             );
           await this.remoteServersService.writeRemoteWebhookScript(
             saved.remoteServerId,
-            userId,
+            null,
             saved.secretToken,
             body,
             notificationEnvLines,
@@ -1049,7 +1097,7 @@ export class WebhooksService implements OnApplicationBootstrap {
     }
 
     const remoteTriggerUrl = await this.resolveRemoteTriggerUrl(userId, saved);
-    const detail = await this.toDetailRow(saved, remoteTriggerUrl);
+    const detail = await this.toDetailRow(saved, remoteTriggerUrl, userId);
     this.logSecurityAudit(expectedOrg, userId, 'security.webhook.updated', endpoint, {
       webhookPublicId: saved.publicId,
       webhookName: saved.name,
@@ -1089,7 +1137,7 @@ export class WebhooksService implements OnApplicationBootstrap {
       );
       throw e;
     }
-    const ensured = await this.ensurePublicId(w);
+    const ensured = await this.ensurePublicId(w, userId);
     const endpoint = `DELETE /api/webhooks/${encodeURIComponent(ensured.publicId)}`;
     this.logSecurityAudit(expectedOrg, userId, 'security.webhook.deleted', endpoint, {
       webhookPublicId: ensured.publicId,
@@ -1114,14 +1162,13 @@ export class WebhooksService implements OnApplicationBootstrap {
   async removeAllForService(
     actingUserId: number,
     serviceId: number,
-    projectUserId: number,
     projectOrganizationId: number,
   ): Promise<void> {
     const rows = await this._internal_system_findWebhooks({
       where: { serviceId, organizationId: projectOrganizationId },
     });
     for (const w of rows) {
-      const ensured = await this.ensurePublicId(w);
+      const ensured = await this.ensurePublicId(w, actingUserId);
       await assertOrganizationWorkspaceAccessForInternalId(
         this.organizationsRepository,
         actingUserId,
@@ -1159,7 +1206,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           this.shouldRunExecutorRedeployForDockerWebhook(w);
         if (useExecutorRedeploy) {
           const svcRowCmd = w.serviceId
-            ? await this.servicesService.findOne(w.serviceId, w.userId)
+            ? await this.servicesService.internalFindOneById(w.serviceId)
             : null;
           const useAutoDeployCmd =
             svcRowCmd?.autoDeployEnabled &&
@@ -1174,10 +1221,9 @@ export class WebhooksService implements OnApplicationBootstrap {
             output = r.output;
           } else {
             action = 'redeploy';
-            const r = await this.servicesService.executeDeployment(
+            const r = await this.servicesService.executeInternalSystemDeployment(
               w.serviceId!,
               'redeploy',
-              { actingUserId: w.userId },
             );
             success = Boolean(r.success);
             output = String(r.output ?? '');
@@ -1191,7 +1237,7 @@ export class WebhooksService implements OnApplicationBootstrap {
           const r = await this.executorService.runSystemScript(
             scriptToRun,
             w.remoteServerId,
-            w.userId,
+            null,
           );
           success = r.success;
           output = r.output;
@@ -1241,8 +1287,8 @@ export class WebhooksService implements OnApplicationBootstrap {
       !notificationSentOnRemote
     ) {
       try {
-        await this.notificationsService.sendMessage(
-          w.userId,
+        await this.notificationsService.sendMessageForOrganization(
+          w.organizationId,
           w.notifyChannelId,
           w.notifyMessage,
         );

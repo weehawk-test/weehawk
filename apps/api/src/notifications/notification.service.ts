@@ -25,7 +25,7 @@ import { ProviderSendResult } from './providers/provider.types';
 import { withRetry } from './utils/with-retry';
 import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { generatePublicId } from '../common/public-id';
-import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationResourceScopedRepository } from '../common/tenant-scoped.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export const NOTIFICATION_TEST_MESSAGE = 'test succeeded';
@@ -53,7 +53,7 @@ export type NotificationChannelRuntimeConfig = {
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
-  private readonly scopedChannels: RemoteServerTenantScopedRepository<NotificationChannel>;
+  private readonly scopedChannels: OrganizationResourceScopedRepository<NotificationChannel>;
 
   constructor(
     @InjectRepository(NotificationChannel)
@@ -66,7 +66,7 @@ export class NotificationService {
     private readonly remoteServersService: RemoteServersService,
     private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
-    this.scopedChannels = new RemoteServerTenantScopedRepository<NotificationChannel>(
+    this.scopedChannels = new OrganizationResourceScopedRepository<NotificationChannel>(
       this.channelRepo,
       this.membershipRepo,
       'Channel',
@@ -122,12 +122,25 @@ export class NotificationService {
     }
   }
 
+  /** Persist publicId for a row already resolved via membership-scoped APIs. */
   private async ensureChannelPublicId(
+    row: NotificationChannel,
+    actingUserId: number,
+  ): Promise<NotificationChannel> {
+    if (row.publicId?.trim()) return row;
+    row.publicId = generatePublicId('nch');
+    return this.scopedChannels.saveScoped(row, actingUserId);
+  }
+
+  /**
+   * Backfill publicId when the row was loaded by org id only (e.g. cron env build).
+   */
+  private async ensureChannelPublicIdOrgOnly(
     row: NotificationChannel,
   ): Promise<NotificationChannel> {
     if (row.publicId?.trim()) return row;
     row.publicId = generatePublicId('nch');
-    return this.scopedChannels.saveScoped(row, row.userId);
+    return this.channelRepo.save(row);
   }
 
   private async findChannelForUser(
@@ -138,10 +151,32 @@ export class NotificationService {
     try {
       if (/^\d+$/.test(t)) {
         const ch = await this.scopedChannels.findScoped(Number(t), userId);
-        return this.ensureChannelPublicId(ch);
+        return this.ensureChannelPublicId(ch, userId);
       }
       const ch = await this.scopedChannels.findScopedBy('publicId', t, userId);
-      return this.ensureChannelPublicId(ch);
+      return this.ensureChannelPublicId(ch, userId);
+    } catch {
+      return null;
+    }
+  }
+
+  private async findChannelInOrganization(
+    organizationInternalId: number,
+    raw: string,
+  ): Promise<NotificationChannel | null> {
+    const t = String(raw).trim();
+    const oid = organizationInternalId;
+    try {
+      if (/^\d+$/.test(t)) {
+        const ch = await this.channelRepo.findOne({
+          where: { id: Number(t), organizationId: oid },
+        });
+        return ch ? await this.ensureChannelPublicIdOrgOnly(ch) : null;
+      }
+      const ch = await this.channelRepo.findOne({
+        where: { publicId: t, organizationId: oid },
+      });
+      return ch ? await this.ensureChannelPublicIdOrgOnly(ch) : null;
     } catch {
       return null;
     }
@@ -188,9 +223,9 @@ export class NotificationService {
             config: channelConfigRecord(channel),
           };
           const result =
-            await this.remoteServersService.deliverNotificationChannelViaDeployHost(
+            await this.remoteServersService.deliverNotificationChannelForOrganization(
               channel.remoteServerId,
-              channel.userId,
+              channel.organizationId,
               runtime,
               plainText,
             );
@@ -243,6 +278,39 @@ export class NotificationService {
     };
   }
 
+  /** Channel must belong to {@link organizationInternalId} (org-owned cron jobs, etc.). */
+  async getChannelRuntimeConfigForOrganization(
+    organizationInternalId: number,
+    channelId: number | string,
+  ): Promise<NotificationChannelRuntimeConfig> {
+    const channel = await this.findChannelInOrganization(
+      organizationInternalId,
+      String(channelId),
+    );
+    if (!channel) throw new NotFoundException('Channel not found');
+    return {
+      id: channel.id,
+      name: channel.name,
+      type: channel.type,
+      config: channelConfigRecord(channel),
+    };
+  }
+
+  /** Sends via deploy host; channel must belong to {@link organizationInternalId}. */
+  async sendMessageForOrganization(
+    organizationInternalId: number,
+    channelId: number | string,
+    message: string,
+  ): Promise<void> {
+    const channel = await this.findChannelInOrganization(
+      organizationInternalId,
+      String(channelId),
+    );
+    if (!channel) throw new NotFoundException('Channel not found');
+    const text = formatNotificationPlainText('Notification', message);
+    await this.sendWithRetry(channel, text);
+  }
+
   async listChannels(
     userId: number,
     organizationPublicId?: string | null,
@@ -260,7 +328,7 @@ export class NotificationService {
     );
     const rows: NotificationChannelRow[] = [];
     for (const channel of list) {
-      const ch = await this.ensureChannelPublicId(channel);
+      const ch = await this.ensureChannelPublicId(channel, userId);
       const provider = this.providerRegistry.get(ch.type);
       const preview = await provider.preview(ch);
       rows.push(this.toChannelRow(ch, preview));
@@ -299,7 +367,7 @@ export class NotificationService {
     const [rows, total] = await qb.getManyAndCount();
     const items: NotificationChannelRow[] = [];
     for (const channel of rows) {
-      const ch = await this.ensureChannelPublicId(channel);
+      const ch = await this.ensureChannelPublicId(channel, userId);
       const provider = this.providerRegistry.get(ch.type);
       const preview = await provider.preview(ch);
       items.push(this.toChannelRow(ch, preview));
@@ -330,7 +398,6 @@ export class NotificationService {
       await this.remoteServersService.findOne(remoteId, userId);
     }
     const ch = this.channelRepo.create({
-      userId,
       organizationId: orgId,
       name: dto.name.trim(),
       type: dto.type as NotificationChannelType,

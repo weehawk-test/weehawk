@@ -30,7 +30,7 @@ import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJob } from './entities/cron-job.entity';
 import { generatePublicId } from '../common/public-id';
-import { RemoteServerTenantScopedRepository } from '../common/tenant-scoped.service';
+import { OrganizationResourceScopedRepository } from '../common/tenant-scoped.service';
 import { OrgRealtimeEmitter } from '../org-realtime/org-realtime-emitter.service';
 
 export type CronJobListRow = {
@@ -55,7 +55,7 @@ export type CronJobDetailRow = CronJobListRow & {
 @Injectable()
 export class CronJobsService {
   private readonly logger = new Logger(CronJobsService.name);
-  private readonly scopedCronJobs: RemoteServerTenantScopedRepository<CronJob>;
+  private readonly scopedCronJobs: OrganizationResourceScopedRepository<CronJob>;
 
   constructor(
     @InjectRepository(CronJob)
@@ -69,7 +69,7 @@ export class CronJobsService {
     private readonly remoteServersService: RemoteServersService,
     private readonly orgRealtime: OrgRealtimeEmitter,
   ) {
-    this.scopedCronJobs = new RemoteServerTenantScopedRepository<CronJob>(
+    this.scopedCronJobs = new OrganizationResourceScopedRepository<CronJob>(
       this.cronJobRepo,
       this.membershipRepo,
       'Cron job',
@@ -141,10 +141,13 @@ export class CronJobsService {
     }, 0);
   }
 
-  private async ensurePublicId(row: CronJob): Promise<CronJob> {
+  private async ensurePublicId(
+    row: CronJob,
+    actingUserId: number,
+  ): Promise<CronJob> {
     if (row.publicId) return row;
     row.publicId = generatePublicId('crn');
-    return this.scopedCronJobs.saveScoped(row, row.userId);
+    return this.scopedCronJobs.saveScoped(row, actingUserId);
   }
 
   private async resolveEntity(
@@ -154,10 +157,10 @@ export class CronJobsService {
     const raw = String(idOrPublicId).trim();
     if (/^\d+$/.test(raw)) {
       const row = await this.scopedCronJobs.findScoped(Number(raw), userId);
-      return this.ensurePublicId(row);
+      return this.ensurePublicId(row, userId);
     }
     const row = await this.scopedCronJobs.findScopedBy('publicId', raw, userId);
-    return this.ensurePublicId(row);
+    return this.ensurePublicId(row, userId);
   }
 
   private shQuote(value: string): string {
@@ -195,10 +198,11 @@ export class CronJobsService {
     if (!job.notifyOnTrigger || !job.notifyChannelId || !job.notifyMessage) {
       return buildRemoteNotificationEnvLinesFromChannel(false, null, null);
     }
-    const channel = await this.notificationsService.getChannelRuntimeConfig(
-      job.userId,
-      job.notifyChannelId,
-    );
+    const channel =
+      await this.notificationsService.getChannelRuntimeConfigForOrganization(
+        job.organizationId,
+        job.notifyChannelId,
+      );
     return buildRemoteNotificationEnvLinesFromChannel(
       true,
       channel,
@@ -214,7 +218,7 @@ export class CronJobsService {
     }
     await this.remoteServersService.assertDeployServerById(
       job.remoteServerId,
-      job.userId,
+      null,
     );
     return job.remoteServerId;
   }
@@ -231,7 +235,7 @@ export class CronJobsService {
 
   private async removeCrontabEntryForRemote(
     remoteServerId: number,
-    projectUserId: number,
+    projectUserId: number | null,
     jobId: number,
   ): Promise<void> {
     const marker = this.cronMarker(jobId);
@@ -255,7 +259,7 @@ export class CronJobsService {
 
   private async writeRemoteScriptFile(
     remoteServerId: number,
-    projectUserId: number,
+    projectUserId: number | null,
     jobId: number,
     scriptBody: string,
     envLines: string[],
@@ -286,7 +290,7 @@ export class CronJobsService {
 
   private async removeRemoteScriptFile(
     remoteServerId: number,
-    projectUserId: number,
+    projectUserId: number | null,
     jobId: number,
   ): Promise<void> {
     const scriptPath = this.scriptPathRemote(jobId);
@@ -306,8 +310,8 @@ export class CronJobsService {
   private async removeCrontabEntry(job: CronJob): Promise<void> {
     const remoteServerId = await this.tryResolveCronRemoteServerId(job);
     if (remoteServerId == null) return;
-    await this.removeCrontabEntryForRemote(remoteServerId, job.userId, job.id);
-    await this.removeRemoteScriptFile(remoteServerId, job.userId, job.id);
+    await this.removeCrontabEntryForRemote(remoteServerId, null, job.id);
+    await this.removeRemoteScriptFile(remoteServerId, null, job.id);
   }
 
   async readLastRunLog(
@@ -346,7 +350,7 @@ fi
     const out = await this.executorService.runSystemScript(
       script,
       job.remoteServerId,
-      userId,
+      null,
     );
     if (!out.success) {
       throw new BadRequestException(
@@ -372,7 +376,7 @@ fi
     const envLines = await this.buildNotificationEnvForJob(job);
     await this.writeRemoteScriptFile(
       remoteServerId,
-      job.userId,
+      null,
       job.id,
       job.bashScript,
       envLines,
@@ -389,7 +393,7 @@ fi
     const r = await this.executorService.runSystemScript(
       script,
       remoteServerId,
-      job.userId,
+      null,
     );
     if (!r.success) {
       throw new BadRequestException(
@@ -474,8 +478,11 @@ fi
     return `[Cron ${w.cronExpression}] Bash on deploy host`;
   }
 
-  private async toListRow(w: CronJob): Promise<CronJobListRow> {
-    const row = await this.ensurePublicId(w);
+  private async toListRow(
+    w: CronJob,
+    actingUserId: number,
+  ): Promise<CronJobListRow> {
+    const row = await this.ensurePublicId(w, actingUserId);
     return {
       id: row.id,
       publicId: row.publicId,
@@ -490,10 +497,13 @@ fi
     };
   }
 
-  private async toDetailRow(w: CronJob): Promise<CronJobDetailRow> {
-    const row = await this.ensurePublicId(w);
+  private async toDetailRow(
+    w: CronJob,
+    actingUserId: number,
+  ): Promise<CronJobDetailRow> {
+    const row = await this.ensurePublicId(w, actingUserId);
     return {
-      ...(await this.toListRow(row)),
+      ...(await this.toListRow(row, actingUserId)),
       bashScript: row.bashScript,
       notifyChannelId: row.notifyChannelId,
       notifyMessage: row.notifyMessage,
@@ -524,7 +534,6 @@ fi
 
     const job = this.cronJobRepo.create({
       publicId: generatePublicId('crn'),
-      userId,
       organizationId: orgId,
       name: dto.name.trim(),
       description: dto.description?.trim() ?? null,
@@ -540,7 +549,7 @@ fi
       notifyMessage: dto.notifyMessage?.trim() || null,
     });
     const saved = await this.scopedCronJobs.saveScoped(job, userId);
-    const ensured = await this.ensurePublicId(saved);
+    const ensured = await this.ensurePublicId(saved, userId);
     this.logSecurityAudit(orgId, userId, 'security.cron_job.created', 'POST /api/cron-jobs', {
       cronJobPublicId: ensured.publicId,
       cronJobName: ensured.name,
@@ -555,7 +564,7 @@ fi
     this.runRemoteSyncInBackground(`create cron job ${saved.id}`, async () => {
       await this.upsertCrontabEntry(saved);
     });
-    return await this.toDetailRow(saved);
+    return await this.toDetailRow(saved, userId);
   }
 
   async list(
@@ -573,7 +582,7 @@ fi
         order: { createdAt: 'DESC' },
       },
     );
-    return Promise.all(list.map((w) => this.toListRow(w)));
+    return Promise.all(list.map((w) => this.toListRow(w, userId)));
   }
 
   async findOne(
@@ -587,7 +596,7 @@ fi
     );
     const job = await this.resolveEntity(userId, idOrPublicId);
     this.assertCronWorkspace(job, expectedOrg);
-    return await this.toDetailRow(job);
+    return await this.toDetailRow(job, userId);
   }
 
   async update(
@@ -680,13 +689,13 @@ fi
       ) {
         await this.removeCrontabEntryForRemote(
           prevRemoteId,
-          previousJob.userId,
+          null,
           saved.id,
         );
       }
       await this.upsertCrontabEntry(saved);
     });
-    const detail = await this.toDetailRow(saved);
+    const detail = await this.toDetailRow(saved, userId);
     this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.updated', endpoint, {
       cronJobPublicId: saved.publicId,
       cronJobName: saved.name,
@@ -726,7 +735,7 @@ fi
       );
       throw e;
     }
-    const ensured = await this.ensurePublicId(existing);
+    const ensured = await this.ensurePublicId(existing, userId);
     const endpoint = `DELETE /api/cron-jobs/${encodeURIComponent(ensured.publicId)}`;
     this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.deleted', endpoint, {
       cronJobPublicId: ensured.publicId,
@@ -758,7 +767,7 @@ fi
         const r = await this.executorService.runSystemScript(
           `/bin/bash ${this.shQuote(this.scriptPathRemote(job.id))}`,
           job.remoteServerId,
-          job.userId,
+          null,
         );
         success = r.success;
         output = r.output;
@@ -773,8 +782,8 @@ fi
 
     if (job.notifyOnTrigger && job.notifyChannelId && job.notifyMessage) {
       try {
-        await this.notificationsService.sendMessage(
-          job.userId,
+        await this.notificationsService.sendMessageForOrganization(
+          job.organizationId,
           job.notifyChannelId,
           normalizeRemoteNotificationMessage(job.notifyMessage),
         );
@@ -815,7 +824,7 @@ fi
       );
       throw e;
     }
-    const ensuredForGate = await this.ensurePublicId(job);
+    const ensuredForGate = await this.ensurePublicId(job, userId);
     const endpoint = `POST /api/cron-jobs/${encodeURIComponent(ensuredForGate.publicId)}/run`;
     if (!job.isActive) {
       this.logSecurityAudit(expectedOrg, userId, 'security.cron_job.run_now', endpoint, {

@@ -22,9 +22,6 @@ export class S3Profile {
   @Column({ type: 'varchar', length: 40, unique: true, nullable: true })
   publicId!: string;
 
-  @Column({ name: 'user_id', type: 'int' })
-  userId!: number;
-
   @Column({ name: 'organization_id', type: 'int' })
   organizationId!: number;
 

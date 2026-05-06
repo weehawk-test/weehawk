@@ -203,13 +203,6 @@ fi
         rawConfig,
         'app.git.provider',
       )?.trim();
-      const ownerUserIdRaw = service.project?.userId;
-      if (!ownerUserIdRaw || ownerUserIdRaw < 1) {
-        throw new InternalServerErrorException(
-          'Remote Git application source requires a service linked to a project with a valid owner user id.',
-        );
-      }
-      const ownerUserId = ownerUserIdRaw;
       const orgInternalRaw = service.project?.organizationId;
       if (!orgInternalRaw || orgInternalRaw < 1) {
         throw new InternalServerErrorException(
@@ -296,7 +289,7 @@ fi
   ): Promise<NodeJS.ProcessEnv> {
     const base = await this.getBaseProcessEnvForService(service);
     const ids = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const projectOrganizationId: number | null =
       service.project?.organizationId ?? null;
     return this.remoteServersService.mergeDockerHostEnvForDeployIds(
@@ -344,7 +337,7 @@ fi
     const sshTargets = await this.servicesService.getDockerSshTargetIds(
       service.id,
     );
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const projectOrganizationId: number | null =
       service.project?.organizationId ?? null;
     const rawConfig = (service.dockerConfig || '').trim();
@@ -941,13 +934,13 @@ fi
    */
   async syncRemoteDeploymentMirror(
     id: number,
-    _actingUserId: number,
+    _actingUserId: number | null,
   ): Promise<{ ok: boolean }> {
     const service = await this.servicesService.internalFindOneById(id);
     const sshTargets = await this.servicesService.getDockerSshTargetIds(
       service.id,
     );
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const projectOrganizationId: number | null =
       service.project?.organizationId ?? null;
     const remoteId = sshTargets.remoteServerId;
@@ -1052,7 +1045,7 @@ fi
     }
 
     const finalConfig = this.composeYamlForResolvedDeploy(service);
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
       sshIds.remoteServerId,
       projectUserId,
@@ -1095,7 +1088,7 @@ fi
   async getRuntimeStatus(id: number): Promise<{ running: boolean }> {
     const service = await this.servicesService.internalFindOneById(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
 
     try {
       if (isSwarmStackService(service)) {
@@ -1174,7 +1167,7 @@ fi
     }
 
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     let key: string;
     if (composeServiceKey !== undefined && composeServiceKey.trim() !== '') {
       try {
@@ -1276,7 +1269,7 @@ fi
   async stopAndRemove(id: number) {
     const service = await this.servicesService.internalFindOneById(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const deployDir = getServiceDeploymentDir(service.appName, service.id);
 
     try {
@@ -1327,7 +1320,7 @@ fi
 
     const finalConfig = this.composeYamlForResolvedDeploy(service);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     if (sshIds.remoteServerId == null) {
       return {
         items: [],
@@ -1395,7 +1388,7 @@ fi
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const stagingDir =
       await this.remoteServersService.allocRemoteWeehawkTempDir(
         sshIds.remoteServerId,
@@ -1495,7 +1488,7 @@ fi
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const cid = resolved.id;
     const onRemote = Boolean(opts?.archiveOnRemoteHost);
     const docker: StructuredDbImportDocker = {
@@ -1624,7 +1617,7 @@ ${marker}
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
     const persistQ = persist.replace(/'/g, `'\\''`);
     const stagingDir =
@@ -1703,7 +1696,7 @@ test -s "$OUT"
     if (sshIds.remoteServerId == null) {
       return { success: false, output: COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE };
     }
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
     const persist = `${WEEHAWK_REMOTE_DEPLOYMENTS_BASE}/${toSafePathSegment(service.appName || 'service')}`;
     const persistQ = persist.replace(/'/g, `'\\''`);
     const body = `set -euo pipefail
@@ -1761,7 +1754,7 @@ ${script}
   async shutdown(id: number) {
     const service = await this.servicesService.internalFindOneById(id);
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
-    const projectUserId: number | null = service.project?.userId ?? null;
+    const projectUserId: number | null = null;
 
     try {
       if (isSwarmStackService(service)) {

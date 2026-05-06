@@ -12,7 +12,7 @@ import { Service } from 'src/services/entities/service.entity';
 import { generatePublicId } from '../../common/public-id';
 
 @Entity('projects')
-@Index(['userId', 'organizationId', 'name'])
+@Index(['organizationId', 'name'])
 export class Project {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -22,9 +22,6 @@ export class Project {
 
   @Column({ type: 'varchar', length: 100 })
   name!: string;
-
-  @Column({ name: 'user_id', type: 'int' })
-  userId!: number;
 
   /** Organization scope (internal FK); APIs expose `organizationPublicId`. */
   @Column({ name: 'organization_id', type: 'int' })
