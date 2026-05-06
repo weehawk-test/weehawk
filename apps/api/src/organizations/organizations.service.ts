@@ -647,6 +647,29 @@ export class OrganizationsService implements OnModuleInit {
     }
   }
 
+  /**
+   * Strict access gate for Remote Servers workspace pages/routes.
+   * Unlike server-row visibility used by Domains UI, this requires explicit
+   * `remote_server` workspace access.
+   */
+  async assertMemberCanAccessOrgRemoteServersWorkspace(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have access to organization remote servers.',
+      );
+    }
+  }
+
   async assertMemberCanViewOrgProject(
     userId: number,
     organizationInternalId: number,
@@ -661,6 +684,24 @@ export class OrganizationsService implements OnModuleInit {
     ) {
       throw new ForbiddenException(
         'You do not have permission to view this organization project.',
+      );
+    }
+  }
+
+  async assertMemberCanEditOrgProject(
+    userId: number,
+    organizationInternalId: number,
+  ): Promise<void> {
+    const m = await this.repo.findMembership(userId, organizationInternalId);
+    if (!m) throw new NotFoundException('Organization not found');
+    if (
+      !membershipAllowsWorkspaceArea(
+        m,
+        ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS_VIEW,
+      )
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to update this organization project.',
       );
     }
   }

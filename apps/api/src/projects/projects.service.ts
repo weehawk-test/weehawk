@@ -270,7 +270,14 @@ export class ProjectsService {
       organizationPublicId,
       { requireOrgProjectView: true },
     );
-    const updated = this.projectRepository.merge(project, updateProjectDto);
+    await this.organizationsService.assertMemberCanEditOrgProject(
+      userId,
+      project.organizationId,
+    );
+    const updated = this.projectRepository.merge(project, {
+      name: updateProjectDto.name,
+      description: updateProjectDto.description,
+    });
     const saved = await this._internal_system_saveProject(updated);
     this.logProjectAudit(
       project.organizationId,

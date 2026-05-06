@@ -19,10 +19,11 @@ import { UserCreateRequestDto } from './dto/user-create-request.dto';
 import { UserUpdateRequestDto } from './dto/user-update-request.dto';
 import { RolesGuard, Roles } from '../auth/guards/roles.guard';
 import { Role } from '../auth/entities/role.enum';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @ApiTags('Admin - Users')
 @Controller('/api/admin/users')
-@UseGuards(RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.ADMIN)
 export class AdminUserController {
   constructor(private readonly adminUserService: AdminUserService) {}

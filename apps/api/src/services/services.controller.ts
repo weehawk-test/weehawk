@@ -80,6 +80,13 @@ export class ServicesController {
   }
 
   @Post()
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
   @ApiOperation({ summary: 'Create service record' })
   create(
     @Body() createServiceDto: CreateServiceDto,
@@ -604,6 +611,13 @@ export class ServicesController {
   }
 
   @Patch(':id')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
   @ApiOperation({ summary: 'Update service configuration' })
   async update(
     @Param('id') id: string,

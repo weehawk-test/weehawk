@@ -10,6 +10,8 @@ import {
   Query,
   Req,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -133,6 +135,13 @@ export class ProjectsController {
   }
 
   @Patch(':publicId')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
   @ApiOperation({ summary: 'update project' })
   @ApiQuery({ name: 'organizationPublicId', required: true })
   async update(

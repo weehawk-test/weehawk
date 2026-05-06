@@ -184,7 +184,7 @@ export class ServicesService {
     if (!service?.project?.publicId) {
       throw new NotFoundException('Service not found');
     }
-    await this.projectsService.findOne(service.project.publicId, userId);
+    await this.assertServiceWorkspaceAccess(service, userId);
     const ensured = await this.ensureServicePublicId(service);
     return ensured.id;
   }
@@ -197,6 +197,7 @@ export class ServicesService {
     const service = await this.scopedServices.findScoped(serviceId, userId, {
       relations: ['project', 'remoteServer', 'buildRemoteServer'],
     });
+    await this.assertServiceWorkspaceAccess(service, userId);
     return this.ensureServicePublicId(service);
   }
 
@@ -220,6 +221,22 @@ export class ServicesService {
       );
     }
     return Math.trunc(id);
+  }
+
+  private async assertServiceWorkspaceAccess(
+    service: Service,
+    userId: number,
+    opts?: { write?: boolean },
+  ): Promise<void> {
+    const orgId = service.project?.organizationId;
+    if (!orgId || !Number.isFinite(orgId) || orgId < 1) {
+      throw new NotFoundException('Service not found');
+    }
+    if (opts?.write === true) {
+      await this.organizationsService.assertMemberCanEditOrgProject(userId, orgId);
+      return;
+    }
+    await this.organizationsService.assertMemberCanViewOrgProject(userId, orgId);
   }
 
   /** Socket.IO: refresh service detail / lists for other org members and tabs. */
@@ -292,6 +309,21 @@ export class ServicesService {
     return this.projectsService.findByInternalIdForUser(projectId, userId);
   }
 
+  private stripSensitiveServiceFields<T extends Record<string, unknown>>(
+    payload: T,
+  ): T {
+    const cleaned = { ...payload };
+    delete cleaned.id;
+    delete cleaned.userId;
+    delete cleaned.projectId;
+    delete cleaned.project;
+    delete cleaned.publicId;
+    delete cleaned.organizationId;
+    delete cleaned.createdAt;
+    delete cleaned.updatedAt;
+    return cleaned;
+  }
+
   async create(createServiceDto: CreateServiceDto, userId: number) {
     const {
       projectId,
@@ -299,8 +331,9 @@ export class ServicesService {
       remoteServerId,
       buildRemoteServerId,
       registryPushImage: registryPushInCreate,
-      ...serviceData
+      ...rawServiceData
     } = createServiceDto;
+    const serviceData = this.stripSensitiveServiceFields(rawServiceData);
     const project = await this.getScopedProjectForUser(projectId, userId);
 
     if (
@@ -3257,8 +3290,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       remoteServerId: remotePatch,
       buildRemoteServerId: buildPatch,
       registryPushImage: registryPushPatch,
-      ...mergeFields
+      ...rawMergeFields
     } = updateServiceDto;
+    const mergeFields = this.stripSensitiveServiceFields(rawMergeFields);
     const updated = this.serviceRepository.merge(service, mergeFields);
 
     // @RelationId fields are not persisted by merge/save; set ManyToOne refs so FK columns update.

@@ -1,4 +1,5 @@
 import './load-docker-secrets';
+import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { AppModule } from './app.module';
@@ -49,6 +50,14 @@ async function bootstrap() {
     ],
   });
   app.use(createSecretKeyMiddleware(configService));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
   app.useGlobalFilters(new HttpErrorSanitizerFilter());
 
   const config = new DocumentBuilder()

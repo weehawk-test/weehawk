@@ -2942,7 +2942,7 @@ done
     const ctx = await this.organizationsService.requireMemberContext(
       organizationPublicId,
       userId,
-      { requireOrgServersAccess: true },
+      { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER },
     );
     const rows = await this.scopedRemoteServers.listForOrganization(
       userId,
@@ -2976,6 +2976,19 @@ done
     userId: number,
   ): Promise<number> {
     const row = await this.findEntityByPublicIdOrFail(idOrPublicId, userId);
+    return row.id;
+  }
+
+  /**
+   * Resolve server route id and enforce Docker Manager permission.
+   * Use this for endpoints that run Docker commands on the remote host.
+   */
+  async resolveDockerManagerServerIdForUser(
+    idOrPublicId: string,
+    userId: number,
+  ): Promise<number> {
+    const row = await this.findEntityByPublicIdOrFail(idOrPublicId, userId);
+    await this.assertOrgServerDockerIfNeeded(row, userId);
     return row.id;
   }
 
@@ -3205,7 +3218,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<RemoteServer> {
     const ensured = await this.ensurePublicId(rs);
-    await this.organizationsService.assertMemberCanAccessOrgServerRow(
+    await this.organizationsService.assertMemberCanAccessOrgRemoteServersWorkspace(
       userId,
       ensured.organizationId,
     );

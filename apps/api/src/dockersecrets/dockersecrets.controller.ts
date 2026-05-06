@@ -46,7 +46,10 @@ export class DockerSecretsController {
         'Query parameter remoteServerId is required (remote server id or publicId). Secrets are managed on the remote Swarm manager over SSH.',
       );
     }
-    return this.remoteServersService.resolveServerIdForUser(t, this.uid(req));
+    return this.remoteServersService.resolveDockerManagerServerIdForUser(
+      t,
+      this.uid(req),
+    );
   }
 
   @Get()
