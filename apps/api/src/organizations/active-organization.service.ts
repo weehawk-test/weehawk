@@ -85,7 +85,9 @@ export class ActiveOrganizationService {
       return ctx;
     }
 
-    const active = await this.getActiveOrganizationPublicId(userId);
+    const active = await this.resolveOrBootstrapActiveOrganizationPublicId(
+      userId,
+    );
     if (!active) {
       throw new BadRequestException(
         'organizationPublicId is required until an active organization is set.',
@@ -101,6 +103,27 @@ export class ActiveOrganizationService {
       await this.clearActiveOrganization(userId);
       throw error;
     }
+  }
+
+  /**
+   * Returns active organization when present, otherwise bootstraps a default
+   * org context for new users and persists it as active.
+   */
+  private async resolveOrBootstrapActiveOrganizationPublicId(
+    userId: number,
+  ): Promise<string | null> {
+    const current = await this.getActiveOrganizationPublicId(userId);
+    if (current) return current;
+
+    await this.organizationsService.ensureAtLeastOneOwnedOrganizationForUser(
+      userId,
+    );
+    const first =
+      await this.organizationsService.getFirstOrganizationPublicIdForUser(userId);
+    if (!first) return null;
+
+    await this.setActiveOrganizationPublicId(userId, first);
+    return first;
   }
 
   async resolvePreferredOrganizationPublicId(

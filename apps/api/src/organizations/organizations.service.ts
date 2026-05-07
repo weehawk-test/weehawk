@@ -519,6 +519,15 @@ export class OrganizationsService implements OnModuleInit {
     return rows[0]?.id ?? null;
   }
 
+  /** First org public id for this user (membership order). */
+  async getFirstOrganizationPublicIdForUser(
+    userId: number,
+  ): Promise<string | null> {
+    const rows = await this.repo.listOrganizationsForUser(userId);
+    const publicId = rows[0]?.publicId?.trim() ?? '';
+    return publicId || null;
+  }
+
   async updateOrganization(
     ctx: OrganizationMemberContext,
     dto: UpdateOrganizationDto,
