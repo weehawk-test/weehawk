@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { FlaskConical, Globe2, Loader2, Pencil, Plus, Search, Shield, Trash2, X } from "lucide-react";
+import { Clock, FlaskConical, Globe2, Loader2, Pencil, Plus, Search, Shield, Trash2, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
@@ -33,6 +33,17 @@ function providerLabel(providerUrl: string): string {
   if (p === "ghcr.io") return "GitHub Registry";
   if (p === "registry.gitlab.com") return "GitLab Registry";
   return "Custom Registry";
+}
+
+function formatDateUTC(dateInput: string): string {
+  const d = new Date(dateInput);
+  if (Number.isNaN(d.getTime())) return dateInput;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(d);
 }
 
 export function RegistryClient({
@@ -315,9 +326,9 @@ export function RegistryClient({
                     </div>
                     <div className="min-w-0">
                       <h3 className="font-semibold text-lg leading-tight truncate">
-                        {providerLabel(acc.providerUrl)}
+                        {acc.name}
                       </h3>
-                      <p className="text-sm text-muted-foreground mt-1 truncate">{acc.name}</p>
+                      <p className="text-sm text-muted-foreground mt-1 truncate">{providerLabel(acc.providerUrl)}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
@@ -355,7 +366,16 @@ export function RegistryClient({
                   <p className="font-mono truncate">Username: {acc.username}</p>
                 </div>
 
-                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-end">
+                <div className="mt-auto pt-4 border-t border-white/5 flex items-center justify-between text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <Clock className="w-3 h-3 shrink-0" />
+                    <span
+                      className="truncate"
+                      title={acc.createdAt ? `Created (UTC) ${formatDateUTC(acc.createdAt)}` : "Created date unavailable"}
+                    >
+                      {acc.createdAt ? formatDateUTC(acc.createdAt) : "Unknown date"}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-3">
                     <button
                       type="button"

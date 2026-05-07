@@ -77,6 +77,7 @@ export type RegistryAccountRow = {
   name: string;
   providerUrl: string;
   username: string;
+  createdAt: string;
   lastVerifiedAt: string | null;
 };
 

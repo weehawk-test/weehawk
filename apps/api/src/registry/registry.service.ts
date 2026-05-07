@@ -40,6 +40,7 @@ export type RegistryAccountSafe = {
   name: string;
   providerUrl: string;
   username: string;
+  createdAt: string;
   lastVerifiedAt: string | null;
 };
 
@@ -525,6 +526,7 @@ export class RegistryService {
       name: row.name,
       providerUrl: row.providerUrl,
       username: row.username,
+      createdAt: row.createdAt.toISOString(),
       lastVerifiedAt: row.lastVerifiedAt?.toISOString() ?? null,
     };
   }

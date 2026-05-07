@@ -40,6 +40,7 @@ export default function RegistryCreatePage() {
   const orgPid = useOrgWorkspace().publicId.trim();
 
   const [preset, setPreset] = useState<PresetId>("dockerhub");
+  const [accountName, setAccountName] = useState("");
   const [providerUrl, setProviderUrl] = useState(PRESETS.dockerhub.providerUrl);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -60,8 +61,8 @@ export default function RegistryCreatePage() {
   );
 
   const canSubmit = useMemo(
-    () => Boolean(providerUrl.trim() && username.trim() && password.trim()),
-    [providerUrl, username, password],
+    () => Boolean(accountName.trim() && providerUrl.trim() && username.trim() && password.trim()),
+    [accountName, providerUrl, username, password],
   );
 
   const setPresetAndProvider = (next: PresetId) => {
@@ -116,7 +117,7 @@ export default function RegistryCreatePage() {
     setIsSaving(true);
     try {
       await createRegistryAccountApi(accessToken, {
-        name: preset === "custom" ? providerUrl.trim() : PRESETS[preset].label,
+        name: accountName.trim(),
         providerUrl: providerUrl.trim(),
         username: username.trim(),
         password,
@@ -172,6 +173,16 @@ export default function RegistryCreatePage() {
         </div>
 
         <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1.5">Name</label>
+            <input
+              className="input-field"
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+              placeholder="e.g. Production Docker Hub"
+            />
+          </div>
+
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1.5">Provider</label>
             <div className="rounded-lg border border-border bg-muted/60 p-2.5 dark:border-white/10 dark:bg-white/[0.03]">

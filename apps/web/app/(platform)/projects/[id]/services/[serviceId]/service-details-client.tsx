@@ -3466,13 +3466,7 @@ function ApplicationArchivePanel({
     if (!registryConfigured || !registryAccounts?.length) return "No registry account configured yet.";
     const labels = Array.from(
       new Set(
-        registryAccounts.map((acc) => {
-          const url = acc.providerUrl.toLowerCase();
-          if (url.includes("gitlab")) return "GitLab";
-          if (url.includes("docker.io") || url.includes("hub.docker.com")) return "Docker Hub";
-          if (url.includes("ghcr.io") || url.includes("github")) return "GitHub Container Registry";
-          return acc.name.trim() || acc.providerUrl;
-        }),
+        registryAccounts.map((acc) => acc.name.trim() || acc.providerUrl),
       ),
     );
     return `Configured registries: ${labels.join(", ")}.`;
