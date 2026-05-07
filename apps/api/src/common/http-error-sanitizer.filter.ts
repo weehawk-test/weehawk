@@ -4,6 +4,7 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 
 function sanitizeMessageText(raw: string): string {
@@ -31,6 +32,8 @@ function sanitizePayload(value: unknown): unknown {
 
 @Catch()
 export class HttpErrorSanitizerFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpErrorSanitizerFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse();
@@ -51,9 +54,21 @@ export class HttpErrorSanitizerFilter implements ExceptionFilter {
       return;
     }
 
+    const isProd = (process.env.NODE_ENV ?? '').toLowerCase() === 'production';
+    const err =
+      exception instanceof Error ? exception : new Error(String(exception));
+    this.logger.error(
+      `Unhandled exception on ${request?.url ?? ''}: ${err.message}`,
+      err.stack,
+    );
+
+    const message = isProd
+      ? 'Internal server error'
+      : sanitizeMessageText(err.message || String(exception));
+
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-      message: 'Internal server error',
+      message,
       timestamp: new Date().toISOString(),
       path: request?.url ?? '',
     });

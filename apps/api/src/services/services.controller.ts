@@ -530,6 +530,25 @@ export class ServicesController {
     return this.servicesService.findAll(uid);
   }
 
+  @Get('runtime/snapshot')
+  @ApiOperation({
+    summary:
+      'Runtime snapshot for all services in a project (single request, event-driven updates afterwards)',
+  })
+  @ApiQuery({ name: 'projectId', required: true })
+  async runtimeSnapshot(
+    @Query('projectId') projectId: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    if (!projectId?.trim()) {
+      throw new BadRequestException('projectId is required');
+    }
+    const uid = this.uid(req);
+    const resolvedProjectId =
+      await this.servicesService.resolveProjectIdForUser(projectId, uid);
+    return this.servicesService.getProjectRuntimeSnapshot(resolvedProjectId, uid);
+  }
+
   @Get(':id/runtime')
   @ApiOperation({
     summary: 'Whether Docker reports running containers for this service',

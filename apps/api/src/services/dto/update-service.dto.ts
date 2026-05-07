@@ -10,10 +10,7 @@ export class UpdateServiceDto extends PartialType(CreateServiceDto) {
     example: '127.0.0.1',
   })
   @IsOptional()
-  @ValidateIf((_, o) => {
-    const v = (o as UpdateServiceDto).magicTraefikMeIpv4;
-    return v != null && String(v).trim().length > 0;
-  })
+  @ValidateIf((_, value) => value != null && String(value).trim().length > 0)
   @IsString()
   @Matches(/^(\d{1,3}\.){3}\d{1,3}$/, {
     message: 'magicTraefikMeIpv4 must be a dotted IPv4 address',

@@ -45,7 +45,7 @@ export function invalidateServiceScopedQueries(
 }
 
 /** Extra runtime-only refetches after deploy/start/stop — Docker often lags behind the API response. */
-const RUNTIME_BURST_MS = [450, 1_200, 2_500, 4_500, 8_000] as const;
+const RUNTIME_BURST_MS = [700, 2_500] as const;
 
 export function scheduleServiceRuntimeRefetchBurst(
   qc: QueryClient,

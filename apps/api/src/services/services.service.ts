@@ -134,7 +134,11 @@ export class ServicesService {
   private async _internal_systemFindOneRemoteServerByIdOrFail(
     id: number,
   ): Promise<RemoteServer> {
-    return this.remoteServerRepository.findOneByOrFail({ id });
+    const row = await this.remoteServerRepository.findOneBy({ id });
+    if (!row) {
+      throw new BadRequestException('Remote server not found');
+    }
+    return row;
   }
 
   // SYSTEM-LEVEL BYPASS: Required for service delete persistence in legacy flow.
@@ -242,6 +246,21 @@ export class ServicesService {
       action,
       publicId,
       resourceId: service.id,
+    });
+  }
+
+  private async emitOrgServiceRuntimeRealtime(serviceId: number): Promise<void> {
+    const service = await this._internal_systemFindOneService({
+      where: { id: serviceId },
+      relations: ['project'],
+    });
+    const orgId = service?.project?.organizationId;
+    const publicId = service?.publicId?.trim();
+    if (!service || !orgId || orgId < 1 || !publicId) return;
+    const runtime = await this.executorService.getRuntimeStatus(serviceId);
+    await this.orgRealtime.notifyServiceRuntimeChanged(orgId, {
+      servicePublicId: publicId,
+      running: runtime.running === true,
     });
   }
 
@@ -2303,6 +2322,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
         relations: ['project'],
       });
       if (afterDeploy) this.emitOrgServiceRealtime(afterDeploy, 'updated');
+      await this.emitOrgServiceRuntimeRealtime(id);
     }
     return finalResult;
   }
@@ -2940,12 +2960,36 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
   async startService(id: number, userId: number) {
     await this.getScopedServiceForUser(id, userId);
-    return await this.executorService.startContainers(id);
+    const out = await this.executorService.startContainers(id);
+    await this.emitOrgServiceRuntimeRealtime(id);
+    return out;
   }
 
   async getRuntimeStatus(id: number, userId: number) {
     await this.getScopedServiceForUser(id, userId);
     return await this.executorService.getRuntimeStatus(id);
+  }
+
+  async getProjectRuntimeSnapshot(projectId: number, userId: number) {
+    await this.getScopedProjectForUser(projectId, userId);
+    const rows = await this._internal_systemFindServices({
+      where: { project: { id: projectId } },
+      relations: ['project'],
+      order: { createdAt: 'DESC' },
+    });
+    const ensured = await this.ensureServicePublicIds(rows);
+    const statuses = await Promise.all(
+      ensured.map(async (service) => {
+        const runtime = await this.executorService.getRuntimeStatus(service.id);
+        return {
+          servicePublicId: service.publicId ?? '',
+          running: runtime.running === true,
+        };
+      }),
+    );
+    return {
+      data: statuses.filter((row) => row.servicePublicId.trim().length > 0),
+    };
   }
 
   async getServiceVolumes(id: number, userId: number) {
@@ -3402,7 +3446,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
 
   async shutdownService(id: number, userId: number) {
     await this.getScopedServiceForUser(id, userId);
-    return await this.executorService.shutdown(id);
+    const out = await this.executorService.shutdown(id);
+    await this.emitOrgServiceRuntimeRealtime(id);
+    return out;
   }
 
   /**

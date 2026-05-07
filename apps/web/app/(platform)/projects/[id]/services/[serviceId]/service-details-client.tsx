@@ -1304,11 +1304,13 @@ export default function ServiceDetails({
                     <button
                       type="button"
                       onClick={handleStartHost}
-                      disabled={actionBusy}
+                      disabled={actionBusy || runtimeLoading}
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-600/40 bg-emerald-600/12 px-4 py-2.5 text-sm font-medium text-emerald-800 transition-colors hover:bg-emerald-600/20 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20 sm:w-auto"
                     >
                       {startService.isPending ? (
                         <><RefreshCw className="w-4 h-4 animate-spin" />Starting…</>
+                      ) : runtimeLoading ? (
+                        <><RefreshCw className="w-4 h-4 animate-spin" />Checking…</>
                       ) : (
                         <><Play className="w-4 h-4 fill-current" />Start</>
                       )}

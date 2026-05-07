@@ -13,7 +13,7 @@ import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
 import { projectQueryKey, useProject } from "@/hooks/use-projects";
-import { useServicesPage, useCreateService, useDeleteService, useServiceRuntime } from "@/hooks/use-services";
+import { useServicesPage, useCreateService, useDeleteService, useProjectRuntimeSnapshot } from "@/hooks/use-services";
 import { ListPagination } from "@/components/docker/ListPagination";
 import { useForm, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -183,12 +183,15 @@ function dbPortByEngine(engine?: CreateServiceInput["databaseEngine"]): number {
 
 /** Dot + label under the type badge: Running / Stopped. */
 function ServiceRuntimeStatus({
-  serviceId,
+  running,
+  loading,
+  errored,
 }: {
-  serviceId: string;
+  running?: boolean;
+  loading?: boolean;
+  errored?: boolean;
 }) {
-  const { data, isPending, isError } = useServiceRuntime(serviceId);
-  if (isPending) {
+  if (loading) {
     return (
       <div
         className="flex w-full items-center justify-center gap-1.5 text-[10px] text-muted-foreground"
@@ -199,7 +202,7 @@ function ServiceRuntimeStatus({
       </div>
     );
   }
-  if (isError) {
+  if (errored) {
     return (
       <div
         className="flex w-full items-center justify-center gap-1.5 text-[10px] text-muted-foreground"
@@ -210,22 +213,22 @@ function ServiceRuntimeStatus({
       </div>
     );
   }
-  const running = data?.running === true;
+  const isRunning = running === true;
   return (
     <div
       className={`flex w-full items-center justify-center gap-1.5 text-[10px] font-medium ${
-        running ? "text-emerald-700 dark:text-emerald-400/95" : "text-red-700 dark:text-red-400/95"
+        isRunning ? "text-emerald-700 dark:text-emerald-400/95" : "text-red-700 dark:text-red-400/95"
       }`}
     >
       <span
         className={`h-2 w-2 shrink-0 rounded-full ${
-          running
+          isRunning
             ? "bg-emerald-600 shadow-[0_0_5px_rgba(5,150,105,0.45)] dark:bg-emerald-500 dark:shadow-[0_0_6px_rgba(16,185,129,0.55)]"
             : "bg-red-600 shadow-[0_0_4px_rgba(220,38,38,0.4)] dark:bg-red-500 dark:shadow-[0_0_4px_rgba(239,68,68,0.35)]"
         }`}
         aria-hidden
       />
-      <span>{running ? "Running" : "Stopped"}</span>
+      <span>{isRunning ? "Running" : "Stopped"}</span>
     </div>
   );
 }
@@ -827,6 +830,17 @@ export default function ProjectsIdClient({
     return reconcileAndFilterPendingDeletions("services", raw, (item) => [item.id, item.publicId]);
   }, [servicesListClientReady, servicesPageData?.data]);
   const total = servicesPageData?.total ?? 0;
+  const runtimeSnapshot = useProjectRuntimeSnapshot(
+    projectId,
+    items.length > 0,
+  );
+  const runtimeByServiceId = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const row of runtimeSnapshot.data?.data ?? []) {
+      map.set(String(row.servicePublicId), row.running === true);
+    }
+    return map;
+  }, [runtimeSnapshot.data?.data]);
   const limit = servicesPageData?.limit ?? SERVICES_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const from = total > 0 ? (page - 1) * limit + 1 : 0;
@@ -1117,7 +1131,11 @@ export default function ProjectsIdClient({
                           >
                             {typeConf.label}
                           </span>
-                          <ServiceRuntimeStatus serviceId={serviceQueryKeyId(service)} />
+                          <ServiceRuntimeStatus
+                            running={runtimeByServiceId.get(serviceQueryKeyId(service))}
+                            loading={runtimeSnapshot.isLoading}
+                            errored={runtimeSnapshot.isError}
+                          />
                         </div>
                       </div>
 

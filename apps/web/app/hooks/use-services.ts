@@ -9,6 +9,7 @@ import {
   fetchServiceVolumesApi,
   fetchServices,
   fetchServicesPage,
+  fetchProjectRuntimeSnapshot,
   shutdownServiceApi,
   startServiceApi,
   updateServiceApi,
@@ -107,7 +108,7 @@ export function useService(id: string, options?: { initialData?: Service }) {
 
 export function useServiceRuntime(
   id: string | undefined,
-  options?: { initialData?: { running: boolean } },
+  options?: { initialData?: { running: boolean }; refetchIntervalMs?: number | false },
 ) {
   const { user } = useAuth();
   const ownerKey = user?.userId ?? "none";
@@ -117,11 +118,24 @@ export function useServiceRuntime(
     queryFn: () => fetchServiceRuntime(id!),
     enabled: !!id,
     initialDataUpdatedAt: hasInitial ? 0 : undefined,
-    staleTime: hasInitial ? Infinity : 5_000,
-    /** Polling + post-mutation bursts; keep interval moderate to avoid API noise. */
-    refetchInterval: 5_000,
+    staleTime: Infinity,
+    refetchInterval: options?.refetchIntervalMs ?? false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: "always",
     refetchOnMount: hasInitial ? false : undefined,
     initialData: options?.initialData,
+  });
+}
+
+export function useProjectRuntimeSnapshot(projectId: string | undefined, enabled: boolean) {
+  const { user } = useAuth();
+  const ownerKey = user?.userId ?? "none";
+  return useQuery({
+    queryKey: ["project-runtime", ownerKey, projectId],
+    queryFn: () => fetchProjectRuntimeSnapshot(projectId!),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: Infinity,
+    refetchOnWindowFocus: "always",
   });
 }
 

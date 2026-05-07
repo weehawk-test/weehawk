@@ -810,6 +810,33 @@ export async function fetchServiceRuntime(id: string): Promise<{ running: boolea
   return { running: j.running === true };
 }
 
+export type ProjectRuntimeSnapshotItem = {
+  servicePublicId: string;
+  running: boolean;
+};
+
+export async function fetchProjectRuntimeSnapshot(
+  projectId: string,
+): Promise<{ data: ProjectRuntimeSnapshotItem[] }> {
+  const q = new URLSearchParams({ projectId: String(projectId) });
+  const res = await apiFetch(`/api/services/runtime/snapshot?${q.toString()}`);
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { data?: ProjectRuntimeSnapshotItem[] };
+  return {
+    data: Array.isArray(j.data)
+      ? j.data
+          .filter((row) => typeof row?.servicePublicId === "string")
+          .map((row) => ({
+            servicePublicId: String(row.servicePublicId),
+            running: row.running === true,
+          }))
+      : [],
+  };
+}
+
 export interface ServiceVolumeMount {
   composeService: string;
   mountType: "bind" | "volume" | "tmpfs" | "unknown";
