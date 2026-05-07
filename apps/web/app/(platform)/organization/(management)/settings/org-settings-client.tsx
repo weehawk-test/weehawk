@@ -172,7 +172,8 @@ export function OrgSettingsClient() {
           You will lose access to this organization’s shared projects and settings. You can join again if an owner
           invites you. If you are the only member, the organization is closed and{" "}
           <span className="font-medium text-foreground">all of its data is permanently deleted</span> (projects,
-          servers, webhooks, cron jobs, notifications, S3 profiles, and related workspace records).
+          servers, webhooks, cron jobs, notifications, S3 profiles, Git integration settings, registry accounts, and
+          related workspace records).
         </p>
         <button
           type="button"

@@ -28,6 +28,8 @@ import { NotificationChannel } from '../notifications/entities/notification-chan
 import { S3Profile } from '../s3/entities/s3-profile.entity';
 import { TraefikSettings } from '../traefik/entities/traefik-settings.entity';
 import { RemoteServerProvisionJob } from '../remote-servers/entities/remote-server-provision-job.entity';
+import { GitIntegrationSettings } from '../git/entities/git-integration.entity';
+import { RegistryAccount } from '../registry/entities/registry-account.entity';
 import { generatePublicId } from '../common/public-id';
 import { auditHttpContextStorage } from '../common/audit-http-context.storage';
 import type { ResolveOrganizationWorkspaceOptions } from '../common/organization-workspace-scope';
@@ -952,6 +954,8 @@ export class OrganizationsService implements OnModuleInit {
       await em.delete(Project, { organizationId });
       await em.delete(NotificationChannel, { organizationId });
       await em.delete(S3Profile, { organizationId });
+      await em.delete(GitIntegrationSettings, { organizationId });
+      await em.delete(RegistryAccount, { organizationId });
 
       await em.delete(RemoteServerProvisionJob, { organizationId });
       await em.delete(RemoteServer, { organizationId });
