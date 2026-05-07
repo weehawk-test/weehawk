@@ -87,10 +87,10 @@ export async function fetchOrganizations(): Promise<OrganizationPublic[]> {
 
 /** Organization owners may update the display name. */
 export async function updateOrganization(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   body: UpdateOrganizationInput,
 ): Promise<OrganizationPublic> {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) throw new Error("Organization id required");
   const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -133,11 +133,11 @@ function mapMember(raw: unknown): OrganizationMemberPublic {
 }
 
 export async function setMemberWorkspacePermissions(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   email: string,
   permissions: Partial<Record<OrgWorkspacePermissionKey, boolean>>,
 ): Promise<{ message: string }> {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) throw new Error("Organization id required");
   const res = await apiFetch(
     `/api/organizations/${encodeURIComponent(id)}/members/permissions`,
@@ -176,9 +176,9 @@ function mapOrgProject(raw: unknown): OrganizationProjectListItem {
 }
 
 export async function fetchOrganizationMembers(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
 ): Promise<OrganizationMemberPublic[]> {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) return [];
   const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/members`, {
     method: "GET",
@@ -193,9 +193,9 @@ export async function fetchOrganizationMembers(
 }
 
 export async function fetchOrganizationProjects(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
 ): Promise<OrganizationProjectListItem[]> {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) return [];
   const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/projects`, {
     method: "GET",
@@ -211,11 +211,11 @@ export async function fetchOrganizationProjects(
 
 /** Organization owners may promote a member to owner or demote an owner to member (API enforces at least one owner). */
 export async function setOrganizationMemberRole(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   email: string,
   role: "owner" | "member",
 ): Promise<{ message: string }> {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) throw new Error("Organization id required");
   const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/ownership`, {
     method: "PATCH",
@@ -233,11 +233,11 @@ export async function setOrganizationMemberRole(
 
 /** Sends invitation email; invitee accepts via link while signed in as that email. */
 export async function inviteOrganizationMember(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   email: string,
 ): Promise<{ message: string; notice?: string }> {
   const res = await apiFetch(
-    `/api/organizations/${encodeURIComponent(organizationPublicId.trim())}/members`,
+    `/api/organizations/${encodeURIComponent(activeOrgPublicId.trim())}/members`,
     {
       method: "POST",
       body: JSON.stringify({ email: email.trim().toLowerCase() }),
@@ -278,8 +278,8 @@ export async function acceptOrganizationInvite(token: string): Promise<Organizat
 }
 
 /** Leave organization (members and owners; API transfers ownership or dissolves the org when needed). */
-export async function leaveOrganization(organizationPublicId: string): Promise<{ message: string }> {
-  const id = organizationPublicId.trim();
+export async function leaveOrganization(activeOrgPublicId: string): Promise<{ message: string }> {
+  const id = activeOrgPublicId.trim();
   if (!id) throw new Error("Organization id required");
   const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/membership`, {
     method: "DELETE",
@@ -304,6 +304,46 @@ export async function createOrganization(
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
   }
   return mapOrg(JSON.parse(text) as unknown);
+}
+
+export async function getActiveOrganizationPublicId(): Promise<string | null> {
+  const res = await apiFetch("/api/organizations/active", { method: "GET" });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as { organizationPublicId?: string | null };
+  const id =
+    typeof data.organizationPublicId === "string"
+      ? data.organizationPublicId.trim()
+      : "";
+  return id || null;
+}
+
+export async function setActiveOrganizationPublicId(
+  activeOrgPublicId: string,
+): Promise<string> {
+  const id = activeOrgPublicId.trim();
+  if (!id) throw new Error("Organization id required");
+  const res = await apiFetch("/api/organizations/active", {
+    method: "PUT",
+    body: JSON.stringify({ organizationPublicId: id }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as { organizationPublicId?: string };
+  const next = String(data.organizationPublicId ?? "").trim();
+  if (!next) throw new Error("Server did not return active organization");
+  return next;
+}
+
+export async function clearActiveOrganizationPublicId(): Promise<void> {
+  const res = await apiFetch("/api/organizations/active", { method: "DELETE" });
+  if (res.ok) return;
+  const text = await res.text();
+  throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
 }
 
 /** Browser-only: workspace switcher / sidebar listen and refetch GET /api/organizations. */

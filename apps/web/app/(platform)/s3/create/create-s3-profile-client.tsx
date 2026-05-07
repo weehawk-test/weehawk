@@ -33,11 +33,11 @@ const S3_PROVIDER_PRESETS: S3ProviderPreset[] = [
 ];
 
 export function CreateS3ProfileClient({
-  organizationPublicId = null,
+  activeOrgPublicId = null,
 }: {
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 } = {}) {
-  const orgTrim = organizationPublicId?.trim();
+  const orgTrim = activeOrgPublicId?.trim();
   const s3BasePath = "/s3";
   const router = useRouter();
   const { toast } = useToast();
@@ -59,10 +59,7 @@ export function CreateS3ProfileClient({
   useEffect(() => {
     if (!accessToken) return;
     let cancelled = false;
-    void fetchRemoteServers(
-      accessToken,
-      organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
-    )
+    void fetchRemoteServers(accessToken)
       .then((rows) => {
         if (!cancelled) setDeployServersForTest(rows.filter((r) => r.serverRole === "deploy"));
       })
@@ -72,7 +69,7 @@ export function CreateS3ProfileClient({
     return () => {
       cancelled = true;
     };
-  }, [accessToken, organizationPublicId]);
+  }, [accessToken, activeOrgPublicId]);
 
   const canSubmit = useMemo(
     () =>
@@ -111,7 +108,6 @@ export function CreateS3ProfileClient({
       accessKeyId: form.accessKeyId.trim(),
       secretAccessKey: (form.secretAccessKey ?? "").trim(),
       forcePathStyle,
-      organizationPublicId: orgTrim,
     };
   }, [form, orgTrim]);
 

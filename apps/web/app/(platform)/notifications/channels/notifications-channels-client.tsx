@@ -398,7 +398,7 @@ export function NotificationsChannelsClient({
   initialMode,
   initialRouteChannel,
   notificationsBasePath,
-  organizationPublicId: organizationPublicIdProp,
+  activeOrgPublicId: activeOrgPublicIdProp,
 }: {
   initialData: PaginatedNotificationChannelsResponse | null;
   initialError: string | null;
@@ -409,7 +409,7 @@ export function NotificationsChannelsClient({
   /** List root, e.g. `/notifications` or `/organizations/:id/notifications`. */
   notificationsBasePath?: string;
   /** When set (e.g. SSR org mirror), scopes API calls to this organization. */
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
   const pathname = usePathname();
   const listBase = useMemo(
@@ -424,10 +424,10 @@ export function NotificationsChannelsClient({
   const router = useRouter();
   const { accessToken } = useAuth();
   const orgWorkspace = useOptionalOrgWorkspace();
-  const organizationPublicId =
-    organizationPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
+  const activeOrgPublicId =
+    activeOrgPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
   const inOrgNotifications =
-    organizationPublicId != null && String(organizationPublicId).trim() !== "";
+    activeOrgPublicId != null && String(activeOrgPublicId).trim() !== "";
   const allowNotificationsAdd =
     !inOrgNotifications ||
     (orgWorkspace != null &&
@@ -440,7 +440,7 @@ export function NotificationsChannelsClient({
     !inOrgNotifications ||
     (orgWorkspace != null &&
       orgMemberAllowsNotificationsTest(orgWorkspace.workspacePermissions));
-  const orgSegment = orgScopedQuerySegment(organizationPublicId);
+  const orgSegment = orgScopedQuerySegment(activeOrgPublicId);
   const remoteServersQueryKey = ["remote-servers", orgSegment] as const;
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -473,11 +473,7 @@ export function NotificationsChannelsClient({
 
   const remoteServersQuery = useQuery({
     queryKey: remoteServersQueryKey,
-    queryFn: () =>
-      fetchRemoteServers(
-        accessToken!,
-        organizationPublicId ? organizationPublicId : undefined,
-      ),
+    queryFn: () => fetchRemoteServers(accessToken!),
     enabled: Boolean(accessToken && orgSegment),
     staleTime: 120_000,
   });
@@ -494,7 +490,6 @@ export function NotificationsChannelsClient({
         channelsPage,
         CHANNELS_PAGE_SIZE,
         channelsQ,
-        organizationPublicId,
       ),
     enabled: Boolean(accessToken && orgSegment),
     initialData:
@@ -650,7 +645,7 @@ export function NotificationsChannelsClient({
     mutationFn: async () => {
       if (!form.name.trim()) throw new Error("Service name is required.");
       if (addTestRemoteId == null) throw new Error("Select a deploy host to run the test.");
-      const org = organizationPublicId?.trim();
+      const org = activeOrgPublicId?.trim();
       if (!org) throw new Error("Organization workspace is required.");
       const tempChannel = await createNotificationChannel(accessToken!, {
         name: `${form.name.trim()} (test)`,
@@ -660,10 +655,10 @@ export function NotificationsChannelsClient({
         organizationPublicId: org,
       });
       try {
-        return await testNotificationChannel(accessToken!, tempChannel.id, org);
+        return await testNotificationChannel(accessToken!, tempChannel.id);
       } finally {
         try {
-          await deleteNotificationChannel(accessToken!, tempChannel.id, org);
+          await deleteNotificationChannel(accessToken!, tempChannel.id);
         } catch {}
       }
     },
@@ -675,7 +670,7 @@ export function NotificationsChannelsClient({
   });
   const createMutation = useMutation({
     mutationFn: () => {
-      const org = organizationPublicId?.trim();
+      const org = activeOrgPublicId?.trim();
       if (!org) throw new Error("Organization workspace is required.");
       return createNotificationChannel(accessToken!, {
         name: form.name.trim(),
@@ -697,7 +692,7 @@ export function NotificationsChannelsClient({
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
-      deleteNotificationChannel(accessToken!, id, organizationPublicId),
+      deleteNotificationChannel(accessToken!, id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
@@ -707,7 +702,7 @@ export function NotificationsChannelsClient({
   });
   const bulkDeleteChannelsMutation = useMutation({
     mutationFn: (ids: string[]) =>
-      bulkDeleteNotificationChannels(accessToken!, ids, organizationPublicId),
+      bulkDeleteNotificationChannels(accessToken!, ids),
     onSuccess: () => {
       channelsBulk.clear();
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -728,9 +723,9 @@ export function NotificationsChannelsClient({
     }) => {
       if (!accessToken) throw new Error("Not signed in.");
       if (remoteServerId !== previousRemoteId) {
-        await updateNotificationChannel(accessToken, channelId, { remoteServerId }, organizationPublicId);
+        await updateNotificationChannel(accessToken, channelId, { remoteServerId });
       }
-      return testNotificationChannel(accessToken, channelId, organizationPublicId);
+      return testNotificationChannel(accessToken, channelId);
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -758,7 +753,6 @@ export function NotificationsChannelsClient({
           name: editName.trim(),
           remoteServerId: editDeployServerId as number,
         },
-        organizationPublicId,
       );
     },
     onSuccess: () => {

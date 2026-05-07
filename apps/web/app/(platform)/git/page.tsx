@@ -8,7 +8,7 @@ export default async function GitLandingPage({
   searchParams?: Promise<{ q?: string }>;
 }) {
   const orgPid = (await getServerActiveOrganizationPublicId())?.trim() ?? "";
-  const settings = orgPid ? await fetchGitSettingsSSR(orgPid) : null;
+  const settings = orgPid ? await fetchGitSettingsSSR() : null;
   const sp = await searchParams;
-  return <GitPageClient initialSettings={settings} organizationPublicId={orgPid} initialQuery={sp?.q ?? ""} />;
+  return <GitPageClient initialSettings={settings} activeOrgPublicId={orgPid} initialQuery={sp?.q ?? ""} />;
 }

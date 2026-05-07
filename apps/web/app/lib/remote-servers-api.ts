@@ -36,13 +36,8 @@ function nestErrorMessage(text: string, fallback: string): string {
 
 export async function fetchRemoteServers(
   accessToken: string,
-  organizationPublicId?: string | null,
 ): Promise<RemoteServerRow[]> {
-  const q =
-    organizationPublicId != null && String(organizationPublicId).trim() !== ""
-      ? `?organizationPublicId=${encodeURIComponent(String(organizationPublicId).trim())}`
-      : "";
-  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers${q}`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers`, {
     method: "GET",
   });
   const text = await res.text();
@@ -146,13 +141,8 @@ export async function updateRemoteServerApi(
     publicIpv4: string | null;
     domainsJson?: string | null;
   }>,
-  organizationPublicId?: string | null,
 ): Promise<RemoteServerRow> {
-  const org =
-    organizationPublicId != null && String(organizationPublicId).trim() !== ""
-      ? `?organizationPublicId=${encodeURIComponent(String(organizationPublicId).trim())}`
-      : "";
-  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}${org}`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -272,12 +262,8 @@ export async function fetchNixpacksInstallScriptApi(
 export async function fetchProvisionScriptApi(
   accessToken: string,
   role: RemoteServerRole,
-  organizationPublicId: string,
 ): Promise<{ script: string }> {
-  const org = organizationPublicId.trim();
-  if (!org) throw new Error("organizationPublicId is required");
   const params = new URLSearchParams();
-  params.set("organizationPublicId", org);
   params.set("role", role === "build" ? "build" : "deploy");
   const res = await authFetch(
     accessToken,

@@ -43,7 +43,7 @@ export default function RegistrySavedPage() {
 
   const accountsQ = useQuery({
     queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
-    queryFn: () => fetchRegistryAccounts(accessToken ?? "", orgPid),
+    queryFn: () => fetchRegistryAccounts(accessToken ?? ""),
     enabled: Boolean(accessToken && orgPid),
   });
 
@@ -65,7 +65,7 @@ export default function RegistrySavedPage() {
     if (!accessToken || !orgPid) return;
     setDeletingId(publicId);
     try {
-      await deleteRegistryAccountApi(accessToken, orgPid, publicId);
+      await deleteRegistryAccountApi(accessToken, publicId);
       await queryClient.invalidateQueries({
         queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
       });

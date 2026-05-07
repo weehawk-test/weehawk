@@ -54,15 +54,15 @@ function formatDateUTC(dateInput: string): string {
 
 export function CronJobsClient({
   initialJobs,
-  organizationPublicId: organizationPublicIdProp,
+  activeOrgPublicId: activeOrgPublicIdProp,
 }: {
   initialJobs: CronJobListItem[];
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
-  const organizationPublicId = organizationPublicIdProp?.trim() || undefined;
+  const activeOrgPublicId = activeOrgPublicIdProp?.trim() || undefined;
   const cronJobsBasePath = "/cron-jobs";
   const inOrgCron =
-    organizationPublicId != null && organizationPublicId !== "";
+    activeOrgPublicId != null && activeOrgPublicId !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
   const allowCronAdd =
     !inOrgCron ||
@@ -84,11 +84,11 @@ export function CronJobsClient({
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const orgKeyForQuery = organizationPublicId ?? "";
+  const orgKeyForQuery = activeOrgPublicId ?? "";
   const cronJobsQuery = useCronJobs(orgKeyForQuery || undefined, { initialData: initialJobs });
   const jobs = cronJobsQuery.data ?? initialJobs;
-  const deleteCronJob = useDeleteCronJob(organizationPublicId);
-  const updateCronJob = useUpdateCronJob(organizationPublicId);
+  const deleteCronJob = useDeleteCronJob(activeOrgPublicId);
+  const updateCronJob = useUpdateCronJob(activeOrgPublicId);
   const { toast } = useToast();
   const confirm = useConfirm();
   const { accessToken } = useAuth();
@@ -250,7 +250,7 @@ export function CronJobsClient({
   ) => {
     if (provisioningCronJobIds.includes(cronJob.id)) return;
     if (!accessToken) return;
-    if (!organizationPublicId?.trim()) {
+    if (!activeOrgPublicId?.trim()) {
       if (!opts?.silent) {
         toast({
           title: "Organization required",
@@ -284,7 +284,6 @@ export function CronJobsClient({
         accessToken,
         cronJobRouteId(cronJob),
         2000,
-        organizationPublicId,
       );
       const normalized = out.log.trim();
       if (out.source === "not-applicable") {
@@ -336,7 +335,7 @@ export function CronJobsClient({
     setLogTextByCronJobId((prev) => ({ ...prev, [cronJob.id]: "" }));
     setRunLogLoadingCronJobId(cronJob.id);
     try {
-      await triggerCronJobNow(accessToken, cronJobRouteId(cronJob), organizationPublicId);
+      await triggerCronJobNow(accessToken, cronJobRouteId(cronJob));
       await sleep(900);
       await loadCronJobLog(cronJob, {
         silent: true,
@@ -366,7 +365,7 @@ export function CronJobsClient({
       void loadCronJobLog(cronJob, { silent: true, keepModalState: true });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [openLogCronJobId, accessToken, jobs, organizationPublicId, inOrgCron, allowCronLogs]);
+  }, [openLogCronJobId, accessToken, jobs, activeOrgPublicId, inOrgCron, allowCronLogs]);
 
   return (
     <>

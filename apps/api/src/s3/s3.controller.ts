@@ -25,12 +25,16 @@ import { UpsertS3ProfileDto } from './dto/upsert-s3-profile.dto';
 import { TestS3ConnectionDto } from './dto/test-s3-connection.dto';
 import { MkdirS3FolderDto } from './dto/mkdir-s3-folder.dto';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 
 @ApiTags('S3')
 @UseGuards(LocalSessionGuard)
 @Controller('api/s3')
 export class S3Controller {
-  constructor(private readonly s3Service: S3Service) {}
+  constructor(
+    private readonly s3Service: S3Service,
+    private readonly activeOrganizationService: ActiveOrganizationService,
+  ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
     const id = req?.user?.userId;
@@ -38,13 +42,25 @@ export class S3Controller {
     return id;
   }
 
+  private async resolveOrg(
+    req: { user?: { userId: number } },
+    activeOrgPublicId?: string,
+  ): Promise<string | undefined> {
+    const r = await this.activeOrganizationService.resolvePreferredOrganizationPublicId(
+      this.uid(req),
+      activeOrgPublicId,
+    );
+    return r ?? undefined;
+  }
+
   @Get('profiles')
   @ApiOperation({ summary: 'List saved S3-compatible destination profiles' })
   async listProfiles(
     @Req() req: { user?: { userId: number } },
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
-    return this.s3Service.listProfiles(this.uid(req), organizationPublicId);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
+    return this.s3Service.listProfiles(this.uid(req), org);
   }
 
   @Post('profiles')
@@ -53,7 +69,8 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Body() dto: UpsertS3ProfileDto,
   ) {
-    return this.s3Service.saveProfile(this.uid(req), dto);
+    const org = await this.resolveOrg(req, dto.organizationPublicId);
+    return this.s3Service.saveProfile(this.uid(req), dto, org);
   }
 
   @Delete('profiles/:publicId')
@@ -61,12 +78,13 @@ export class S3Controller {
   async deleteProfile(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.deleteProfile(
       this.uid(req),
       publicId,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -80,7 +98,8 @@ export class S3Controller {
     @Req() req: { user?: { userId: number } },
     @Body() dto: TestS3ConnectionDto,
   ) {
-    return this.s3Service.testConnection(this.uid(req), dto);
+    const org = await this.resolveOrg(req, dto.organizationPublicId);
+    return this.s3Service.testConnection(this.uid(req), dto, org);
   }
 
   @Get('profiles/:publicId/objects')
@@ -88,19 +107,20 @@ export class S3Controller {
     summary:
       'List objects and common prefixes under one prefix (virtual folders)',
   })
-  listBucketObjects(
+  async listBucketObjects(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Query('prefix') prefix?: string,
     @Query('continuationToken') continuationToken?: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.listBucketObjects(
       this.uid(req),
       publicId,
       prefix,
       continuationToken,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -109,20 +129,21 @@ export class S3Controller {
     summary:
       'Aggregate count, total size, and latest LastModified under a prefix (recursive)',
   })
-  prefixSummary(
+  async prefixSummary(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Query('prefix') prefix: string | undefined,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!prefix?.trim()) {
       throw new BadRequestException('prefix query parameter is required.');
     }
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.summarizePrefix(
       this.uid(req),
       publicId,
       prefix,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -131,16 +152,17 @@ export class S3Controller {
     summary:
       'Get a presigned PUT URL so the browser or another host can upload the object without sending bytes through the API',
   })
-  presignPutObject(
+  async presignPutObject(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body()
     body: { key?: string; contentType?: string; expiresInSeconds?: number },
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.presignPutObject(
       this.uid(req),
       publicId,
@@ -148,7 +170,7 @@ export class S3Controller {
       {
         contentType: body.contentType,
         expiresInSeconds: body.expiresInSeconds,
-        organizationPublicId,
+        organizationPublicId: org,
       },
     );
   }
@@ -163,13 +185,13 @@ export class S3Controller {
     summary:
       'Upload object through the API (multipart). Use when browser presigned PUT fails (CORS, unreachable MinIO URL).',
   })
-  uploadObjectViaApi(
+  async uploadObjectViaApi(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Query('key') key: string | undefined,
     @Query('contentType') contentTypeRaw: string | undefined,
     @UploadedFile() file: Express.Multer.File | undefined,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
@@ -187,13 +209,14 @@ export class S3Controller {
       (key.trim().toLowerCase().endsWith('.gz')
         ? 'application/gzip'
         : 'application/octet-stream');
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.putObjectBuffer(
       this.uid(req),
       publicId,
       key.trim(),
       buffer,
       ct,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -203,17 +226,18 @@ export class S3Controller {
     summary:
       'Create a folder marker (empty key ending with /) for S3 console-style navigation',
   })
-  mkdirFolder(
+  async mkdirFolder(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: MkdirS3FolderDto,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.putFolderMarker(
       this.uid(req),
       publicId,
       body.key.trim(),
-      organizationPublicId,
+      org,
     );
   }
 
@@ -222,12 +246,12 @@ export class S3Controller {
     summary:
       'Get a presigned GET URL so the browser can download the object without streaming through the API',
   })
-  presignGetObject(
+  async presignGetObject(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Query('key') key: string | undefined,
     @Query('expiresInSeconds') expiresInSecondsRaw?: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
@@ -236,12 +260,13 @@ export class S3Controller {
       expiresInSecondsRaw != null ? Number(expiresInSecondsRaw) : undefined;
     const expiresInSeconds =
       expiresInSecondsRaw != null && !Number.isFinite(n) ? undefined : n;
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.presignGetObject(
       this.uid(req),
       publicId,
       key.trim(),
       expiresInSeconds,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -252,16 +277,17 @@ export class S3Controller {
     @Param('publicId') publicId: string,
     @Query('key') key: string | undefined,
     @Res({ passthrough: true }) res: Response,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ): Promise<StreamableFile> {
     if (!key?.trim()) {
       throw new BadRequestException('key query parameter is required.');
     }
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     const r = await this.s3Service.getObjectStream(
       this.uid(req),
       publicId,
       key.trim(),
-      organizationPublicId,
+      org,
     );
     const enc = encodeURIComponent(r.filename).replace(/'/g, '%27');
     res.setHeader('Content-Type', r.contentType);
@@ -274,20 +300,21 @@ export class S3Controller {
 
   @Delete('profiles/:publicId/objects')
   @ApiOperation({ summary: 'Delete one object by key' })
-  deleteObject(
+  async deleteObject(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { key?: string },
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.deleteObject(
       this.uid(req),
       publicId,
       body.key,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -296,20 +323,21 @@ export class S3Controller {
     summary:
       'Delete one object (POST with JSON body; prefer this if DELETE-with-body is blocked)',
   })
-  deleteObjectPost(
+  async deleteObjectPost(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { key?: string },
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!body?.key?.trim()) {
       throw new BadRequestException('key is required in body.');
     }
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.deleteObject(
       this.uid(req),
       publicId,
       body.key,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -317,20 +345,21 @@ export class S3Controller {
   @ApiOperation({
     summary: 'Delete multiple objects (max 1000 keys per request)',
   })
-  deleteObjectsBatch(
+  async deleteObjectsBatch(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { keys?: string[] },
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!body?.keys?.length) {
       throw new BadRequestException('keys array is required.');
     }
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.deleteObjectsBatch(
       this.uid(req),
       publicId,
       body.keys,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -338,20 +367,21 @@ export class S3Controller {
   @ApiOperation({
     summary: 'Delete all objects whose keys start with prefix (recursive)',
   })
-  deleteObjectsUnderPrefix(
+  async deleteObjectsUnderPrefix(
     @Req() req: { user?: { userId: number } },
     @Param('publicId') publicId: string,
     @Body() body: { prefix?: string },
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     if (!body?.prefix?.trim()) {
       throw new BadRequestException('prefix is required in body.');
     }
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.s3Service.deleteObjectsUnderPrefix(
       this.uid(req),
       publicId,
       body.prefix,
-      organizationPublicId,
+      org,
     );
   }
 }

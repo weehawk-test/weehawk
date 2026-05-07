@@ -52,12 +52,8 @@ function apiBase(): string {
 /** Server-only: forwards the browser Cookie header to the API (no client Network tab). */
 export async function fetchWebhookSSR(
   id: string,
-  organizationPublicId?: string | null,
 ): Promise<WebhookDetail | null> {
-  const org = organizationPublicId?.trim();
-  if (!org) return null;
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/webhooks/${encodeURIComponent(id)}${q}`, {
+  const res = await fetch(`${apiBase()}/api/webhooks/${encodeURIComponent(id)}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -78,12 +74,8 @@ export async function fetchWebhookSSR(
 }
 
 export async function fetchWebhooksSSR(
-  organizationPublicId?: string | null,
 ): Promise<WebhookListItem[]> {
-  const org = organizationPublicId?.trim();
-  if (!org) return [];
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/webhooks${q}`, {
+  const res = await fetch(`${apiBase()}/api/webhooks`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -103,12 +95,8 @@ export async function fetchWebhooksSSR(
 
 export async function fetchCronJobSSR(
   id: string,
-  organizationPublicId?: string | null,
 ): Promise<CronJobDetail | null> {
-  const org = organizationPublicId?.trim();
-  if (!org) return null;
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/cron-jobs/${encodeURIComponent(id)}${q}`, {
+  const res = await fetch(`${apiBase()}/api/cron-jobs/${encodeURIComponent(id)}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -125,12 +113,8 @@ export async function fetchCronJobSSR(
 }
 
 export async function fetchCronJobsSSR(
-  organizationPublicId?: string | null,
 ): Promise<CronJobListItem[]> {
-  const org = organizationPublicId?.trim();
-  if (!org) return [];
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/cron-jobs${q}`, {
+  const res = await fetch(`${apiBase()}/api/cron-jobs`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -146,12 +130,8 @@ export async function fetchCronJobsSSR(
 
 export async function fetchProjectSSR(
   id: string,
-  organizationPublicId?: string | null,
 ): Promise<Project | null> {
-  const org = organizationPublicId?.trim();
-  if (!org) return null;
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/projects/${encodeURIComponent(id)}${q}`, {
+  const res = await fetch(`${apiBase()}/api/projects/${encodeURIComponent(id)}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -162,18 +142,12 @@ export async function fetchProjectSSR(
 export async function fetchProjectsSSR(
   page = 1,
   q = "",
-  organizationPublicId?: string,
 ): Promise<ProjectsPageResponse> {
   const params = new URLSearchParams();
   params.set("page", String(Math.max(1, page)));
   params.set("limit", String(PROJECTS_PAGE_SIZE));
   const trim = q.trim();
   if (trim) params.set("q", trim);
-  const org = organizationPublicId?.trim();
-  if (!org) {
-    throw new Error("organizationPublicId is required");
-  }
-  params.set("organizationPublicId", org);
   const res = await fetch(`${apiBase()}/api/projects?${params.toString()}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
@@ -250,12 +224,8 @@ export async function fetchServiceRuntimeSSR(
 }
 
 export async function fetchNotificationChannelsSSR(
-  organizationPublicId?: string | null,
 ): Promise<NotificationChannel[]> {
-  const org = organizationPublicId?.trim();
-  if (!org) return [];
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/notifications/channels${q}`, {
+  const res = await fetch(`${apiBase()}/api/notifications/channels`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -267,7 +237,6 @@ export async function fetchNotificationChannelsPagedSSR(
   page: number,
   pageSize: number,
   q: string,
-  organizationPublicId?: string | null,
 ): Promise<PaginatedNotificationChannelsResponse> {
   const params = new URLSearchParams({
     page: String(Math.max(1, page)),
@@ -275,11 +244,6 @@ export async function fetchNotificationChannelsPagedSSR(
   });
   const trimmed = q.trim();
   if (trimmed) params.set("q", trimmed);
-  const org = organizationPublicId?.trim();
-  if (!org) {
-    throw new Error("organizationPublicId is required");
-  }
-  params.set("organizationPublicId", org);
   const res = await fetch(`${apiBase()}/api/notifications/channels/paged?${params.toString()}`, {
     headers: await cookieHeaders(),
     cache: "no-store",
@@ -292,12 +256,8 @@ export async function fetchNotificationChannelsPagedSSR(
 }
 
 export async function fetchRegistryAccountsSSR(
-  organizationPublicId?: string | null,
 ): Promise<RegistryAccountRow[]> {
-  const org = organizationPublicId?.trim();
-  if (!org) return [];
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/registry/accounts${q}`, {
+  const res = await fetch(`${apiBase()}/api/registry/accounts`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -308,12 +268,8 @@ export async function fetchRegistryAccountsSSR(
 }
 
 export async function fetchS3ProfilesSSR(
-  organizationPublicId?: string | null,
 ): Promise<S3ProfilePublic[]> {
-  const org = organizationPublicId?.trim();
-  if (!org) return [];
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${apiBase()}/api/s3/profiles${q}`, {
+  const res = await fetch(`${apiBase()}/api/s3/profiles`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -324,13 +280,8 @@ export async function fetchS3ProfilesSSR(
 }
 
 export async function fetchRemoteServersSSR(
-  organizationPublicId?: string | null,
 ): Promise<RemoteServerRow[]> {
-  const q =
-    organizationPublicId != null && String(organizationPublicId).trim() !== ""
-      ? `?organizationPublicId=${encodeURIComponent(String(organizationPublicId).trim())}`
-      : "";
-  const res = await fetch(`${apiBase()}/api/remote-servers${q}`, {
+  const res = await fetch(`${apiBase()}/api/remote-servers`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -366,12 +317,9 @@ export async function fetchDockerSecretsPagedSSR(
 }
 
 export async function fetchTraefikSettingsSSR(
-  organizationPublicId: string,
 ): Promise<TraefikSettingsPayload | null> {
-  const org = organizationPublicId.trim();
-  if (!org) return null;
   const res = await fetch(
-    `${apiBase()}/api/traefik/settings?organizationPublicId=${encodeURIComponent(org)}`,
+    `${apiBase()}/api/traefik/settings`,
     {
       headers: await cookieHeaders(),
       cache: "no-store",
@@ -383,13 +331,8 @@ export async function fetchTraefikSettingsSSR(
 
 /** Server-only: Git provider settings for Git/GitHub/GitLab screens (organization-scoped). */
 export async function fetchGitSettingsSSR(
-  organizationPublicId: string,
 ): Promise<GitSettingsPublic | null> {
-  const org = organizationPublicId.trim();
-  if (!org) return null;
-  const u = new URL(`${apiBase()}/api/git/settings`);
-  u.searchParams.set("organizationPublicId", org);
-  const res = await fetch(u.toString(), {
+  const res = await fetch(`${apiBase()}/api/git/settings`, {
     headers: await cookieHeaders(),
     cache: "no-store",
   });
@@ -426,10 +369,24 @@ export async function fetchOrganizationsListSSR(): Promise<OrganizationPublic[]>
   });
 }
 
+export async function fetchActiveOrganizationSSR(): Promise<string | null> {
+  const res = await fetch(`${apiBase()}/api/organizations/active`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { organizationPublicId?: string | null };
+  const id =
+    typeof data.organizationPublicId === "string"
+      ? data.organizationPublicId.trim()
+      : "";
+  return id || null;
+}
+
 export async function fetchOrganizationMembersSSR(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
 ): Promise<OrganizationMemberPublic[]> {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) return [];
   const res = await fetch(`${apiBase()}/api/organizations/${encodeURIComponent(id)}/members`, {
     headers: await cookieHeaders(),
@@ -485,12 +442,12 @@ function emptyAuditLogPage(pageSize: number): OrganizationAuditLogPage {
 
 /** Server-only: organization audit log (requires Management · Audit log or owner). */
 export async function fetchOrganizationAuditLogSSR(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   opts?: { page?: number; pageSize?: number },
 ): Promise<OrganizationAuditLogPage> {
   const pageSize = opts?.pageSize ?? 12;
   const page = opts?.page ?? 1;
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) return emptyAuditLogPage(pageSize);
 
   const qs = new URLSearchParams();
@@ -548,9 +505,9 @@ export async function fetchOrganizationAuditLogSSR(
 }
 
 export async function fetchOrganizationProjectsSSR(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
 ): Promise<OrganizationProjectListItem[]> {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   if (!id) return [];
   const res = await fetch(`${apiBase()}/api/organizations/${encodeURIComponent(id)}/projects`, {
     headers: await cookieHeaders(),
@@ -612,12 +569,9 @@ export async function fetchOrganizationSSR(
 export async function fetchS3BucketObjectsSSR(
   profileId: string,
   prefix = "",
-  organizationPublicId?: string | null,
 ): Promise<S3BucketListResponse | null> {
   const q = new URLSearchParams();
   if (prefix) q.set("prefix", prefix);
-  const org = organizationPublicId?.trim();
-  if (org) q.set("organizationPublicId", org);
   const qs = q.toString();
   const res = await fetch(
     `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileId)}/objects${qs ? `?${qs}` : ""}`,
@@ -631,11 +585,8 @@ export async function fetchS3BucketObjectsSSR(
 export async function fetchS3PrefixSummarySSR(
   profileId: string,
   folderPrefix: string,
-  organizationPublicId?: string | null,
 ): Promise<S3PrefixSummaryResponse | null> {
   const q = new URLSearchParams({ prefix: folderPrefix });
-  const org = organizationPublicId?.trim();
-  if (org) q.set("organizationPublicId", org);
   const res = await fetch(
     `${apiBase()}/api/s3/profiles/${encodeURIComponent(profileId)}/prefix-summary?${q.toString()}`,
     { headers: await cookieHeaders(), cache: "no-store" },

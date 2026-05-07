@@ -3,5 +3,5 @@ import { RegistrySettingsClient } from "../_components/registry-settings-client"
 
 export default async function RegistryGhcrPage() {
   const orgPid = (await getServerActiveOrganizationPublicId())?.trim() ?? "";
-  return <RegistrySettingsClient preset="ghcr" organizationPublicId={orgPid} />;
+  return <RegistrySettingsClient preset="ghcr" activeOrgPublicId={orgPid} />;
 }

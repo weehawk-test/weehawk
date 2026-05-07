@@ -5,5 +5,5 @@ export const dynamic = "force-dynamic";
 
 export default async function CreateS3ProfilePage() {
   const orgPid = await getServerActiveOrganizationPublicId();
-  return <CreateS3ProfileClient organizationPublicId={orgPid ?? undefined} />;
+  return <CreateS3ProfileClient activeOrgPublicId={orgPid ?? undefined} />;
 }

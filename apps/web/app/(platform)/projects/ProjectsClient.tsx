@@ -39,10 +39,10 @@ function projectRouteId(project: { id: string; publicId?: string }): string {
 
 function CreateProjectModal({
   onClose,
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
   onClose: () => void;
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
   const router = useRouter();
   const create = useCreateProject();
@@ -52,16 +52,16 @@ function CreateProjectModal({
     defaultValues: {
       name: "",
       description: "",
-      ...(organizationPublicId?.trim()
-        ? { organizationPublicId: organizationPublicId.trim() }
+      ...(activeOrgPublicId?.trim()
+        ? { organizationPublicId: activeOrgPublicId.trim() }
         : {}),
     },
   });
 
   const onSubmit = (data: CreateProjectInput) => {
     const payload: CreateProjectInput =
-      organizationPublicId?.trim() != null && organizationPublicId.trim() !== ""
-        ? { ...data, organizationPublicId: organizationPublicId.trim() }
+      activeOrgPublicId?.trim() != null && activeOrgPublicId.trim() !== ""
+        ? { ...data, organizationPublicId: activeOrgPublicId.trim() }
         : data;
     create.mutate(payload, {
       onSuccess: () => {
@@ -153,16 +153,16 @@ export default function ProjectsClient({
   urlQ,
   initialPageData,
   initialError,
-  organizationPublicId,
+  activeOrgPublicId,
   initialPageOrganizationId,
 }: {
   urlPage: number;
   urlQ: string;
   initialPageData?: ProjectsPageResponse;
   initialError?: string | null;
-  /** When set, lists/creates projects scoped to this organization (API `organizationPublicId`). */
-  organizationPublicId?: string;
-  /** Same as `organizationPublicId` on the server render that produced `initialPageData` (if any). */
+  /** When set, lists/creates projects scoped to active organization. */
+  activeOrgPublicId?: string;
+  /** Same as active org id on the server render that produced `initialPageData` (if any). */
   initialPageOrganizationId?: string;
 }) {
   const router = useRouter();
@@ -173,7 +173,7 @@ export default function ProjectsClient({
   const projectDetailBasePath = "/projects";
 
   const inOrgProjects =
-    organizationPublicId != null && String(organizationPublicId).trim() !== "";
+    activeOrgPublicId != null && String(activeOrgPublicId).trim() !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
   const allowOrgProjectAdd =
     !inOrgProjects ||
@@ -191,7 +191,7 @@ export default function ProjectsClient({
     urlPage,
     urlQ,
     initialPageData,
-    organizationPublicId,
+    activeOrgPublicId,
     initialPageOrganizationId,
   );
   const deleteProject = useDeleteProject();
@@ -236,7 +236,7 @@ export default function ProjectsClient({
     if (!ok) return;
 
     deleteProject.mutate(
-      { id, organizationPublicId: organizationPublicId?.trim() || undefined },
+      { id, activeOrgPublicId: activeOrgPublicId?.trim() || undefined },
       {
       onSuccess: () => {
         toast({ title: "Project Deleted", description: `"${name}" has been removed.` });
@@ -261,9 +261,9 @@ export default function ProjectsClient({
 
     setIsBulkDeleting(true);
     try {
-      const orgPid = organizationPublicId?.trim() || undefined;
+      const orgPid = activeOrgPublicId?.trim() || undefined;
       const results = await Promise.allSettled(
-        ids.map((id) => deleteProject.mutateAsync({ id, organizationPublicId: orgPid })),
+        ids.map((id) => deleteProject.mutateAsync({ id, activeOrgPublicId: orgPid })),
       );
       const removed = results.filter((r) => r.status === "fulfilled").length;
       const fail = results.length - removed;
@@ -292,7 +292,7 @@ export default function ProjectsClient({
       {showCreate ? (
         <CreateProjectModal
           onClose={() => setShowCreate(false)}
-          organizationPublicId={organizationPublicId}
+          activeOrgPublicId={activeOrgPublicId}
         />
       ) : null}
 

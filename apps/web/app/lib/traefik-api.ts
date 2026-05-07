@@ -3,7 +3,7 @@ import { authFetch } from "./auth-fetch";
 
 export type TraefikSettingsPayload = {
   id: number;
-  /** Internal tenant key (API only); UI uses `organizationPublicId` in requests. */
+  /** Internal tenant key (API only); UI uses active org context in requests. */
   organizationId?: number;
   acmeEmail: string;
   platformDomain: string | null;
@@ -49,13 +49,10 @@ async function errorBody(res: Response): Promise<string> {
 
 export async function fetchTraefikSettings(
   accessToken: string,
-  organizationPublicId: string,
 ): Promise<TraefikSettingsPayload> {
-  const org = organizationPublicId.trim();
-  if (!org) throw new Error("organizationPublicId is required");
   const res = await authFetch(
     accessToken,
-    `${API_BASE}/api/traefik/settings?organizationPublicId=${encodeURIComponent(org)}`,
+    `${API_BASE}/api/traefik/settings`,
     { method: "GET" },
   );
   if (!res.ok) throw new Error(await errorBody(res));
@@ -65,12 +62,8 @@ export async function fetchTraefikSettings(
 export async function updateTraefikSettings(
   accessToken: string,
   patch: TraefikSettingsPatch,
-  organizationPublicId: string,
 ): Promise<TraefikSettingsPayload> {
-  const org = organizationPublicId.trim();
-  if (!org) throw new Error("organizationPublicId is required");
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await authFetch(accessToken, `${API_BASE}/api/traefik/settings${q}`, {
+  const res = await authFetch(accessToken, `${API_BASE}/api/traefik/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),

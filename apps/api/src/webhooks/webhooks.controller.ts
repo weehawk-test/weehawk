@@ -20,6 +20,7 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { CreateWebhookDto } from './dto/create-webhook.dto';
 import { UpdateWebhookDto } from './dto/update-webhook.dto';
 import { WebhooksService } from './webhooks.service';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 
 type AuthedReq = { user?: { email: string; userId: number } };
 
@@ -35,12 +36,26 @@ type AuthedReq = { user?: { email: string; userId: number } };
 )
 @Controller('api/webhooks')
 export class WebhooksController {
-  constructor(private readonly webhooksService: WebhooksService) {}
+  constructor(
+    private readonly webhooksService: WebhooksService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
+  ) {}
 
   private uid(req?: AuthedReq): number {
     const id = req?.user?.userId;
     if (!id) throw new UnauthorizedException('User context missing');
     return id;
+  }
+
+  private async resolveOrg(
+    req: AuthedReq,
+    activeOrgPublicId?: string,
+  ): Promise<string | undefined> {
+    const r = await this.activeOrganizationService.resolvePreferredOrganizationPublicId(
+      this.uid(req),
+      activeOrgPublicId,
+    );
+    return r ?? undefined;
   }
 
   @Post()
@@ -49,53 +64,57 @@ export class WebhooksController {
   }
 
   @Get()
-  list(
+  async list(
     @Req() req: AuthedReq,
     @Query('includeHidden', new DefaultValuePipe(false), ParseBoolPipe)
     includeHidden: boolean,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.webhooksService.list(this.uid(req), {
       includeHidden,
-      organizationPublicId,
+      organizationPublicId: org,
     });
   }
 
   @Get(':id')
-  findOne(
+  async findOne(
     @Req() req: AuthedReq,
     @Param('id') id: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
-    return this.webhooksService.findOne(this.uid(req), id, organizationPublicId);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
+    return this.webhooksService.findOne(this.uid(req), id, org);
   }
 
   @Get(':id/last-log')
-  readLastRunLog(
+  async readLastRunLog(
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Query('lines', new DefaultValuePipe(200)) lines: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     const n = Number(lines);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.webhooksService.readLastRunLog(this.uid(req), id, {
       lines: Number.isFinite(n) ? n : 200,
-      organizationPublicId,
+      organizationPublicId: org,
     });
   }
 
   @Patch(':id')
-  update(
+  async update(
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Body() dto: UpdateWebhookDto,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.webhooksService.update(
       this.uid(req),
       id,
       dto,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -103,9 +122,10 @@ export class WebhooksController {
   async remove(
     @Req() req: AuthedReq,
     @Param('id') id: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
-    await this.webhooksService.remove(this.uid(req), id, organizationPublicId);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
+    await this.webhooksService.remove(this.uid(req), id, org);
     return { ok: true };
   }
 }

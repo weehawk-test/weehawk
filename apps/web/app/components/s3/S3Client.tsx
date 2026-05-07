@@ -90,13 +90,13 @@ const S3_PROVIDER_PRESETS: S3ProviderPreset[] = [
 export function S3Client({
   initialProfiles,
   initialError,
-  organizationPublicId = null,
+  activeOrgPublicId = null,
 }: {
   initialProfiles: S3ProfilePublic[];
   initialError: string | null;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 }) {
-  const orgTrim = organizationPublicId?.trim();
+  const orgTrim = activeOrgPublicId?.trim();
   const s3QueryOrg = orgTrim && orgTrim.length > 0 ? orgTrim : null;
   const s3BasePath = "/s3";
   const inOrgS3 = orgTrim != null && orgTrim !== "";
@@ -114,7 +114,7 @@ export function S3Client({
   const queryClient = useQueryClient();
   const profilesQuery = useQuery({
     queryKey: ["s3-profiles", s3QueryOrg],
-    queryFn: () => listS3ProfilesApi(s3QueryOrg!),
+    queryFn: () => listS3ProfilesApi(),
     enabled: Boolean(accessToken && s3QueryOrg),
     initialData: s3QueryOrg ? initialProfiles : undefined,
   });
@@ -152,10 +152,7 @@ export function S3Client({
   useEffect(() => {
     if (!isAddOpen || !accessToken) return;
     let cancelled = false;
-    void fetchRemoteServers(
-      accessToken,
-      organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
-    )
+    void fetchRemoteServers(accessToken)
       .then((rows) => {
         if (!cancelled) {
           setDeployServersForTest(rows.filter((r) => r.serverRole === "deploy"));
@@ -167,7 +164,7 @@ export function S3Client({
     return () => {
       cancelled = true;
     };
-  }, [isAddOpen, accessToken, organizationPublicId]);
+  }, [isAddOpen, accessToken, activeOrgPublicId]);
 
   const canSubmit = useMemo(() => {
     if (!orgTrim) return false;
@@ -232,7 +229,6 @@ export function S3Client({
       accessKeyId: form.accessKeyId.trim(),
       secretAccessKey: secret,
       forcePathStyle,
-      organizationPublicId: orgTrim,
     };
   }, [form, orgTrim]);
 
@@ -298,7 +294,7 @@ export function S3Client({
     try {
       const target = profiles.find((p) => p.name === name);
       if (!target) throw new Error("S3 destination not found.");
-      await deleteS3ProfileApi(s3ProfileRouteId(target), organizationPublicId);
+      await deleteS3ProfileApi(s3ProfileRouteId(target));
       toast({ title: "Deleted", description: name });
       void queryClient.invalidateQueries({ queryKey: ["s3-profiles", s3QueryOrg] });
     } catch (e) {
@@ -327,7 +323,7 @@ export function S3Client({
         names.map((name) => {
           const target = profiles.find((p) => p.name === name);
           if (!target) throw new Error(`S3 destination "${name}" not found.`);
-          return deleteS3ProfileApi(s3ProfileRouteId(target), organizationPublicId);
+          return deleteS3ProfileApi(s3ProfileRouteId(target));
         }),
       );
       profilesBulk.clear();

@@ -7,20 +7,20 @@ import { fetchRemoteServersSSR } from "@/lib/server-fetch";
 
 export default async function Page({
   searchParams,
-  organizationPublicId: orgPublicIdProp,
+  activeOrgPublicId: activeOrgPublicIdProp,
 }: {
   searchParams: Promise<{ page?: string; q?: string; server?: string }>;
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
+  void activeOrgPublicIdProp;
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
 
-  const orgPid = orgPublicIdProp?.trim();
   const secretsBase = "/secrets";
   const remoteServerHref = "/remote-server";
 
-  const remoteServers = await fetchRemoteServersSSR(orgPid ?? undefined);
+  const remoteServers = await fetchRemoteServersSSR();
   const deployServers = filterSshDeployServers(remoteServers);
   const serverParam = typeof sp.server === "string" ? parseInt(sp.server, 10) : NaN;
   const explicitId = Number.isInteger(serverParam) && serverParam > 0 ? serverParam : null;

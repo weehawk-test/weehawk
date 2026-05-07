@@ -17,16 +17,14 @@ export default async function DockerManagerServerLayout({
   params: Promise<{ serverId: string }>;
 }) {
   const { serverId } = await params;
-  const organizationPublicId = (await getServerActiveOrganizationPublicId()) ?? "";
+  const activeOrgPublicId = (await getServerActiveOrganizationPublicId()) ?? "";
   const target = parseConsoleServerSlug(serverId);
   /** Block invalid / legacy numeric slugs before rendering any console page. */
   if (target == null || /^[0-9]+$/.test(target)) {
     redirect("/resource-not-found");
   }
-  /** Enforce access: personal remote servers, or org servers when `organizationPublicId` matches. */
-  const remoteServers = await fetchRemoteServersSSR(
-    organizationPublicId !== "" ? organizationPublicId : undefined,
-  );
+  /** Enforce access: personal remote servers, or org servers when active org matches. */
+  const remoteServers = await fetchRemoteServersSSR();
   const canAccess = remoteServers.some(
     (row) => String(row.publicId ?? "").trim() === target,
   );
@@ -34,14 +32,14 @@ export default async function DockerManagerServerLayout({
     redirect("/resource-not-found");
   }
 
-  if (organizationPublicId !== "") {
-    const org = await fetchOrganizationSSR(organizationPublicId);
+  if (activeOrgPublicId !== "") {
+    const org = await fetchOrganizationSSR(activeOrgPublicId);
     if (!org) {
       redirect("/resource-not-found");
     }
     if (!orgMemberAllowsRemoteServerDockerManager(org.workspacePermissions)) {
       redirectOrgWorkspaceAccessDenied(
-        organizationPublicId,
+        activeOrgPublicId,
         ORG_WORKSPACE_PERMISSIONS.REMOTE_SERVER_DOCKER_MANAGER,
       );
     }

@@ -17,16 +17,16 @@ export default async function S3BucketPage({
   const p = await params;
   const profileId = decodeURIComponent((p.id ?? "").trim());
   const prefixParam = s3PathSegmentsToPrefix(p.prefix);
-  const orgPid = await getServerActiveOrganizationPublicId();
+  await getServerActiveOrganizationPublicId();
 
   const initialList = profileId
-    ? await fetchS3BucketObjectsSSR(profileId, prefixParam, orgPid)
+    ? await fetchS3BucketObjectsSSR(profileId, prefixParam)
     : null;
   const initialFolderSummaries: Record<string, S3PrefixSummaryResponse> = {};
   if (initialList?.folders?.length) {
     const results = await Promise.all(
       initialList.folders.map(async (f) => {
-        const s = await fetchS3PrefixSummarySSR(profileId, f.prefix, orgPid);
+        const s = await fetchS3PrefixSummarySSR(profileId, f.prefix);
         return [f.prefix, s] as const;
       }),
     );
@@ -42,7 +42,6 @@ export default async function S3BucketPage({
       initialPrefix={prefixParam}
       initialList={initialList}
       initialFolderSummaries={initialFolderSummaries}
-      organizationPublicId={orgPid ?? undefined}
     />
   );
 }

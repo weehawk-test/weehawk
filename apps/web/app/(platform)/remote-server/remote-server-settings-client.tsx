@@ -96,14 +96,14 @@ function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): str
 export function RemoteServerSettingsClient({
   initialRemoteServers,
   initialTraefikSettings,
-  organizationPublicId = null,
+  activeOrgPublicId = null,
   initialRemoteServersOrganizationId = null,
   initialTraefikOrganizationId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
   initialTraefikSettings?: TraefikSettingsPayload | null;
   /** When set (org workspace), list/create servers scoped to this organization. */
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
   initialRemoteServersOrganizationId?: string | null;
   initialTraefikOrganizationId?: string | null;
 }) {
@@ -112,7 +112,7 @@ export function RemoteServerSettingsClient({
   const confirm = useConfirm();
   const qc = useQueryClient();
   const orgWorkspace = useOptionalOrgWorkspace();
-  const trimmedOrg = organizationPublicId?.trim() ?? "";
+  const trimmedOrg = activeOrgPublicId?.trim() ?? "";
   const orgScopeSegment = orgScopedQuerySegment(trimmedOrg);
   const trimmedSsrServersOrg = initialRemoteServersOrganizationId?.trim() ?? "";
   const useSsrRemoteInitial =
@@ -151,8 +151,7 @@ export function RemoteServerSettingsClient({
   const traefikSettingsQueryKey = ["traefik", "settings", orgScopeSegment] as const;
   const list = useQuery({
     queryKey: remoteServersQueryKey,
-    queryFn: () =>
-      fetchRemoteServers(accessToken ?? "", trimmedOrg !== "" ? trimmedOrg : undefined),
+    queryFn: () => fetchRemoteServers(accessToken ?? ""),
     enabled: Boolean(accessToken),
     initialData: useSsrRemoteInitial ? initialRemoteServers : undefined,
     initialDataUpdatedAt: useSsrRemoteInitial ? Date.now() : undefined,
@@ -162,7 +161,7 @@ export function RemoteServerSettingsClient({
 
   const traefikSettingsQ = useQuery({
     queryKey: traefikSettingsQueryKey,
-    queryFn: () => fetchTraefikSettings(accessToken ?? "", trimmedOrg),
+    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
     enabled: Boolean(accessToken && trimmedOrg),
     initialData: useSsrTraefikInitial ? (initialTraefikSettings ?? undefined) : undefined,
     initialDataUpdatedAt: useSsrTraefikInitial ? Date.now() : undefined,
@@ -260,8 +259,8 @@ export function RemoteServerSettingsClient({
         privateKey: form.privateKey.trim(),
         serverRole: form.serverRole,
         ...(pip ? { publicIpv4: pip } : {}),
-        ...(organizationPublicId?.trim()
-          ? { organizationPublicId: organizationPublicId.trim() }
+        ...(activeOrgPublicId?.trim()
+          ? { organizationPublicId: activeOrgPublicId.trim() }
           : {}),
       });
     },
@@ -750,7 +749,7 @@ export function RemoteServerSettingsClient({
                     accessToken={accessToken}
                     row={row}
                     installMaintenanceAllowed={allowOrgInstallMaintenance}
-                    organizationPublicIdForProvision={trimmedOrg}
+                    activeOrgPublicIdForProvision={trimmedOrg}
                   />
                 </>
               </div>

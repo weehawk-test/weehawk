@@ -18,11 +18,11 @@ export const dynamic = "force-dynamic";
 export async function NotificationsEditView({
   params,
   notificationsBasePath = NOTIFICATIONS_BASE_PATH,
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
   params: Promise<{ id: string }>;
   notificationsBasePath?: string;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 }) {
   const { id: rawId } = await params;
   const id = rawId.trim();
@@ -35,12 +35,11 @@ export async function NotificationsEditView({
       urlPage,
       CHANNELS_PAGE_SIZE,
       urlQ,
-      organizationPublicId,
     );
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
   }
-  const channels = await fetchNotificationChannelsSSR(organizationPublicId);
+  const channels = await fetchNotificationChannelsSSR();
   const channel = channels.find((ch) => String(ch.publicId ?? "") === id || String(ch.id) === id) ?? null;
   if (!channel) redirect("/resource-not-found");
 
@@ -53,7 +52,7 @@ export async function NotificationsEditView({
       initialMode="edit"
       initialRouteChannel={channel}
       notificationsBasePath={notificationsBasePath}
-      organizationPublicId={organizationPublicId ?? undefined}
+      activeOrgPublicId={activeOrgPublicId ?? undefined}
     />
   );
 }
@@ -67,6 +66,6 @@ export default async function NotificationsEditPage({
   return NotificationsEditView({
     params,
     notificationsBasePath: NOTIFICATIONS_BASE_PATH,
-    organizationPublicId: orgPid ?? undefined,
+    activeOrgPublicId: orgPid ?? undefined,
   });
 }

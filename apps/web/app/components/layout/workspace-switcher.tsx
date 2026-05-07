@@ -15,14 +15,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  setActiveOrganizationPublicId,
   fetchOrganizations,
   ORGANIZATIONS_LIST_CHANGED_EVENT,
 } from "@/lib/organizations-api";
 import type { OrganizationPublic } from "@/lib/organizations-types";
-import {
-  setActiveOrganizationPublicBrowserCookie,
-  WEHAWK_ACTIVE_ORG_COOKIE,
-} from "@/lib/active-org-cookie";
 import { cn } from "@/lib/utils";
 
 /** Always land on the workspace start page after switching organization. */
@@ -89,17 +86,6 @@ const menuItemClass =
 const rowLinkClass =
   "flex w-full min-w-0 items-center gap-2 py-1.5 pl-2 pr-1.5 text-left no-underline outline-none";
 
-function readCookieValue(name: string): string {
-  if (typeof document === "undefined") return "";
-  const parts = document.cookie.split("; ");
-  for (const part of parts) {
-    const i = part.indexOf("=");
-    if (i <= 0) continue;
-    if (part.slice(0, i) === name) return decodeURIComponent(part.slice(i + 1));
-  }
-  return "";
-}
-
 export function WorkspaceSwitcher({
   currentLabel = "",
   activeOrgPublicId,
@@ -113,21 +99,18 @@ export function WorkspaceSwitcher({
   const [orgs, setOrgs] = useState<OrganizationPublic[]>([]);
   const [pendingOrgPublicId, setPendingOrgPublicId] = useState("");
   const [pendingOrgLabel, setPendingOrgLabel] = useState("");
-  const cookieActiveOrgPublicId = readCookieValue(WEHAWK_ACTIVE_ORG_COOKIE).trim();
   const effectiveActiveOrgPublicId =
     pendingOrgPublicId ||
-    (cookieActiveOrgPublicId !== ""
-      ? cookieActiveOrgPublicId
-      : activeOrgPublicId != null && activeOrgPublicId.trim() !== ""
-        ? activeOrgPublicId.trim()
-        : "");
+    (activeOrgPublicId != null && activeOrgPublicId.trim() !== ""
+      ? activeOrgPublicId.trim()
+      : "");
 
   const selectOrganization = (publicId: string) => {
     const nextId = publicId.trim();
     const nextOrg = orgs.find((o) => o.publicId === nextId) ?? null;
     setPendingOrgPublicId(nextId);
     setPendingOrgLabel(nextOrg?.name?.trim() ?? "");
-    setActiveOrganizationPublicBrowserCookie(publicId);
+    void setActiveOrganizationPublicId(nextId).catch(() => undefined);
     /** Drop cached lists/details so UI cannot show the previous org’s data while RSC refreshes. */
     queryClient.clear();
     onNavigate?.();
@@ -142,7 +125,7 @@ export function WorkspaceSwitcher({
         router.refresh();
       }
     };
-    /** Next tick: cookie is committed before refresh/navigation requests. */
+    /** Next tick: active org API call starts before refresh/navigation requests. */
     queueMicrotask(runNav);
   };
 
@@ -179,8 +162,7 @@ export function WorkspaceSwitcher({
   useEffect(() => {
     if (!pendingOrgPublicId) return;
     const propOrg = activeOrgPublicId?.trim() ?? "";
-    const cookieOrg = readCookieValue(WEHAWK_ACTIVE_ORG_COOKIE).trim();
-    if (pendingOrgPublicId === propOrg || pendingOrgPublicId === cookieOrg) {
+    if (pendingOrgPublicId === propOrg) {
       setPendingOrgPublicId("");
       setPendingOrgLabel("");
     }

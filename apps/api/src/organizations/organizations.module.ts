@@ -11,6 +11,7 @@ import { OrganizationsService } from './organizations.service';
 import { OrganizationsController } from './organizations.controller';
 import { OrgMembershipGuard } from './guards/org-membership.guard';
 import { OrganizationInviteService } from './organization-invite.service';
+import { ActiveOrganizationService } from './active-organization.service';
 
 @Module({
   imports: [
@@ -27,11 +28,13 @@ import { OrganizationInviteService } from './organization-invite.service';
   providers: [
     OrganizationsRepository,
     OrganizationsService,
+    ActiveOrganizationService,
     OrganizationInviteService,
     OrgMembershipGuard,
   ],
   exports: [
     OrganizationsService,
+    ActiveOrganizationService,
     OrgMembershipGuard,
     OrganizationsRepository,
   ],

@@ -50,7 +50,7 @@ export default function RegistryCreatePage() {
 
   const remoteServersQ = useQuery({
     queryKey: ["remote-servers", orgScopedQuerySegment(orgPid)],
-    queryFn: () => fetchRemoteServers(accessToken ?? "", orgPid),
+    queryFn: () => fetchRemoteServers(accessToken ?? ""),
     enabled: Boolean(accessToken && orgPid),
     staleTime: 120_000,
   });
@@ -115,7 +115,7 @@ export default function RegistryCreatePage() {
     if (!accessToken || !orgPid || !canSubmit) return;
     setIsSaving(true);
     try {
-      await createRegistryAccountApi(accessToken, orgPid, {
+      await createRegistryAccountApi(accessToken, {
         name: preset === "custom" ? providerUrl.trim() : PRESETS[preset].label,
         providerUrl: providerUrl.trim(),
         username: username.trim(),

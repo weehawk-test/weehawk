@@ -10,7 +10,7 @@ export default async function RegistryPage() {
   let initialAccounts: RegistryAccountRow[] = [];
   let initialError: string | null = null;
   try {
-    initialAccounts = await fetchRegistryAccountsSSR(orgPid ?? undefined);
+    initialAccounts = await fetchRegistryAccountsSSR();
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
   }

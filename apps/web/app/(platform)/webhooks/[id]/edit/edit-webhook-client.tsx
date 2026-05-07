@@ -54,22 +54,22 @@ type Props = {
   initialWebhook: WebhookDetail;
   initialChannels: NotificationChannel[];
   initialRemoteServers: RemoteServerRow[];
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 };
 
 export function EditWebhookClient({
   initialWebhook,
   initialChannels,
   initialRemoteServers,
-  organizationPublicId = null,
+  activeOrgPublicId = null,
 }: Props) {
   const router = useRouter();
   const { accessToken } = useAuth();
   const { toast } = useToast();
-  const updateMutation = useUpdateWebhook(organizationPublicId);
+  const updateMutation = useUpdateWebhook(activeOrgPublicId);
   const webhooksHref = useMemo(
-    () => workspaceRoute(organizationPublicId, "/webhooks"),
-    [organizationPublicId],
+    () => workspaceRoute(activeOrgPublicId, "/webhooks"),
+    [activeOrgPublicId],
   );
 
   const [name, setName] = useState(initialWebhook.name);
@@ -138,13 +138,12 @@ export function EditWebhookClient({
     }
     try {
       setAddingHostname(true);
-      const orgTrim = organizationPublicId?.trim() || undefined;
-      const servers = await fetchRemoteServers(accessToken, orgTrim);
+      const servers = await fetchRemoteServers(accessToken);
       const target = servers.find((s) => s.id === selectedDeployServer.id);
       if (!target) throw new Error("Remote server not found");
       const routeId = target.publicId?.trim() || String(target.id);
       const nextJson = upsertHostInDomainsJson(clean, target.domainsJson ?? null);
-      const updated = await updateRemoteServerApi(accessToken, routeId, { domainsJson: nextJson }, orgTrim);
+      const updated = await updateRemoteServerApi(accessToken, routeId, { domainsJson: nextJson });
       setRemoteServers((prev) =>
         prev.map((row) => (row.id === updated.id ? { ...row, domainsJson: updated.domainsJson } : row)),
       );

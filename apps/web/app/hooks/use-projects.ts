@@ -12,9 +12,9 @@ import {
 export function projectQueryKey(
   userId: number | undefined,
   projectId: string,
-  organizationPublicId?: string | null,
+  activeOrgPublicId?: string | null,
 ) {
-  return ["projects", userId ?? "none", projectId, organizationPublicId?.trim() ?? ""] as const;
+  return ["projects", userId ?? "none", projectId, activeOrgPublicId?.trim() ?? ""] as const;
 }
 
 export function useProjectsPage(
@@ -23,15 +23,15 @@ export function useProjectsPage(
   ssrPage: number,
   ssrQ: string,
   initialPageData?: ProjectsPageResponse,
-  organizationPublicId?: string,
-  /** Must match `organizationPublicId` used when SSR fetched `initialPageData` (usually same as current org id). */
+  activeOrgPublicId?: string,
+  /** Must match active org id used when SSR fetched `initialPageData` (usually same current org). */
   initialPageOrganizationId?: string,
 ) {
   const { user } = useAuth();
   const ownerKey = user?.userId ?? "none";
   const trimmed = q.trim();
   const ssrTrim = ssrQ.trim();
-  const orgKey = organizationPublicId?.trim() ?? "";
+  const orgKey = activeOrgPublicId?.trim() ?? "";
   const initialOrgKey = initialPageOrganizationId?.trim() ?? "";
   const hasSsrInitial =
     initialPageData !== undefined &&
@@ -41,8 +41,8 @@ export function useProjectsPage(
 
   return useQuery({
     queryKey: ["projects", "list", ownerKey, orgKey, page, trimmed],
-    queryFn: () => fetchProjectsPage(page, undefined, trimmed, organizationPublicId),
-    enabled: Boolean(user?.userId && orgKey),
+    queryFn: () => fetchProjectsPage(page, undefined, trimmed),
+    enabled: Boolean(user?.userId),
     initialData:
       hasSsrInitial && user?.userId != null ? initialPageData : undefined,
     initialDataUpdatedAt:
@@ -61,18 +61,18 @@ export function useProject(
   options?: {
     initialData?: Project;
     skipClientFetch?: boolean;
-    organizationPublicId?: string | null;
+    activeOrgPublicId?: string | null;
   },
 ) {
   const { user } = useAuth();
   const ownerKey = user?.userId ?? "none";
-  const orgKey = options?.organizationPublicId?.trim() ?? "";
+  const orgKey = options?.activeOrgPublicId?.trim() ?? "";
   const hasInitial = options?.initialData !== undefined;
   return useQuery({
     queryKey: projectQueryKey(user?.userId, id, orgKey || undefined),
-    queryFn: () => fetchProject(id, orgKey || undefined),
+    queryFn: () => fetchProject(id),
     /** Stay enabled with SSR `initialData` so org-realtime invalidation can refetch. */
-    enabled: Boolean(id) && Boolean(orgKey),
+    enabled: Boolean(id),
     initialData: options?.initialData,
     initialDataUpdatedAt: hasInitial ? Date.now() : undefined,
     staleTime: hasInitial ? Infinity : 10_000,
@@ -92,8 +92,8 @@ export function useCreateProject() {
 export function useDeleteProject() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { id: string; organizationPublicId?: string | null }) =>
-      deleteProjectApi(args.id, args.organizationPublicId),
+    mutationFn: (args: { id: string; activeOrgPublicId?: string | null }) =>
+      deleteProjectApi(args.id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects", "list"], exact: false }),
   });
 }

@@ -23,7 +23,8 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
-import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
+import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 import { RemoteServersService } from './remote-servers.service';
 import { RemoteServerProvisionService } from './remote-server-provision.service';
 import { CreateRemoteServerDto } from './dto/create-remote-server.dto';
@@ -38,6 +39,7 @@ export class RemoteServersController {
   constructor(
     private readonly remoteServersService: RemoteServersService,
     private readonly remoteServerProvisionService: RemoteServerProvisionService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
   ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
@@ -54,16 +56,24 @@ export class RemoteServersController {
   @ApiOperation({ summary: 'List SSH / Docker remote hosts' })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'List remote servers for this organization (membership required).',
+    required: false,
+    description:
+      'Organization workspace (`org_...`). Optional if an active organization is set server-side.',
   })
-  list(
+  async list(
     @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
+      this.uid(req),
+      organizationPublicId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+      },
+    );
     return this.remoteServersService.findAll(
       this.uid(req),
-      parseOrganizationPublicIdParam(organizationPublicId),
+      ctx.publicId,
     );
   }
 
@@ -92,20 +102,27 @@ export class RemoteServersController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
+    required: false,
     description:
-      'Organization workspace; ACME email in the script comes from that org’s Traefik settings.',
+      'Organization workspace; optional if an active organization is set server-side.',
   })
-  getProvisionScript(
+  async getProvisionScript(
     @Query('organizationPublicId') organizationPublicId: string,
     @Query('role') role?: string,
     @Req() req?: { user?: { userId: number } },
   ) {
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
+      this.uid(req),
+      organizationPublicId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+      },
+    );
     const r = role === 'build' ? 'build' : 'deploy';
     return this.remoteServerProvisionService.getProvisionScriptPreview(
       r,
       this.uid(req),
-      organizationPublicId,
+      ctx.publicId,
     );
   }
 

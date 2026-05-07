@@ -23,7 +23,7 @@ export default async function ProjectsPage({
   let initialError: string | null = null;
 
   try {
-    initialPageData = await fetchProjectsSSR(page, q, orgPid);
+    initialPageData = await fetchProjectsSSR(page, q);
   } catch (e) {
     initialError = e instanceof Error ? e.message : "Unknown error";
   }
@@ -34,7 +34,7 @@ export default async function ProjectsPage({
       urlQ={q}
       initialPageData={initialPageData}
       initialError={initialError}
-      organizationPublicId={orgPid}
+      activeOrgPublicId={orgPid}
       initialPageOrganizationId={orgPid}
     />
   );

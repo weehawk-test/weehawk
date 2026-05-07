@@ -76,7 +76,7 @@ export function RegistryClient({
 
   const accountsQ = useQuery({
     queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
-    queryFn: () => fetchRegistryAccounts(accessToken ?? "", orgPid),
+    queryFn: () => fetchRegistryAccounts(accessToken ?? ""),
     enabled: Boolean(accessToken && orgPid),
     initialData: initialAccounts,
     refetchOnMount: "always",
@@ -104,7 +104,7 @@ export function RegistryClient({
   const bulk = useBulkSelection(cardKeys);
   const remoteServersQ = useQuery({
     queryKey: ["remote-servers", orgScopedQuerySegment(orgPid)],
-    queryFn: () => fetchRemoteServers(accessToken ?? "", orgPid),
+    queryFn: () => fetchRemoteServers(accessToken ?? ""),
     enabled: Boolean(accessToken && orgPid),
     staleTime: 120_000,
   });
@@ -125,7 +125,7 @@ export function RegistryClient({
     if (!accessToken || !orgPid) return;
     setDeletingId(publicId);
     try {
-      await deleteRegistryAccountApi(accessToken, orgPid, publicId);
+      await deleteRegistryAccountApi(accessToken, publicId);
       await queryClient.invalidateQueries({
         queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
       });
@@ -150,7 +150,6 @@ export function RegistryClient({
       setIsTesting(true);
       const out = await testSavedRegistryAccountApi(
         accessToken,
-        orgPid,
         testingId,
         testServerRef,
       );
@@ -177,7 +176,7 @@ export function RegistryClient({
     if (!accessToken || !orgPid || !editTarget) return;
     setIsEditing(true);
     try {
-      await updateRegistryAccountApi(accessToken, orgPid, editTarget.publicId, {
+      await updateRegistryAccountApi(accessToken, editTarget.publicId, {
         name: editName.trim(),
         providerUrl: editProviderUrl.trim(),
         username: editUsername.trim(),

@@ -20,12 +20,12 @@ export default async function DockerManagerSecretsPage({
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
-  const organizationPublicId = (await getServerActiveOrganizationPublicId()) || "";
+  const activeOrgPublicId = (await getServerActiveOrganizationPublicId()) || "";
 
   return (
     <DockerSecretsClient
       remoteServerId={remoteServerId}
-      organizationPublicId={organizationPublicId || undefined}
+      activeOrgPublicId={activeOrgPublicId || undefined}
       data={null}
       error={null}
       urlPage={page}

@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Req,
   UnauthorizedException,
   Controller,
@@ -23,8 +22,8 @@ import { RegistryService } from './registry.service';
 import { CreateRegistryAccountDto } from './dto/create-registry-account.dto';
 import { UpdateRegistryAccountDto } from './dto/update-registry-account.dto';
 import { TestRegistryAccountDto } from './dto/test-registry-account.dto';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 import { OrganizationsService } from '../organizations/organizations.service';
-import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
 
 @ApiTags('Registry')
@@ -34,6 +33,7 @@ import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organizatio
 export class RegistryAccountsController {
   constructor(
     private readonly registryService: RegistryService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
     private readonly organizationsService: OrganizationsService,
   ) {}
 
@@ -43,14 +43,6 @@ export class RegistryAccountsController {
     return id;
   }
 
-  private parseRequiredOrgPublicId(raw: string | undefined): string {
-    const t = raw?.trim() ?? '';
-    if (!t) {
-      throw new BadRequestException('organizationPublicId is required');
-    }
-    return parseOrganizationPublicIdParam(t);
-  }
-
   @Get()
   @ApiOperation({
     summary:
@@ -58,19 +50,18 @@ export class RegistryAccountsController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
+    required: false,
     description:
-      'Organization workspace; caller must have registry integration access.',
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   async list(
     @Req() req: { user?: { userId: number } },
-    @Query('organizationPublicId') organizationPublicId: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     const userId = this.uid(req);
-    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      pub,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
       },
@@ -85,8 +76,9 @@ export class RegistryAccountsController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'Organization workspace; credentials are stored per organization.',
+    required: false,
+    description:
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   async create(
     @Req() req: { user?: { userId: number } },
@@ -94,10 +86,9 @@ export class RegistryAccountsController {
     @Body() dto: CreateRegistryAccountDto,
   ) {
     const userId = this.uid(req);
-    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      pub,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
         requireAllWorkspaceAreas: [
@@ -127,8 +118,9 @@ export class RegistryAccountsController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'Organization workspace.',
+    required: false,
+    description:
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   async remove(
     @Req() req: { user?: { userId: number } },
@@ -136,10 +128,9 @@ export class RegistryAccountsController {
     @Param('accountRef') accountRef: string,
   ) {
     const userId = this.uid(req);
-    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      pub,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
         requireAllWorkspaceAreas: [
@@ -176,8 +167,9 @@ export class RegistryAccountsController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'Organization workspace.',
+    required: false,
+    description:
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   async update(
     @Req() req: { user?: { userId: number } },
@@ -186,10 +178,9 @@ export class RegistryAccountsController {
     @Body() dto: UpdateRegistryAccountDto,
   ) {
     const userId = this.uid(req);
-    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      pub,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
         requireAllWorkspaceAreas: [
@@ -227,8 +218,9 @@ export class RegistryAccountsController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'Organization workspace.',
+    required: false,
+    description:
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   async testSavedAccount(
     @Req() req: { user?: { userId: number } },
@@ -237,10 +229,9 @@ export class RegistryAccountsController {
     @Body() dto: TestRegistryAccountDto,
   ) {
     const userId = this.uid(req);
-    const pub = this.parseRequiredOrgPublicId(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      pub,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REGISTRY,
         requireAllWorkspaceAreas: [

@@ -517,7 +517,7 @@ function SecretRow({
 
 type Props = {
   remoteServerId: DockerSecretsRemoteServerId;
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
   data: PaginatedSecretsResponse | null;
   error: string | null;
   urlPage: number;
@@ -528,7 +528,7 @@ type Props = {
 
 export function DockerSecretsClient({
   remoteServerId,
-  organizationPublicId,
+  activeOrgPublicId,
   data,
   error,
   urlPage,
@@ -625,7 +625,7 @@ export function DockerSecretsClient({
   const isError = !!listError;
 
   useEffect(() => {
-    const orgId = organizationPublicId?.trim();
+    const orgId = activeOrgPublicId?.trim();
     if (!orgId) return;
     const base = socketIoHttpBase();
     const socket: Socket = io(`${base}/org-realtime`, {
@@ -643,7 +643,7 @@ export function DockerSecretsClient({
       socket.off("data_changed", onDataChanged);
       socket.disconnect();
     };
-  }, [organizationPublicId, pagedListQuery]);
+  }, [activeOrgPublicId, pagedListQuery]);
 
   const handleBulkDeleteSecrets = async () => {
     const names = bulk.selectedInFiltered;

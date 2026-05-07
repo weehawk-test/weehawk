@@ -25,7 +25,7 @@ import {
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
-import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 
 @ApiTags('Projects')
 @ApiBearerAuth()
@@ -36,6 +36,7 @@ export class ProjectsController {
   constructor(
     private readonly projectsService: ProjectsService,
     private readonly organizationsService: OrganizationsService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
   ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
@@ -73,8 +74,9 @@ export class ProjectsController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'List projects in this organization (membership required).',
+    required: false,
+    description:
+      'Organization workspace (`org_...`). Optional if an active organization is set server-side.',
   })
   async findAll(
     @Query('page') pageStr?: string,
@@ -85,10 +87,9 @@ export class ProjectsController {
   ) {
     const page = parseInt(pageStr ?? '1', 10);
     const limit = parseInt(limitStr ?? '9', 10);
-    const orgRaw = parseOrganizationPublicIdParam(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      orgRaw,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       this.uid(req),
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
       },
@@ -112,18 +113,26 @@ export class ProjectsController {
   @ApiOperation({ summary: 'Get project details and its services' })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'Active organization workspace (`org_…`).',
+    required: false,
+    description:
+      'Active organization workspace (`org_…`). Optional if an active organization is set server-side.',
   })
   async findOne(
     @Param('publicId') publicId: string,
     @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
+      this.uid(req),
+      organizationPublicId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+      },
+    );
     const project = await this.projectsService.findOneWithRoute(
       publicId,
       this.uid(req),
-      organizationPublicId,
+      ctx.publicId,
       { requireOrgProjectView: true },
     );
     const op = await this.organizationsService.getPublicIdByInternalId(
@@ -143,18 +152,30 @@ export class ProjectsController {
     }),
   )
   @ApiOperation({ summary: 'update project' })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional if an active organization is set server-side; otherwise required.',
+  })
   async update(
     @Param('publicId') publicId: string,
     @Body() updateProjectDto: UpdateProjectDto,
     @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
+      this.uid(req),
+      organizationPublicId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+      },
+    );
     const project = await this.projectsService.update(
       publicId,
       updateProjectDto,
       this.uid(req),
-      organizationPublicId,
+      ctx.publicId,
     );
     const op = await this.organizationsService.getPublicIdByInternalId(
       project.organizationId,
@@ -166,16 +187,28 @@ export class ProjectsController {
 
   @Delete(':publicId')
   @ApiOperation({ summary: 'delete project' })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
-  remove(
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional if an active organization is set server-side; otherwise required.',
+  })
+  async remove(
     @Param('publicId') publicId: string,
     @Query('organizationPublicId') organizationPublicId: string,
     @Req() req: { user?: { userId: number } },
   ) {
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
+      this.uid(req),
+      organizationPublicId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.PROJECTS,
+      },
+    );
     return this.projectsService.remove(
       publicId,
       this.uid(req),
-      organizationPublicId,
+      ctx.publicId,
     );
   }
 }

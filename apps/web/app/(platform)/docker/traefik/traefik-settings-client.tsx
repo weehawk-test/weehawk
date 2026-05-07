@@ -24,7 +24,7 @@ export function TraefikSettingsClient() {
 
   const q = useQuery({
     queryKey: traefikQk,
-    queryFn: () => fetchTraefikSettings(accessToken ?? "", orgPub),
+    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
     enabled: Boolean(accessToken && orgPub),
   });
 
@@ -41,7 +41,7 @@ export function TraefikSettingsClient() {
 
   const mut = useMutation({
     mutationFn: (patch: { acmeEmail: string; platformDomain: string }) =>
-      updateTraefikSettings(accessToken ?? "", patch, orgPub),
+      updateTraefikSettings(accessToken ?? "", patch),
     onSuccess: (data) => {
       qc.setQueryData(traefikQk, data);
       setAcmeEmail(data.acmeEmail);

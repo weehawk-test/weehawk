@@ -10,6 +10,7 @@ import {
   fetchS3BucketObjectsSSR,
   fetchS3ProfilesSSR,
 } from "@/lib/server-fetch";
+import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 import { normalizeS3PrefixParam } from "@/lib/s3-prefix-param";
 import type { S3BucketListResponse } from "@/lib/s3-api";
 import { redirect } from "next/navigation";
@@ -38,8 +39,7 @@ export default async function ServiceDetailsPage({
 }) {
   const { id: projectIdRaw, serviceId: serviceIdRaw } = await params;
   const sp = await searchParams;
-  const organizationPublicId =
-    typeof sp.organizationPublicId === "string" ? sp.organizationPublicId.trim() : "";
+  await getServerActiveOrganizationPublicId();
 
   const safeProjectId = projectIdRaw.trim() ? projectIdRaw.trim() : null;
   const safeServiceId = serviceIdRaw.trim() ? serviceIdRaw.trim() : null;
@@ -49,9 +49,7 @@ export default async function ServiceDetailsPage({
   let initialRuntime: { running: boolean } | null = null;
   let initialSecretsPaged: PaginatedSecretsResponse | null = null;
   const [projectResult, serviceResult, runtimeResult] = await Promise.all([
-    safeProjectId
-      ? fetchProjectSSR(safeProjectId, organizationPublicId || undefined)
-      : Promise.resolve(null),
+    safeProjectId ? fetchProjectSSR(safeProjectId) : Promise.resolve(null),
     safeServiceId ? fetchServiceSSR(safeServiceId) : Promise.resolve(null),
     safeServiceId
       ? withSsrTimeout(fetchServiceRuntimeSSR(safeServiceId), SSR_RUNTIME_TIMEOUT_MS, null)
@@ -70,12 +68,7 @@ export default async function ServiceDetailsPage({
     initialService?.publicId &&
     (safeProjectId !== initialProject.publicId || safeServiceId !== initialService.publicId)
   ) {
-    const orgQ = organizationPublicId
-      ? `?organizationPublicId=${encodeURIComponent(organizationPublicId)}`
-      : "";
-    redirect(
-      `/projects/${initialProject.publicId}/services/${initialService.publicId}${orgQ}`,
-    );
+    redirect(`/projects/${initialProject.publicId}/services/${initialService.publicId}`);
   }
 
   const rsId = initialService?.remoteServerId;
@@ -91,7 +84,7 @@ export default async function ServiceDetailsPage({
   const s3ProfileId = typeof sp.s3Profile === "string" ? sp.s3Profile.trim() : "";
   const s3Prefix = normalizeS3PrefixParam(sp.s3Prefix);
   const initialS3Profiles = await withSsrTimeout(
-    fetchS3ProfilesSSR(organizationPublicId || undefined),
+    fetchS3ProfilesSSR(),
     SSR_S3_TIMEOUT_MS,
     [],
   );
@@ -108,7 +101,7 @@ export default async function ServiceDetailsPage({
     if (s3ProfileId) {
       const matchedProfile = initialS3Profiles.find((p) => p.publicId === s3ProfileId);
       const initialList = await withSsrTimeout(
-        fetchS3BucketObjectsSSR(s3ProfileId, s3Prefix, organizationPublicId || undefined),
+        fetchS3BucketObjectsSSR(s3ProfileId, s3Prefix),
         SSR_S3_TIMEOUT_MS,
         null,
       );

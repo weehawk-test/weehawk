@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
@@ -17,6 +16,7 @@ import { TraefikService } from './traefik.service';
 import { UpdateTraefikSettingsDto } from './dto/update-traefik-settings.dto';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 
 @ApiTags('Traefik')
 @ApiBearerAuth()
@@ -26,20 +26,13 @@ export class TraefikController {
   constructor(
     private readonly traefikService: TraefikService,
     private readonly organizationsService: OrganizationsService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
   ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
     const id = req?.user?.userId;
     if (!id) throw new UnauthorizedException('User context missing');
     return id;
-  }
-
-  private parseRequiredOrgPublicId(raw: string | undefined): string {
-    const t = raw?.trim() ?? '';
-    if (!t) {
-      throw new BadRequestException('organizationPublicId is required');
-    }
-    return t;
   }
 
   @Get('settings')
@@ -49,18 +42,18 @@ export class TraefikController {
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'Organization workspace; caller must have Domains access.',
+    required: false,
+    description:
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   async getSettings(
     @Req() req: { user?: { userId: number } },
-    @Query('organizationPublicId') organizationPublicId: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     const userId = this.uid(req);
-    const orgPub = this.parseRequiredOrgPublicId(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      orgPub,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS,
       },
@@ -72,21 +65,20 @@ export class TraefikController {
   @ApiOperation({ summary: 'Update Traefik / ACME settings (organization-scoped)' })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
+    required: false,
     description:
-      'Organization workspace; caller must have Domains + certificate email permission when not owner.',
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async putSettings(
     @Req() req: { user?: { userId: number } },
-    @Query('organizationPublicId') organizationPublicId: string | undefined,
+    @Query('organizationPublicId') organizationPublicId: string,
     @Body() dto: UpdateTraefikSettingsDto,
   ) {
     const userId = this.uid(req);
-    const orgPub = this.parseRequiredOrgPublicId(organizationPublicId);
-    const ctx = await this.organizationsService.requireMemberContext(
-      orgPub,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.DOMAINS,
       },

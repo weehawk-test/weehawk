@@ -38,11 +38,11 @@ function formatShortDate(input: string | null): string {
 
 export function GitPageClient({
   initialSettings,
-  organizationPublicId,
+  activeOrgPublicId,
   initialQuery = "",
 }: {
   initialSettings: GitSettingsPublic | null;
-  organizationPublicId: string;
+  activeOrgPublicId: string;
   initialQuery?: string;
 }) {
   const { accessToken } = useAuth();
@@ -83,11 +83,11 @@ export function GitPageClient({
   );
 
   useEffect(() => {
-    if (!accessToken || !organizationPublicId) return;
+    if (!accessToken || !activeOrgPublicId) return;
     let cancelled = false;
     const refreshSettings = async () => {
       try {
-        const next = await fetchGitSettings(accessToken, organizationPublicId);
+        const next = await fetchGitSettings(accessToken, activeOrgPublicId);
         if (!cancelled) setSettings(next);
       } catch {
         // Keep current view; user-facing actions already show explicit toasts.
@@ -103,10 +103,10 @@ export function GitPageClient({
       cancelled = true;
       window.removeEventListener(ORG_DATA_CHANGED_EVENT, onOrgDataChanged as EventListener);
     };
-  }, [accessToken, organizationPublicId]);
+  }, [accessToken, activeOrgPublicId]);
 
   const startGithubManifestRegistration = async () => {
-    if (!organizationPublicId) return;
+    if (!activeOrgPublicId) return;
     setRegisterBusy(true);
     try {
       const orgSlug = orgName.trim().replace(/^@+/, "");
@@ -120,12 +120,12 @@ export function GitPageClient({
         return;
       }
       if (isOrganization && orgName.trim() && accessToken) {
-        await createGitAccount(accessToken, organizationPublicId, {
+        await createGitAccount(accessToken, activeOrgPublicId, {
           provider: "github",
           accountName: orgSlug,
         });
       }
-      const manifest = await fetchPublicGithubAppManifest(organizationPublicId);
+      const manifest = await fetchPublicGithubAppManifest(activeOrgPublicId);
       const form = document.createElement("form");
       form.method = "POST";
       form.action =
@@ -152,7 +152,7 @@ export function GitPageClient({
   };
 
   const saveGitlabSettings = async () => {
-    if (!accessToken || !organizationPublicId) return;
+    if (!accessToken || !activeOrgPublicId) return;
     if (!gitlabAccountName.trim()) {
       toast({
         title: "Account name is required",
@@ -163,7 +163,7 @@ export function GitPageClient({
     }
     setGitlabSaving(true);
     try {
-      const next = await createGitAccount(accessToken, organizationPublicId, {
+      const next = await createGitAccount(accessToken, activeOrgPublicId, {
         provider: "gitlab",
         accountName: gitlabAccountName.trim(),
         gitlabBaseUrl: "https://gitlab.com",
@@ -186,7 +186,7 @@ export function GitPageClient({
   };
 
   const removeAccount = async (accountPublicId: string) => {
-    if (!accessToken || !organizationPublicId) return;
+    if (!accessToken || !activeOrgPublicId) return;
     const ok = await confirm({
       title: "Delete channel?",
       description: "This git account will be removed.",
@@ -196,7 +196,7 @@ export function GitPageClient({
     if (!ok) return;
     setDeletingAccountId(accountPublicId);
     try {
-      const next = await deleteGitAccount(accessToken, organizationPublicId, accountPublicId);
+      const next = await deleteGitAccount(accessToken, activeOrgPublicId, accountPublicId);
       setSettings(next);
       toast({ title: "Git account removed" });
     } catch (e) {

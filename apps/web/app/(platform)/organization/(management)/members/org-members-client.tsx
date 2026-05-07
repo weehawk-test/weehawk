@@ -19,11 +19,11 @@ import {
 } from "@/components/ui/dialog";
 
 export function OrgMembersClient({
-  organizationPublicId,
+  activeOrgPublicId,
   initialMembers,
   intro,
 }: {
-  organizationPublicId: string;
+  activeOrgPublicId: string;
   initialMembers: OrganizationMemberPublic[];
   intro: ReactNode;
 }) {
@@ -61,7 +61,7 @@ export function OrgMembersClient({
     setError(null);
     setAdding(true);
     try {
-      const { message, notice } = await inviteOrganizationMember(organizationPublicId, email);
+      const { message, notice } = await inviteOrganizationMember(activeOrgPublicId, email);
       resetInviteForm();
       setInviteOpen(false);
       router.refresh();
@@ -102,7 +102,7 @@ export function OrgMembersClient({
 
     setRoleUpdatingEmail(member.email);
     try {
-      const { message } = await setOrganizationMemberRole(organizationPublicId, member.email, nextRole);
+      const { message } = await setOrganizationMemberRole(activeOrgPublicId, member.email, nextRole);
       toast({ title: "Role updated", description: message });
       router.refresh();
     } catch (err) {

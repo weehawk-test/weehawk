@@ -37,9 +37,9 @@ export type UpdateGitSettingsPayload = Partial<{
   gitlabGroupAccessToken: string;
 }>;
 
-function requireOrgPublicId(organizationPublicId: string): string {
-  const t = organizationPublicId.trim();
-  if (!t) throw new Error("organizationPublicId is required");
+function requireOrgPublicId(activeOrgPublicId: string): string {
+  const t = activeOrgPublicId.trim();
+  if (!t) throw new Error("activeOrgPublicId is required");
   return t;
 }
 
@@ -64,9 +64,9 @@ function createApiUrl(path: string): URL {
 
 export async function fetchGitSettings(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
 ): Promise<GitSettingsPublic> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl("/api/git/settings");
   u.searchParams.set("organizationPublicId", org);
   const res = await authFetch(accessToken, u.toString(), { method: "GET" });
@@ -90,10 +90,10 @@ export type GitlabProjectsListResponse = {
 
 export async function fetchGitlabProjects(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   params?: { accountPublicId?: string; page?: number; perPage?: number; search?: string },
 ): Promise<GitlabProjectsListResponse> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl("/api/git/gitlab/projects");
   u.searchParams.set("organizationPublicId", org);
   if (params?.accountPublicId?.trim()) {
@@ -109,11 +109,11 @@ export async function fetchGitlabProjects(
 
 export async function fetchGitlabBranches(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   projectId: number,
   accountPublicId?: string,
 ): Promise<{ branches: string[] }> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl(
     `/api/git/gitlab/projects/${encodeURIComponent(String(projectId))}/branches`,
   );
@@ -141,10 +141,10 @@ export type GithubRepositoriesListResponse = {
 
 export async function fetchGithubRepositories(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   params?: { accountPublicId?: string; page?: number; perPage?: number; search?: string },
 ): Promise<GithubRepositoriesListResponse> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl("/api/git/github/repositories");
   u.searchParams.set("organizationPublicId", org);
   if (params?.accountPublicId?.trim()) {
@@ -160,10 +160,10 @@ export async function fetchGithubRepositories(
 
 export async function fetchGithubBranches(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   params: { installationId: number; repo: string; accountPublicId?: string },
 ): Promise<{ branches: string[] }> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl("/api/git/github/branches");
   u.searchParams.set("organizationPublicId", org);
   if (params.accountPublicId?.trim()) {
@@ -191,9 +191,9 @@ export type GithubAppManifest = {
 };
 
 export async function fetchPublicGithubAppManifest(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
 ): Promise<GithubAppManifest> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl("/api/git/github/manifest");
   u.searchParams.set("organizationPublicId", org);
   const res = await fetch(u.toString(), {
@@ -206,10 +206,10 @@ export async function fetchPublicGithubAppManifest(
 
 export async function updateGitSettings(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   payload: UpdateGitSettingsPayload,
 ): Promise<GitSettingsPublic> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl("/api/git/settings");
   u.searchParams.set("organizationPublicId", org);
   const res = await authFetch(accessToken, u.toString(), {
@@ -223,7 +223,7 @@ export async function updateGitSettings(
 
 export async function createGitAccount(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   payload: {
     provider: "github" | "gitlab";
     accountName: string;
@@ -231,7 +231,7 @@ export async function createGitAccount(
     gitlabGroupAccessToken?: string;
   },
 ): Promise<GitSettingsPublic> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const u = createApiUrl("/api/git/accounts");
   u.searchParams.set("organizationPublicId", org);
   const res = await authFetch(accessToken, u.toString(), {
@@ -245,10 +245,10 @@ export async function createGitAccount(
 
 export async function deleteGitAccount(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   accountPublicId: string,
 ): Promise<GitSettingsPublic> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const pid = accountPublicId.trim();
   if (!pid) throw new Error("accountPublicId is required");
   const u = createApiUrl(`/api/git/accounts/${encodeURIComponent(pid)}`);
@@ -262,10 +262,10 @@ export async function deleteGitAccount(
 
 export async function exchangeGithubManifest(
   accessToken: string,
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   code: string,
 ): Promise<GitSettingsPublic> {
-  const org = requireOrgPublicId(organizationPublicId);
+  const org = requireOrgPublicId(activeOrgPublicId);
   const res = await authFetch(accessToken, `${API_BASE}/api/git/github/exchange`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

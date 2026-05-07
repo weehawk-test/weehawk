@@ -80,19 +80,16 @@ export type RegistryAccountRow = {
   lastVerifiedAt: string | null;
 };
 
-function registryAccountsQuery(organizationPublicId: string): string {
-  const t = organizationPublicId.trim();
-  if (!t) throw new Error("organizationPublicId is required");
-  return `?organizationPublicId=${encodeURIComponent(t)}`;
+function registryAccountsQuery(): string {
+  return "";
 }
 
 export async function fetchRegistryAccounts(
   accessToken: string,
-  organizationPublicId: string,
 ): Promise<RegistryAccountRow[]> {
   const res = await authFetch(
     accessToken,
-    `${API_BASE}/api/registry/accounts${registryAccountsQuery(organizationPublicId)}`,
+    `${API_BASE}/api/registry/accounts${registryAccountsQuery()}`,
     { method: "GET" },
   );
   const text = await res.text();
@@ -115,12 +112,11 @@ export type UpdateRegistryAccountPayload = Partial<CreateRegistryAccountPayload>
 
 export async function createRegistryAccountApi(
   accessToken: string,
-  organizationPublicId: string,
   body: CreateRegistryAccountPayload,
 ): Promise<RegistryAccountRow> {
   const res = await authFetch(
     accessToken,
-    `${API_BASE}/api/registry/accounts${registryAccountsQuery(organizationPublicId)}`,
+    `${API_BASE}/api/registry/accounts${registryAccountsQuery()}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -136,14 +132,13 @@ export async function createRegistryAccountApi(
 
 export async function deleteRegistryAccountApi(
   accessToken: string,
-  organizationPublicId: string,
   accountPublicId: string,
 ): Promise<void> {
   const id = accountPublicId.trim();
   if (!id) throw new Error("Registry account publicId is required");
   const res = await authFetch(
     accessToken,
-    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}${registryAccountsQuery(organizationPublicId)}`,
+    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}${registryAccountsQuery()}`,
     {
       method: "DELETE",
     },
@@ -156,7 +151,6 @@ export async function deleteRegistryAccountApi(
 
 export async function updateRegistryAccountApi(
   accessToken: string,
-  organizationPublicId: string,
   accountPublicId: string,
   body: UpdateRegistryAccountPayload,
 ): Promise<RegistryAccountRow> {
@@ -164,7 +158,7 @@ export async function updateRegistryAccountApi(
   if (!id) throw new Error("Registry account publicId is required");
   const res = await authFetch(
     accessToken,
-    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}${registryAccountsQuery(organizationPublicId)}`,
+    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}${registryAccountsQuery()}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -180,7 +174,6 @@ export async function updateRegistryAccountApi(
 
 export async function testSavedRegistryAccountApi(
   accessToken: string,
-  organizationPublicId: string,
   accountPublicId: string,
   remoteServerRef: string,
 ): Promise<{ success: boolean; output: string }> {
@@ -190,7 +183,7 @@ export async function testSavedRegistryAccountApi(
   if (!remote) throw new Error("Remote server is required");
   const res = await authFetch(
     accessToken,
-    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}/test${registryAccountsQuery(organizationPublicId)}`,
+    `${API_BASE}/api/registry/accounts/${encodeURIComponent(id)}/test${registryAccountsQuery()}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

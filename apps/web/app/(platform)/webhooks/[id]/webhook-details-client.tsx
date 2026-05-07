@@ -26,14 +26,14 @@ import { webhookRouteId, type WebhookDetail } from "@/lib/webhooks-api";
 
 type Props = {
   initialWebhook: WebhookDetail;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 };
 
-export function WebhookDetailsClient({ initialWebhook, organizationPublicId }: Props) {
+export function WebhookDetailsClient({ initialWebhook, activeOrgPublicId }: Props) {
   const router = useRouter();
   const webhook = initialWebhook;
 
-  const deleteMutation = useDeleteWebhook(organizationPublicId);
+  const deleteMutation = useDeleteWebhook(activeOrgPublicId);
   const { toast } = useToast();
   const confirm = useConfirm();
 

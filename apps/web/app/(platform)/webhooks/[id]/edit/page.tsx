@@ -17,11 +17,10 @@ export default async function EditWebhookPage({ params }: PageProps) {
   const { id: rawId } = await params;
   const id = rawId.trim();
   const orgPid = await getServerActiveOrganizationPublicId();
-  const org = orgPid?.trim() ?? "";
   const [webhook, initialChannels, initialRemoteServers] = await Promise.all([
-    fetchWebhookSSR(id, orgPid),
-    fetchNotificationChannelsSSR(org || undefined),
-    fetchRemoteServersSSR(org || undefined),
+    fetchWebhookSSR(id),
+    fetchNotificationChannelsSSR(),
+    fetchRemoteServersSSR(),
   ]);
   if (!webhook) redirect("/resource-not-found");
   if (webhook.publicId && id !== webhook.publicId) {
@@ -32,7 +31,7 @@ export default async function EditWebhookPage({ params }: PageProps) {
       initialWebhook={webhook}
       initialChannels={initialChannels}
       initialRemoteServers={initialRemoteServers}
-      organizationPublicId={orgPid ?? undefined}
+      activeOrgPublicId={orgPid ?? undefined}
     />
   );
 }

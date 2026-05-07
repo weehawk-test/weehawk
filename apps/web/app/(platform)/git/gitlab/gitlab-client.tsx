@@ -25,18 +25,18 @@ const gitSettingsPredicate = (orgPid: string) => (q: { queryKey: unknown }) =>
 
 export function GitLabGitSettingsClient({
   initialData,
-  organizationPublicId,
+  activeOrgPublicId,
   hideBreadcrumb = false,
 }: {
   initialData: GitSettingsPublic | null;
-  organizationPublicId: string;
+  activeOrgPublicId: string;
   hideBreadcrumb?: boolean;
 }) {
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const orgFromCtx = useOrgWorkspace().publicId;
-  const orgPid = (organizationPublicId || orgFromCtx).trim();
+  const orgPid = (activeOrgPublicId || orgFromCtx).trim();
   const [saving, setSaving] = useState(false);
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
   const [gitlabBaseUrlTouched, setGitlabBaseUrlTouched] = useState(false);

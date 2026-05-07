@@ -17,7 +17,7 @@ type Props = {
   initialCronJob: CronJobDetail;
   initialChannels: NotificationChannel[];
   initialRemoteServers: RemoteServerRow[];
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 };
 
 type CronPreset =
@@ -58,14 +58,14 @@ export function EditCronJobClient({
   initialCronJob,
   initialChannels,
   initialRemoteServers,
-  organizationPublicId = null,
+  activeOrgPublicId = null,
 }: Props) {
   const router = useRouter();
   const { toast } = useToast();
-  const updateMutation = useUpdateCronJob(organizationPublicId);
+  const updateMutation = useUpdateCronJob(activeOrgPublicId);
   const cronJobsHref = useMemo(
-    () => workspaceRoute(organizationPublicId, "/cron-jobs"),
-    [organizationPublicId],
+    () => workspaceRoute(activeOrgPublicId, "/cron-jobs"),
+    [activeOrgPublicId],
   );
 
   const [name, setName] = useState(initialCronJob.name);

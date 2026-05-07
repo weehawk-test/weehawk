@@ -3,5 +3,5 @@ import { RegistrySettingsClient } from "../_components/registry-settings-client"
 
 export default async function RegistryGitlabPage() {
   const orgPid = (await getServerActiveOrganizationPublicId())?.trim() ?? "";
-  return <RegistrySettingsClient preset="gitlab" organizationPublicId={orgPid} />;
+  return <RegistrySettingsClient preset="gitlab" activeOrgPublicId={orgPid} />;
 }

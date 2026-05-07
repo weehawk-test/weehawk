@@ -4,8 +4,11 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Loader2, Type, X } from "lucide-react";
-import { createOrganization, notifyOrganizationsListChanged } from "@/lib/organizations-api";
-import { setActiveOrganizationPublicBrowserCookie } from "@/lib/active-org-cookie";
+import {
+  createOrganization,
+  notifyOrganizationsListChanged,
+  setActiveOrganizationPublicId,
+} from "@/lib/organizations-api";
 
 export function CreateOrganizationClient() {
   const router = useRouter();
@@ -26,7 +29,7 @@ export function CreateOrganizationClient() {
       const org = await createOrganization({
         name: name.trim(),
       });
-      setActiveOrganizationPublicBrowserCookie(org.publicId);
+      await setActiveOrganizationPublicId(org.publicId);
       notifyOrganizationsListChanged();
       router.replace("/home");
       router.refresh();

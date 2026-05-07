@@ -39,10 +39,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 const PERM_CHECKBOX_ROW_CLASS = "flex h-9 shrink-0 items-center justify-center gap-1";
 
 export function OrgPermissionsClient({
-  organizationPublicId,
+  activeOrgPublicId,
   initialMembers,
 }: {
-  organizationPublicId: string;
+  activeOrgPublicId: string;
   initialMembers: OrganizationMemberPublic[];
 }) {
   const org = useOrgWorkspace();
@@ -66,7 +66,7 @@ export function OrgPermissionsClient({
     if (!canEdit || member.isOwner || busy) return;
     setBusy({ email: member.email, key });
     try {
-      await setMemberWorkspacePermissions(organizationPublicId, member.email, {
+      await setMemberWorkspacePermissions(activeOrgPublicId, member.email, {
         [key]: allowed,
       });
       setMembers((prev) =>

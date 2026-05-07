@@ -757,11 +757,9 @@ function CreateServiceModal({
 function serviceDetailHref(
   projectRouteId: string,
   serviceKey: string,
-  organizationPublicId?: string,
+  _activeOrgPublicId?: string,
 ) {
-  const org = organizationPublicId?.trim();
-  const q = org ? `?organizationPublicId=${encodeURIComponent(org)}` : "";
-  return `/projects/${projectRouteId}/services/${serviceKey}${q}`;
+  return `/projects/${projectRouteId}/services/${serviceKey}`;
 }
 
 export default function ProjectsIdClient({
@@ -771,7 +769,7 @@ export default function ProjectsIdClient({
   initialProjectError,
   urlPage,
   urlQ,
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
   projectId: string;
   initialProject?: Project | null;
@@ -779,7 +777,7 @@ export default function ProjectsIdClient({
   initialProjectError?: string | null;
   urlPage: number;
   urlQ: string;
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
   const router = useRouter();
   const qc = useQueryClient();
@@ -795,17 +793,17 @@ export default function ProjectsIdClient({
   const { data: project, isLoading: projectLoading } = useProject(projectId, {
     initialData: initialProject ?? undefined,
     skipClientFetch: Boolean(initialProject),
-    organizationPublicId: organizationPublicId ?? initialProject?.organizationPublicId,
+    activeOrgPublicId: activeOrgPublicId ?? initialProject?.organizationPublicId,
   });
 
   useEffect(() => {
     if (initialProject) {
       qc.setQueryData(
-        projectQueryKey(user?.userId, projectId, organizationPublicId ?? initialProject.organizationPublicId),
+        projectQueryKey(user?.userId, projectId, activeOrgPublicId ?? initialProject.organizationPublicId),
         initialProject,
       );
     }
-  }, [initialProject, projectId, qc, user?.userId, organizationPublicId]);
+  }, [initialProject, projectId, qc, user?.userId, activeOrgPublicId]);
 
   useEffect(() => {
     if (initialServicesPage === undefined) return;
@@ -931,9 +929,7 @@ export default function ProjectsIdClient({
     }
   };
 
-  const projectsHref = organizationPublicId?.trim()
-    ? `/projects?organizationPublicId=${encodeURIComponent(organizationPublicId.trim())}`
-    : "/projects";
+  const projectsHref = "/projects";
 
   if (!project) {
     if (projectLoading) return null;
@@ -1185,7 +1181,7 @@ export default function ProjectsIdClient({
                             href={serviceDetailHref(
                               projectRouteId,
                               serviceQueryKeyId(service),
-                              organizationPublicId,
+                              activeOrgPublicId,
                             )}
                             prefetch
                             className="ml-auto inline-flex items-center gap-0.5 rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20"

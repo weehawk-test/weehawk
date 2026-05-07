@@ -601,10 +601,14 @@ export class S3Service implements OnModuleInit {
     return rowsWithPublicId.map((p) => this.toPublicProfile(p));
   }
 
-  async saveProfile(userId: number, dto: UpsertS3ProfileDto) {
+  async saveProfile(
+    userId: number,
+    dto: UpsertS3ProfileDto,
+    organizationPublicId?: string | null,
+  ) {
     const orgId = await this.requireWorkspaceOrgId(
       userId,
-      dto.organizationPublicId,
+      organizationPublicId ?? dto.organizationPublicId,
     );
     const base = this.normalizeProfileFields(dto);
     const dtoPublicId = dto.publicId?.trim();
@@ -636,7 +640,7 @@ export class S3Service implements OnModuleInit {
     const hadExisting = row != null;
     await this.requireOrgS3Subs(
       userId,
-      dto.organizationPublicId,
+      organizationPublicId ?? dto.organizationPublicId,
       row
         ? [ORGANIZATION_WORKSPACE_PERMISSIONS.S3_EDIT]
         : [ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD],
@@ -747,6 +751,7 @@ export class S3Service implements OnModuleInit {
   async testConnection(
     userId: number,
     dto: TestS3ConnectionDto,
+    organizationPublicId?: string | null,
   ): Promise<{
     success: true;
     message: string;
@@ -754,7 +759,7 @@ export class S3Service implements OnModuleInit {
   }> {
     await this.requireOrgS3Subs(
       userId,
-      dto.organizationPublicId,
+      organizationPublicId ?? dto.organizationPublicId,
       undefined,
       [
         ORGANIZATION_WORKSPACE_PERMISSIONS.S3_ADD,
@@ -816,7 +821,7 @@ export class S3Service implements OnModuleInit {
 
     const orgId = await this.resolveExpectedOrgId(
       userId,
-      dto.organizationPublicId,
+      organizationPublicId ?? dto.organizationPublicId,
       undefined,
     );
     void this.organizationsService

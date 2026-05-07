@@ -40,12 +40,12 @@ function formatDateUTC(dateInput: string): string {
 
 export function WebhooksClient({
   initialWebhooks,
-  organizationPublicId = undefined,
+  activeOrgPublicId = undefined,
 }: {
   initialWebhooks: WebhookListItem[];
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
-  const orgTrim = organizationPublicId?.trim();
+  const orgTrim = activeOrgPublicId?.trim();
   const webhooksBasePath = "/webhooks";
   const inOrgWebhooks = orgTrim != null && orgTrim !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
@@ -71,7 +71,7 @@ export function WebhooksClient({
   const orgKeyForQuery = orgTrim ?? "";
   const webhooksQuery = useWebhooks(orgKeyForQuery || undefined, { initialData: initialWebhooks });
   const webhooks = webhooksQuery.data ?? initialWebhooks;
-  const deleteWebhook = useDeleteWebhook(organizationPublicId);
+  const deleteWebhook = useDeleteWebhook(activeOrgPublicId);
   const { toast } = useToast();
   const confirm = useConfirm();
   const { accessToken } = useAuth();
@@ -252,7 +252,6 @@ export function WebhooksClient({
         accessToken,
         webhookRouteId(webhook),
         2000,
-        organizationPublicId,
       );
       const normalized = out.log.trim();
       if (out.source === "executor-redeploy") {

@@ -91,13 +91,11 @@ function FolderStatsCells({
   profileName,
   folderPrefix,
   initialSummary,
-  organizationPublicId,
 }: {
   profileName: string;
   folderPrefix: string;
   /** From SSR — avoids a client fetch for this row on first paint. */
   initialSummary?: S3PrefixSummaryResponse | null;
-  organizationPublicId?: string | null;
 }) {
   const [state, setState] = useState<
     "loading" | "error" | { data: S3PrefixSummaryResponse }
@@ -110,7 +108,7 @@ function FolderStatsCells({
     }
     let cancelled = false;
     setState("loading");
-    getPrefixSummaryApi(profileName, folderPrefix, organizationPublicId)
+    getPrefixSummaryApi(profileName, folderPrefix)
       .then((data) => {
         if (!cancelled) setState({ data });
       })
@@ -120,7 +118,7 @@ function FolderStatsCells({
     return () => {
       cancelled = true;
     };
-  }, [profileName, folderPrefix, initialSummary, organizationPublicId]);
+  }, [profileName, folderPrefix, initialSummary]);
 
   if (state === "loading") {
     return (
@@ -166,7 +164,7 @@ export function S3BucketBrowser({
   initialPrefix = "",
   initialList = null,
   initialFolderSummaries,
-  organizationPublicId = null,
+  activeOrgPublicId = null,
 }: {
   profileName: string;
   /** Current path from URL — folder navigation uses server render (no client list fetch). */
@@ -174,9 +172,9 @@ export function S3BucketBrowser({
   /** From SSR for this prefix — list + folder summaries fetched on the server. */
   initialList?: S3BucketListResponse | null;
   initialFolderSummaries?: Record<string, S3PrefixSummaryResponse>;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 }) {
-  const orgTrim = organizationPublicId?.trim();
+  const orgTrim = activeOrgPublicId?.trim();
   const s3BrowseBase = "/s3";
   const inOrgBucket = orgTrim != null && orgTrim !== "";
   const orgWorkspace = useOptionalOrgWorkspace();
@@ -232,7 +230,6 @@ export function S3BucketBrowser({
     try {
       const r = await listS3BucketObjectsApi(profileName, {
         prefix: targetPrefix,
-        organizationPublicId,
       });
       setPrefix(targetPrefix);
       setBucket(r.bucket);
@@ -258,7 +255,6 @@ export function S3BucketBrowser({
       const r = await listS3BucketObjectsApi(profileName, {
         prefix,
         continuationToken: nextToken,
-        organizationPublicId,
       });
       setObjects((prev) => [...prev, ...r.objects]);
       setNextToken(r.isTruncated ? r.continuationToken : undefined);
@@ -340,7 +336,7 @@ export function S3BucketBrowser({
     const key = `${prefix}${file.name}`;
     setUploading(true);
     try {
-      await uploadS3ObjectApi(profileName, key, file, organizationPublicId);
+      await uploadS3ObjectApi(profileName, key, file);
       toast({ title: "Uploaded", description: key });
       await loadPrefix(prefix);
     } catch (e) {
@@ -354,7 +350,7 @@ export function S3BucketBrowser({
   const onDownload = async (key: string, filename: string) => {
     setDownloadingKey(key);
     try {
-      const blob = await downloadS3ObjectBlob(profileName, key, organizationPublicId);
+      const blob = await downloadS3ObjectBlob(profileName, key);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -382,7 +378,7 @@ export function S3BucketBrowser({
     const fullKey = prefix ? `${prefix}${seg}` : seg;
     setMkdirSaving(true);
     try {
-      await createS3FolderApi(profileName, fullKey, organizationPublicId);
+      await createS3FolderApi(profileName, fullKey);
       toast({ title: "Directory created", description: fullKey.endsWith("/") ? fullKey : `${fullKey}/` });
       setMkdirOpen(false);
       setMkdirName("");
@@ -405,7 +401,7 @@ export function S3BucketBrowser({
     if (!ok) return;
     setDeletingKey(key);
     try {
-      await deleteS3ObjectApi(profileName, key, organizationPublicId);
+      await deleteS3ObjectApi(profileName, key);
       toast({ title: "Deleted", description: label });
       setSelectedKeys((prev) => {
         const next = new Set(prev);
@@ -431,7 +427,7 @@ export function S3BucketBrowser({
     if (!ok) return;
     setDeletingFolderPrefix(folderPrefix);
     try {
-      const r = await deleteS3PrefixApi(profileName, folderPrefix, organizationPublicId);
+      const r = await deleteS3PrefixApi(profileName, folderPrefix);
       const errN = r.errors.length;
       if (errN > 0) {
         toast({
@@ -490,13 +486,13 @@ export function S3BucketBrowser({
     try {
       let prefixErrors = 0;
       for (const fp of prefixes) {
-        const r = await deleteS3PrefixApi(profileName, fp, organizationPublicId);
+        const r = await deleteS3PrefixApi(profileName, fp);
         if (r.errors.length > 0) prefixErrors += r.errors.length;
       }
       let fileErrors = 0;
       for (let i = 0; i < fileKeys.length; i += BATCH_MAX) {
         const chunk = fileKeys.slice(i, i + BATCH_MAX);
-        const r = await deleteS3ObjectsBatchApi(profileName, chunk, organizationPublicId);
+        const r = await deleteS3ObjectsBatchApi(profileName, chunk);
         fileErrors += r.errors.length;
       }
       if (prefixErrors > 0 || fileErrors > 0) {
@@ -794,7 +790,6 @@ export function S3BucketBrowser({
                       profileName={profileName}
                       folderPrefix={f.prefix}
                       initialSummary={initialFolderSummaries?.[f.prefix]}
-                      organizationPublicId={organizationPublicId}
                     />
                     <td className="px-4 py-3 text-right align-middle whitespace-nowrap">
                       {allowS3Edit ? (

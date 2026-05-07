@@ -9,5 +9,5 @@ export default async function OrganizationPermissionPage() {
   );
   const members = await fetchOrganizationMembersSSR(publicId);
 
-  return <OrgPermissionsClient organizationPublicId={publicId} initialMembers={members} />;
+  return <OrgPermissionsClient activeOrgPublicId={publicId} initialMembers={members} />;
 }

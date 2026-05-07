@@ -6,16 +6,15 @@ export const dynamic = "force-dynamic";
 
 export default async function RemoteServerPage() {
   const orgPid = await getServerActiveOrganizationPublicId();
-  const orgPub = orgPid?.trim() ?? "";
   const [initialRemoteServers, initialTraefikSettings] = await Promise.all([
-    fetchRemoteServersSSR(orgPid ?? undefined),
-    orgPub ? fetchTraefikSettingsSSR(orgPub) : Promise.resolve(null),
+    fetchRemoteServersSSR(),
+    fetchTraefikSettingsSSR(),
   ]);
   return (
     <RemoteServerSettingsClient
       initialRemoteServers={initialRemoteServers}
       initialTraefikSettings={initialTraefikSettings}
-      organizationPublicId={orgPid ?? null}
+      activeOrgPublicId={orgPid ?? null}
       initialRemoteServersOrganizationId={orgPid ?? null}
       initialTraefikOrganizationId={orgPid ?? null}
     />

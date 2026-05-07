@@ -101,16 +101,12 @@ export async function fetchProjectsPage(
   page = 1,
   limit = PROJECTS_PAGE_SIZE,
   q = "",
-  organizationPublicId?: string,
 ): Promise<ProjectsPageResponse> {
   const params = new URLSearchParams();
   params.set("page", String(Math.max(1, page)));
   params.set("limit", String(limit));
   const trimmed = q.trim();
   if (trimmed) params.set("q", trimmed);
-  const org = organizationPublicId?.trim();
-  if (!org) throw new Error("organizationPublicId is required");
-  params.set("organizationPublicId", org);
   const res = await apiFetch(`/api/projects?${params.toString()}`);
   const text = await res.text();
   if (!res.ok) {
@@ -121,12 +117,8 @@ export async function fetchProjectsPage(
 
 export async function fetchProject(
   id: string,
-  organizationPublicId?: string | null,
 ): Promise<Project> {
-  const org = organizationPublicId?.trim();
-  if (!org) throw new Error("organizationPublicId is required");
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`);
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`);
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
@@ -154,17 +146,13 @@ export async function createProjectApi(body: CreateProjectInput): Promise<Projec
 
 export async function updateProjectApi(
   id: string,
-  organizationPublicId: string | null | undefined,
   patch: Partial<Pick<Project, "name" | "description">>,
 ): Promise<Project> {
-  const org = organizationPublicId?.trim();
-  if (!org) throw new Error("organizationPublicId is required");
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
   const body: Record<string, unknown> = {};
   if (patch.name !== undefined) body.name = patch.name;
   if (patch.description !== undefined) body.description = patch.description;
 
-  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`, {
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
@@ -177,12 +165,8 @@ export async function updateProjectApi(
 
 export async function deleteProjectApi(
   id: string,
-  organizationPublicId?: string | null,
 ): Promise<void> {
-  const org = organizationPublicId?.trim();
-  if (!org) throw new Error("organizationPublicId is required");
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}${q}`, { method: "DELETE" });
+  const res = await apiFetch(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));

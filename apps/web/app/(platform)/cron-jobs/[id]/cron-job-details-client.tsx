@@ -13,16 +13,16 @@ import { motion } from "framer-motion";
 
 type Props = {
   initialCronJob: CronJobDetail;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 };
 
-export function CronJobDetailsClient({ initialCronJob, organizationPublicId }: Props) {
+export function CronJobDetailsClient({ initialCronJob, activeOrgPublicId }: Props) {
   const router = useRouter();
   const cronJob = initialCronJob;
   const { toast } = useToast();
   const confirm = useConfirm();
-  const deleteMutation = useDeleteCronJob(organizationPublicId);
-  const updateMutation = useUpdateCronJob(organizationPublicId);
+  const deleteMutation = useDeleteCronJob(activeOrgPublicId);
+  const updateMutation = useUpdateCronJob(activeOrgPublicId);
 
   if (typeof document === "undefined") return null;
 

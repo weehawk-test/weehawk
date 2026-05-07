@@ -5,10 +5,10 @@ import type { OrgWorkspacePermissionKey } from "@/lib/org-workspace-permissions"
 export const ORG_WORKSPACE_ACCESS_DENIED_REASON = "org-workspace";
 
 export function redirectOrgWorkspaceAccessDenied(
-  organizationPublicId: string,
+  activeOrgPublicId: string,
   deniedPermission?: OrgWorkspacePermissionKey,
 ): never {
-  const id = organizationPublicId.trim();
+  const id = activeOrgPublicId.trim();
   const q = new URLSearchParams({
     reason: ORG_WORKSPACE_ACCESS_DENIED_REASON,
     org: id,

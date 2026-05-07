@@ -31,6 +31,7 @@ import { RedisService } from '../common/redis/redis.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { parseOrganizationPublicIdParam } from '../organizations/org-public-id';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 
 @ApiTags('Git')
 @Controller('api/git')
@@ -42,6 +43,7 @@ export class GitController {
     private readonly gitService: GitService,
     private readonly redisService: RedisService,
     private readonly organizationsService: OrganizationsService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
   ) {}
 
   private replayKey(deliveryId: string): string {
@@ -211,17 +213,18 @@ return 1
   })
   @ApiQuery({
     name: 'organizationPublicId',
-    required: true,
-    description: 'Organization workspace; caller must have Git integration access.',
+    required: false,
+    description:
+      'Organization workspace; optional when active organization is already set server-side.',
   })
   async getSettings(
     @Req() req: { user?: { userId: number } },
-    @Query('organizationPublicId') organizationPublicId: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
   ) {
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       { requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT },
     );
     return this.gitService.getSettings(ctx.internalId);
@@ -234,19 +237,24 @@ return 1
     summary:
       'List GitLab projects (requires personal or group access token in Git settings)',
   })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional when active organization is already set server-side.',
+  })
   async listGitlabProjects(
     @Req() req: { user?: { userId: number } },
-    @Query('organizationPublicId') organizationPublicId: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
     @Query('accountPublicId') accountPublicId?: string,
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
   ) {
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
         requireAllWorkspaceAreas: [
@@ -269,7 +277,12 @@ return 1
     summary:
       'List branch names for a GitLab project (requires GitLab token in settings)',
   })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional when active organization is already set server-side.',
+  })
   async listGitlabBranches(
     @Req() req: { user?: { userId: number } },
     @Query('organizationPublicId') organizationPublicId: string,
@@ -281,9 +294,9 @@ return 1
       throw new BadRequestException('Invalid project id');
     }
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
         requireAllWorkspaceAreas: [
@@ -301,19 +314,24 @@ return 1
     summary:
       'List GitHub repositories accessible to the configured GitHub App (across all installations)',
   })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional when active organization is already set server-side.',
+  })
   async listGithubRepositories(
     @Req() req: { user?: { userId: number } },
-    @Query('organizationPublicId') organizationPublicId: string,
+    @Query('organizationPublicId') organizationPublicId?: string,
     @Query('accountPublicId') accountPublicId?: string,
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
     @Query('search') search?: string,
   ) {
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
         requireAllWorkspaceAreas: [
@@ -336,7 +354,12 @@ return 1
     summary:
       'List branch names for a repo (installation access token; repo = owner/name)',
   })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional when active organization is already set server-side.',
+  })
   async listGithubBranches(
     @Req() req: { user?: { userId: number } },
     @Query('organizationPublicId') organizationPublicId: string,
@@ -355,9 +378,9 @@ return 1
       );
     }
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
         requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_EDIT],
@@ -372,7 +395,12 @@ return 1
     summary:
       'Update GitHub App / GitLab settings for an organization (partial). Send empty string to clear a secret.',
   })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional when active organization is already set server-side.',
+  })
   @UsePipes(
     new ValidationPipe({
       transform: true,
@@ -386,9 +414,9 @@ return 1
     @Body() dto: UpdateGitSettingsDto,
   ) {
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
         requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_ADD],
@@ -445,7 +473,12 @@ return 1
   @ApiOperation({
     summary: 'Create a new Git account for the organization',
   })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional when active organization is already set server-side.',
+  })
   @UsePipes(
     new ValidationPipe({
       transform: true,
@@ -459,9 +492,9 @@ return 1
     @Body() dto: CreateGitAccountDto,
   ) {
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
         requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_ADD],
@@ -544,16 +577,21 @@ return 1
   @ApiOperation({
     summary: 'Delete saved Git account by public id',
   })
-  @ApiQuery({ name: 'organizationPublicId', required: true })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Optional when active organization is already set server-side.',
+  })
   async deleteAccount(
     @Req() req: { user?: { userId: number } },
     @Query('organizationPublicId') organizationPublicId: string,
     @Param('accountPublicId') accountPublicId: string,
   ) {
     const userId = this.uid(req);
-    const ctx = await this.organizationsService.requireMemberContext(
-      organizationPublicId,
+    const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
       userId,
+      organizationPublicId,
       {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.GIT,
         requireAllWorkspaceAreas: [ORGANIZATION_WORKSPACE_PERMISSIONS.GIT_DELETE],

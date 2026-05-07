@@ -22,14 +22,17 @@ export function GithubCallbackClient() {
   useEffect(() => {
     if (ran.current) return;
     const code = searchParams.get("code");
-    const organizationPublicId = searchParams.get("organizationPublicId")?.trim() ?? "";
+    const activeOrgPublicId =
+      searchParams.get("activeOrgPublicId")?.trim() ??
+      searchParams.get("organizationPublicId")?.trim() ??
+      "";
     if (!code?.trim()) {
       ran.current = true;
       setStatus("error");
       setMessage("Missing ?code= from GitHub. Close this tab and try creating the app again.");
       return;
     }
-    if (!organizationPublicId) {
+    if (!activeOrgPublicId) {
       ran.current = true;
       setStatus("error");
       setMessage(
@@ -53,7 +56,7 @@ export function GithubCallbackClient() {
     void (async () => {
       try {
         if (typeof window !== "undefined") sessionStorage.setItem(dedupeKey, "1");
-        const next = await exchangeGithubManifest(accessToken, organizationPublicId, code.trim());
+        const next = await exchangeGithubManifest(accessToken, activeOrgPublicId, code.trim());
         const nextInstallUrl = next.github.installAppUrl?.trim() || "";
         setStatus("ok");
         toast({ title: "GitHub App connected", description: "Credentials were saved to Weehawk." });

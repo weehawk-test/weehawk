@@ -12,12 +12,12 @@ export const dynamic = "force-dynamic";
 export async function NotificationsListView({
   searchParams,
   notificationsBasePath = NOTIFICATIONS_BASE_PATH,
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
   searchParams: Promise<{ page?: string; q?: string }>;
   /** e.g. `/organizations/:publicId/notifications` in org workspace */
   notificationsBasePath?: string;
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
   const sp = await searchParams;
   const urlPage = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
@@ -29,7 +29,6 @@ export async function NotificationsListView({
       urlPage,
       CHANNELS_PAGE_SIZE,
       urlQ,
-      organizationPublicId,
     );
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
@@ -41,7 +40,7 @@ export async function NotificationsListView({
       urlPage={urlPage}
       urlQ={urlQ}
       notificationsBasePath={notificationsBasePath}
-      organizationPublicId={organizationPublicId}
+      activeOrgPublicId={activeOrgPublicId}
     />
   );
 }
@@ -55,6 +54,6 @@ export default async function NotificationsPage({
   return NotificationsListView({
     searchParams,
     notificationsBasePath: NOTIFICATIONS_BASE_PATH,
-    organizationPublicId: orgPid ?? undefined,
+    activeOrgPublicId: orgPid ?? undefined,
   });
 }

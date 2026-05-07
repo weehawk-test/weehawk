@@ -21,7 +21,7 @@ import { workspaceRoute } from "@/lib/workspace-paths";
 type Props = {
   initialChannels: NotificationChannel[];
   initialRemoteServers: RemoteServerRow[];
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 };
 
 type CronPreset =
@@ -49,14 +49,14 @@ function renderHighlightedScript(script: string): ReactNode[] {
 export function CreateCronJobClient({
   initialChannels,
   initialRemoteServers,
-  organizationPublicId = null,
+  activeOrgPublicId = null,
 }: Props) {
   const router = useRouter();
   const { toast } = useToast();
   const createMutation = useCreateCronJob();
   const cronJobsHref = useMemo(
-    () => workspaceRoute(organizationPublicId, "/cron-jobs"),
-    [organizationPublicId],
+    () => workspaceRoute(activeOrgPublicId, "/cron-jobs"),
+    [activeOrgPublicId],
   );
 
   const [name, setName] = useState("");
@@ -106,7 +106,7 @@ export function CreateCronJobClient({
       return;
     }
 
-    const org = organizationPublicId?.trim();
+    const org = activeOrgPublicId?.trim();
     if (!org) {
       toast({
         title: "Organization required",

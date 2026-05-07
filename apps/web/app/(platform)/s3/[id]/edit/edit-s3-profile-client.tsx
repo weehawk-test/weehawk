@@ -19,11 +19,11 @@ import {
 
 type Props = {
   profile: S3ProfilePublic;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 };
 
-export function EditS3ProfileClient({ profile, organizationPublicId = null }: Props) {
-  const orgTrim = organizationPublicId?.trim();
+export function EditS3ProfileClient({ profile, activeOrgPublicId = null }: Props) {
+  const orgTrim = activeOrgPublicId?.trim();
   const s3BasePath = "/s3";
   const router = useRouter();
   const { toast } = useToast();
@@ -44,10 +44,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
   useEffect(() => {
     if (!accessToken) return;
     let cancelled = false;
-    void fetchRemoteServers(
-      accessToken,
-      organizationPublicId?.trim() ? organizationPublicId.trim() : undefined,
-    )
+    void fetchRemoteServers(accessToken)
       .then((rows) => {
         if (!cancelled) setDeployServersForTest(rows.filter((r) => r.serverRole === "deploy"));
       })
@@ -57,7 +54,7 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
     return () => {
       cancelled = true;
     };
-  }, [accessToken, organizationPublicId]);
+  }, [accessToken, activeOrgPublicId]);
 
   const canSubmit = useMemo(
     () =>
@@ -85,7 +82,6 @@ export function EditS3ProfileClient({ profile, organizationPublicId = null }: Pr
       bucket: form.bucket.trim(),
       accessKeyId: form.accessKeyId.trim(),
       forcePathStyle,
-      organizationPublicId: orgTrim,
     };
     if (!secret) return base;
     return { ...base, secretAccessKey: secret };

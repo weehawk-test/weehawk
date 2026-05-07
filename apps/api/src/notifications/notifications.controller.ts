@@ -20,6 +20,7 @@ import { CreateNotificationChannelDto } from './dto/create-notification-channel.
 import { UpdateNotificationChannelDto } from './dto/update-notification-channel.dto';
 import { PagedLogsQueryDto } from './dto/paged-logs-query.dto';
 import { BulkDeleteChannelsDto } from './dto/bulk-delete-channels.dto';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 
 type AuthedReq = { user?: { email: string; userId: number } };
 
@@ -35,7 +36,10 @@ type AuthedReq = { user?: { email: string; userId: number } };
 )
 @Controller('/api/notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationService) {}
+  constructor(
+    private readonly notificationsService: NotificationService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
+  ) {}
 
   private userId(req?: AuthedReq): number {
     const id = req?.user?.userId;
@@ -43,25 +47,38 @@ export class NotificationsController {
     return id;
   }
 
+  private async resolveOrg(
+    req: AuthedReq,
+    activeOrgPublicId?: string,
+  ): Promise<string | undefined> {
+    const r = await this.activeOrganizationService.resolvePreferredOrganizationPublicId(
+      this.userId(req),
+      activeOrgPublicId,
+    );
+    return r ?? undefined;
+  }
+
   @Get('channels')
-  listChannels(
+  async listChannels(
     @Req() req: AuthedReq,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.notificationsService.listChannels(
       this.userId(req),
-      organizationPublicId,
+      org,
     );
   }
 
   @Get('channels/paged')
-  listChannelsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
+  async listChannelsPaged(@Req() req: AuthedReq, @Query() q: PagedLogsQueryDto) {
+    const org = await this.resolveOrg(req, q.organizationPublicId);
     return this.notificationsService.listChannelsPaged(
       this.userId(req),
       q.page,
       q.pageSize,
       q.q,
-      q.organizationPublicId,
+      org,
     );
   }
 
@@ -69,12 +86,13 @@ export class NotificationsController {
   async bulkDeleteChannels(
     @Req() req: AuthedReq,
     @Body() dto: BulkDeleteChannelsDto,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.notificationsService.bulkDeleteChannels(
       this.userId(req),
       dto.ids,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -87,17 +105,18 @@ export class NotificationsController {
   }
 
   @Patch('channels/:id')
-  updateChannel(
+  async updateChannel(
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Body() dto: UpdateNotificationChannelDto,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.notificationsService.updateChannel(
       this.userId(req),
       id,
       dto,
-      organizationPublicId,
+      org,
     );
   }
 
@@ -105,26 +124,28 @@ export class NotificationsController {
   async deleteChannel(
     @Req() req: AuthedReq,
     @Param('id') id: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     await this.notificationsService.deleteChannel(
       this.userId(req),
       id,
-      organizationPublicId,
+      org,
     );
     return { ok: true };
   }
 
   @Post('channels/:id/test')
-  testChannel(
+  async testChannel(
     @Req() req: AuthedReq,
     @Param('id') id: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.notificationsService.testChannel(
       this.userId(req),
       id,
-      organizationPublicId,
+      org,
     );
   }
 }

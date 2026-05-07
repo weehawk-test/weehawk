@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UnauthorizedException,
@@ -32,6 +33,8 @@ import { OrganizationInviteService } from './organization-invite.service';
 import { SetOrganizationMemberRoleDto } from './dto/set-organization-member-role.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { SetOrgMemberWorkspacePermissionsDto } from './dto/set-org-member-workspace-permissions.dto';
+import { ActiveOrganizationService } from './active-organization.service';
+import { SetActiveOrganizationDto } from './dto/set-active-organization.dto';
 
 @ApiTags('Organizations')
 @ApiBearerAuth()
@@ -41,6 +44,7 @@ export class OrganizationsController {
   constructor(
     private readonly organizationsService: OrganizationsService,
     private readonly organizationInviteService: OrganizationInviteService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
   ) {}
 
   private uid(req?: { user?: { userId?: number } }): number {
@@ -69,6 +73,46 @@ export class OrganizationsController {
   @ApiOperation({ summary: 'List organizations you belong to' })
   list(@Req() req: { user?: { userId: number } }) {
     return this.organizationsService.listMine(this.uid(req));
+  }
+
+  @Get('active')
+  @ApiOperation({
+    summary: 'Get your active organization (server-side workspace context)',
+  })
+  async getActiveOrganization(@Req() req: { user?: { userId: number } }) {
+    const organizationPublicId =
+      await this.activeOrganizationService.getActiveOrganizationPublicId(
+        this.uid(req),
+      );
+    return { organizationPublicId };
+  }
+
+  @Put('active')
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({ summary: 'Set your active organization (server-side only)' })
+  async setActiveOrganization(
+    @Body() dto: SetActiveOrganizationDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    const organizationPublicId =
+      await this.activeOrganizationService.setActiveOrganizationPublicId(
+        this.uid(req),
+        dto.organizationPublicId,
+      );
+    return { organizationPublicId };
+  }
+
+  @Delete('active')
+  @ApiOperation({ summary: 'Clear your active organization selection' })
+  async clearActiveOrganization(@Req() req: { user?: { userId: number } }) {
+    await this.activeOrganizationService.clearActiveOrganization(this.uid(req));
+    return { ok: true };
   }
 
   @Post('invitations/accept')

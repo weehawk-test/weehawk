@@ -9,20 +9,12 @@ import { SidebarLayoutProvider, useSidebarLayout } from "@/contexts/sidebar-layo
 import { useRequireAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { isOrganizationWorkspacePath } from "@/lib/personal-sidebar-path";
-import { fetchOrganizations, ORGANIZATIONS_LIST_CHANGED_EVENT } from "@/lib/organizations-api";
-import { WEHAWK_ACTIVE_ORG_COOKIE } from "@/lib/active-org-cookie";
+import {
+  fetchOrganizations,
+  getActiveOrganizationPublicId,
+  ORGANIZATIONS_LIST_CHANGED_EVENT,
+} from "@/lib/organizations-api";
 import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
-
-function readCookieValue(name: string): string {
-  if (typeof document === "undefined") return "";
-  const parts = document.cookie.split("; ");
-  for (const part of parts) {
-    const i = part.indexOf("=");
-    if (i <= 0) continue;
-    if (part.slice(0, i) === name) return decodeURIComponent(part.slice(i + 1));
-  }
-  return "";
-}
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -59,7 +51,7 @@ function PlatformShell({ children }: { children: ReactNode }) {
       try {
         const orgs = await fetchOrganizations();
         if (cancelled) return;
-        const activeOrgPublicId = readCookieValue(WEHAWK_ACTIVE_ORG_COOKIE).trim();
+        const activeOrgPublicId = (await getActiveOrganizationPublicId())?.trim() ?? "";
         const active =
           (activeOrgPublicId ? orgs.find((o) => o.publicId === activeOrgPublicId) : null) ??
           pickDefaultWorkspaceOrganization(orgs) ??

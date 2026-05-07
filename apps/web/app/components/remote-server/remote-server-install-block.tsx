@@ -30,7 +30,7 @@ type Props = {
   /** When false (e.g. org workspace), hide install/maintenance queue actions. Default true. */
   installMaintenanceAllowed?: boolean;
   /** Required for install-script preview (org-scoped Traefik ACME email). */
-  organizationPublicIdForProvision?: string;
+  activeOrgPublicIdForProvision?: string;
 };
 
 type InstallDialog = "provision" | "nixpacks" | "purge" | null;
@@ -64,7 +64,7 @@ export function RemoteServerInstallBlock({
   accessToken,
   row,
   installMaintenanceAllowed = true,
-  organizationPublicIdForProvision = "",
+  activeOrgPublicIdForProvision = "",
 }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -88,10 +88,10 @@ export function RemoteServerInstallBlock({
     jobLogUserScrolledAwayRef.current = false;
   }, [jobId]);
 
-  const orgForProvision = organizationPublicIdForProvision.trim();
+  const orgForProvision = activeOrgPublicIdForProvision.trim();
   const scriptQ = useQuery({
     queryKey: ["provision-script", row.serverRole, orgForProvision],
-    queryFn: () => fetchProvisionScriptApi(accessToken, row.serverRole, orgForProvision),
+    queryFn: () => fetchProvisionScriptApi(accessToken, row.serverRole),
     enabled: installDialog === "provision" && Boolean(orgForProvision),
   });
 

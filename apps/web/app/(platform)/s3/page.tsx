@@ -6,11 +6,8 @@ import { getServerActiveOrganizationPublicId } from "@/lib/server-active-org";
 
 export const dynamic = "force-dynamic";
 
-async function getInitialProfiles(organizationPublicId?: string | null): Promise<S3ProfilePublic[]> {
-  const org = organizationPublicId?.trim();
-  if (!org) return [];
-  const q = `?organizationPublicId=${encodeURIComponent(org)}`;
-  const res = await fetch(`${API_BASE}/api/s3/profiles${q}`, {
+async function getInitialProfiles(): Promise<S3ProfilePublic[]> {
+  const res = await fetch(`${API_BASE}/api/s3/profiles`, {
     method: "GET",
     headers: await buildServerApiCookieHeaders(),
     cache: "no-store",
@@ -22,15 +19,15 @@ async function getInitialProfiles(organizationPublicId?: string | null): Promise
   return res.json();
 }
 
-type S3PageProps = { organizationPublicId?: string };
+type S3PageProps = { activeOrgPublicId?: string };
 
 export default async function S3Page(props: S3PageProps = {}) {
-  const fromProps = props.organizationPublicId;
+  const fromProps = props.activeOrgPublicId;
   const orgPid = fromProps?.trim() ? fromProps : await getServerActiveOrganizationPublicId();
   let initialProfiles: S3ProfilePublic[] = [];
   let initialError: string | null = null;
   try {
-    initialProfiles = await getInitialProfiles(orgPid);
+    initialProfiles = await getInitialProfiles();
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
   }
@@ -38,7 +35,7 @@ export default async function S3Page(props: S3PageProps = {}) {
     <S3Client
       initialProfiles={initialProfiles}
       initialError={initialError}
-      organizationPublicId={orgPid ?? undefined}
+      activeOrgPublicId={orgPid ?? undefined}
     />
   );
 }

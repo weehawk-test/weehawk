@@ -121,20 +121,20 @@ function serviceRouteId(service: Pick<Service, "id" | "publicId">): string {
 
 export function ServiceRemoteHostPanel({
   service,
-  organizationPublicId: organizationPublicIdProp,
+  activeOrgPublicId: activeOrgPublicIdProp,
 }: {
   service: Service;
   /** From the service's project when opened under `/projects/...` (org workspace context is null there). */
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const updateService = useUpdateService();
   const orgWorkspace = useOptionalOrgWorkspace();
-  const organizationPublicId =
-    organizationPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
-  const remoteOrgSegment = orgScopedQuerySegment(organizationPublicId);
+  const activeOrgPublicId =
+    activeOrgPublicIdProp?.trim() || orgWorkspace?.publicId?.trim() || undefined;
+  const remoteOrgSegment = orgScopedQuerySegment(activeOrgPublicId);
   const remoteServersQueryKey = ["remote-servers", remoteOrgSegment] as const;
   const isApplication = service.type === "application";
 
@@ -146,21 +146,16 @@ export function ServiceRemoteHostPanel({
 
   const q = useQuery({
     queryKey: remoteServersQueryKey,
-    queryFn: () =>
-      fetchRemoteServers(
-        accessToken ?? "",
-        organizationPublicId ? organizationPublicId : undefined,
-      ),
+    queryFn: () => fetchRemoteServers(accessToken ?? ""),
     enabled: Boolean(accessToken),
   });
 
-  const orgForWebhooks = organizationPublicId?.trim() ?? "";
+  const orgForWebhooks = activeOrgPublicId?.trim() ?? "";
   const webhooksQ = useQuery({
     queryKey: ["webhooks", orgForWebhooks, { includeHidden: true }],
     queryFn: () =>
       fetchWebhooks(accessToken!, {
         includeHidden: true,
-        organizationPublicId: orgForWebhooks,
       }),
     enabled: Boolean(accessToken) && Boolean(orgForWebhooks),
   });
@@ -481,7 +476,6 @@ export function ServiceRemoteHostPanel({
             {
               hooksPublicHost: parentHost,
             },
-            orgForWebhooks,
           );
           setPublicRedeployTriggerUrl(outer.remoteTriggerUrl?.trim() ?? null);
           await queryClient.invalidateQueries({ queryKey: ["webhooks"] });
@@ -566,7 +560,7 @@ export function ServiceRemoteHostPanel({
       });
       let deleteProblem = "";
       try {
-        await deleteWebhook(accessToken, oldId, orgForWebhooks);
+        await deleteWebhook(accessToken, oldId);
       } catch (delErr) {
         deleteProblem = (delErr as Error).message;
       }

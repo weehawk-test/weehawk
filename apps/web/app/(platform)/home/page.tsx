@@ -31,9 +31,9 @@ export default async function HomePage() {
     fetchOrganizationSSR(publicId),
     fetchOrganizationProjectsSSR(publicId),
     fetchOrganizationMembersSSR(publicId),
-    fetchRemoteServersSSR(publicId),
-    fetchCronJobsSSR(publicId),
-    fetchWebhooksSSR(publicId),
+    fetchRemoteServersSSR(),
+    fetchCronJobsSSR(),
+    fetchWebhooksSSR(),
   ]);
 
   const orgName = org?.name?.trim() || "Organization";

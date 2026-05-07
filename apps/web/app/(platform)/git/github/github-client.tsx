@@ -48,17 +48,17 @@ function postManifestToGithub(manifest: GithubAppManifest): void {
 
 export function GitHubGitSettingsClient({
   initialData,
-  organizationPublicId,
+  activeOrgPublicId,
   hideBreadcrumb = false,
 }: {
   initialData: GitSettingsPublic | null;
-  organizationPublicId: string;
+  activeOrgPublicId: string;
   hideBreadcrumb?: boolean;
 }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
   const orgFromCtx = useOrgWorkspace().publicId;
-  const orgPid = (organizationPublicId || orgFromCtx).trim();
+  const orgPid = (activeOrgPublicId || orgFromCtx).trim();
   const [loading, setLoading] = useState(!initialData);
   const [registerBusy, setRegisterBusy] = useState(false);
   const [disconnectBusy, setDisconnectBusy] = useState(false);

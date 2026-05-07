@@ -57,12 +57,14 @@ export class UpsertS3ProfileDto {
   @IsOptional()
   forcePathStyle?: boolean;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
+    deprecated: true,
     description:
-      'Organization workspace (required). S3 profiles are scoped to the organization.',
+      'Deprecated. Active organization is resolved server-side; this field is ignored when omitted.',
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(48)
-  organizationPublicId!: string;
+  organizationPublicId?: string;
 }

@@ -5,16 +5,14 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2, Loader2, LogOut, Pencil } from "lucide-react";
 import {
+  clearActiveOrganizationPublicId,
   fetchOrganizations,
   leaveOrganization,
   notifyOrganizationsListChanged,
+  setActiveOrganizationPublicId,
   updateOrganization,
 } from "@/lib/organizations-api";
 import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
-import {
-  clearActiveOrganizationPublicBrowserCookie,
-  setActiveOrganizationPublicBrowserCookie,
-} from "@/lib/active-org-cookie";
 import { useOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -76,13 +74,13 @@ export function OrgSettingsClient() {
       queryClient.clear();
       notifyOrganizationsListChanged();
       if (next?.publicId?.trim()) {
-        setActiveOrganizationPublicBrowserCookie(next.publicId);
+        await setActiveOrganizationPublicId(next.publicId);
         queueMicrotask(() => {
           router.push("/home");
           router.refresh();
         });
       } else {
-        clearActiveOrganizationPublicBrowserCookie();
+        await clearActiveOrganizationPublicId();
         queueMicrotask(() => {
           router.push("/organizations/create");
           router.refresh();

@@ -26,7 +26,7 @@ type PresetId = "dockerhub" | "ghcr" | "gitlab" | "custom";
 
 type Props = {
   preset: PresetId;
-  organizationPublicId: string;
+  activeOrgPublicId: string;
 };
 
 const PRESET_META: Record<
@@ -92,14 +92,14 @@ function ProviderIcon({ preset }: { preset: PresetId }) {
   return <Globe2 className="h-14 w-14 text-sky-500" />;
 }
 
-export function RegistrySettingsClient({ preset, organizationPublicId }: Props) {
+export function RegistrySettingsClient({ preset, activeOrgPublicId }: Props) {
   const meta = PRESET_META[preset];
   const { accessToken } = useAuth();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const orgCtx = useOrgWorkspace();
   const orgFromCtx = orgCtx.publicId;
-  const orgPid = (organizationPublicId || orgFromCtx).trim();
+  const orgPid = (activeOrgPublicId || orgFromCtx).trim();
   const canRegistryAdd = orgMemberAllowsRegistryAdd(orgCtx.workspacePermissions);
   const canRegistryDelete = orgMemberAllowsRegistryDelete(orgCtx.workspacePermissions);
   const canRegistryEdit = orgMemberAllowsRegistryEdit(orgCtx.workspacePermissions);
@@ -117,7 +117,7 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
 
   const accountsQ = useQuery({
     queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
-    queryFn: () => fetchRegistryAccounts(accessToken ?? "", orgPid),
+    queryFn: () => fetchRegistryAccounts(accessToken ?? ""),
     enabled: Boolean(accessToken && orgPid),
   });
 
@@ -184,7 +184,7 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
     try {
       const provider = providerUrl.trim();
       const name = preset === "custom" ? provider || "Custom registry" : meta.title;
-      await createRegistryAccountApi(accessToken, orgPid, {
+      await createRegistryAccountApi(accessToken, {
         name,
         providerUrl: provider,
         username: username.trim(),
@@ -215,7 +215,7 @@ export function RegistrySettingsClient({ preset, organizationPublicId }: Props) 
     if (!accessToken || !visibleSavedAccount) return;
     setIsClearingToken(true);
     try {
-      await deleteRegistryAccountApi(accessToken, orgPid, visibleSavedAccount.publicId);
+      await deleteRegistryAccountApi(accessToken, visibleSavedAccount.publicId);
       await queryClient.invalidateQueries({
         queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
       });

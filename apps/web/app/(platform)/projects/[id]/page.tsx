@@ -22,22 +22,26 @@ async function withSsrTimeout<T>(promise: Promise<T>, timeoutMs: number, fallbac
 export default async function ProjectDetailsPage({
   params,
   searchParams,
-  organizationPublicId: organizationPublicIdProp,
+  activeOrgPublicId: activeOrgPublicIdProp,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ page?: string; q?: string; organizationPublicId?: string }>;
-  /** When set (org workspace), required by the API to load org-scoped projects. */
-  organizationPublicId?: string;
+  searchParams: Promise<{ page?: string; q?: string; activeOrgPublicId?: string; organizationPublicId?: string }>;
+  /** When set (org workspace), active org hint for UI context. */
+  activeOrgPublicId?: string;
 }) {
   const { id: rawId } = await params;
   const sp = await searchParams;
   const page = Math.max(1, parseInt(sp.page ?? "1", 10) || 1);
   const q = typeof sp.q === "string" ? sp.q : "";
   const orgFromQuery =
-    typeof sp.organizationPublicId === "string" ? sp.organizationPublicId.trim() : "";
+    typeof sp.activeOrgPublicId === "string"
+      ? sp.activeOrgPublicId.trim()
+      : typeof sp.organizationPublicId === "string"
+        ? sp.organizationPublicId.trim()
+        : "";
   const orgFromCookie = (await getServerActiveOrganizationPublicId())?.trim() || "";
-  const organizationPublicId =
-    organizationPublicIdProp?.trim() || orgFromQuery || orgFromCookie || undefined;
+  const activeOrgPublicId =
+    activeOrgPublicIdProp?.trim() || orgFromQuery || orgFromCookie || undefined;
 
   const safeProjectId = rawId.trim() ? rawId.trim() : null;
 
@@ -47,7 +51,7 @@ export default async function ProjectDetailsPage({
 
   if (safeProjectId) {
     const [projectResult, servicesResult] = await Promise.all([
-      fetchProjectSSR(safeProjectId, organizationPublicId),
+      fetchProjectSSR(safeProjectId),
       withSsrTimeout(
         fetchServicesPageSSR(safeProjectId, page, q),
         PROJECT_SERVICES_SSR_TIMEOUT_MS,
@@ -62,9 +66,6 @@ export default async function ProjectDetailsPage({
       const params = new URLSearchParams();
       if (page > 1) params.set("page", String(page));
       if (q.trim()) params.set("q", q);
-      if (organizationPublicId) {
-        params.set("organizationPublicId", organizationPublicId);
-      }
       const qs = params.toString();
       const base = `/projects/${initialProject.publicId}`;
       redirect(qs ? `${base}?${qs}` : base);
@@ -79,7 +80,7 @@ export default async function ProjectDetailsPage({
       initialProjectError={initialProjectError}
       urlPage={page}
       urlQ={q}
-      organizationPublicId={organizationPublicId}
+      activeOrgPublicId={activeOrgPublicId}
     />
   );
 }

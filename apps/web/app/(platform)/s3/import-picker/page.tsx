@@ -21,9 +21,9 @@ export default async function S3ImportPickerPage({
     );
   }
 
-  const orgPid = await getServerActiveOrganizationPublicId();
+  await getServerActiveOrganizationPublicId();
   const prefixParam = normalizeS3PrefixParam(sp.prefix);
-  const initialList = await fetchS3BucketObjectsSSR(profileId, prefixParam, orgPid);
+  const initialList = await fetchS3BucketObjectsSSR(profileId, prefixParam);
 
   return (
     <div className="min-h-0 p-3 sm:p-4">
@@ -33,7 +33,6 @@ export default async function S3ImportPickerPage({
         initialPrefix={prefixParam}
         initialList={initialList}
         requireTarGz={requireTarGz}
-        organizationPublicId={orgPid ?? undefined}
       />
     </div>
   );

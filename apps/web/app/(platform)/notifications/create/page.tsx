@@ -10,10 +10,10 @@ export const dynamic = "force-dynamic";
 
 export async function NotificationsCreateView({
   notificationsBasePath = NOTIFICATIONS_BASE_PATH,
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
   notificationsBasePath?: string;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 }) {
   const urlPage = 1;
   const urlQ = "";
@@ -24,7 +24,6 @@ export async function NotificationsCreateView({
       urlPage,
       CHANNELS_PAGE_SIZE,
       urlQ,
-      organizationPublicId,
     );
   } catch (e) {
     initialError = e instanceof Error ? e.message : String(e);
@@ -37,7 +36,7 @@ export async function NotificationsCreateView({
       urlQ={urlQ}
       initialMode="create"
       notificationsBasePath={notificationsBasePath}
-      organizationPublicId={organizationPublicId ?? undefined}
+      activeOrgPublicId={activeOrgPublicId ?? undefined}
     />
   );
 }
@@ -45,6 +44,6 @@ export async function NotificationsCreateView({
 export default async function NotificationsCreatePage() {
   const orgPid = await getServerActiveOrganizationPublicId();
   return NotificationsCreateView({
-    organizationPublicId: orgPid ?? undefined,
+    activeOrgPublicId: orgPid ?? undefined,
   });
 }

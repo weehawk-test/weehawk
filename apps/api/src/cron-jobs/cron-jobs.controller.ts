@@ -18,6 +18,7 @@ import { LocalSessionGuard } from '../common/guards/local-session.guard';
 import { CreateCronJobDto } from './dto/create-cron-job.dto';
 import { UpdateCronJobDto } from './dto/update-cron-job.dto';
 import { CronJobsService } from './cron-jobs.service';
+import { ActiveOrganizationService } from '../organizations/active-organization.service';
 
 type AuthedReq = { user?: { email: string; userId: number } };
 
@@ -33,12 +34,26 @@ type AuthedReq = { user?: { email: string; userId: number } };
 )
 @Controller('api/cron-jobs')
 export class CronJobsController {
-  constructor(private readonly cronJobsService: CronJobsService) {}
+  constructor(
+    private readonly cronJobsService: CronJobsService,
+    private readonly activeOrganizationService: ActiveOrganizationService,
+  ) {}
 
   private uid(req?: AuthedReq): number {
     const id = req?.user?.userId;
     if (!id) throw new UnauthorizedException('User context missing');
     return id;
+  }
+
+  private async resolveOrg(
+    req: AuthedReq,
+    activeOrgPublicId?: string,
+  ): Promise<string | undefined> {
+    const r = await this.activeOrganizationService.resolvePreferredOrganizationPublicId(
+      this.uid(req),
+      activeOrgPublicId,
+    );
+    return r ?? undefined;
   }
 
   @Post()
@@ -47,61 +62,66 @@ export class CronJobsController {
   }
 
   @Get()
-  list(
+  async list(
     @Req() req: AuthedReq,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
-    return this.cronJobsService.list(this.uid(req), organizationPublicId);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
+    return this.cronJobsService.list(this.uid(req), org);
   }
 
   @Get(':id')
-  findOne(
+  async findOne(
     @Req() req: AuthedReq,
     @Param('id') id: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
-    return this.cronJobsService.findOne(this.uid(req), id, organizationPublicId);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
+    return this.cronJobsService.findOne(this.uid(req), id, org);
   }
 
   @Patch(':id')
-  update(
+  async update(
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Body() dto: UpdateCronJobDto,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.cronJobsService.update(
       this.uid(req),
       id,
       dto,
-      organizationPublicId,
+      org,
     );
   }
 
   @Post(':id/run')
-  runNow(
+  async runNow(
     @Req() req: AuthedReq,
     @Param('id') id: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.cronJobsService.triggerNow(
       this.uid(req),
       id,
-      organizationPublicId,
+      org,
     );
   }
 
   @Get(':id/last-run-log')
-  readLastRunLog(
+  async readLastRunLog(
     @Req() req: AuthedReq,
     @Param('id') id: string,
     @Query('lines') lines?: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
     const parsed = lines == null ? undefined : Number(lines);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
     return this.cronJobsService.readLastRunLog(this.uid(req), id, {
       lines: Number.isFinite(parsed) ? parsed : undefined,
-      organizationPublicId,
+      organizationPublicId: org,
     });
   }
 
@@ -109,9 +129,10 @@ export class CronJobsController {
   async remove(
     @Req() req: AuthedReq,
     @Param('id') id: string,
-    @Query('organizationPublicId') organizationPublicId?: string,
+    @Query('organizationPublicId') activeOrgPublicId?: string,
   ) {
-    await this.cronJobsService.remove(this.uid(req), id, organizationPublicId);
+    const org = await this.resolveOrg(req, activeOrgPublicId);
+    await this.cronJobsService.remove(this.uid(req), id, org);
     return { ok: true };
   }
 }

@@ -5,20 +5,20 @@ import { WebhooksClient } from "./webhooks-client";
 export const dynamic = "force-dynamic";
 
 export async function WebhooksPageInner({
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
-  const initialWebhooks = await fetchWebhooksSSR(organizationPublicId);
+  const initialWebhooks = await fetchWebhooksSSR();
   return (
     <WebhooksClient
       initialWebhooks={initialWebhooks}
-      organizationPublicId={organizationPublicId}
+      activeOrgPublicId={activeOrgPublicId}
     />
   );
 }
 
 export default async function Page() {
   const orgPid = await getServerActiveOrganizationPublicId();
-  return WebhooksPageInner({ organizationPublicId: orgPid ?? undefined });
+  return WebhooksPageInner({ activeOrgPublicId: orgPid ?? undefined });
 }

@@ -303,13 +303,13 @@ function ServerDomainsCard({
 export function DeployDomainsClient({
   initialRemoteServers,
   initialTraefikSettings,
-  organizationPublicId = null,
+  activeOrgPublicId = null,
   initialRemoteServersOrganizationId = null,
   initialTraefikOrganizationId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
   initialTraefikSettings?: TraefikSettingsPayload | null;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
   /** Must match the org used for SSR `initialRemoteServers` so TanStack Query does not reuse the wrong list. */
   initialRemoteServersOrganizationId?: string | null;
   /** Must match the org used for SSR Traefik fetch. */
@@ -319,7 +319,7 @@ export function DeployDomainsClient({
   const { toast } = useToast();
   const qc = useQueryClient();
   const orgWorkspace = useOptionalOrgWorkspace();
-  const trimmedOrg = organizationPublicId?.trim() ?? "";
+  const trimmedOrg = activeOrgPublicId?.trim() ?? "";
   const trimmedSsrOrg = initialRemoteServersOrganizationId?.trim() ?? "";
   const trimmedSsrTraefikOrg = initialTraefikOrganizationId?.trim() ?? "";
   const useSsrRemoteInitial =
@@ -341,7 +341,7 @@ export function DeployDomainsClient({
 
   const traefikQ = useQuery({
     queryKey: traefikSettingsQueryKey,
-    queryFn: () => fetchTraefikSettings(accessToken ?? "", trimmedOrg),
+    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
     enabled: Boolean(accessToken && trimmedOrg),
     initialData: useSsrTraefikInitial ? (initialTraefikSettings ?? undefined) : undefined,
     initialDataUpdatedAt: useSsrTraefikInitial ? Date.now() : undefined,
@@ -351,8 +351,7 @@ export function DeployDomainsClient({
 
   const q = useQuery({
     queryKey: remoteServersQueryKey,
-    queryFn: () =>
-      fetchRemoteServers(accessToken ?? "", trimmedOrg !== "" ? trimmedOrg : undefined),
+    queryFn: () => fetchRemoteServers(accessToken ?? ""),
     enabled: Boolean(accessToken),
     initialData: useSsrRemoteInitial ? initialRemoteServers : undefined,
     initialDataUpdatedAt: useSsrRemoteInitial ? Date.now() : undefined,
@@ -372,8 +371,8 @@ export function DeployDomainsClient({
   }, [traefikQ.data, acmeEmailDirty]);
 
   const emailMutation = useMutation({
-    mutationFn: (args: { email: string; organizationPublicId: string }) =>
-      updateTraefikSettings(accessToken ?? "", { acmeEmail: args.email.trim() }, args.organizationPublicId),
+    mutationFn: (args: { email: string }) =>
+      updateTraefikSettings(accessToken ?? "", { acmeEmail: args.email.trim() }),
     onSuccess: async (updated) => {
       qc.setQueryData(traefikSettingsQueryKey, updated);
       await qc.invalidateQueries({ queryKey: traefikSettingsQueryKey });
@@ -404,7 +403,6 @@ export function DeployDomainsClient({
     }
     emailMutation.mutate({
       email: t,
-      organizationPublicId: trimmedOrg,
     });
   };
 

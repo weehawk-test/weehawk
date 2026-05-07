@@ -11,7 +11,7 @@ export default async function OrganizationMembersPage() {
 
   return (
     <OrgMembersClient
-      organizationPublicId={publicId}
+      activeOrgPublicId={publicId}
       initialMembers={members}
       intro={
         <p className="text-sm text-muted-foreground md:max-w-2xl">

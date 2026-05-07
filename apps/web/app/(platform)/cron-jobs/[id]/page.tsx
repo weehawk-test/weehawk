@@ -13,12 +13,12 @@ export default async function CronJobDetailsPage({ params }: PageProps) {
   const { id: rawId } = await params;
   const id = rawId.trim();
   const orgPid = await getServerActiveOrganizationPublicId();
-  const cronJob = await fetchCronJobSSR(id, orgPid);
+  const cronJob = await fetchCronJobSSR(id);
   if (!cronJob) redirect("/resource-not-found");
   if (cronJob.publicId && id !== cronJob.publicId) {
     redirect(`/cron-jobs/${cronJob.publicId}`);
   }
   return (
-    <CronJobDetailsClient initialCronJob={cronJob} organizationPublicId={orgPid ?? undefined} />
+    <CronJobDetailsClient initialCronJob={cronJob} activeOrgPublicId={orgPid ?? undefined} />
   );
 }

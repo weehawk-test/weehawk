@@ -17,11 +17,10 @@ export default async function EditCronJobPage({ params }: PageProps) {
   const { id: rawId } = await params;
   const id = rawId.trim();
   const orgPid = await getServerActiveOrganizationPublicId();
-  const org = orgPid?.trim() ?? "";
   const [cronJob, initialChannels, initialRemoteServers] = await Promise.all([
-    fetchCronJobSSR(id, orgPid),
-    fetchNotificationChannelsSSR(org || undefined),
-    fetchRemoteServersSSR(org || undefined),
+    fetchCronJobSSR(id),
+    fetchNotificationChannelsSSR(),
+    fetchRemoteServersSSR(),
   ]);
   if (!cronJob) redirect("/resource-not-found");
   if (cronJob.publicId && id !== cronJob.publicId) {
@@ -32,7 +31,7 @@ export default async function EditCronJobPage({ params }: PageProps) {
       initialCronJob={cronJob}
       initialChannels={initialChannels}
       initialRemoteServers={initialRemoteServers}
-      organizationPublicId={orgPid ?? undefined}
+      activeOrgPublicId={orgPid ?? undefined}
     />
   );
 }

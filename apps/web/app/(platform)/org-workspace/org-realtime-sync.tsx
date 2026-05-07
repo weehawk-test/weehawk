@@ -96,9 +96,10 @@ export function OrgRealtimeSync() {
       if (incomingSeq > 0 && incomingSeq < prevSeq) return;
       if (incomingSeq > 0) runtimeSeqByServiceRef.current.set(servicePublicId, incomingSeq);
       const running = payload?.running === true;
-      const owner = user?.userId ?? "none";
+      const ownerId = user?.userId;
+      const owner = ownerId ?? "none";
       queryClient.setQueryData(["service-runtime", owner, servicePublicId], { running });
-      if (owner !== "none") {
+      if (ownerId != null) {
         queryClient.setQueryData(["service-runtime", "none", servicePublicId], { running });
       }
       queryClient.setQueriesData(

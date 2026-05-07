@@ -13,12 +13,12 @@ export default async function WebhookDetailsPage({ params }: PageProps) {
   const { id: rawId } = await params;
   const id = rawId.trim();
   const orgPid = await getServerActiveOrganizationPublicId();
-  const webhook = await fetchWebhookSSR(id, orgPid);
+  const webhook = await fetchWebhookSSR(id);
   if (!webhook) redirect("/resource-not-found");
   if (webhook.publicId && id !== webhook.publicId) {
     redirect(`/webhooks/${webhook.publicId}`);
   }
   return (
-    <WebhookDetailsClient initialWebhook={webhook} organizationPublicId={orgPid ?? undefined} />
+    <WebhookDetailsClient initialWebhook={webhook} activeOrgPublicId={orgPid ?? undefined} />
   );
 }

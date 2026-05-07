@@ -5,15 +5,15 @@ import { CronJobsClient } from "./cron-jobs-client";
 export const dynamic = "force-dynamic";
 
 export async function CronJobsPageInner({
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
-  organizationPublicId?: string;
+  activeOrgPublicId?: string;
 }) {
-  const initialJobs = await fetchCronJobsSSR(organizationPublicId);
-  return <CronJobsClient initialJobs={initialJobs} organizationPublicId={organizationPublicId} />;
+  const initialJobs = await fetchCronJobsSSR();
+  return <CronJobsClient initialJobs={initialJobs} activeOrgPublicId={activeOrgPublicId} />;
 }
 
 export default async function Page() {
   const orgPid = await getServerActiveOrganizationPublicId();
-  return CronJobsPageInner({ organizationPublicId: orgPid ?? undefined });
+  return CronJobsPageInner({ activeOrgPublicId: orgPid ?? undefined });
 }

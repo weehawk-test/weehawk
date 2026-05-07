@@ -814,7 +814,7 @@ export default function ServiceDetails({
   const { data: project, isLoading: projectLoading } = useProject(projectId!, {
     initialData: initialProject ?? undefined,
     skipClientFetch: Boolean(initialProject),
-    organizationPublicId: initialProject?.organizationPublicId,
+    activeOrgPublicId: initialProject?.organizationPublicId,
   });
 
   useEffect(() => {
@@ -1402,7 +1402,7 @@ export default function ServiceDetails({
               <ApplicationArchivePanel
                 serviceId={serviceQueryKeyId(service)}
                 projectId={projectId}
-                organizationPublicId={project?.organizationPublicId ?? ""}
+                activeOrgPublicId={project?.organizationPublicId ?? ""}
                 service={service}
                 onNavigateToRemoteDeployHost={openRemoteDeployHostPanel}
               />
@@ -1421,7 +1421,7 @@ export default function ServiceDetails({
             >
               <ServiceRemoteHostPanel
                 service={service}
-                organizationPublicId={project?.organizationPublicId?.trim() || null}
+                activeOrgPublicId={project?.organizationPublicId?.trim() || null}
               />
             </motion.div>
           )}
@@ -1539,7 +1539,7 @@ export default function ServiceDetails({
                 isDatabaseService={isDatabaseService}
                 s3ImportSsr={s3ImportSsr}
                 initialS3Profiles={initialS3Profiles}
-                organizationPublicId={project?.organizationPublicId?.trim() || null}
+                activeOrgPublicId={project?.organizationPublicId?.trim() || null}
               />
             </motion.div>
           )}
@@ -1550,7 +1550,7 @@ export default function ServiceDetails({
               transition={{ duration: 0.2 }}>
               <DomainsPanel
                 service={service}
-                organizationPublicId={project?.organizationPublicId?.trim() || null}
+                activeOrgPublicId={project?.organizationPublicId?.trim() || null}
               />
             </motion.div>
           )}
@@ -1825,14 +1825,14 @@ function ServiceBackupPanel({
   isDatabaseService,
   s3ImportSsr,
   initialS3Profiles,
-  organizationPublicId: s3OrganizationPublicIdProp,
+  activeOrgPublicId: s3OrganizationPublicIdProp,
 }: {
   serviceId: string;
   service: Service | null;
   isDatabaseService: boolean;
   s3ImportSsr?: ServiceS3ImportSsr | null;
   initialS3Profiles?: S3ProfilePublic[];
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 }) {
   const { toast } = useToast();
   const router = useRouter();
@@ -1871,7 +1871,7 @@ function ServiceBackupPanel({
   const s3OrganizationPublicId = s3OrganizationPublicIdProp?.trim() || null;
   const s3ProfilesQuery = useQuery({
     queryKey: ["s3-profiles", s3OrganizationPublicId],
-    queryFn: () => listS3ProfilesApi(s3OrganizationPublicId),
+    queryFn: () => listS3ProfilesApi(),
     enabled: Boolean(s3OrganizationPublicId),
     ...(initialS3Profiles !== undefined
       ? { initialData: initialS3Profiles, refetchOnMount: false }
@@ -2334,7 +2334,7 @@ function ServiceBackupPanel({
               }}
               defaultProfileName={backupS3ProfileName}
               initialProfiles={initialS3Profiles}
-              organizationPublicId={s3OrganizationPublicId}
+              activeOrgPublicId={s3OrganizationPublicId}
               importPickerMode="db"
               ssr={
                 s3ImportSsr?.mode === "db"
@@ -2554,7 +2554,7 @@ function ServiceBackupPanel({
           }}
           defaultProfileName={backupS3ProfileName}
           initialProfiles={initialS3Profiles}
-          organizationPublicId={s3OrganizationPublicId}
+          activeOrgPublicId={s3OrganizationPublicId}
           importPickerMode="vol"
           ssr={
             s3ImportSsr?.mode === "vol"
@@ -3347,13 +3347,13 @@ function DatabaseSetupForm({ serviceId, engine }: { serviceId: string; engine: D
 function ApplicationArchivePanel({
   serviceId,
   projectId,
-  organizationPublicId,
+  activeOrgPublicId,
   service,
   onNavigateToRemoteDeployHost,
 }: {
   serviceId: string;
   projectId: string;
-  organizationPublicId: string;
+  activeOrgPublicId: string;
   service: Service;
   onNavigateToRemoteDeployHost: () => void;
 }) {
@@ -3362,7 +3362,7 @@ function ApplicationArchivePanel({
   const { toast } = useToast();
   const { data: serviceRow } = useService(serviceId);
   const effectiveService = serviceRow ?? service;
-  const orgPid = organizationPublicId.trim();
+  const orgPid = activeOrgPublicId.trim();
   const hasDeployHost = useMemo(() => {
     const id = effectiveService.remoteServerId;
     return typeof id === "number" && id > 0;
@@ -3458,7 +3458,7 @@ function ApplicationArchivePanel({
   const [savingImage, setSavingImage] = useState(false);
   const { data: registryAccounts, isLoading: registryAccountsLoading } = useQuery({
     queryKey: ["registry-accounts", orgScopedQuerySegment(orgPid)],
-    queryFn: () => fetchRegistryAccounts(accessToken!, orgPid),
+    queryFn: () => fetchRegistryAccounts(accessToken!),
     enabled: Boolean(accessToken && orgPid),
   });
   const registryConfigured = (registryAccounts?.length ?? 0) > 0;
@@ -5878,10 +5878,10 @@ function EnvFilePanel({ service }: { service: Service }) {
 
 function DomainsPanel({
   service,
-  organizationPublicId,
+  activeOrgPublicId,
 }: {
   service: Service;
-  organizationPublicId?: string | null;
+  activeOrgPublicId?: string | null;
 }) {
   const { accessToken } = useAuth();
   const { toast } = useToast();
@@ -5914,8 +5914,7 @@ function DomainsPanel({
       if (!accessToken?.trim()) throw new Error("Authentication required.");
       if (!deployServer) throw new Error("Set a deploy server first.");
       const { nextJson, nextHosts } = upsertHostInDomainsJson(host, deployServer.domainsJson ?? null);
-      const orgTrim = organizationPublicId?.trim() || undefined;
-      const remoteServers = await fetchRemoteServers(accessToken, orgTrim);
+      const remoteServers = await fetchRemoteServers(accessToken);
       const targetServer = remoteServers.find((row) => row.id === deployServer.id);
       if (!targetServer) {
         throw new Error("Remote server not found in this organization.");
@@ -5925,7 +5924,6 @@ function DomainsPanel({
         accessToken,
         remoteServerRouteId,
         { domainsJson: nextJson },
-        organizationPublicId,
       );
       return { host, nextHosts };
     },
