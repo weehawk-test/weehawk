@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Logger,
   Post,
@@ -77,6 +78,15 @@ export class AuthController {
     };
   }
 
+  private assertPasswordRecoveryAllowed(): void {
+    const rawMode = this.config.get<string>('INSTANCE_MODE') ?? 'cloud';
+    if (rawMode.trim().toLowerCase() === 'self-hosted') {
+      throw new ForbiddenException(
+        'Password recovery is disabled for self-hosted instances.',
+      );
+    }
+  }
+
   @Post('/register')
   @Public()
   @Throttle({
@@ -94,6 +104,16 @@ export class AuthController {
     const auth = await this.authService.register(dto);
     attachAuthCookies(res, auth, this.isSecureCookie());
     return this.sessionBody(auth);
+  }
+
+  @Get('/status')
+  @Public()
+  async status(): Promise<{
+    instanceMode: 'cloud' | 'self-hosted';
+    userConfigured: boolean;
+    registrationOpen: boolean;
+  }> {
+    return this.authService.getRegistrationStatus();
   }
 
   @Post('/login')
@@ -186,6 +206,7 @@ export class AuthController {
   async forgotPassword(
     @Body() body: ForgotPasswordDto,
   ): Promise<{ message: string }> {
+    this.assertPasswordRecoveryAllowed();
     const email = body?.email?.trim();
     if (email) {
       try {
@@ -207,6 +228,7 @@ export class AuthController {
   async resetPassword(
     @Body() dto: ResetPasswordDto,
   ): Promise<{ message: string }> {
+    this.assertPasswordRecoveryAllowed();
     await this.passwordResetService.resetPassword(dto.token, dto.newPassword);
     return { message: 'Password reset successfully!' };
   }

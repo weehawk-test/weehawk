@@ -496,7 +496,7 @@ export function DeployDomainsClient({
                     setAcmeEmailDirty(true);
                     setAcmeEmailLocal(e.target.value);
                   }}
-                  placeholder="you@example.com"
+                  placeholder="you@weehawk.io"
                   disabled={inOrgDomains && !allowOrgCertEmail}
                   title={
                     inOrgDomains && !allowOrgCertEmail

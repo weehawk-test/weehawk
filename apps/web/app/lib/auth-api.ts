@@ -21,6 +21,12 @@ export type AuthUserSnapshot = {
   imageUrl?: string | null;
 };
 
+export type AuthStatus = {
+  instanceMode: "cloud" | "self-hosted";
+  userConfigured: boolean;
+  registrationOpen: boolean;
+};
+
 export class AuthHttpError extends Error {
   readonly status: number;
   /** Seconds until the client may retry (from Retry-After), when rate-limited. */
@@ -113,6 +119,17 @@ export async function registerApi(input: {
   if (!res.ok) return throwAuthHttpError(res);
   const session = (await res.json()) as AuthSessionBody;
   return { user: toUserSnapshot(session) };
+}
+
+export async function getAuthStatusApi(): Promise<AuthStatus> {
+  const res = await fetch(`${API_BASE}/api/auth/status`, {
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) return throwAuthHttpError(res);
+  return (await res.json()) as AuthStatus;
 }
 
 export async function logoutApi(): Promise<void> {

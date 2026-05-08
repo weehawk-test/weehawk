@@ -5,13 +5,13 @@ import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Loader2, X } from "lucide-react";
-import { AuthHttpError, loginApi } from "@/lib/auth-api";
+import { AuthHttpError, getAuthStatusApi, loginApi } from "@/lib/auth-api";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { useRateLimitCountdown } from "@/hooks/use-rate-limit-countdown";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { PasswordInput } from "@/components/inputs/password-input";
-import { API_BASE, normalizeApiBase } from "@/lib/api";
+import { API_BASE } from "@/lib/api";
 
 function safeInternalNext(raw: string | null | undefined): string | null {
   if (raw == null) return null;
@@ -21,6 +21,10 @@ function safeInternalNext(raw: string | null | undefined): string | null {
 }
 
 export default function LoginPage() {
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+    .trim()
+    .toLowerCase();
+  const isSelfHosted = instanceMode === "self-hosted";
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextAfterAuth = useMemo(
@@ -34,6 +38,7 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [blockedUntilMs, setBlockedUntilMs] = useState<number | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [userConfigured, setUserConfigured] = useState<boolean | null>(null);
   const { secondsLeft, label } = useRateLimitCountdown(blockedUntilMs);
 
   useEffect(() => {
@@ -56,6 +61,27 @@ export default function LoginPage() {
     if (nextAfterAuth) qp.set("next", nextAfterAuth);
     router.replace(qp.toString() ? `/login?${qp.toString()}` : "/login", { scroll: false });
   }, [router, toast, nextAfterAuth, searchParams]);
+
+  useEffect(() => {
+    if (!isSelfHosted) return;
+    let active = true;
+    (async () => {
+      try {
+        const status = await getAuthStatusApi();
+        if (active && status.instanceMode === "self-hosted") {
+          setUserConfigured(status.userConfigured);
+          if (!status.userConfigured) {
+            router.replace("/register");
+          }
+        }
+      } catch {
+        // Keep default enabled state if status endpoint is temporarily unavailable.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isSelfHosted, router]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -104,11 +130,6 @@ export default function LoginPage() {
     }
   };
 
-  const continueWithGoogle = () => {
-    const oauthBase = normalizeApiBase(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080");
-    window.location.href = `${oauthBase}/api/oauth2/authorize/google`;
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-background">
       <div className="fixed top-4 right-4 z-20">
@@ -127,7 +148,9 @@ export default function LoginPage() {
             />
           </div>
           <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
-          <p className="text-sm text-muted-foreground mt-1">Use your Weehawk account.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {isSelfHosted ? "Sign in to your account." : "Use your Weehawk account."}
+          </p>
         </div>
 
         {bannerError ? (
@@ -151,25 +174,34 @@ export default function LoginPage() {
           </div>
         ) : null}
 
-        <button
-          type="button"
-          onClick={continueWithGoogle}
-          className="btn-secondary w-full flex items-center justify-center gap-2"
-        >
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-black text-xs font-bold">
-            G
-          </span>
-          Continue with Google
-        </button>
+        {!isSelfHosted && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                const oauthBase = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080")
+                  .trim()
+                  .replace(/\/+$/, "");
+                window.location.href = `${oauthBase}/api/oauth2/authorize/google`;
+              }}
+              className="btn-secondary w-full flex items-center justify-center gap-2"
+            >
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-black text-xs font-bold">
+                G
+              </span>
+              Continue with Google
+            </button>
 
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">or</span>
-          </div>
-        </div>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+          </>
+        )}
 
         {secondsLeft > 0 ? (
           <div
@@ -192,16 +224,18 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="input-field"
-              placeholder="you@example.com"
+              placeholder="you@weehawk.io"
               autoComplete="email"
             />
           </div>
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <label className="text-sm text-muted-foreground">Password</label>
-              <Link href="/forgot-password" className="text-xs text-primary hover:underline">
-                Forgot password?
-              </Link>
+              {!isSelfHosted && (
+                <Link href="/forgot-password" className="text-xs text-primary hover:underline">
+                  Forgot password?
+                </Link>
+              )}
             </div>
             <PasswordInput
               value={password}
@@ -221,12 +255,14 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="text-sm text-muted-foreground">
-          No account yet?{" "}
-          <Link href="/register" className="text-primary hover:underline">
-            Create one
-          </Link>
-        </p>
+        {(!isSelfHosted || userConfigured === false) && (
+          <p className="text-sm text-muted-foreground">
+            No account yet?{" "}
+            <Link href="/register" className="text-primary hover:underline">
+              Create one
+            </Link>
+          </p>
+        )}
       </div>
     </div>
   );

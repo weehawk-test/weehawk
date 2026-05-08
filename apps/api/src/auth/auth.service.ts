@@ -42,7 +42,33 @@ export class AuthService {
     private readonly organizationsService: OrganizationsService,
   ) {}
 
+  getRegistrationStatus(): Promise<{
+    instanceMode: 'cloud' | 'self-hosted';
+    userConfigured: boolean;
+    registrationOpen: boolean;
+  }> {
+    return this.computeRegistrationStatus();
+  }
+
+  async assertRegistrationAllowed(): Promise<void> {
+    const status = await this.computeRegistrationStatus();
+    if (!status.registrationOpen) {
+      throw new ForbiddenException('Registration is closed for this instance.');
+    }
+  }
+
+  assertGoogleOauthAllowed(): void {
+    const rawMode = this.config.get<string>('INSTANCE_MODE') ?? 'cloud';
+    const normalized = rawMode.trim().toLowerCase();
+    if (normalized === 'self-hosted') {
+      throw new ForbiddenException(
+        'Google OAuth is disabled for self-hosted instances.',
+      );
+    }
+  }
+
   async register(dto: RegisterDto): Promise<AuthResponseDto> {
+    await this.assertRegistrationAllowed();
     if (
       await this.userRepo.exists({ where: { email: dto.email.toLowerCase() } })
     ) {
@@ -74,6 +100,12 @@ export class AuthService {
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {
+    const status = await this.computeRegistrationStatus();
+    if (status.instanceMode === 'self-hosted' && !status.userConfigured) {
+      throw new ForbiddenException(
+        'Login is unavailable until the first account is created.',
+      );
+    }
     const user = await this.userRepo.findOne({
       where: { email: dto.email.toLowerCase() },
     });
@@ -170,6 +202,7 @@ export class AuthService {
   }
 
   async assertCanStartGoogleLink(userId: number): Promise<void> {
+    this.assertGoogleOauthAllowed();
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
     if (user.locked)
@@ -185,6 +218,7 @@ export class AuthService {
     userId: number,
     profile: Profile,
   ): Promise<AuthResponseDto> {
+    this.assertGoogleOauthAllowed();
     const email = profile.emails?.[0]?.value?.toLowerCase()?.trim();
     if (!email)
       throw new UnauthorizedException('Google account email not available');
@@ -253,6 +287,7 @@ export class AuthService {
   }
 
   async loginWithGoogle(profile: Profile): Promise<AuthResponseDto> {
+    this.assertGoogleOauthAllowed();
     const email = profile.emails?.[0]?.value?.toLowerCase()?.trim();
     if (!email)
       throw new UnauthorizedException('Google account email not available');
@@ -409,6 +444,23 @@ export class AuthService {
       provider: user.provider,
       imageUrl: user.imageUrl ?? null,
       emailVerified: user.emailVerified,
+    };
+  }
+
+  private async computeRegistrationStatus(): Promise<{
+    instanceMode: 'cloud' | 'self-hosted';
+    userConfigured: boolean;
+    registrationOpen: boolean;
+  }> {
+    const rawMode = this.config.get<string>('INSTANCE_MODE') ?? 'cloud';
+    const normalized = rawMode.trim().toLowerCase();
+    const instanceMode: 'cloud' | 'self-hosted' =
+      normalized === 'self-hosted' ? 'self-hosted' : 'cloud';
+    const userConfigured = await this.userRepo.exists({});
+    return {
+      instanceMode,
+      userConfigured,
+      registrationOpen: !(instanceMode === 'self-hosted' && userConfigured),
     };
   }
 }

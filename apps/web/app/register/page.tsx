@@ -5,15 +5,19 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { AuthHttpError, registerApi } from "@/lib/auth-api";
+import { AuthHttpError, getAuthStatusApi, registerApi } from "@/lib/auth-api";
 import { useAuth } from "@/contexts/auth-context";
 import { useToast } from "@/hooks/use-toast";
 import { useRateLimitCountdown } from "@/hooks/use-rate-limit-countdown";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { PasswordInput } from "@/components/inputs/password-input";
-import { API_BASE, normalizeApiBase } from "@/lib/api";
+import { normalizeApiBase } from "@/lib/api";
 
 export default function RegisterPage() {
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+    .trim()
+    .toLowerCase();
+  const isSelfHosted = instanceMode === "self-hosted";
   const router = useRouter();
   const { accessToken, isReady, setSession } = useAuth();
   const { toast } = useToast();
@@ -23,12 +27,43 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(true);
   const [blockedUntilMs, setBlockedUntilMs] = useState<number | null>(null);
   const { secondsLeft, label } = useRateLimitCountdown(blockedUntilMs);
 
   useEffect(() => {
     if (isReady && accessToken) router.replace("/");
   }, [isReady, accessToken, router]);
+
+  useEffect(() => {
+    if (!isSelfHosted) {
+      setCheckingStatus(false);
+      return;
+    }
+    let active = true;
+    (async () => {
+      try {
+        const status = await getAuthStatusApi();
+        if (
+          active &&
+          status.instanceMode === "self-hosted" &&
+          status.userConfigured
+        ) {
+          router.replace(
+            `/login?error=${encodeURIComponent("Registration is closed for this instance.")}`,
+          );
+          return;
+        }
+      } catch {
+        // Keep register available if status probe fails unexpectedly.
+      } finally {
+        if (active) setCheckingStatus(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isSelfHosted, router]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -67,6 +102,12 @@ export default function RegisterPage() {
       });
       router.replace("/");
     } catch (err) {
+      if (err instanceof AuthHttpError && err.status === 403) {
+        router.replace(
+          `/login?error=${encodeURIComponent("Registration is closed for this instance.")}`,
+        );
+        return;
+      }
       if (err instanceof AuthHttpError && err.status === 429) {
         const waitSec = err.retryAfterSeconds ?? 15 * 60;
         setBlockedUntilMs(Date.now() + waitSec * 1000);
@@ -110,28 +151,34 @@ export default function RegisterPage() {
             />
           </div>
           <h1 className="text-2xl font-bold tracking-tight">Create account</h1>
-          <p className="text-sm text-muted-foreground mt-1">Start using Weehawk with your account.</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {isSelfHosted ? "Create your account to get started." : "Start using Weehawk with your account."}
+          </p>
         </div>
 
-        <button
-          type="button"
-          onClick={continueWithGoogle}
-          className="btn-secondary w-full flex items-center justify-center gap-2"
-        >
-          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-black text-xs font-bold">
-            G
-          </span>
-          Continue with Google
-        </button>
+        {!isSelfHosted && (
+          <>
+            <button
+              type="button"
+              onClick={continueWithGoogle}
+              className="btn-secondary w-full flex items-center justify-center gap-2"
+            >
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-black text-xs font-bold">
+                G
+              </span>
+              Continue with Google
+            </button>
 
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-card px-2 text-muted-foreground">or</span>
-          </div>
-        </div>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+          </>
+        )}
 
         {secondsLeft > 0 ? (
           <div
@@ -176,7 +223,7 @@ export default function RegisterPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="input-field"
-              placeholder="you@example.com"
+              placeholder="you@weehawk.io"
               autoComplete="email"
             />
           </div>
@@ -201,20 +248,22 @@ export default function RegisterPage() {
 
           <button
             type="submit"
-            disabled={submitting || secondsLeft > 0}
+            disabled={submitting || checkingStatus || secondsLeft > 0}
             className="btn-primary w-full flex items-center justify-center gap-2"
           >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {submitting || checkingStatus ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
             Create account
           </button>
         </form>
 
-        <p className="text-sm text-muted-foreground">
-          Already have an account?{" "}
-          <Link href="/login" className="text-primary hover:underline">
-            Sign in
-          </Link>
-        </p>
+        {!isSelfHosted && (
+          <p className="text-sm text-muted-foreground">
+            Already have an account?{" "}
+            <Link href="/login" className="text-primary hover:underline">
+              Sign in
+            </Link>
+          </p>
+        )}
       </div>
     </div>
   );

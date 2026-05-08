@@ -116,7 +116,7 @@ export function TraefikSettingsClient() {
             className="input-field w-full"
             type="email"
             autoComplete="email"
-            placeholder="you@example.com"
+            placeholder="you@weehawk.io"
             value={acmeEmail}
             onChange={(e) => {
               setDirty(true);
