@@ -7,7 +7,9 @@
     "dev:provision-worker": "pnpm --filter provision-worker dev",
     "devcontainer": "pnpm -r --parallel devcontainer",
     "devcontainer:cron-worker": "pnpm --filter cron-worker devcontainer",
-    "devcontainer:provision-worker": "pnpm --filter provision-worker devcontainer"
+    "devcontainer:provision-worker": "pnpm --filter provision-worker devcontainer",
+    "reset-mypassword": "pnpm --filter api run reset-mypassword",
+    "reset-mypassword:dev": "pnpm --filter api run reset-mypassword:dev"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

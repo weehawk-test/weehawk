@@ -68,7 +68,10 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto): Promise<AuthResponseDto> {
-    await this.assertRegistrationAllowed();
+    const status = await this.computeRegistrationStatus();
+    if (!status.registrationOpen) {
+      throw new ForbiddenException('Registration is closed for this instance.');
+    }
     if (
       await this.userRepo.exists({ where: { email: dto.email.toLowerCase() } })
     ) {
@@ -76,15 +79,18 @@ export class AuthService {
     }
     const hash = await bcrypt.hash(dto.password, 10);
     const now = new Date();
+    // In self-hosted, the very first account bootstraps the instance and gets ADMIN.
+    const isFirstSelfHostedUser =
+      status.instanceMode === 'self-hosted' && !status.userConfigured;
     const user = this.userRepo.create({
       firstName: dto.firstName,
       lastName: dto.lastName,
       email: dto.email.toLowerCase(),
       passwordHash: hash,
       provider: AuthProvider.LOCAL,
-      role: Role.USER,
+      role: isFirstSelfHostedUser ? Role.ADMIN : Role.USER,
       enabled: true,
-      emailVerified: false,
+      emailVerified: isFirstSelfHostedUser,
       locked: false,
       createdAt: now,
       updatedAt: now,

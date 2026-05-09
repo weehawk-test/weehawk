@@ -22,6 +22,7 @@ import { AuthService } from './auth.service';
 import { Public } from './decorators/public.decorator';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { resolveSecureCookies } from './secure-cookies';
 
 function oauthRedirectErrorMessage(e: unknown): string {
   if (
@@ -48,13 +49,7 @@ export class Oauth2Controller {
   }
 
   private isSecureCookie(): boolean {
-    return (
-      (
-        this.config.get<string>('NODE_ENV') ??
-        process.env.NODE_ENV ??
-        ''
-      ).toLowerCase() === 'production'
-    );
+    return resolveSecureCookies(this.config);
   }
 
   /**

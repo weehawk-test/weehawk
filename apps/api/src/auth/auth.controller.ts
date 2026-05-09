@@ -34,6 +34,7 @@ import { EmailConfirmationService } from '../email/email-confirmation.service';
 import { PasswordResetService } from '../email/password-reset.service';
 import { Public } from './decorators/public.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { resolveSecureCookies } from './secure-cookies';
 
 const IS_DEV = ['development', 'dev'].includes(
   (process.env.NODE_ENV ?? '').toLowerCase().trim(),
@@ -56,13 +57,7 @@ export class AuthController {
   ) {}
 
   private isSecureCookie(): boolean {
-    return (
-      (
-        this.config.get<string>('NODE_ENV') ??
-        process.env.NODE_ENV ??
-        ''
-      ).toLowerCase() === 'production'
-    );
+    return resolveSecureCookies(this.config);
   }
 
   private sessionBody(auth: AuthResponseDto): AuthSessionBodyDto {
