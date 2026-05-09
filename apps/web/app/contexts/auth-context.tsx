@@ -23,6 +23,7 @@ export type AuthUser = {
   email: string;
   firstName: string;
   lastName: string;
+  role?: string;
   provider?: "LOCAL" | "GOOGLE";
   providerId?: string | null;
   googleAccountEmail?: string | null;
@@ -35,6 +36,7 @@ export type AuthSessionInput = {
   email: string;
   firstName: string;
   lastName: string;
+  role?: string;
   provider?: "LOCAL" | "GOOGLE";
   providerId?: string | null;
   googleAccountEmail?: string | null;
@@ -89,6 +91,7 @@ export function AuthProvider({
     email: string;
     firstName: string;
     lastName: string;
+    role?: string;
     provider: "LOCAL" | "GOOGLE";
     providerId: string | null;
     googleAccountEmail: string | null;
@@ -100,6 +103,7 @@ export function AuthProvider({
       email: p.email,
       firstName: p.firstName,
       lastName: p.lastName,
+      role: p.role,
       provider: p.provider,
       providerId: p.providerId,
       googleAccountEmail: p.googleAccountEmail,
@@ -165,6 +169,7 @@ export function AuthProvider({
       email: res.email,
       firstName: res.firstName,
       lastName: res.lastName,
+      role: res.role,
       provider: res.provider,
       providerId: res.providerId ?? null,
       googleAccountEmail: res.googleAccountEmail ?? null,
@@ -182,6 +187,7 @@ export function AuthProvider({
           | "firstName"
           | "lastName"
           | "email"
+          | "role"
           | "emailVerified"
           | "imageUrl"
           | "provider"

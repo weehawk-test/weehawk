@@ -34,6 +34,43 @@ function nestErrorMessage(text: string, fallback: string): string {
   return text.trim() || fallback;
 }
 
+export type RestoreSelfHostedLocalHostResult = {
+  remoteServer: RemoteServerRow;
+  /** True when a row named This Server already existed; no new row was created. */
+  alreadyPresent: boolean;
+};
+
+/** Self-hosted admin: ensure the default `This Server` (localhost) row exists (creates it if missing). */
+export async function restoreSelfHostedLocalHostApi(
+  accessToken: string,
+  organizationPublicId?: string | null,
+): Promise<RestoreSelfHostedLocalHostResult> {
+  const q = new URLSearchParams();
+  const org = organizationPublicId?.trim();
+  if (org) q.set("organizationPublicId", org);
+  const suffix = q.toString() ? `?${q.toString()}` : "";
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/remote-servers/self-hosted/restore-local-host${suffix}`,
+    { method: "POST" },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as {
+    remoteServer?: unknown;
+    alreadyPresent?: unknown;
+  };
+  if (!j.remoteServer || typeof j.remoteServer !== "object") {
+    throw new Error("Invalid restore-local-host response");
+  }
+  return {
+    remoteServer: mapRemoteServer(j.remoteServer),
+    alreadyPresent: Boolean(j.alreadyPresent),
+  };
+}
+
 export async function fetchRemoteServers(
   accessToken: string,
 ): Promise<RemoteServerRow[]> {

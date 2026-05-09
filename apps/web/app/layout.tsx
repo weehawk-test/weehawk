@@ -46,6 +46,7 @@ export default async function RootLayout({
         email: profile.email,
         firstName: profile.firstName,
         lastName: profile.lastName,
+        role: profile.role,
         provider: profile.provider,
         providerId: profile.providerId,
         googleAccountEmail: profile.googleAccountEmail,

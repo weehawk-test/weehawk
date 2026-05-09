@@ -19,7 +19,7 @@ export class LocalSessionGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<{
       headers?: Record<string, string | string[] | undefined>;
-      user?: { userId: number; email: string };
+      user?: { userId: number; email: string; role?: string };
     }>();
 
     if (req.user?.userId && req.user?.email) return true;
@@ -75,7 +75,7 @@ export class LocalSessionGuard implements CanActivate {
     if (user.email.trim().toLowerCase() !== decodedEmail) {
       throw new UnauthorizedException('Invalid token payload');
     }
-    req.user = { userId: user.id, email: user.email };
+    req.user = { userId: user.id, email: user.email, role: user.role };
     return true;
   }
 }

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -20,6 +21,7 @@ import {
 import { TraefikService } from '../traefik/traefik.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import { ORGANIZATION_WORKSPACE_PERMISSIONS } from '../organizations/organization-workspace-permissions';
+import { isSelfHostedBootstrapRemoteServer } from './loopback-ssh-host';
 
 const MAX_LOG_CHARS = 512_000;
 const DEFAULT_FINAL_LOG_MAX_CHARS = 32_768;
@@ -179,6 +181,19 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
         remoteServerId,
         userId,
       );
+    if (
+      isSelfHostedBootstrapRemoteServer({
+        host: rs.host,
+        name: rs.name,
+        sshUser: rs.sshUser,
+        serverRole: rs.serverRole,
+        domainsJson: rs.domainsJson,
+      })
+    ) {
+      throw new ForbiddenException(
+        'Docker purge is not available for the default This Server (localhost) entry.',
+      );
+    }
     const row = this.jobRepo.create({
       remoteServerId,
       organizationId: rs.organizationId,

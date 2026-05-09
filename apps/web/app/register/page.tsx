@@ -96,6 +96,7 @@ export default function RegisterPage() {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        role: user.role,
         provider: user.provider,
         emailVerified: user.emailVerified,
         imageUrl: user.imageUrl ?? null,

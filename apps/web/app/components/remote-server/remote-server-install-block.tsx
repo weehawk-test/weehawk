@@ -23,6 +23,7 @@ import {
   type RemoteServerRow,
 } from "@/lib/remote-servers-api";
 import { useToast } from "@/hooks/use-toast";
+import { isSelfHostedBootstrapRemoteServer } from "@/lib/loopback-ssh-host";
 
 type Props = {
   accessToken: string;
@@ -68,6 +69,13 @@ export function RemoteServerInstallBlock({
 }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const showDockerPurgeOption = !isSelfHostedBootstrapRemoteServer({
+    domainsJson: row.domainsJson,
+    name: row.name,
+    host: row.host,
+    sshUser: row.sshUser,
+    serverRole: row.serverRole,
+  });
   const [installMenuOpen, setInstallMenuOpen] = useState(false);
   const [installDialog, setInstallDialog] = useState<InstallDialog>(null);
   const [ack, setAck] = useState(false);
@@ -104,7 +112,7 @@ export function RemoteServerInstallBlock({
   const purgeScriptQ = useQuery({
     queryKey: ["docker-purge-script"],
     queryFn: () => fetchDockerPurgeScriptApi(accessToken),
-    enabled: installDialog === "purge",
+    enabled: installDialog === "purge" && showDockerPurgeOption,
   });
 
   const jobQ = useQuery({
@@ -255,16 +263,18 @@ export function RemoteServerInstallBlock({
                   After setup — Dockerfile-less builds
                 </span>
               </button>
-              <button
-                type="button"
-                className="rounded-md px-2.5 py-2 text-left text-xs text-destructive hover:bg-destructive/10"
-                onClick={() => openInstallFlow("purge")}
-              >
-                <span className="font-medium">Remove Docker (purge)</span>
-                <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
-                  Conflict cleanup — destructive
-                </span>
-              </button>
+              {showDockerPurgeOption ? (
+                <button
+                  type="button"
+                  className="rounded-md px-2.5 py-2 text-left text-xs text-destructive hover:bg-destructive/10"
+                  onClick={() => openInstallFlow("purge")}
+                >
+                  <span className="font-medium">Remove Docker (purge)</span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                    Conflict cleanup — destructive
+                  </span>
+                </button>
+              ) : null}
             </div>
           </PopoverContent>
         </Popover>

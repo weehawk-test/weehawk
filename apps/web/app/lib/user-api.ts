@@ -8,6 +8,7 @@ export type UserProfile = {
   firstName: string;
   lastName: string;
   email: string;
+  role?: string;
   provider: AuthProvider;
   providerId: string | null;
   /** Google sign-in email; may differ from `email` after changing account email in-app. */

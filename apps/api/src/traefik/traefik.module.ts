@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TraefikSettings } from './entities/traefik-settings.entity';
 import { TraefikController } from './traefik.controller';
@@ -10,7 +10,7 @@ import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
   imports: [
     TypeOrmModule.forFeature([TraefikSettings]),
     OrganizationsModule,
-    OrgRealtimeModule,
+    forwardRef(() => OrgRealtimeModule),
   ],
   controllers: [TraefikController],
   providers: [TraefikService],

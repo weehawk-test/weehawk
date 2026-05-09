@@ -19,7 +19,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
+import {
+  filterSshDeployServers,
+  isSelfHostedBootstrapRemoteServer,
+} from "@/lib/loopback-ssh-host";
 import {
   isBlockedAcmeContactEmail,
   isLetsEncryptEmailConfigured,
@@ -127,6 +130,14 @@ function ServerDomainsCard({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const bootstrapHostLocked = isSelfHostedBootstrapRemoteServer({
+    domainsJson: server.domainsJson,
+    name: server.name,
+    host: server.host,
+    sshUser: server.sshUser,
+    serverRole: server.serverRole,
+  });
+  const canEditSites = domainsEnabled && !bootstrapHostLocked;
   const baselineHosts = useMemo(() => domainsJsonToHosts(server.domainsJson), [server.domainsJson]);
   const initialRows = useMemo(() => hostsToRows(baselineHosts), [baselineHosts]);
 
@@ -167,24 +178,24 @@ function ServerDomainsCard({
   });
 
   const onSave = useCallback(() => {
-    if (!domainsEnabled) return;
+    if (!canEditSites) return;
     mutate(hostsToStoredJson(currentHosts, server.domainsJson));
-  }, [domainsEnabled, mutate, currentHosts, server.domainsJson]);
+  }, [canEditSites, mutate, currentHosts, server.domainsJson]);
 
   const updateRow = (id: number, value: string) => {
-    if (!domainsEnabled) return;
+    if (!canEditSites) return;
     setDirty(true);
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, value } : r)));
   };
 
   const addRow = () => {
-    if (!domainsEnabled) return;
+    if (!canEditSites) return;
     setDirty(true);
     setRows((prev) => [...prev, { id: newRowId(), value: "" }]);
   };
 
   const removeRow = (index: number) => {
-    if (!domainsEnabled) return;
+    if (!canEditSites) return;
     setDirty(true);
     setRows((prev) => {
       if (prev.length <= 1) return [{ ...prev[0], value: "" }];
@@ -196,7 +207,7 @@ function ServerDomainsCard({
     <div
       className={cn(
         "rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20",
-        !domainsEnabled && "opacity-55 pointer-events-none select-none",
+        !canEditSites && "opacity-55 pointer-events-none select-none",
       )}
     >
       <div className="rounded-[0.875rem] bg-card/50 p-5 space-y-5">
@@ -214,6 +225,12 @@ function ServerDomainsCard({
 
         <div className="space-y-3">
           <p className="text-xs font-medium text-foreground/80 tracking-wide uppercase">Sites</p>
+          {bootstrapHostLocked && domainsEnabled ? (
+            <p className="text-xs text-muted-foreground">
+              This Server (localhost) cannot be edited here. Add a remote deploy host for custom
+              sites and SSH settings.
+            </p>
+          ) : null}
 
           <div
             className={cn(
@@ -246,7 +263,7 @@ function ServerDomainsCard({
                   value={row.value}
                   onChange={(e) => updateRow(row.id, e.target.value)}
                   placeholder="app.example.com"
-                  disabled={!domainsEnabled}
+                  disabled={!canEditSites}
                   className={cn(
                     "h-9 flex-1 min-w-0 border-0 bg-transparent shadow-none",
                     "text-sm placeholder:text-muted-foreground/55",
@@ -258,7 +275,7 @@ function ServerDomainsCard({
                   type="button"
                   variant="outline"
                   size="icon"
-                  disabled={!domainsEnabled}
+                  disabled={!canEditSites}
                   className={cn(
                     "h-9 w-9 shrink-0 self-center rounded-lg",
                     "border-border/60 bg-background/80 text-muted-foreground",
@@ -278,7 +295,7 @@ function ServerDomainsCard({
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              disabled={!domainsEnabled}
+              disabled={!canEditSites}
               onClick={addRow}
               className="btn-secondary inline-flex h-9 items-center gap-2 px-3 text-sm"
             >
@@ -288,7 +305,7 @@ function ServerDomainsCard({
             <button
               type="button"
               className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
-              disabled={!domainsEnabled || isPending || !isDirty}
+              disabled={!canEditSites || isPending || !isDirty}
               onClick={onSave}
             >
               {isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}

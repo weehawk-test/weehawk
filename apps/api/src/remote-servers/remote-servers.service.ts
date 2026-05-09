@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   Injectable,
   InternalServerErrorException,
@@ -60,7 +61,12 @@ import { TraefikService } from '../traefik/traefik.service';
 import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
 import { toSafePathSegment } from '../services/deployment-paths';
-import { isLoopbackSshHost } from './loopback-ssh-host';
+import {
+  isLoopbackSshHost,
+  isLoopbackSshDeployForbidden,
+  isSelfHostedBootstrapRemoteServer,
+  SELF_HOSTED_BOOTSTRAP_REMOTE_NAME,
+} from './loopback-ssh-host';
 import { sshHostKeySha256Fingerprint, sshHostKeysEqual } from './ssh-host-key';
 import {
   assertPublicRemoteIpv4Literal,
@@ -2825,7 +2831,7 @@ done
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
       );
     }
-    if (isLoopbackSshHost(rs.host)) {
+    if (isLoopbackSshDeployForbidden(rs)) {
       throw new BadRequestException(
         'This service uses the local machine (loopback) as deploy target. Point deploy to a real remote host under Remote servers.',
       );
@@ -2919,7 +2925,7 @@ done
         'This service uses a build-only host as its deploy target. Choose a deploy server under Remote servers.',
       );
     }
-    if (isLoopbackSshHost(rs.host)) {
+    if (isLoopbackSshDeployForbidden(rs)) {
       throw new BadRequestException(
         'This service uses the local machine (loopback) as deploy target. Point deploy to a real remote host under Remote servers.',
       );
@@ -3097,7 +3103,7 @@ done
         `Remote server "${rs.name}" is build-only. Choose a deploy server (not a build host).`,
       );
     }
-    if (isLoopbackSshHost(rs.host)) {
+    if (isLoopbackSshDeployForbidden(rs)) {
       throw new BadRequestException(
         `Remote server "${rs.name}" points to the local machine (loopback). It cannot be used as a deploy host — use a real remote server, or use this entry only for image builds.`,
       );
@@ -3421,6 +3427,182 @@ curl -fsS -o /dev/null "$U"
     return this.withOrgServerAccessCheck(rs, userId);
   }
 
+  /**
+   * Ensures the self-hosted placeholder `deploy` remote server (This Server / localhost) exists
+   * for an organization. Does not enforce public-SSH host policy. Used when an admin restores
+   * the row via the API, not during registration.
+   *
+   * @param preferredOrganizationPublicId When set (e.g. active org), create in that org; otherwise first org.
+   * @param auditEndpoint `metadata.endpoint` for the org audit row when a row is created.
+   */
+  async ensureSelfHostedLocalDeployBootstrapIfNeeded(
+    userId: number,
+    preferredOrganizationPublicId?: string | null,
+    auditEndpoint = 'self_hosted_bootstrap',
+  ): Promise<boolean> {
+    const rawMode =
+      this.configService.get<string>('INSTANCE_MODE') ?? 'cloud';
+    if (rawMode.trim().toLowerCase() !== 'self-hosted') {
+      return false;
+    }
+
+    const trimmedPreferred = preferredOrganizationPublicId?.trim() ?? '';
+    const orgPublicId = trimmedPreferred
+      ? trimmedPreferred
+      : await this.organizationsService.getFirstOrganizationPublicIdForUser(
+          userId,
+        );
+    if (!orgPublicId) {
+      return false;
+    }
+
+    let ctx;
+    try {
+      ctx = await this.organizationsService.requireMemberContext(
+        orgPublicId,
+        userId,
+        {
+          requireWorkspaceArea:
+            ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_ADD,
+        },
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Self-hosted bootstrap remote skipped (org context): ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return false;
+    }
+
+    const organizationId = ctx.internalId;
+
+    const existingByName = await this.remoteServerRepository.findOne({
+      where: {
+        organizationId,
+        name: SELF_HOSTED_BOOTSTRAP_REMOTE_NAME,
+      },
+    });
+    if (existingByName) {
+      return false;
+    }
+
+    await this.organizationsService.assertMemberCanAddOrgRemoteServer(
+      userId,
+      organizationId,
+    );
+
+    let privateKeyEncrypted: string | null = null;
+    try {
+      const pem = generateEd25519SshKeyPair(
+        'weehawk-selfhosted-bootstrap',
+      ).privateKey;
+      privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
+    } catch (e) {
+      if (
+        e instanceof BadRequestException &&
+        String(e.message).includes('WEEHAWK_ENCRYPTION_KEY')
+      ) {
+        this.logger.warn(
+          'Self-hosted bootstrap remote created without stored SSH key ciphertext (set WEEHAWK_ENCRYPTION_KEY).',
+        );
+      } else {
+        throw e;
+      }
+    }
+
+    const entity = this.remoteServerRepository.create({
+      publicId: generatePublicId('rsv'),
+      organizationId,
+      name: SELF_HOSTED_BOOTSTRAP_REMOTE_NAME,
+      host: 'localhost',
+      port: 22,
+      sshUser: 'root',
+      serverRole: 'deploy',
+      privateKeyEncrypted,
+      publicIpv4: null,
+      domainsJson: null,
+    });
+
+    const saved = await this.scopedRemoteServers.saveScoped(entity, userId);
+    if (saved.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          saved.organizationId,
+          userId,
+          'security.remote_server.created',
+          {
+            metadata: {
+              endpoint: auditEndpoint,
+              remoteServerPublicId: saved.publicId ?? null,
+              remoteServerName: saved.name,
+              serverRole: saved.serverRole,
+              weehawkBootstrap: true,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
+    if (organizationId >= 1) {
+      this.orgRealtime.notifyOrgDataChanged(organizationId, {
+        entity: 'remote_server',
+        action: 'created',
+        publicId: saved.publicId,
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Self-hosted only: admins can re-create the default `This Server` (localhost) row if it was deleted.
+   */
+  async restoreSelfHostedBootstrapRemote(
+    userId: number,
+    actingRole: string,
+    organizationPublicId: string,
+  ): Promise<{ remoteServer: RemoteServerSafe; alreadyPresent: boolean }> {
+    const rawMode =
+      this.configService.get<string>('INSTANCE_MODE') ?? 'cloud';
+    if (rawMode.trim().toLowerCase() !== 'self-hosted') {
+      throw new ForbiddenException(
+        'Restoring the local host entry is only available on self-hosted instances.',
+      );
+    }
+    if (actingRole !== 'ADMIN') {
+      throw new ForbiddenException(
+        'Only administrators can restore the local This Server entry.',
+      );
+    }
+    const rawOrg = organizationPublicId.trim();
+    if (!rawOrg) {
+      throw new BadRequestException('Organization context is required.');
+    }
+    const created = await this.ensureSelfHostedLocalDeployBootstrapIfNeeded(
+      userId,
+      rawOrg,
+      'self_hosted_restore_local_host',
+    );
+    const rows = await this.findAll(userId, rawOrg);
+    const bootstrap = rows.find((r) =>
+      isSelfHostedBootstrapRemoteServer({
+        host: r.host,
+        name: r.name,
+        sshUser: r.sshUser,
+        serverRole: r.serverRole,
+        domainsJson: r.domainsJson,
+      }),
+    );
+    if (!bootstrap) {
+      throw new BadRequestException(
+        'The local host entry could not be created or found. Check organization membership and permissions.',
+      );
+    }
+    return {
+      remoteServer: bootstrap,
+      alreadyPresent: !created,
+    };
+  }
+
   async create(
     dto: CreateRemoteServerDto,
     userId: number,
@@ -3535,6 +3717,19 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<RemoteServerSafe> {
     const existing = await this.findEntityOrFail(id, userId);
+    if (
+      isSelfHostedBootstrapRemoteServer({
+        host: existing.host,
+        name: existing.name,
+        sshUser: existing.sshUser,
+        serverRole: existing.serverRole,
+        domainsJson: existing.domainsJson,
+      })
+    ) {
+      throw new ForbiddenException(
+        'The default This Server (localhost) entry cannot be edited.',
+      );
+    }
     if (this.isDomainsJsonOnlyUpdate(dto)) {
       await this.organizationsService.assertMemberCanEditOrgServerDomainsJson(
         userId,
@@ -3613,7 +3808,10 @@ curl -fsS -o /dev/null "$U"
       privateKeyEncrypted: nextEnc,
       ...(hostOrPortChanged ? { sshHostKeySha256: null } : {}),
     });
-    if (isLoopbackSshHost(merged.host) && merged.serverRole === 'deploy') {
+    if (
+      isLoopbackSshDeployForbidden(merged) &&
+      merged.serverRole === 'deploy'
+    ) {
       const nDeploy = await svcRepo.count({
         where: { remoteServer: { id: merged.id } },
       });

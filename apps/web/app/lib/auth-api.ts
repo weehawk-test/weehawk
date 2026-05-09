@@ -16,6 +16,7 @@ export type AuthUserSnapshot = {
   email: string;
   firstName: string;
   lastName: string;
+  role?: string;
   provider?: "LOCAL" | "GOOGLE";
   emailVerified?: boolean;
   imageUrl?: string | null;
@@ -77,6 +78,7 @@ function toUserSnapshot(session: AuthSessionBody): AuthUserSnapshot {
     email: session.email,
     firstName: session.firstName,
     lastName: session.lastName,
+    role: session.role,
     provider: session.provider,
     emailVerified: session.emailVerified,
     imageUrl: session.imageUrl,

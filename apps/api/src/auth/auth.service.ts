@@ -102,7 +102,10 @@ export class AuthService {
     const accessToken = this.generateAccessToken(saved);
     const refreshToken =
       await this.refreshTokenService.createRefreshToken(saved);
-    return this.buildAuthResponseWithOrg(saved, accessToken, refreshToken);
+    await this.organizationsService.ensureAtLeastOneOwnedOrganizationForUser(
+      saved.id,
+    );
+    return this.buildAuthResponse(saved, accessToken, refreshToken);
   }
 
   async login(dto: LoginDto): Promise<AuthResponseDto> {

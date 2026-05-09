@@ -83,6 +83,10 @@ export default function ProfilePage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmPhrase, setDeleteConfirmPhrase] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+    .trim()
+    .toLowerCase();
+  const isSelfHosted = instanceMode === "self-hosted";
   const isGoogleLinked = Boolean(user?.providerId) || user?.provider === "GOOGLE";
   const googleLinkedEmail = user?.googleAccountEmail?.trim() || user?.email || "";
 
@@ -481,7 +485,7 @@ export default function ProfilePage() {
           </div>
         ) : null}
 
-        {user && !isGoogleLinked ? (
+        {user && !isGoogleLinked && !isSelfHosted ? (
           <div className="rounded-xl border border-border/70 bg-muted/25 dark:bg-muted/15 p-4 shadow-sm ring-1 ring-black/[0.03] dark:ring-white/[0.06]">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">
               Link account

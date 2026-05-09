@@ -104,6 +104,7 @@ export default function LoginPage() {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        role: user.role,
         provider: user.provider,
         emailVerified: user.emailVerified,
         imageUrl: user.imageUrl ?? null,

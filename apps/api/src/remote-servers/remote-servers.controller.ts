@@ -443,6 +443,40 @@ export class RemoteServersController {
     );
   }
 
+  @Post('self-hosted/restore-local-host')
+  @ApiOperation({
+    summary:
+      'Self-hosted only: restore the default This Server (localhost) SSH row (admin only)',
+  })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: false,
+    description:
+      'Organization workspace (`org_…`); optional if an active organization is set server-side.',
+  })
+  async restoreSelfHostedLocalHost(
+    @Query('organizationPublicId') organizationPublicId: string,
+    @Req()
+    req: { user?: { userId: number; email: string; role?: string } },
+  ) {
+    const role = req.user?.role;
+    if (!role) throw new UnauthorizedException('User context missing');
+    const ctx =
+      await this.activeOrganizationService.resolveRequiredMemberContext(
+        this.uid(req),
+        organizationPublicId,
+        {
+          requireWorkspaceArea:
+            ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_ADD,
+        },
+      );
+    return this.remoteServersService.restoreSelfHostedBootstrapRemote(
+      this.uid(req),
+      role,
+      ctx.publicId,
+    );
+  }
+
   @Post()
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({

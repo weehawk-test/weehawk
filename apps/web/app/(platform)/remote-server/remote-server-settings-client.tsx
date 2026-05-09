@@ -23,6 +23,7 @@ import {
   createRemoteServerApi,
   deleteRemoteServerApi,
   fetchRemoteServers,
+  restoreSelfHostedLocalHostApi,
   generateRemoteSshKeypairApi,
   remoteTerminalWsUrlCandidates,
   testRemoteServerApi,
@@ -31,6 +32,7 @@ import {
   type RemoteServerRow,
   type RemoteServerRole,
 } from "@/lib/remote-servers-api";
+import { isSelfHostedBootstrapRemoteServer } from "@/lib/loopback-ssh-host";
 import { fetchTraefikSettings, type TraefikSettingsPayload } from "@/lib/traefik-api";
 import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -147,6 +149,15 @@ export function RemoteServerSettingsClient({
       orgMemberAllowsRemoteServerInstallMaintenance(orgWorkspace.workspacePermissions));
   const showConnectionTests =
     allowOrgTest && (allowOrgTerminal || allowOrgDocker);
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+    .trim()
+    .toLowerCase();
+  const isSelfHosted = instanceMode === "self-hosted";
+  const showRestoreLocalHost =
+    isSelfHosted &&
+    user?.role === "ADMIN" &&
+    inOrgRemoteServerPage &&
+    allowOrgAdd;
   const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
   const traefikSettingsQueryKey = ["traefik", "settings", orgScopeSegment] as const;
   const list = useQuery({
@@ -240,6 +251,32 @@ export function RemoteServerSettingsClient({
     },
     onError: (e: Error) =>
       toast({ title: "Generation failed", description: e.message, variant: "destructive" }),
+  });
+
+  const restoreLocalHostMut = useMutation({
+    mutationFn: () =>
+      restoreSelfHostedLocalHostApi(accessToken ?? "", trimmedOrg || null),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: remoteServersQueryKey });
+      if (result.alreadyPresent) {
+        toast({
+          title: "This Server already listed",
+          description: "This Server (localhost) is already in Remote servers.",
+        });
+      } else {
+        toast({
+          title: "Local host restored",
+          description: "This Server (localhost) was added back to Remote servers.",
+        });
+      }
+    },
+    onError: (err) => {
+      toast({
+        title: "Could not restore local host",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    },
   });
 
   const createMut = useMutation({
@@ -573,27 +610,55 @@ export function RemoteServerSettingsClient({
       <div className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Hosts</h2>
-          {!creating && (
-            <button
-              type="button"
-              disabled={addHostBlocked || (inOrgRemoteServerPage && !allowOrgAdd)}
-              title={
-                addHostBlocked
-                  ? "Save your Let's Encrypt email on Domains first"
-                  : inOrgRemoteServerPage && !allowOrgAdd
-                    ? "Your role cannot add remote hosts in this organization"
-                    : "Add a remote host"
-              }
-              onClick={() => {
-                setShowPrivateKeyCreate(false);
-                setCreating(true);
-              }}
-              className="btn-primary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
-            >
-              <Plus className="size-3.5" />
-              Add host
-            </button>
-          )}
+          {!creating ? (
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+              {showRestoreLocalHost ? (
+                <button
+                  type="button"
+                  disabled={
+                    restoreLocalHostMut.isPending ||
+                    addHostBlocked ||
+                    (inOrgRemoteServerPage && !allowOrgAdd)
+                  }
+                  title={
+                    addHostBlocked
+                      ? "Save your Let's Encrypt email on Domains first"
+                      : inOrgRemoteServerPage && !allowOrgAdd
+                        ? "Your role cannot add remote hosts in this organization"
+                        : "Re-add the default This Server (root@localhost) deploy host for this instance"
+                  }
+                  onClick={() => restoreLocalHostMut.mutate()}
+                  className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
+                >
+                  {restoreLocalHostMut.isPending ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <PlugZap className="size-3.5" />
+                  )}
+                  Add This Server
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={addHostBlocked || (inOrgRemoteServerPage && !allowOrgAdd)}
+                title={
+                  addHostBlocked
+                    ? "Save your Let's Encrypt email on Domains first"
+                    : inOrgRemoteServerPage && !allowOrgAdd
+                      ? "Your role cannot add remote hosts in this organization"
+                      : "Add a remote host"
+                }
+                onClick={() => {
+                  setShowPrivateKeyCreate(false);
+                  setCreating(true);
+                }}
+                className="btn-primary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
+              >
+                <Plus className="size-3.5" />
+                Add host
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="space-y-2">
@@ -626,12 +691,20 @@ export function RemoteServerSettingsClient({
                     <div className="min-w-0 sm:min-h-0 sm:flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="min-w-0 max-w-full break-words font-medium text-sm sm:truncate">{row.name}</p>
-                        <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
-                          Remote
-                        </span>
-                        <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100">
-                          {row.serverRole === "build" ? "Build" : "Deploy"}
-                        </span>
+                        {isSelfHostedBootstrapRemoteServer(row) ? (
+                          <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-emerald-500/45 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100">
+                            Localhost
+                          </span>
+                        ) : (
+                          <>
+                            <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
+                              Remote
+                            </span>
+                            <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100">
+                              {row.serverRole === "build" ? "Build" : "Deploy"}
+                            </span>
+                          </>
+                        )}
                         {row.authMode !== "stored" ? (
                           <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-amber-500/30 text-amber-400/90 bg-amber-500/10">
                             No key
@@ -701,23 +774,25 @@ export function RemoteServerSettingsClient({
                         <Terminal className="size-3.5 shrink-0" />
                         Terminal
                       </button>
-                      <button
-                        type="button"
-                        disabled={inOrgRemoteServerPage && !allowOrgEdit}
-                        title={
-                          inOrgRemoteServerPage && !allowOrgEdit
-                            ? "Your role cannot edit remote hosts in this organization"
-                            : undefined
-                        }
-                        onClick={() => {
-                          setGeneratedPublicKey(null);
-                          setShowPrivateKeyEdit(false);
-                          setEditingId(row.id);
-                        }}
-                        className="btn-secondary min-h-10 px-2.5 py-2 text-xs disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:py-1.5"
-                      >
-                        Edit
-                      </button>
+                      {!isSelfHostedBootstrapRemoteServer(row) ? (
+                        <button
+                          type="button"
+                          disabled={inOrgRemoteServerPage && !allowOrgEdit}
+                          title={
+                            inOrgRemoteServerPage && !allowOrgEdit
+                              ? "Your role cannot edit remote hosts in this organization"
+                              : undefined
+                          }
+                          onClick={() => {
+                            setGeneratedPublicKey(null);
+                            setShowPrivateKeyEdit(false);
+                            setEditingId(row.id);
+                          }}
+                          className="btn-secondary min-h-10 px-2.5 py-2 text-xs disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:py-1.5"
+                        >
+                          Edit
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         disabled={deleteMut.isPending || (inOrgRemoteServerPage && !allowOrgDelete)}
@@ -948,8 +1023,14 @@ export function RemoteServerSettingsClient({
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                  <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10 w-fit">
-                    Remote
+                  <span
+                    className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border w-fit ${
+                      isSelfHostedBootstrapRemoteServer(editingRow)
+                        ? "border-emerald-500/45 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100"
+                        : "border-primary/35 text-primary bg-primary/10"
+                    }`}
+                  >
+                    {isSelfHostedBootstrapRemoteServer(editingRow) ? "Localhost" : "Remote"}
                   </span>
                   <button
                     type="button"

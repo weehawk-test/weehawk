@@ -47,7 +47,9 @@ import {
   buildTraefikMeMagicHostname,
   parseIpv4Octets,
 } from '../common/magic-traefik-me';
-import { isLoopbackSshHost } from '../remote-servers/loopback-ssh-host';
+import {
+  isLoopbackSshDeployForbidden,
+} from '../remote-servers/loopback-ssh-host';
 import {
   RemoteServersService,
   WEEHAWK_REMOTE_DEPLOYMENTS_BASE,
@@ -3093,7 +3095,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         'That host is a build-only server. Pick a deploy server to run containers, or change its role under Remote servers.',
       );
     }
-    if (isLoopbackSshHost(rs.host)) {
+    if (isLoopbackSshDeployForbidden(rs)) {
       throw new BadRequestException(
         'That SSH host is the local machine (loopback). It can only be used for image builds — pick a real remote deploy server to run containers.',
       );
