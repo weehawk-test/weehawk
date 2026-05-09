@@ -20,9 +20,24 @@ export class EmailService {
 
   async send(request: EmailRequestDto): Promise<void> {
     const enabledRaw = this.config.get<string>('MAIL_ENABLED');
-    const enabled =
-      enabledRaw != null
-        ? !['false', '0', 'off', 'no'].includes(enabledRaw.toLowerCase().trim())
+    const nodeEnv = (
+      this.config.get<string>('NODE_ENV') ??
+      process.env.NODE_ENV ??
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    const instanceSelfHosted =
+      (this.config.get<string>('INSTANCE_MODE') ?? 'cloud')
+        .trim()
+        .toLowerCase() === 'self-hosted';
+    /** When unset, do not assume mail is configured (avoids requiring SMTP in self-hosted prod). */
+    const mailEnabledExplicitlySet =
+      enabledRaw != null && String(enabledRaw).trim() !== '';
+    const enabled = mailEnabledExplicitlySet
+      ? !['false', '0', 'off', 'no'].includes(enabledRaw!.toLowerCase().trim())
+      : instanceSelfHosted && nodeEnv === 'production'
+        ? this.config.get<boolean>('mail.enabled', false)
         : this.config.get<boolean>('mail.enabled', true);
     if (!enabled) {
       const env = this.config.get<string>('app.env', 'development');

@@ -1,5 +1,8 @@
 import type { NextConfig } from "next";
 
+/** Docker one-image-many-envs: build with this token, replace at container start. */
+const RUNTIME_API_URL_PLACEHOLDER = "__WEEHAWK_RUNTIME_API_URL__";
+
 /** Match {@link apps/web/app/lib/api.ts}: origin only; strip mistaken `.../api` suffix. */
 function normalizePublicApiOrigin(raw: string): string {
   let u = raw.trim().replace(/\/+$/, "");
@@ -9,7 +12,17 @@ function normalizePublicApiOrigin(raw: string): string {
   return u || "http://localhost:8080";
 }
 
-const apiBase = normalizePublicApiOrigin(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080");
+function publicApiOriginForConfig(): string {
+  const raw = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").trim();
+  if (raw === RUNTIME_API_URL_PLACEHOLDER) {
+    // `rewrites()` requires an absolute URL (`http://`/`https://`). The entrypoint replaces
+    // `http://__WEEHAWK_RUNTIME_API_URL__` and any bare token with the real origin.
+    return `http://${RUNTIME_API_URL_PLACEHOLDER}`;
+  }
+  return normalizePublicApiOrigin(raw);
+}
+
+const apiBase = publicApiOriginForConfig();
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,

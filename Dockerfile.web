@@ -9,8 +9,10 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-ARG NEXT_PUBLIC_API_URL=https://app.weehawk.io
+ARG NEXT_PUBLIC_API_URL=__WEEHAWK_RUNTIME_API_URL__
+ARG NEXT_PUBLIC_INSTANCE_MODE=__WEEHAWK_RUNTIME_INSTANCE_MODE__
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_INSTANCE_MODE=$NEXT_PUBLIC_INSTANCE_MODE
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -43,6 +45,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 
+COPY docker/web/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && chown appuser:appgroup /entrypoint.sh
+
 COPY --from=builder --chown=appuser:appgroup /app/apps/web/public ./apps/web/public
 COPY --from=builder --chown=appuser:appgroup /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=appuser:appgroup /app/apps/web/.next/static ./apps/web/.next/static
@@ -51,4 +56,5 @@ USER appuser
 
 EXPOSE 3000
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["node", "apps/web/server.js"]

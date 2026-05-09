@@ -16,13 +16,23 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       process.env.NODE_ENV ??
       ''
     ).toLowerCase();
-    if (env === 'production' && !callbackURL) {
+    const instanceMode = (
+      config.get<string>('INSTANCE_MODE') ?? 'cloud'
+    )
+      .trim()
+      .toLowerCase();
+    // Self-hosted disables Google OAuth at the guard; do not require OAuth env to boot.
+    if (
+      env === 'production' &&
+      !callbackURL &&
+      instanceMode !== 'self-hosted'
+    ) {
       throw new Error('Missing google.callbackUrl in production');
     }
 
     super({
       // Use placeholders so the app can boot even if env is missing.
-      // Requests are blocked by GoogleAuthGuard with a clear 503 error until env is set.
+      // Requests are blocked by GoogleAuthGuard with a clear 403 until env is set (cloud only).
       clientID: clientID || 'MISSING_GOOGLE_CLIENT_ID',
       clientSecret: clientSecret || 'MISSING_GOOGLE_CLIENT_SECRET',
       callbackURL:
