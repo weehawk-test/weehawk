@@ -657,9 +657,14 @@ export function RemoteServerSettingsClient({
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="min-w-0 max-w-full break-words font-medium text-sm sm:truncate">{row.name}</p>
                         {isBootstrapHost ? (
-                          <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-emerald-500/45 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100">
-                            Localhost
-                          </span>
+                          <>
+                            <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-emerald-500/45 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100">
+                              Localhost
+                            </span>
+                            <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100">
+                              {row.serverRole === "build" ? "Build" : "Deploy"}
+                            </span>
+                          </>
                         ) : (
                           <>
                             <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-primary/35 text-primary bg-primary/10">
@@ -993,12 +998,6 @@ export function RemoteServerSettingsClient({
                     <X className="size-4" />
                   </button>
                 </div>
-                {editingBootstrapHost ? (
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    SSH host, port, and user are fixed for This Server. You can generate or paste a new private key below,
-                    then save.
-                  </p>
-                ) : null}
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                   <span
@@ -1009,6 +1008,9 @@ export function RemoteServerSettingsClient({
                     }`}
                   >
                     {isSelfHostedBootstrapRemoteServer(editingRow) ? "Localhost" : "Remote"}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border w-fit border-violet-500/50 bg-violet-500/15 text-violet-900 dark:text-violet-100">
+                    {editDraft.serverRole === "build" ? "Build" : "Deploy"}
                   </span>
                   <button
                     type="button"
@@ -1048,13 +1050,12 @@ export function RemoteServerSettingsClient({
                       <button
                         key={opt.value}
                         type="button"
-                        disabled={editingBootstrapHost}
                         onClick={() => setEditDraft((d) => ({ ...d, serverRole: opt.value }))}
                         className={`w-full text-left rounded-lg border px-3 py-2 transition-colors sm:min-w-[140px] sm:flex-1 ${
                           editDraft.serverRole === opt.value
                             ? "border-primary/40 bg-primary/10 text-foreground"
                             : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
-                        } ${editingBootstrapHost ? "pointer-events-none opacity-50" : ""}`}
+                        }`}
                       >
                         <span className="text-xs font-medium block">{opt.title}</span>
                         <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">
@@ -1090,8 +1091,7 @@ export function RemoteServerSettingsClient({
                     <input
                       value={editDraft.port}
                       onChange={(e) => setEditDraft((d) => ({ ...d, port: e.target.value }))}
-                      disabled={editingBootstrapHost}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
                     />
                   </label>
                   <label className="space-y-1 block">

@@ -377,9 +377,12 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
       this.logger.log(
         `Job ${job.id} remote_server_id=${serverId} resolved job_kind=${kind} (from DB column job_kind)`,
       );
+      const dialHost = this.remoteServersService.effectiveSshDialHost(
+        ctx.server,
+      );
       await appendLog(
         `[Weehawk] job_kind=${kind}\n` +
-          `\n--- SSH ${ctx.server.host}:${ctx.server.port} (${ctx.server.sshUser}) [${kind}] ---\n`,
+          `\n--- SSH ${dialHost}:${ctx.server.port} (${ctx.server.sshUser}) [${kind}] ---\n`,
       );
       await this.execSshBashScript(
         ctx.server,

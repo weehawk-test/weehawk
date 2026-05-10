@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as fs from 'fs/promises';
+import { readFileSync } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { randomBytes } from 'crypto';
@@ -403,6 +404,101 @@ export class RemoteServersService {
     return /^(1|true|yes|on)$/i.test(String(raw).trim());
   }
 
+  /**
+   * Host/IP ssh2 actually dials. For self-hosted "This Server" rows that still store
+   * `host.docker.internal`, Linux Docker often lacks that DNS name unless compose sets
+   * `extra_hosts: host.docker.internal:host-gateway`. Optional env
+   * `WEEHAWK_SELF_HOSTED_BOOTSTRAP_SSH_HOST` overrides; otherwise we fall back to the
+   * default bridge gateway when `host.docker.internal` does not resolve.
+   */
+  private resolveEffectiveSshHost(rs: RemoteServer): string {
+    const stored = rs.host.trim();
+    if (
+      !isSelfHostedBootstrapRemoteServer({
+        host: rs.host,
+        name: rs.name,
+        sshUser: rs.sshUser,
+        serverRole: rs.serverRole,
+        domainsJson: rs.domainsJson,
+      })
+    ) {
+      return stored;
+    }
+    const envOverride = (
+      this.configService.get<string>('WEEHAWK_SELF_HOSTED_BOOTSTRAP_SSH_HOST') ??
+      ''
+    ).trim();
+    if (envOverride.length > 0) {
+      return envOverride;
+    }
+    if (stored.toLowerCase() !== SELF_HOSTED_BOOTSTRAP_SSH_HOST.toLowerCase()) {
+      return stored;
+    }
+    const disableFallback = /^(1|true|yes|on)$/i.test(
+      String(
+        this.configService.get<string>(
+          'WEEHAWK_SELF_HOSTED_DISABLE_DOCKER_INTERNAL_FALLBACK',
+        ) ?? '',
+      ).trim(),
+    );
+    if (disableFallback) {
+      return stored;
+    }
+    const fromEtcHosts = this.readHostDockerInternalIpFromEtcHosts();
+    if (fromEtcHosts) {
+      return fromEtcHosts;
+    }
+    this.logger.debug(
+      'No host.docker.internal entry in /etc/hosts; using 172.17.0.1 for This Server SSH (set WEEHAWK_SELF_HOSTED_BOOTSTRAP_SSH_HOST, add extra_hosts host.docker.internal:host-gateway, or adjust bridge IP)',
+    );
+    return '172.17.0.1';
+  }
+
+  /** Docker / Desktop often inject `host.docker.internal` here; avoids relying on libc DNS. */
+  private readHostDockerInternalIpFromEtcHosts(): string | null {
+    try {
+      const s = readFileSync('/etc/hosts', 'utf8');
+      for (const line of s.split('\n')) {
+        const trimmed = line.replace(/#.*$/, '').trim();
+        if (!trimmed) continue;
+        const parts = trimmed.split(/\s+/).filter(Boolean);
+        if (parts.length < 2) continue;
+        const ip = parts[0];
+        if (
+          !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip) &&
+          !/^[0-9a-f:]+$/i.test(ip)
+        ) {
+          continue;
+        }
+        const hosts = parts.slice(1).map((h) => h.toLowerCase());
+        if (hosts.includes('host.docker.internal')) {
+          return ip;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  /**
+   * For provision logs / support: the address ssh2 will dial (may differ from DB `host` for bootstrap).
+   */
+  effectiveSshDialHost(rs: RemoteServer): string {
+    const stored = rs.host.trim();
+    const logical = this.resolveEffectiveSshHost(rs);
+    return isLoopbackSshHost(stored) ? 'localhost' : logical;
+  }
+
+  private resolveBootstrapStoredHostForCreate(): string {
+    const fromEnv = this.configService
+      .get<string>('WEEHAWK_SELF_HOSTED_BOOTSTRAP_SSH_HOST')
+      ?.trim();
+    return fromEnv && fromEnv.length > 0
+      ? fromEnv
+      : SELF_HOSTED_BOOTSTRAP_SSH_HOST;
+  }
+
   private async enforcePublicRemoteSshTargets(
     host: string,
     publicIpv4: string | null | undefined,
@@ -550,9 +646,10 @@ export class RemoteServersService {
     privateKey: Buffer;
     family?: number;
   } {
-    const raw = rs.host.trim();
-    const isLoopback = isLoopbackSshHost(raw);
-    const host = isLoopback ? 'localhost' : raw;
+    const stored = rs.host.trim();
+    const logical = this.resolveEffectiveSshHost(rs);
+    const isLoopback = isLoopbackSshHost(stored);
+    const host = isLoopback ? 'localhost' : logical;
     const port = rs.port ?? 22;
     return {
       host,
@@ -2789,11 +2886,12 @@ done
     rs: RemoteServer,
   ): Promise<Record<string, string>> {
     const identityPath = await this.resolveIdentityFilePath(rs);
-    const raw = rs.host.trim();
-    const isLoopback = isLoopbackSshHost(raw);
+    const stored = rs.host.trim();
+    const logical = this.resolveEffectiveSshHost(rs);
+    const isLoopback = isLoopbackSshHost(stored);
     // Use `localhost` in ssh:// so OpenSSH matches [localhost]:port in known_hosts (avoids yes/no prompts).
     // With `-4`, resolution stays on 127.0.0.1 so we don't hit ::1 when sshd listens on IPv4 only (common on Windows).
-    const host = isLoopback ? 'localhost' : raw;
+    const host = isLoopback ? 'localhost' : logical;
     const userHost =
       rs.port === 22
         ? `${rs.sshUser}@${host}`
@@ -3555,7 +3653,7 @@ curl -fsS -o /dev/null "$U"
       publicId: generatePublicId('rsv'),
       organizationId,
       name: SELF_HOSTED_BOOTSTRAP_REMOTE_NAME,
-      host: SELF_HOSTED_BOOTSTRAP_SSH_HOST,
+      host: this.resolveBootstrapStoredHostForCreate(),
       port: 22,
       sshUser: 'root',
       serverRole: 'deploy',
@@ -3775,17 +3873,10 @@ curl -fsS -o /dev/null "$U"
         dto.name !== undefined ? String(dto.name).trim() : existing.name;
       const nextHost =
         dto.host !== undefined ? String(dto.host).trim() : existing.host;
-      const nextPort = dto.port !== undefined ? dto.port : existing.port;
       const nextSshUser =
         dto.sshUser !== undefined
           ? String(dto.sshUser).trim()
           : existing.sshUser;
-      const nextRole =
-        dto.serverRole === 'build'
-          ? 'build'
-          : dto.serverRole === 'deploy'
-            ? 'deploy'
-            : existing.serverRole;
       let nextPublicIpv4 = existing.publicIpv4?.trim()
         ? existing.publicIpv4.trim()
         : null;
@@ -3798,13 +3889,11 @@ curl -fsS -o /dev/null "$U"
       if (
         nextName !== existing.name ||
         nextHost !== existing.host ||
-        nextPort !== existing.port ||
         nextSshUser !== existing.sshUser ||
-        nextRole !== existing.serverRole ||
         (nextPublicIpv4 ?? null) !== (existing.publicIpv4?.trim() || null)
       ) {
         throw new ForbiddenException(
-          'The default This Server entry cannot change its SSH target, user, port, label, role, or public IPv4. You may replace the stored private key or update deploy hostnames on Domains.',
+          'The default This Server entry cannot change its label, SSH host, user, or public IPv4. You may change the SSH port and server role, replace the stored private key, or update deploy hostnames on Domains.',
         );
       }
     }

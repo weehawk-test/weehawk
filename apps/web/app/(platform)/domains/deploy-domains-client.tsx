@@ -19,10 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import {
-  filterSshDeployServers,
-  isSelfHostedBootstrapRemoteServer,
-} from "@/lib/loopback-ssh-host";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
 import {
   isBlockedAcmeContactEmail,
   isLetsEncryptEmailConfigured,
@@ -103,7 +100,22 @@ function hostsEqual(a: string[], b: string[]): boolean {
 }
 
 function hostsToStoredJson(hosts: string[], previousRaw: string | null): string | null {
-  if (hosts.length === 0) return null;
+  if (hosts.length === 0) {
+    if (previousRaw?.trim()) {
+      try {
+        const prev = JSON.parse(previousRaw) as unknown;
+        if (prev && typeof prev === "object" && !Array.isArray(prev)) {
+          const o = prev as Record<string, unknown>;
+          if (typeof o.weehawkBootstrap === "string" && o.weehawkBootstrap.trim()) {
+            return JSON.stringify({ ...o, domains: [] });
+          }
+        }
+      } catch {
+        /* fall through */
+      }
+    }
+    return null;
+  }
   if (previousRaw?.trim()) {
     try {
       const prev = JSON.parse(previousRaw) as unknown;
@@ -130,14 +142,7 @@ function ServerDomainsCard({
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const bootstrapHostLocked = isSelfHostedBootstrapRemoteServer({
-    domainsJson: server.domainsJson,
-    name: server.name,
-    host: server.host,
-    sshUser: server.sshUser,
-    serverRole: server.serverRole,
-  });
-  const canEditSites = domainsEnabled && !bootstrapHostLocked;
+  const canEditSites = domainsEnabled;
   const baselineHosts = useMemo(() => domainsJsonToHosts(server.domainsJson), [server.domainsJson]);
   const initialRows = useMemo(() => hostsToRows(baselineHosts), [baselineHosts]);
 
@@ -225,13 +230,6 @@ function ServerDomainsCard({
 
         <div className="space-y-3">
           <p className="text-xs font-medium text-foreground/80 tracking-wide uppercase">Sites</p>
-          {bootstrapHostLocked && domainsEnabled ? (
-            <p className="text-xs text-muted-foreground">
-              The default This Server deploy host cannot be edited here. Add a remote deploy host for custom
-              sites and SSH settings.
-            </p>
-          ) : null}
-
           <div
             className={cn(
               "rounded-xl border border-border/50 bg-muted/30 p-2 space-y-1.5",

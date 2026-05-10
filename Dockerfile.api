@@ -50,6 +50,12 @@ COPY --from=builder /prod/app ./
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
   && chown -R appuser:appgroup /app
 
+# Self-hosted Linux: `host.docker.internal` is often missing unless you add
+#   extra_hosts: [ "host.docker.internal:host-gateway" ]
+# to this service, or set WEEHAWK_SELF_HOSTED_BOOTSTRAP_SSH_HOST to the host-reachable IP (e.g. 172.17.0.1).
+# Without that, the API falls back to 172.17.0.1 when the name does not resolve (disable via
+# WEEHAWK_SELF_HOSTED_DISABLE_DOCKER_INTERNAL_FALLBACK=1).
+#
 # Self-hosted: to auto-append the bootstrap SSH key to the host, the API process usually needs
 # access to Docker (socket) and a bind-mounted host `.ssh` dir, e.g.:
 #   -v /var/run/docker.sock:/var/run/docker.sock
