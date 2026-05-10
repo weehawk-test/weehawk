@@ -1,4 +1,5 @@
 import { API_BASE } from "./api";
+import { authFetch } from "./auth-fetch";
 
 export type AuthSessionBody = {
   userId: number;
@@ -174,4 +175,33 @@ export async function resetPasswordApi(input: {
   });
   if (!res.ok) throw new Error(await parseError(res));
   return (await res.json()) as { message: string };
+}
+
+/**
+ * Append short-lived WS handoff JWT so terminal upgrades work when the browser
+ * omits `SameSite=Lax` cookies on cross-site WebSocket handshakes.
+ */
+export function appendTerminalWsTicketQuery(wsUrl: string, ticket: string): string {
+  const u = new URL(wsUrl);
+  u.searchParams.set("ticket", ticket);
+  return u.toString();
+}
+
+/**
+ * @returns Handoff JWT, or `null` if the API build has no `/api/auth/websocket-ticket` yet (404).
+ *         Callers should open the terminal without a `ticket` query when `null` (cookie auth only).
+ */
+export async function fetchWebsocketTerminalTicket(accessToken: string | null): Promise<string | null> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/auth/websocket-ticket`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) return throwAuthHttpError(res);
+  const j = (await res.json()) as { ticket?: string };
+  if (typeof j.ticket !== "string" || j.ticket.length < 1) {
+    throw new AuthHttpError("Invalid websocket ticket response", res.status);
+  }
+  return j.ticket;
 }

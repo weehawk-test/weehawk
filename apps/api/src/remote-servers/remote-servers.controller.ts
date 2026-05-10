@@ -446,7 +446,7 @@ export class RemoteServersController {
   @Post('self-hosted/restore-local-host')
   @ApiOperation({
     summary:
-      'Self-hosted only: restore the default This Server (localhost) SSH row (admin only)',
+      'Self-hosted only: restore the default This Server SSH row (admin only)',
   })
   @ApiQuery({
     name: 'organizationPublicId',

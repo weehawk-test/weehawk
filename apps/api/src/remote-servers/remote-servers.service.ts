@@ -65,9 +65,15 @@ import {
   isLoopbackSshHost,
   isLoopbackSshDeployForbidden,
   isSelfHostedBootstrapRemoteServer,
+  SELF_HOSTED_BOOTSTRAP_MARKER,
   SELF_HOSTED_BOOTSTRAP_REMOTE_NAME,
+  SELF_HOSTED_BOOTSTRAP_SSH_HOST,
 } from './loopback-ssh-host';
 import { sshHostKeySha256Fingerprint, sshHostKeysEqual } from './ssh-host-key';
+import {
+  DEFAULT_SELF_HOSTED_MOUNTED_AUTHORIZED_KEYS,
+  injectSelfHostedBootstrapAuthorizedKey,
+} from './self-hosted-authorized-keys-docker';
 import {
   assertPublicRemoteIpv4Literal,
   assertPublicRemoteSshHost,
@@ -3428,7 +3434,39 @@ curl -fsS -o /dev/null "$U"
   }
 
   /**
-   * Ensures the self-hosted placeholder `deploy` remote server (This Server / localhost) exists
+   * Self-hosted default: best-effort append of the bootstrap SSH public key to the Docker host
+   * root `authorized_keys` when the API can use the local Docker socket (same host as
+   * `host.docker.internal` in typical installs).
+   */
+  private async maybeInjectSelfHostedBootstrapAuthorizedKeys(
+    publicKeyLine: string,
+  ): Promise<void> {
+    try {
+      await injectSelfHostedBootstrapAuthorizedKey(
+        publicKeyLine,
+        this.logger,
+        {
+          mountedAuthorizedKeysPath:
+            this.configService
+              .get<string>('WEEHAWK_SELF_HOSTED_AUTHORIZED_KEYS_MOUNT')
+              ?.trim() || DEFAULT_SELF_HOSTED_MOUNTED_AUTHORIZED_KEYS,
+          dockerHostSshBind:
+            this.configService
+              .get<string>('WEEHAWK_SELF_HOSTED_AUTHORIZED_KEYS_BIND')
+              ?.trim() || '/root/.ssh',
+        },
+      );
+    } catch (e) {
+      this.logger.warn(
+        `Self-hosted: automatic authorized_keys update failed (${
+          e instanceof Error ? e.message : String(e)
+        }). Recommended: bind-mount the real host directory to the API, e.g. \`/root/.ssh:/weehawk/docker-host-root-ssh:rw\`, or set WEEHAWK_SELF_HOSTED_AUTHORIZED_KEYS_BIND to the host path sshd uses. Otherwise add the public key manually in the UI.`,
+      );
+    }
+  }
+
+  /**
+   * Ensures the self-hosted placeholder `deploy` remote server (This Server / host.docker.internal) exists
    * for an organization. Does not enforce public-SSH host policy. Used when an admin restores
    * the row via the API, not during registration.
    *
@@ -3493,11 +3531,13 @@ curl -fsS -o /dev/null "$U"
     );
 
     let privateKeyEncrypted: string | null = null;
+    const pair = generateEd25519SshKeyPair('weehawk-selfhosted-bootstrap');
+    const bootstrapPublicKeyLine = pair.publicKey;
     try {
-      const pem = generateEd25519SshKeyPair(
-        'weehawk-selfhosted-bootstrap',
-      ).privateKey;
-      privateKeyEncrypted = encryptPrivateKey(pem, this.getEncryptionSecret());
+      privateKeyEncrypted = encryptPrivateKey(
+        pair.privateKey,
+        this.getEncryptionSecret(),
+      );
     } catch (e) {
       if (
         e instanceof BadRequestException &&
@@ -3515,16 +3555,22 @@ curl -fsS -o /dev/null "$U"
       publicId: generatePublicId('rsv'),
       organizationId,
       name: SELF_HOSTED_BOOTSTRAP_REMOTE_NAME,
-      host: 'localhost',
+      host: SELF_HOSTED_BOOTSTRAP_SSH_HOST,
       port: 22,
       sshUser: 'root',
       serverRole: 'deploy',
       privateKeyEncrypted,
       publicIpv4: null,
-      domainsJson: null,
+      domainsJson: JSON.stringify({
+        weehawkBootstrap: SELF_HOSTED_BOOTSTRAP_MARKER,
+        domains: [],
+      }),
     });
 
     const saved = await this.scopedRemoteServers.saveScoped(entity, userId);
+    await this.maybeInjectSelfHostedBootstrapAuthorizedKeys(
+      bootstrapPublicKeyLine,
+    );
     if (saved.organizationId != null) {
       void this.organizationsService
         .appendOrganizationAuditEvent(
@@ -3554,7 +3600,7 @@ curl -fsS -o /dev/null "$U"
   }
 
   /**
-   * Self-hosted only: admins can re-create the default `This Server` (localhost) row if it was deleted.
+   * Self-hosted only: admins can re-create the default `This Server` row if it was deleted.
    */
   async restoreSelfHostedBootstrapRemote(
     userId: number,
@@ -3717,18 +3763,50 @@ curl -fsS -o /dev/null "$U"
     userId: number,
   ): Promise<RemoteServerSafe> {
     const existing = await this.findEntityOrFail(id, userId);
-    if (
-      isSelfHostedBootstrapRemoteServer({
-        host: existing.host,
-        name: existing.name,
-        sshUser: existing.sshUser,
-        serverRole: existing.serverRole,
-        domainsJson: existing.domainsJson,
-      })
-    ) {
-      throw new ForbiddenException(
-        'The default This Server (localhost) entry cannot be edited.',
-      );
+    const existingBootstrap = isSelfHostedBootstrapRemoteServer({
+      host: existing.host,
+      name: existing.name,
+      sshUser: existing.sshUser,
+      serverRole: existing.serverRole,
+      domainsJson: existing.domainsJson,
+    });
+    if (existingBootstrap) {
+      const nextName =
+        dto.name !== undefined ? String(dto.name).trim() : existing.name;
+      const nextHost =
+        dto.host !== undefined ? String(dto.host).trim() : existing.host;
+      const nextPort = dto.port !== undefined ? dto.port : existing.port;
+      const nextSshUser =
+        dto.sshUser !== undefined
+          ? String(dto.sshUser).trim()
+          : existing.sshUser;
+      const nextRole =
+        dto.serverRole === 'build'
+          ? 'build'
+          : dto.serverRole === 'deploy'
+            ? 'deploy'
+            : existing.serverRole;
+      let nextPublicIpv4 = existing.publicIpv4?.trim()
+        ? existing.publicIpv4.trim()
+        : null;
+      if (dto.publicIpv4 !== undefined) {
+        nextPublicIpv4 =
+          dto.publicIpv4 != null && String(dto.publicIpv4).trim()
+            ? String(dto.publicIpv4).trim()
+            : null;
+      }
+      if (
+        nextName !== existing.name ||
+        nextHost !== existing.host ||
+        nextPort !== existing.port ||
+        nextSshUser !== existing.sshUser ||
+        nextRole !== existing.serverRole ||
+        (nextPublicIpv4 ?? null) !== (existing.publicIpv4?.trim() || null)
+      ) {
+        throw new ForbiddenException(
+          'The default This Server entry cannot change its SSH target, user, port, label, role, or public IPv4. You may replace the stored private key or update deploy hostnames on Domains.',
+        );
+      }
     }
     if (this.isDomainsJsonOnlyUpdate(dto)) {
       await this.organizationsService.assertMemberCanEditOrgServerDomainsJson(

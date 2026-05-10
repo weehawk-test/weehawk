@@ -50,6 +50,13 @@ COPY --from=builder /prod/app ./
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
   && chown -R appuser:appgroup /app
 
+# Self-hosted: to auto-append the bootstrap SSH key to the host, the API process usually needs
+# access to Docker (socket) and a bind-mounted host `.ssh` dir, e.g.:
+#   -v /var/run/docker.sock:/var/run/docker.sock
+#   -v /root/.ssh:/weehawk/docker-host-root-ssh:rw
+# Non-root `appuser` often cannot use the socket or write root-owned files — use `user: "0:0"` in
+# compose for that deployment, or matching `group_add` + writable mount permissions.
+
 USER appuser
 
 EXPOSE 8080

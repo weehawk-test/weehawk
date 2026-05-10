@@ -21,6 +21,7 @@ import { RefreshTokenService } from '../token/refresh-token.service';
 import { EmailConfirmationService } from '../email/email-confirmation.service';
 import { OrganizationsService } from '../organizations/organizations.service';
 import type { Profile } from 'passport-google-oauth20';
+import { WS_TERMINAL_TICKET_PURPOSE } from './ws-upgrade-auth';
 
 function isPostgresUniqueViolation(err: unknown): boolean {
   if (!(err instanceof QueryFailedError)) return false;
@@ -422,6 +423,18 @@ export class AuthService {
         role: user.role,
       },
       { expiresIn: this.config.get('JWT_EXP', '7d') },
+    );
+  }
+
+  /** Short-lived JWT for WebSocket terminal upgrades when cookies are not sent on the handshake. */
+  signWebSocketHandoffTicket(userId: number): string {
+    return this.jwtService.sign(
+      {
+        purpose: WS_TERMINAL_TICKET_PURPOSE,
+        userId,
+        sub: String(userId),
+      },
+      { expiresIn: '3m' },
     );
   }
 

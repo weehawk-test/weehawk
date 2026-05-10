@@ -191,7 +191,7 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
       })
     ) {
       throw new ForbiddenException(
-        'Docker purge is not available for the default This Server (localhost) entry.',
+        'Docker purge is not available for the default This Server entry.',
       );
     }
     const row = this.jobRepo.create({

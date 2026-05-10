@@ -141,10 +141,9 @@ echo "Weehawk: Nixpacks step finished."
 `.trim();
 }
 
-/** YAML scalar for ACME email (quoted if needed). */
+/** YAML scalar for ACME email (JSON-quoted; empty when unset). */
 function traefikYamlEmailScalar(email: string): string {
-  const t = email.trim() || 'admin@example.com';
-  return JSON.stringify(t);
+  return JSON.stringify(email.trim());
 }
 
 /**
@@ -492,7 +491,7 @@ echo "Weehawk build host provision: done."
     Boolean(opts.isProvisionJobPreview),
   );
 
-  const acmeEmailForYaml = (opts.acmeEmail ?? '').trim() || 'admin@example.com';
+  const acmeEmailForYaml = (opts.acmeEmail ?? '').trim();
   const traefikStaticYaml = buildTraefikStaticYaml({
     acmeEmail: acmeEmailForYaml,
     dockerNetwork: net,
@@ -511,7 +510,7 @@ OS_TYPE=$(grep -w "ID" /etc/os-release | cut -d "=" -f 2 | tr -d '"')
 SYS_ARCH=$(uname -m)
 CURRENT_USER=$USER
 OVERLAY_NET="${net}"
-ACME_EMAIL="${(opts.acmeEmail ?? '').replace(/"/g, '\\"') || 'admin@example.com'}"
+ACME_EMAIL="${(opts.acmeEmail ?? '').replace(/"/g, '\\"')}"
 
 echo "Weehawk deploy host provision | OS: $OS_TYPE | arch: $SYS_ARCH | network: $OVERLAY_NET"
 

@@ -40,7 +40,7 @@ export type RestoreSelfHostedLocalHostResult = {
   alreadyPresent: boolean;
 };
 
-/** Self-hosted admin: ensure the default `This Server` (localhost) row exists (creates it if missing). */
+/** Self-hosted admin: ensure the default `This Server` deploy row exists (creates it if missing). */
 export async function restoreSelfHostedLocalHostApi(
   accessToken: string,
   organizationPublicId?: string | null,

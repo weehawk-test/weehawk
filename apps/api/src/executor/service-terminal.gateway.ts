@@ -8,7 +8,7 @@ import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import { ExecutorService } from './executor.service';
 import { ServicesService } from '../services/services.service';
 import { isRequestOriginAllowed } from '../common/cors-origin';
-import { parseCookieHeader, AUTH_ACCESS_COOKIE } from '../auth/auth-cookies';
+import { resolveUserIdFromWsUpgradeRequest } from '../auth/ws-upgrade-auth';
 
 /**
  * Interactive shell inside the service's running container on the **deploy** host (SSH + `docker exec`).
@@ -23,36 +23,6 @@ export class ServiceTerminalGateway {
     @Inject(forwardRef(() => ServicesService))
     private readonly servicesService: ServicesService,
   ) {}
-
-  private async userIdFromWsRequest(
-    req: IncomingMessage | undefined,
-  ): Promise<number | null> {
-    const raw = req?.headers?.cookie;
-    const cookies = parseCookieHeader(
-      typeof raw === 'string' ? raw : undefined,
-    );
-    const token = cookies[AUTH_ACCESS_COOKIE]?.trim();
-    if (!token) return null;
-    try {
-      const payload = await this.jwtService.verifyAsync<{
-        userId?: number;
-        sub?: string;
-      }>(token);
-      if (
-        typeof payload.userId === 'number' &&
-        Number.isFinite(payload.userId) &&
-        payload.userId >= 1
-      ) {
-        return payload.userId;
-      }
-      const sub =
-        payload.sub != null ? Number.parseInt(String(payload.sub), 10) : NaN;
-      if (Number.isFinite(sub) && sub >= 1) return sub;
-      return null;
-    } catch {
-      return null;
-    }
-  }
 
   async handleConnection(client: WebSocket, ...args: unknown[]) {
     const req = args[0] as IncomingMessage | undefined;
@@ -91,7 +61,7 @@ export class ServiceTerminalGateway {
       return;
     }
 
-    const userId = await this.userIdFromWsRequest(req);
+    const userId = await resolveUserIdFromWsUpgradeRequest(req, this.jwtService);
     if (userId == null) {
       client.send(
         JSON.stringify({

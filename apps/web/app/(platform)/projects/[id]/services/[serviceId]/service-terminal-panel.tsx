@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Terminal } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
+import { appendTerminalWsTicketQuery, fetchWebsocketTerminalTicket } from "@/lib/auth-api";
 import { serviceTerminalWsUrlCandidates } from "@/lib/services-api";
 
 type Props = {
@@ -9,13 +11,14 @@ type Props = {
 };
 
 export function ServiceTerminalPanel({ serviceId }: Props) {
+  const { accessToken } = useAuth();
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || !accessToken) return;
 
     let disposed = false;
     let ws: WebSocket | null = null;
@@ -85,7 +88,23 @@ export function ServiceTerminalPanel({ serviceId }: Props) {
       ro = new ResizeObserver(onResize);
       ro.observe(el);
 
-      const urls = serviceTerminalWsUrlCandidates(serviceId);
+      let ticket: string | null;
+      try {
+        ticket = await fetchWebsocketTerminalTicket(accessToken);
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Could not authorize the terminal. Sign in again.";
+        setError(message);
+        setConnecting(false);
+        return;
+      }
+      if (disposed) return;
+
+      const baseUrls = serviceTerminalWsUrlCandidates(serviceId);
+      const urls =
+        ticket != null
+          ? baseUrls.map((u) => appendTerminalWsTicketQuery(u, ticket))
+          : baseUrls;
       let activeUrlIndex = 0;
       const connect = (index: number) => {
         if (disposed) return;
@@ -152,7 +171,7 @@ export function ServiceTerminalPanel({ serviceId }: Props) {
       ws?.close();
       term?.dispose();
     };
-  }, [serviceId]);
+  }, [serviceId, accessToken]);
 
   return (
     <div className="glass-panel rounded-xl overflow-hidden border border-border/60 flex flex-col min-h-[min(70vh,560px)] max-h-[min(88vh,760px)]">

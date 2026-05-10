@@ -83,7 +83,7 @@ export class TraefikService {
     if (!row) {
       row = this.repo.create({
         organizationId: oid,
-        acmeEmail: 'admin@example.com',
+        acmeEmail: '',
         platformDomain: null,
         acmeStorageHostPath: '/var/www/weehawk/traefik/data/acme.json',
         dockerNetwork: WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
@@ -97,9 +97,18 @@ export class TraefikService {
         staticConfigOverride: null,
       });
       await this._internal_system_saveTraefik(row);
-    } else if (row.dockerNetwork !== WEEHAWK_TRAEFIK_EXTERNAL_NETWORK) {
-      row.dockerNetwork = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK;
-      await this._internal_system_saveTraefik(row);
+    } else {
+      let dirty = false;
+      if (row.dockerNetwork !== WEEHAWK_TRAEFIK_EXTERNAL_NETWORK) {
+        row.dockerNetwork = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK;
+        dirty = true;
+      }
+      // Legacy default was a placeholder; treat as unset so Certificate email starts empty.
+      if (row.acmeEmail.trim().toLowerCase() === 'admin@example.com') {
+        row.acmeEmail = '';
+        dirty = true;
+      }
+      if (dirty) await this._internal_system_saveTraefik(row);
     }
     return row;
   }

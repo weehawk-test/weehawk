@@ -18,7 +18,7 @@ export class TraefikSettings {
   @Column({ name: 'organization_id', type: 'int' })
   organizationId!: number;
 
-  @Column({ type: 'varchar', length: 254, default: 'admin@example.com' })
+  @Column({ type: 'varchar', length: 254, default: '' })
   acmeEmail!: string;
 
   /** Public hostname for the Weehawk UI (Traefik routes to host:3000). */

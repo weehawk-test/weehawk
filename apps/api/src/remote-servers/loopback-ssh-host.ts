@@ -19,6 +19,9 @@ export const SELF_HOSTED_BOOTSTRAP_REMOTE_NAME = 'This Server';
 /** Legacy: was stored in `domainsJson` before empty-metadata bootstrap. */
 export const SELF_HOSTED_BOOTSTRAP_MARKER = 'self_hosted_local_v1';
 
+/** SSH hostname for the default self-hosted deploy row (API in Docker → host machine). */
+export const SELF_HOSTED_BOOTSTRAP_SSH_HOST = 'host.docker.internal';
+
 export type RemoteServerLoopbackIdentity = {
   host: string;
   domainsJson?: string | null;

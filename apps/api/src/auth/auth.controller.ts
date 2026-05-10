@@ -150,6 +150,15 @@ export class AuthController {
     return this.sessionBody(auth);
   }
 
+  @Post('/websocket-ticket')
+  async websocketTicket(
+    @Req() req: { user?: { userId: number } },
+  ): Promise<{ ticket: string }> {
+    const uid = req.user?.userId;
+    if (!uid || uid < 1) throw new UnauthorizedException();
+    return { ticket: this.authService.signWebSocketHandoffTicket(uid) };
+  }
+
   @Post('/logout')
   @ApiBody({ type: RefreshTokenDto })
   async logout(

@@ -227,7 +227,7 @@ function ServerDomainsCard({
           <p className="text-xs font-medium text-foreground/80 tracking-wide uppercase">Sites</p>
           {bootstrapHostLocked && domainsEnabled ? (
             <p className="text-xs text-muted-foreground">
-              This Server (localhost) cannot be edited here. Add a remote deploy host for custom
+              The default This Server deploy host cannot be edited here. Add a remote deploy host for custom
               sites and SSH settings.
             </p>
           ) : null}

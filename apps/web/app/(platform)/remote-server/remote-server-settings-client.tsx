@@ -19,6 +19,7 @@ import { MaskedPemTextarea } from "@/components/remote-server/masked-pem-textare
 import { PublicKeyCopyBlock } from "@/components/remote-server/public-key-copy-block";
 import { RemoteServerInstallBlock } from "@/components/remote-server/remote-server-install-block";
 import { useAuth } from "@/contexts/auth-context";
+import { appendTerminalWsTicketQuery, fetchWebsocketTerminalTicket } from "@/lib/auth-api";
 import {
   createRemoteServerApi,
   deleteRemoteServerApi,
@@ -32,9 +33,10 @@ import {
   type RemoteServerRow,
   type RemoteServerRole,
 } from "@/lib/remote-servers-api";
-import { isSelfHostedBootstrapRemoteServer } from "@/lib/loopback-ssh-host";
-import { fetchTraefikSettings, type TraefikSettingsPayload } from "@/lib/traefik-api";
-import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
+import {
+  isSelfHostedBootstrapRemoteServer,
+  SELF_HOSTED_BOOTSTRAP_SSH_HOST,
+} from "@/lib/loopback-ssh-host";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { useToast } from "@/hooks/use-toast";
 import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
@@ -48,6 +50,7 @@ import {
   orgMemberAllowsRemoteServerTerminal,
   orgMemberAllowsRemoteServerTest,
 } from "@/lib/org-workspace-permissions";
+import { cn } from "@/lib/utils";
 /** When Host is a dotted public IPv4, it is stored as `publicIpv4` (e.g. Magic traefik.me). Hostnames are SSH-only. */
 function parseDottedPublicIpv4(hostOrIp: string): string | null {
   const t = hostOrIp.trim();
@@ -97,17 +100,13 @@ function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): str
 
 export function RemoteServerSettingsClient({
   initialRemoteServers,
-  initialTraefikSettings,
   activeOrgPublicId = null,
   initialRemoteServersOrganizationId = null,
-  initialTraefikOrganizationId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
-  initialTraefikSettings?: TraefikSettingsPayload | null;
   /** When set (org workspace), list/create servers scoped to this organization. */
   activeOrgPublicId?: string | null;
   initialRemoteServersOrganizationId?: string | null;
-  initialTraefikOrganizationId?: string | null;
 }) {
   const { accessToken, user } = useAuth();
   const { toast } = useToast();
@@ -119,9 +118,6 @@ export function RemoteServerSettingsClient({
   const trimmedSsrServersOrg = initialRemoteServersOrganizationId?.trim() ?? "";
   const useSsrRemoteInitial =
     initialRemoteServers !== undefined && trimmedOrg === trimmedSsrServersOrg;
-  const trimmedSsrTraefikOrg = initialTraefikOrganizationId?.trim() ?? "";
-  const useSsrTraefikInitial =
-    initialTraefikSettings != null && trimmedOrg === trimmedSsrTraefikOrg;
   const inOrgRemoteServerPage = Boolean(trimmedOrg);
   const allowOrgTerminal =
     !inOrgRemoteServerPage ||
@@ -159,7 +155,6 @@ export function RemoteServerSettingsClient({
     inOrgRemoteServerPage &&
     allowOrgAdd;
   const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
-  const traefikSettingsQueryKey = ["traefik", "settings", orgScopeSegment] as const;
   const list = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
@@ -169,20 +164,6 @@ export function RemoteServerSettingsClient({
     staleTime: 10_000,
     refetchOnMount: true,
   });
-
-  const traefikSettingsQ = useQuery({
-    queryKey: traefikSettingsQueryKey,
-    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken && trimmedOrg),
-    initialData: useSsrTraefikInitial ? (initialTraefikSettings ?? undefined) : undefined,
-    initialDataUpdatedAt: useSsrTraefikInitial ? Date.now() : undefined,
-    staleTime: 0,
-    refetchOnMount: "always",
-  });
-
-  const certEmailReady = isLetsEncryptEmailConfigured(traefikSettingsQ.data?.acmeEmail);
-  const addHostBlocked =
-    traefikSettingsQ.isLoading || traefikSettingsQ.isError || !certEmailReady;
 
   const [creating, setCreating] = useState(false);
   const [showPrivateKeyCreate, setShowPrivateKeyCreate] = useState(false);
@@ -258,15 +239,16 @@ export function RemoteServerSettingsClient({
       restoreSelfHostedLocalHostApi(accessToken ?? "", trimmedOrg || null),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: remoteServersQueryKey });
+      const sshTarget = `${result.remoteServer.sshUser}@${result.remoteServer.host}`;
       if (result.alreadyPresent) {
         toast({
           title: "This Server already listed",
-          description: "This Server (localhost) is already in Remote servers.",
+          description: `This Server (${sshTarget}) is already in Remote servers.`,
         });
       } else {
         toast({
           title: "Local host restored",
-          description: "This Server (localhost) was added back to Remote servers.",
+          description: `This Server (${sshTarget}) was added back to Remote servers.`,
         });
       }
     },
@@ -281,12 +263,6 @@ export function RemoteServerSettingsClient({
 
   const createMut = useMutation({
     mutationFn: () => {
-      const settings = qc.getQueryData<TraefikSettingsPayload>(traefikSettingsQueryKey);
-      if (!isLetsEncryptEmailConfigured(settings?.acmeEmail)) {
-        return Promise.reject(
-          new Error("Save your Let's Encrypt certificate email on Domains before adding a host."),
-        );
-      }
       const pip = parseDottedPublicIpv4(form.host);
       return createRemoteServerApi(accessToken ?? "", {
         name: form.name.trim(),
@@ -459,7 +435,31 @@ export function RemoteServerSettingsClient({
       ro = new ResizeObserver(onResize);
       ro.observe(el);
 
-      const urls = remoteTerminalWsUrlCandidates(remoteServerRouteId(row));
+      let ticket: string | null;
+      try {
+        ticket = await fetchWebsocketTerminalTicket(accessToken);
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "Could not authorize the terminal. Sign in again.";
+        setTerminalError(message);
+        setTerminalConnecting(false);
+        if (!terminalFailureNotifiedRef.current) {
+          terminalFailureNotifiedRef.current = true;
+          toast({
+            title: "Terminal connection failed",
+            description: message,
+            variant: "destructive",
+          });
+        }
+        return;
+      }
+      if (disposed) return;
+
+      const baseUrls = remoteTerminalWsUrlCandidates(remoteServerRouteId(row));
+      const urls =
+        ticket != null
+          ? baseUrls.map((u) => appendTerminalWsTicketQuery(u, ticket))
+          : baseUrls;
       let activeUrlIndex = 0;
       const connect = (index: number) => {
         if (disposed) return;
@@ -540,7 +540,7 @@ export function RemoteServerSettingsClient({
       ws?.close();
       term?.dispose();
     };
-  }, [terminalModalRow, toast]);
+  }, [terminalModalRow, toast, accessToken]);
 
   if (!accessToken) {
     return (
@@ -569,6 +569,8 @@ export function RemoteServerSettingsClient({
 
   const editingRow =
     editingId != null ? (list.data ?? []).find((r) => r.id === editingId) ?? null : null;
+  const editingBootstrapHost =
+    editingRow != null && isSelfHostedBootstrapRemoteServer(editingRow);
 
   return (
     <div className="w-full space-y-6 pb-[max(1rem,env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-0">
@@ -583,30 +585,6 @@ export function RemoteServerSettingsClient({
         </p>
       </header>
 
-      {traefikSettingsQ.isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-xl border border-border bg-muted/30 px-4 py-3">
-          <Loader2 className="size-4 animate-spin" />
-          Checking certificate settings…
-        </div>
-      ) : traefikSettingsQ.isError ? (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-200">
-          <p className="font-medium">Could not load certificate settings</p>
-          <p className="text-xs text-red-300/90 mt-1">{(traefikSettingsQ.error as Error).message}</p>
-        </div>
-      ) : !certEmailReady ? (
-        <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 dark:bg-amber-500/15 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
-          <p className="font-medium">Certificate email required</p>
-          <p className="text-xs mt-1.5 text-amber-900/90 dark:text-amber-100/90 leading-relaxed">
-            Before adding a remote host, open{" "}
-            <Link href="/domains" className="font-medium text-primary underline-offset-2 hover:underline">
-              Domains
-            </Link>{" "}
-            and save a real Let&apos;s Encrypt contact email (Certificate email section). Then return here to add your
-            server.
-          </p>
-        </div>
-      ) : null}
-
       <div className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Hosts</h2>
@@ -615,17 +593,11 @@ export function RemoteServerSettingsClient({
               {showRestoreLocalHost ? (
                 <button
                   type="button"
-                  disabled={
-                    restoreLocalHostMut.isPending ||
-                    addHostBlocked ||
-                    (inOrgRemoteServerPage && !allowOrgAdd)
-                  }
+                  disabled={restoreLocalHostMut.isPending || (inOrgRemoteServerPage && !allowOrgAdd)}
                   title={
-                    addHostBlocked
-                      ? "Save your Let's Encrypt email on Domains first"
-                      : inOrgRemoteServerPage && !allowOrgAdd
-                        ? "Your role cannot add remote hosts in this organization"
-                        : "Re-add the default This Server (root@localhost) deploy host for this instance"
+                    inOrgRemoteServerPage && !allowOrgAdd
+                      ? "Your role cannot add remote hosts in this organization"
+                      : `Re-add the default This Server (root@${SELF_HOSTED_BOOTSTRAP_SSH_HOST}) deploy host for this instance`
                   }
                   onClick={() => restoreLocalHostMut.mutate()}
                   className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
@@ -640,13 +612,11 @@ export function RemoteServerSettingsClient({
               ) : null}
               <button
                 type="button"
-                disabled={addHostBlocked || (inOrgRemoteServerPage && !allowOrgAdd)}
+                disabled={inOrgRemoteServerPage && !allowOrgAdd}
                 title={
-                  addHostBlocked
-                    ? "Save your Let's Encrypt email on Domains first"
-                    : inOrgRemoteServerPage && !allowOrgAdd
-                      ? "Your role cannot add remote hosts in this organization"
-                      : "Add a remote host"
+                  inOrgRemoteServerPage && !allowOrgAdd
+                    ? "Your role cannot add remote hosts in this organization"
+                    : "Add a remote host"
                 }
                 onClick={() => {
                   setShowPrivateKeyCreate(false);
@@ -664,34 +634,29 @@ export function RemoteServerSettingsClient({
         <div className="space-y-2">
           {(list.data ?? []).length === 0 && !creating ? (
             <p className="text-sm text-muted-foreground px-3 py-8 text-center border border-dashed border-border rounded-xl sm:px-4">
-              {certEmailReady ? (
-                <>
-                  No remote hosts yet. Add a host and paste a private key, or generate a new pair.
-                </>
-              ) : (
-                <>
-                  Save your Let&apos;s Encrypt certificate email on{" "}
-                  <Link href="/domains" className="text-primary hover:underline">
-                    Domains
-                  </Link>{" "}
-                  first, then use Add host.
-                </>
-              )}
+              No remote hosts yet. Add a host and paste a private key, or generate a new pair.
             </p>
           ) : null}
 
-          {(list.data ?? []).map((row) => (
+          {(list.data ?? []).map((row) => {
+            const isBootstrapHost = isSelfHostedBootstrapRemoteServer(row);
+            return (
               <div
                 key={row.id}
                 className="glass-panel rounded-xl border border-border overflow-hidden"
               >
                 <>
-                  <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-3 sm:px-5 sm:py-4">
+                  <div
+                    className={cn(
+                      "flex flex-col gap-4 px-4 py-4 sm:flex-row sm:justify-between sm:gap-3 sm:px-5 sm:py-4",
+                      isBootstrapHost ? "sm:items-center" : "sm:items-start",
+                    )}
+                  >
                     {/* `flex-1` only from `sm:` so the column on phones does not grow and pin actions to the bottom */}
                     <div className="min-w-0 sm:min-h-0 sm:flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="min-w-0 max-w-full break-words font-medium text-sm sm:truncate">{row.name}</p>
-                        {isSelfHostedBootstrapRemoteServer(row) ? (
+                        {isBootstrapHost ? (
                           <span className="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-emerald-500/45 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100">
                             Localhost
                           </span>
@@ -711,10 +676,16 @@ export function RemoteServerSettingsClient({
                           </span>
                         ) : null}
                       </div>
-                      <p className="mt-1 break-all font-mono text-xs text-muted-foreground sm:truncate">
-                        {row.sshUser}@{row.host}
-                        {row.port !== 22 ? `:${row.port}` : ""}
-                      </p>
+                      {isBootstrapHost ? (
+                        <p className="mt-1 text-xs leading-snug text-muted-foreground sm:max-w-md">
+                          The machine where Weehawk is running.
+                        </p>
+                      ) : (
+                        <p className="mt-1 break-all font-mono text-xs text-muted-foreground sm:truncate">
+                          {row.sshUser}@{row.host}
+                          {row.port !== 22 ? `:${row.port}` : ""}
+                        </p>
+                      )}
                     </div>
                     <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
                       {row.hasPrivateKey && allowOrgDocker ? (
@@ -774,25 +745,25 @@ export function RemoteServerSettingsClient({
                         <Terminal className="size-3.5 shrink-0" />
                         Terminal
                       </button>
-                      {!isSelfHostedBootstrapRemoteServer(row) ? (
-                        <button
-                          type="button"
-                          disabled={inOrgRemoteServerPage && !allowOrgEdit}
-                          title={
-                            inOrgRemoteServerPage && !allowOrgEdit
-                              ? "Your role cannot edit remote hosts in this organization"
+                      <button
+                        type="button"
+                        disabled={inOrgRemoteServerPage && !allowOrgEdit}
+                        title={
+                          inOrgRemoteServerPage && !allowOrgEdit
+                            ? "Your role cannot edit remote hosts in this organization"
+                            : isBootstrapHost
+                              ? "Rotate SSH key or view details (connection target is fixed)"
                               : undefined
-                          }
-                          onClick={() => {
-                            setGeneratedPublicKey(null);
-                            setShowPrivateKeyEdit(false);
-                            setEditingId(row.id);
-                          }}
-                          className="btn-secondary min-h-10 px-2.5 py-2 text-xs disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:py-1.5"
-                        >
-                          Edit
-                        </button>
-                      ) : null}
+                        }
+                        onClick={() => {
+                          setGeneratedPublicKey(null);
+                          setShowPrivateKeyEdit(false);
+                          setEditingId(row.id);
+                        }}
+                        className="btn-secondary min-h-10 px-2.5 py-2 text-xs disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:py-1.5"
+                      >
+                        Edit
+                      </button>
                       <button
                         type="button"
                         disabled={deleteMut.isPending || (inOrgRemoteServerPage && !allowOrgDelete)}
@@ -828,7 +799,8 @@ export function RemoteServerSettingsClient({
                   />
                 </>
               </div>
-            ))}
+            );
+          })}
         </div>
 
       </div>
@@ -978,7 +950,7 @@ export function RemoteServerSettingsClient({
                   </button>
                   <button
                     type="button"
-                    disabled={createMut.isPending || addHostBlocked}
+                    disabled={createMut.isPending}
                     onClick={() => createMut.mutate()}
                     className="btn-primary order-1 inline-flex w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:order-2 sm:w-auto"
                   >
@@ -1021,6 +993,12 @@ export function RemoteServerSettingsClient({
                     <X className="size-4" />
                   </button>
                 </div>
+                {editingBootstrapHost ? (
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    SSH host, port, and user are fixed for This Server. You can generate or paste a new private key below,
+                    then save.
+                  </p>
+                ) : null}
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                   <span
@@ -1070,12 +1048,13 @@ export function RemoteServerSettingsClient({
                       <button
                         key={opt.value}
                         type="button"
+                        disabled={editingBootstrapHost}
                         onClick={() => setEditDraft((d) => ({ ...d, serverRole: opt.value }))}
                         className={`w-full text-left rounded-lg border px-3 py-2 transition-colors sm:min-w-[140px] sm:flex-1 ${
                           editDraft.serverRole === opt.value
                             ? "border-primary/40 bg-primary/10 text-foreground"
                             : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
-                        }`}
+                        } ${editingBootstrapHost ? "pointer-events-none opacity-50" : ""}`}
                       >
                         <span className="text-xs font-medium block">{opt.title}</span>
                         <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">
@@ -1091,7 +1070,8 @@ export function RemoteServerSettingsClient({
                     <input
                       value={editDraft.name}
                       onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      disabled={editingBootstrapHost}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                     />
                   </label>
                   <label className="space-y-1 block">
@@ -1099,7 +1079,8 @@ export function RemoteServerSettingsClient({
                     <input
                       value={editDraft.host}
                       onChange={(e) => setEditDraft((d) => ({ ...d, host: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      disabled={editingBootstrapHost}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                       placeholder="203.0.113.10"
                       autoComplete="off"
                     />
@@ -1109,7 +1090,8 @@ export function RemoteServerSettingsClient({
                     <input
                       value={editDraft.port}
                       onChange={(e) => setEditDraft((d) => ({ ...d, port: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      disabled={editingBootstrapHost}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                     />
                   </label>
                   <label className="space-y-1 block">
@@ -1117,7 +1099,8 @@ export function RemoteServerSettingsClient({
                     <input
                       value={editDraft.sshUser}
                       onChange={(e) => setEditDraft((d) => ({ ...d, sshUser: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      disabled={editingBootstrapHost}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                     />
                   </label>
                   <div className="space-y-1 sm:col-span-2">
