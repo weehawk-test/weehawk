@@ -109,22 +109,87 @@ function hostsToStoredJson(hosts: string[], previousRaw: string | null): string 
   return JSON.stringify(hosts);
 }
 
+const isSelfHosted =
+  (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
+
 export function ServerDomainsCard({
   server,
   accessToken,
   domainsEnabled,
   remoteServersQueryKey,
+  orgName,
 }: {
   server: RemoteServerRow;
   accessToken: string;
   domainsEnabled: boolean;
   remoteServersQueryKey: readonly unknown[];
+  orgName?: string | null;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const canEditSites = domainsEnabled;
   const baselineHosts = useMemo(() => domainsJsonToHosts(server.domainsJson), [server.domainsJson]);
   const initialRows = useMemo(() => hostsToRows(baselineHosts), [baselineHosts]);
+
+  const [acmeEmail, setAcmeEmail] = useState(server.acmeEmail ?? "");
+  const [primaryDomain, setPrimaryDomain] = useState(() => {
+    try {
+      const parsed = server.domainsJson ? JSON.parse(server.domainsJson) : null;
+      return (parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.primaryDomain === "string")
+        ? parsed.primaryDomain
+        : "";
+    } catch { return ""; }
+  });
+
+  useEffect(() => {
+    setAcmeEmail(server.acmeEmail ?? "");
+  }, [server.acmeEmail]);
+
+  useEffect(() => {
+    try {
+      const parsed = server.domainsJson ? JSON.parse(server.domainsJson) : null;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.primaryDomain === "string") {
+        setPrimaryDomain(parsed.primaryDomain);
+      }
+    } catch { /* ignore */ }
+  }, [server.domainsJson]);
+
+  const serverSettingsMut = useMutation({
+    mutationFn: async () => {
+      const raw = server.domainsJson?.trim() || null;
+      let base: Record<string, unknown> = {};
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            base = parsed as Record<string, unknown>;
+          }
+        } catch { /* ignore */ }
+      }
+      const next = { ...base, primaryDomain: primaryDomain.trim() };
+      return updateRemoteServerApi(accessToken, server.publicId?.trim() || String(server.id), {
+        acmeEmail: acmeEmail.trim(),
+        domainsJson: JSON.stringify(next),
+      });
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: remoteServersQueryKey });
+      toast({ title: "Server settings saved" });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  const serverSettingsDirty = (() => {
+    if (acmeEmail.trim() !== (server.acmeEmail ?? "")) return true;
+    try {
+      const parsed = server.domainsJson ? JSON.parse(server.domainsJson) : null;
+      const stored = (parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.primaryDomain === "string")
+        ? parsed.primaryDomain : "";
+      if (primaryDomain.trim() !== stored) return true;
+    } catch { return true; }
+    return false;
+  })();
 
   const [rows, setRows] = useState<DomainRow[]>(initialRows);
   const [savedHosts, setSavedHosts] = useState<string[]>(baselineHosts);
@@ -190,10 +255,7 @@ export function ServerDomainsCard({
 
   return (
     <div
-      className={cn(
-        "rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20",
-        !canEditSites && "opacity-55 pointer-events-none select-none",
-      )}
+      className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20"
     >
       <div className="rounded-[0.875rem] bg-card/50 p-5 space-y-5">
         <div className="flex items-start gap-3 min-w-0">
@@ -208,7 +270,56 @@ export function ServerDomainsCard({
           </div>
         </div>
 
-        <div className="space-y-3">
+        {isSelfHosted && orgName === "Root Org" && (
+          <div className="space-y-4">
+            <p className="text-xs font-medium text-foreground/80 tracking-wide uppercase">Server settings</p>
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">
+                Certificate email (For Let&apos;s Encrypt)
+              </label>
+              <Input
+                type="email"
+                value={acmeEmail}
+                onChange={(e) => setAcmeEmail(e.target.value)}
+                placeholder="admin@example.com"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">
+                Primary domain
+              </label>
+              <Input
+                type="text"
+                value={primaryDomain}
+                onChange={(e) => setPrimaryDomain(e.target.value)}
+                placeholder="weehawk.example.com"
+                className="h-9 text-sm"
+                spellCheck={false}
+              />
+              <p className="text-[11px] text-muted-foreground/70">
+                The main domain where this Weehawk instance is accessible.
+              </p>
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
+                disabled={serverSettingsMut.isPending || !serverSettingsDirty}
+                onClick={() => serverSettingsMut.mutate()}
+              >
+                {serverSettingsMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
+              </button>
+            </div>
+
+            <div className="border-t border-border/40" />
+          </div>
+        )}
+
+        <div className={cn("space-y-3", !canEditSites && "opacity-55 pointer-events-none select-none")}>
           <p className="text-xs font-medium text-foreground/80 tracking-wide uppercase">Sites</p>
           <div
             className={cn(

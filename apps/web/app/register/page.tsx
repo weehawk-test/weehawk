@@ -12,10 +12,6 @@ import { useRateLimitCountdown } from "@/hooks/use-rate-limit-countdown";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { PasswordInput } from "@/components/inputs/password-input";
 import { normalizeApiBase } from "@/lib/api";
-import {
-  readSelfHostedFirstInstallState,
-  writeSelfHostedFirstInstallState,
-} from "@/lib/self-hosted-first-install";
 
 export default function RegisterPage() {
   const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
@@ -37,15 +33,8 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (!isReady || !accessToken) return;
-    if (
-      isSelfHosted &&
-      readSelfHostedFirstInstallState() === "pending"
-    ) {
-      router.replace("/onboarding/self-hosted-deploy");
-      return;
-    }
     router.replace("/");
-  }, [isReady, accessToken, isSelfHosted, router]);
+  }, [isReady, accessToken, router]);
 
   useEffect(() => {
     if (!isSelfHosted) {
@@ -113,12 +102,7 @@ export default function RegisterPage() {
         emailVerified: user.emailVerified,
         imageUrl: user.imageUrl ?? null,
       });
-      if (isSelfHosted && user.role === "ADMIN") {
-        writeSelfHostedFirstInstallState("pending");
-        router.replace("/onboarding/self-hosted-deploy");
-      } else {
-        router.replace("/");
-      }
+      router.replace("/");
     } catch (err) {
       if (err instanceof AuthHttpError && err.status === 403) {
         router.replace(

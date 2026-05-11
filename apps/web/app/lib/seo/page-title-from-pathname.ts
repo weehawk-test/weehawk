@@ -22,8 +22,6 @@ export function pageLabelFromPathname(pathname: string): string {
   if (path.startsWith("/register")) return "Register";
   if (path.startsWith("/forgot-password")) return "Forgot Password";
   if (path.startsWith("/reset-password")) return "Reset Password";
-  if (path === "/onboarding/self-hosted-deploy") return "Install — Deploy target";
-  if (path === "/onboarding/self-hosted-this-machine") return "Install — This machine";
   if (path.startsWith("/onboarding")) return "Onboarding";
   if (path.startsWith("/docker")) return "Docker";
 

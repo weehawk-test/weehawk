@@ -8,29 +8,20 @@ import { ServerDeployChoiceSection } from "@/components/onboarding/server-deploy
 import type { ServerDeployTarget } from "@/lib/server-deploy-preference";
 import { writeServerDeployChoice } from "@/lib/server-deploy-preference";
 
-function isSelfHostedInstance(): boolean {
-  return (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
-}
-
 export default function OnboardingServerPage() {
   const router = useRouter();
-  const selfHosted = isSelfHostedInstance();
   const [gateOk, setGateOk] = useState(false);
   const [deployTarget, setDeployTarget] = useState<ServerDeployTarget>("localhost");
 
   useEffect(() => {
-    if (selfHosted) {
-      router.replace("/onboarding/self-hosted-deploy");
-      return;
-    }
     setGateOk(true);
-  }, [router, selfHosted]);
+  }, []);
 
   useEffect(() => {
-    if (!gateOk || selfHosted) return;
+    if (!gateOk) return;
     setDeployTarget("localhost");
     writeServerDeployChoice("localhost");
-  }, [gateOk, selfHosted]);
+  }, [gateOk]);
 
   const finishAndEnter = useCallback(() => {
     router.replace("/");
@@ -41,13 +32,11 @@ export default function OnboardingServerPage() {
     finishAndEnter();
   }, [finishAndEnter]);
 
-  if (!gateOk || selfHosted) {
+  if (!gateOk) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3 px-4">
-        <>
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        </>
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Loading…</p>
       </div>
     );
   }

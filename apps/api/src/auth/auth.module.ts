@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -13,6 +13,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { TokenModule } from '../token/token.module';
 import { EmailModule } from '../email/email.module';
 import { OrganizationsModule } from '../organizations/organizations.module';
+import { RemoteServersModule } from '../remote-servers/remote-servers.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { OrganizationsModule } from '../organizations/organizations.module';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     EmailModule,
     OrganizationsModule,
+    forwardRef(() => RemoteServersModule),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

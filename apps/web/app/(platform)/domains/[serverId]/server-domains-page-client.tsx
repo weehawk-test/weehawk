@@ -115,6 +115,7 @@ export function ServerDomainsPageClient({
             accessToken={accessToken}
             domainsEnabled={domainsEnabled}
             remoteServersQueryKey={remoteServersQueryKey}
+            orgName={orgWorkspace?.name}
           />
         ) : (
           <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-3 py-4 text-center">

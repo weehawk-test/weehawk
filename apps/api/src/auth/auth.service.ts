@@ -1,9 +1,11 @@
 import {
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   UnauthorizedException,
+  forwardRef,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -20,6 +22,7 @@ import { ChangePasswordDto } from './dto/change-password.dto';
 import { RefreshTokenService } from '../token/refresh-token.service';
 import { EmailConfirmationService } from '../email/email-confirmation.service';
 import { OrganizationsService } from '../organizations/organizations.service';
+import { RemoteServersService } from '../remote-servers/remote-servers.service';
 import type { Profile } from 'passport-google-oauth20';
 import { WS_TERMINAL_TICKET_PURPOSE } from './ws-upgrade-auth';
 
@@ -41,6 +44,8 @@ export class AuthService {
     private readonly refreshTokenService: RefreshTokenService,
     private readonly emailConfirmationService: EmailConfirmationService,
     private readonly organizationsService: OrganizationsService,
+    @Inject(forwardRef(() => RemoteServersService))
+    private readonly remoteServersService: RemoteServersService,
   ) {}
 
   getRegistrationStatus(): Promise<{
@@ -106,6 +111,15 @@ export class AuthService {
     await this.organizationsService.ensureAtLeastOneOwnedOrganizationForUser(
       saved.id,
     );
+    if (isFirstSelfHostedUser) {
+      await this.remoteServersService
+        .ensureSelfHostedLocalDeployBootstrapIfNeeded(
+          saved.id,
+          null,
+          'self_hosted_registration',
+        )
+        .catch(() => undefined);
+    }
     return this.buildAuthResponse(saved, accessToken, refreshToken);
   }
 

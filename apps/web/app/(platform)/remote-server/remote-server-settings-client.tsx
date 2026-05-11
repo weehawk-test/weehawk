@@ -951,7 +951,7 @@ export function RemoteServerSettingsClient({
                       >
                         Edit
                       </button>
-                      {!(isSelfHosted && isBootstrapHost) && (
+                      {!(isSelfHosted && isBootstrapHost && orgWorkspace?.name === "Root Org") && (
                       <button
                         type="button"
                         disabled={deleteMut.isPending || (inOrgRemoteServerPage && !allowOrgDelete)}
@@ -1262,6 +1262,7 @@ export function RemoteServerSettingsClient({
                       className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                     />
                   </label>
+                  {!(isSelfHosted && editingBootstrapHost && orgWorkspace?.name === "Root Org") && (
                   <label className="space-y-1 block sm:col-span-2">
                     <span className="text-xs text-muted-foreground">
                       Certificate email (For Let&apos;s Encrypt)
@@ -1275,6 +1276,7 @@ export function RemoteServerSettingsClient({
                       autoComplete="email"
                     />
                   </label>
+                  )}
                   <div className="space-y-1 sm:col-span-2">
                     <span className="block text-xs text-muted-foreground">
                       Replace private key (optional PEM)
