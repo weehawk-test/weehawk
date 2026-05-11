@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Loader2, LogOut, Pencil, Plus } from "lucide-react";
 import { useAuth, type AuthUser } from "@/contexts/auth-context";
 import {
   DropdownMenu,
@@ -15,11 +15,34 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  clearActiveOrganizationPublicId,
   setActiveOrganizationPublicId,
   fetchOrganizations,
+  leaveOrganization,
+  notifyOrganizationsListChanged,
+  updateOrganization,
   ORGANIZATIONS_LIST_CHANGED_EVENT,
 } from "@/lib/organizations-api";
+import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
 import type { OrganizationPublic } from "@/lib/organizations-types";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 /** Always land on the workspace start page after switching organization. */
@@ -96,9 +119,17 @@ export function WorkspaceSwitcher({
   const pathname = usePathname();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [orgs, setOrgs] = useState<OrganizationPublic[]>([]);
   const [pendingOrgPublicId, setPendingOrgPublicId] = useState("");
   const [pendingOrgLabel, setPendingOrgLabel] = useState("");
+
+  const [editNameOpen, setEditNameOpen] = useState(false);
+  const [editNameValue, setEditNameValue] = useState("");
+  const [savingName, setSavingName] = useState(false);
+
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const effectiveActiveOrgPublicId =
     pendingOrgPublicId ||
     (activeOrgPublicId != null && activeOrgPublicId.trim() !== ""
@@ -192,6 +223,70 @@ export function WorkspaceSwitcher({
     };
   }, [user?.userId]);
 
+  const activeOrg = orgs.find((o) => o.publicId === effectiveActiveOrgPublicId) ?? null;
+
+  const openEditName = () => {
+    if (!activeOrg) return;
+    setEditNameValue(activeOrg.name);
+    setEditNameOpen(true);
+  };
+
+  const onSaveName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeOrg || savingName || editNameValue.trim() === activeOrg.name.trim()) return;
+    setSavingName(true);
+    try {
+      await updateOrganization(activeOrg.publicId, { name: editNameValue.trim() });
+      toast({ title: "Organization updated", description: "Name saved." });
+      notifyOrganizationsListChanged();
+      setEditNameOpen(false);
+      router.refresh();
+    } catch (err) {
+      toast({
+        title: "Could not save",
+        description: err instanceof Error ? err.message : "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const onConfirmLeave = async () => {
+    if (!activeOrg || leaving) return;
+    setLeaving(true);
+    try {
+      const { message } = await leaveOrganization(activeOrg.publicId);
+      toast({ title: "Left organization", description: message });
+      setLeaveOpen(false);
+      const remaining = await fetchOrganizations();
+      const next = pickDefaultWorkspaceOrganization(remaining);
+      queryClient.clear();
+      notifyOrganizationsListChanged();
+      if (next?.publicId?.trim()) {
+        await setActiveOrganizationPublicId(next.publicId);
+        queueMicrotask(() => {
+          router.push("/home");
+          router.refresh();
+        });
+      } else {
+        await clearActiveOrganizationPublicId();
+        queueMicrotask(() => {
+          router.push("/organizations/create");
+          router.refresh();
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Could not leave",
+        description: err instanceof Error ? err.message : "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setLeaving(false);
+    }
+  };
+
   const triggerLabel = activeOrgLabel || accountHint;
 
   return (
@@ -247,18 +342,44 @@ export function WorkspaceSwitcher({
                 key={o.publicId}
                 className={menuItemClass}
                 onSelect={() => {
-                  selectOrganization(o.publicId);
+                  if (!active) selectOrganization(o.publicId);
                 }}
               >
                 <div className={rowLinkClass}>
                   <WorkspaceRowAvatar imageUrl={null} initials={orgInitials} alt={o.name} />
                   <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{o.name}</span>
                   {active ? (
-                    <Check
-                      className="size-4 shrink-0 -translate-x-0.5 text-foreground"
-                      strokeWidth={2.25}
-                      aria-hidden
-                    />
+                    <span className="flex shrink-0 items-center gap-1">
+                      {o.isOwner ? (
+                        <button
+                          type="button"
+                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                          aria-label="Edit name"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditName();
+                          }}
+                        >
+                          <Pencil className="size-3.5" strokeWidth={2} aria-hidden />
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        aria-label="Leave organization"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLeaveOpen(true);
+                        }}
+                      >
+                        <LogOut className="size-3.5" strokeWidth={2} aria-hidden />
+                      </button>
+                      <Check
+                        className="size-4 -translate-x-0.5 text-foreground"
+                        strokeWidth={2.25}
+                        aria-hidden
+                      />
+                    </span>
                   ) : null}
                 </div>
               </DropdownMenuItem>
@@ -280,6 +401,86 @@ export function WorkspaceSwitcher({
           </Link>
         </DropdownMenuItem>
       </DropdownMenuContent>
+
+      <Dialog open={editNameOpen} onOpenChange={(open) => !savingName && setEditNameOpen(open)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit organization name</DialogTitle>
+            <DialogDescription>Visible to all members in this organization.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => void onSaveName(e)} className="space-y-4">
+            <input
+              type="text"
+              value={editNameValue}
+              onChange={(e) => setEditNameValue(e.target.value)}
+              maxLength={200}
+              className="input-field w-full"
+              autoComplete="organization"
+              disabled={savingName}
+              autoFocus
+            />
+            <DialogFooter className="gap-2 sm:gap-0">
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={savingName}
+                onClick={() => setEditNameOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingName || !editNameValue.trim() || editNameValue.trim() === activeOrg?.name.trim()}
+                className="btn-primary inline-flex items-center justify-center gap-2"
+              >
+                {savingName ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                Save
+              </button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={leaveOpen} onOpenChange={(open) => !leaving && setLeaveOpen(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leave this organization?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                {activeOrg && !activeOrg.isOwner ? (
+                  <p>
+                    You will lose access until someone invites you back to{" "}
+                    <span className="font-medium text-foreground">{activeOrg.name}</span>.
+                  </p>
+                ) : activeOrg && activeOrg.memberCount <= 1 ? (
+                  <p>
+                    You are the only member. Leaving will close this organization and{" "}
+                    <span className="font-medium text-foreground">permanently delete all of its workspace data</span>.
+                    This cannot be undone.
+                  </p>
+                ) : (
+                  <p>
+                    If you are the only owner, another member will be promoted automatically. You can return only if
+                    invited.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={leaving}>Cancel</AlertDialogCancel>
+            <button
+              type="button"
+              disabled={leaving}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground ring-offset-background transition-colors hover:bg-destructive/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+              onClick={() => void onConfirmLeave()}
+            >
+              {leaving ? <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden /> : null}
+              Leave
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DropdownMenu>
   );
 }

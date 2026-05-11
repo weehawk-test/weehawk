@@ -12,7 +12,6 @@ import {
   Menu,
   Server,
   UserCog,
-  Settings,
 } from "lucide-react";
 import { LayoutGroup } from "framer-motion";
 import type { OrganizationPublic } from "@/lib/organizations-types";
@@ -27,14 +26,11 @@ import {
 } from "./main-nav-sections";
 import {
   ORG_WORKSPACE_PERMISSIONS,
-  firstOrgManagementPathSegment,
 } from "@/lib/org-workspace-permissions";
 import {
   orgFullHrefIsActive,
-  isOrgManagementSectionActive,
   orgPersonalNavIsActive,
   prefixOrgHref,
-  ORGANIZATION_MANAGEMENT_BASE,
 } from "@/lib/org-nav-utils";
 import { useAuth } from "@/contexts/auth-context";
 import {
@@ -304,18 +300,10 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                     )}
                     <div className="space-y-px">
                       {section.items.map((item) => {
-                        const mgmtSeg = firstOrgManagementPathSegment(
-                          org.workspacePermissions,
-                          org.isOwner,
-                        );
-                        const orgManagementEntryHref = `${ORGANIZATION_MANAGEMENT_BASE}/${mgmtSeg}`;
-                        const isOrgSettings = Boolean(item.orgManagementEntry);
-                        const href = isOrgSettings ? orgManagementEntryHref : prefixOrgHref(navOrgBase, item.href);
+                        const href = prefixOrgHref(navOrgBase, item.href);
                         const active = item.external
                           ? false
-                          : isOrgSettings
-                            ? isOrgManagementSectionActive(pathname, navOrgBase)
-                            : orgPersonalNavIsActive(pathname, navOrgBase, item.href);
+                          : orgPersonalNavIsActive(pathname, navOrgBase, item.href);
                         const navDisabled = isOrgMainNavItemDisabled(org, item);
                         return (
                           <NavRow
@@ -324,7 +312,7 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                             href={href}
                             label={item.label}
                             active={active}
-                            icon={isOrgSettings ? Settings : item.icon}
+                            icon={item.icon}
                             activeLayoutId={ORG_ACTIVE}
                             external={item.external}
                             onNavigate={closeMobile}

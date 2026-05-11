@@ -7,7 +7,7 @@ export function prefixOrgHref(_orgBaseUnused: string, href: string): string {
 /** Organization management: `/organization/overview`, … */
 export const ORGANIZATION_MANAGEMENT_BASE = "/organization";
 
-const ORG_MANAGEMENT_SEGMENTS = ["overview", "audit", "members", "permissions", "settings"] as const;
+const ORG_MANAGEMENT_SEGMENTS = ["audit", "members"] as const;
 
 export function isOrgManagementSectionActive(pathname: string, _orgBaseUnused: string): boolean {
   for (const seg of ORG_MANAGEMENT_SEGMENTS) {
@@ -28,9 +28,6 @@ export function orgPersonalNavIsActive(pathname: string, _orgBaseUnused: string,
   }
   if (personalHref === "/remote-server") {
     return pathname === "/remote-server" || pathname.startsWith("/remote-server/");
-  }
-  if (personalHref === "/organization") {
-    return isOrgManagementSectionActive(pathname, "");
   }
   const p = personalHref.startsWith("/") ? personalHref : `/${personalHref}`;
   if (personalHref.includes("/secrets")) {

@@ -37,11 +37,12 @@ export default async function OrganizationAuditPage({
 
   return (
     <div className="space-y-6">
-      <p className="max-w-2xl text-sm text-muted-foreground">
-        Membership and settings changes, projects, remote servers (including Docker console and install jobs), Domains,
-        notifications, S3 workspace actions, webhooks, cron jobs, and remote terminal runs — with API endpoint, HTTP
-        status when recorded, and actor.
-      </p>
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Audit Log</h1>
+        <p className="mt-1 text-muted-foreground">
+          Track membership changes, projects, servers, webhooks, cron jobs, and more.
+        </p>
+      </div>
 
       {entries.length === 0 ? (
         <div className="glass-panel rounded-2xl border border-dashed border-border/80 p-10 text-center">

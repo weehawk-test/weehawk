@@ -2,16 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ClipboardList, Home, Settings, Shield, Users } from "lucide-react";
+import { ClipboardList, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { OrgManagementTabMatch } from "@/lib/org-workspace-permissions";
 
 const tabs = [
-  { href: "/overview", label: "Overview", icon: Home, match: "overview" as const },
-  { href: "/audit", label: "Audit log", icon: ClipboardList, match: "audit" as const },
   { href: "/members", label: "Members", icon: Users, match: "members" as const },
-  { href: "/permissions", label: "Permissions", icon: Shield, match: "permissions" as const },
-  { href: "/settings", label: "Settings", icon: Settings, match: "settings" as const },
+  { href: "/audit", label: "Audit log", icon: ClipboardList, match: "audit" as const },
 ] as const;
 
 export function OrgManagementTabs({
@@ -29,17 +26,8 @@ export function OrgManagementTabs({
   const normalizedBase = base.replace(/\/$/, "");
 
   const activeMatch = (): OrgManagementTabMatch => {
-    if (
-      pathname === `${normalizedBase}/overview` ||
-      pathname.startsWith(`${normalizedBase}/overview/`)
-    ) {
-      return "overview";
-    }
     if (pathname.startsWith(`${normalizedBase}/audit`)) return "audit";
-    if (pathname.startsWith(`${normalizedBase}/members`)) return "members";
-    if (pathname.startsWith(`${normalizedBase}/permissions`)) return "permissions";
-    if (pathname.startsWith(`${normalizedBase}/settings`)) return "settings";
-    return "overview";
+    return "members";
   };
 
   const current = activeMatch();

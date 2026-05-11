@@ -124,7 +124,7 @@ export function OrgMembersClient({
           <div className="shrink-0">
             <Dialog open={inviteOpen} onOpenChange={onOpenChange}>
               <DialogTrigger asChild>
-                <button type="button" className="btn-primary inline-flex shrink-0 items-center justify-center gap-2">
+                <button type="button" className="btn-primary inline-flex shrink-0 items-center justify-center gap-2 h-9 text-sm">
                   <UserPlus className="size-4" aria-hidden />
                   Invite member
                 </button>
@@ -206,20 +206,19 @@ export function OrgMembersClient({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{m.email}</td>
                   <td className="px-4 py-3">
-                    {canManageMembers ? (
+                    {m.isOwner ? (
+                      <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                        Owner
+                      </span>
+                    ) : canManageMembers ? (
                       <select
                         key={`${m.email}-${m.isOwner}`}
                         className="input-field w-full max-w-[11rem] py-1.5 text-xs"
                         aria-label={`Role for ${m.email}`}
-                        value={m.isOwner ? "owner" : "member"}
+                        value="member"
                         disabled={
                           roleUpdatingEmail === m.email ||
                           Boolean(roleUpdatingEmail && roleUpdatingEmail !== m.email)
-                        }
-                        title={
-                          m.isOwner
-                            ? "Change to Member to step down (another owner must remain)."
-                            : undefined
                         }
                         onChange={(ev) => {
                           const v = ev.target.value as "member" | "owner";
@@ -229,10 +228,6 @@ export function OrgMembersClient({
                         <option value="member">Member</option>
                         <option value="owner">Owner</option>
                       </select>
-                    ) : m.isOwner ? (
-                      <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-                        Owner
-                      </span>
                     ) : (
                       <span className="text-muted-foreground">Member</span>
                     )}

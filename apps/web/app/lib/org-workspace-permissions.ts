@@ -477,20 +477,20 @@ export function firstOrgManagementPathSegment(
   p: OrganizationWorkspacePermissions,
   isOwner: boolean,
 ): string {
-  if (isOwner) return "overview";
+  if (isOwner) return "members";
   for (const k of ORG_MANAGEMENT_ADVANCED_PERMISSION_KEYS) {
     if (p[k]) {
-      if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW) return "overview";
+      if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW) return "members";
       if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG) return "audit";
       if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS) return "members";
-      if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS) return "permissions";
-      if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_SETTINGS) return "settings";
+      if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS) return "members";
+      if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_SETTINGS) return "members";
     }
   }
-  return "overview";
+  return "members";
 }
 
-export type OrgManagementTabMatch = "overview" | "audit" | "members" | "permissions" | "settings";
+export type OrgManagementTabMatch = "audit" | "members";
 
 export function allowedOrgManagementTabMatches(
   p: OrganizationWorkspacePermissions,
@@ -498,19 +498,16 @@ export function allowedOrgManagementTabMatches(
 ): Set<OrgManagementTabMatch> {
   if (isOwner) {
     return new Set<OrgManagementTabMatch>([
-      "overview",
       "audit",
       "members",
-      "permissions",
-      "settings",
     ]);
   }
   const s = new Set<OrgManagementTabMatch>();
-  if (p[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW]) s.add("overview");
   if (p[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG]) s.add("audit");
-  if (p[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS]) s.add("members");
-  if (p[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS]) s.add("permissions");
-  if (p[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_SETTINGS]) s.add("settings");
+  if (
+    p[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS] ||
+    p[ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS]
+  ) s.add("members");
   return s;
 }
 

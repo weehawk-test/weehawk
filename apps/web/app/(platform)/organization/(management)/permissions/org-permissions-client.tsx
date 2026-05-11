@@ -97,6 +97,7 @@ export function OrgPermissionsClient({
 
   return (
     <div className="space-y-4">
+      <h3 className="text-lg font-semibold text-foreground">Permissions</h3>
       <p className="max-w-2xl text-sm text-muted-foreground">
         Configure workspace access for each member. Owners retain full access by default.
       </p>

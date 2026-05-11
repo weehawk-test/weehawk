@@ -16,7 +16,8 @@ import {
   Clock3,
   GitBranch,
   Server,
-  Building2,
+  Users,
+  ClipboardList,
 } from "lucide-react";
 import {
   ORG_WORKSPACE_PERMISSIONS,
@@ -105,9 +106,16 @@ export function buildMainNavSections(): MainNavSection[] {
       label: "Organization",
       items: [
         {
-          href: "/organization",
-          label: "Settings",
-          icon: Building2,
+          href: "/organization/members",
+          label: "Members",
+          icon: Users,
+          orgPermission: ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
+          orgManagementEntry: true,
+        },
+        {
+          href: "/organization/audit",
+          label: "Audit log",
+          icon: ClipboardList,
           orgPermission: ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
           orgManagementEntry: true,
         },
