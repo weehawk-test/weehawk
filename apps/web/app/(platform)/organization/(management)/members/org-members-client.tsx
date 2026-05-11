@@ -18,6 +18,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+const isSelfHosted =
+  (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
+
 export function OrgMembersClient({
   activeOrgPublicId,
   initialMembers,
@@ -66,7 +69,7 @@ export function OrgMembersClient({
       setInviteOpen(false);
       router.refresh();
       toast({
-        title: notice ? "Request recorded" : "Invitation sent",
+        title: notice ? "Request recorded" : isSelfHosted ? "Member added" : "Invitation sent",
         description: notice ?? message,
       });
     } catch (err) {
@@ -131,10 +134,11 @@ export function OrgMembersClient({
               </DialogTrigger>
               <DialogContent className="sm:max-w-lg">
                 <DialogHeader>
-                  <DialogTitle>Invite member</DialogTitle>
+                  <DialogTitle>{isSelfHosted ? "Add member" : "Invite member"}</DialogTitle>
                   <DialogDescription>
-                    Enter their email. If they already have a Weehawk account, they&apos;ll get a link to accept the
-                    invite (they should open it while signed in with that address).
+                    {isSelfHosted
+                      ? "Enter their email. If they don\u2019t have an account yet, one will be created automatically and they\u2019ll be added to this organization."
+                      : "Enter their email. If they already have a Weehawk account, they\u2019ll get a link to accept the invite (they should open it while signed in with that address)."}
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={onAdd} className="space-y-4">
@@ -170,7 +174,7 @@ export function OrgMembersClient({
                     </button>
                     <button type="submit" disabled={adding} className="btn-primary inline-flex items-center justify-center gap-2">
                       {adding ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}
-                      Send invitation
+                      {isSelfHosted ? "Add member" : "Send invitation"}
                     </button>
                   </DialogFooter>
                 </form>

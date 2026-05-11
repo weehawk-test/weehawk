@@ -8,7 +8,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as bcrypt from 'bcrypt';
 import { User } from '../auth/entities/user.entity';
+import { AuthProvider } from '../auth/entities/auth-provider.enum';
+import { Role } from '../auth/entities/role.enum';
 import { EmailService } from '../email/email.service';
 import { TokenStoreService } from '../email/token-store.service';
 import { OrganizationsRepository } from './organizations.repository';
@@ -45,6 +48,11 @@ export class OrganizationInviteService {
     ).replace(/\/$/, '');
   }
 
+  private isSelfHosted(): boolean {
+    const raw = this.config.get<string>('INSTANCE_MODE') ?? 'cloud';
+    return raw.trim().toLowerCase() === 'self-hosted';
+  }
+
   async sendMemberInvite(
     ctx: OrganizationMemberContext,
     actingUserId: number,
@@ -61,12 +69,97 @@ export class OrganizationInviteService {
     if (!email) {
       throw new BadRequestException('email is required');
     }
+
+    if (this.isSelfHosted()) {
+      return this.selfHostedDirectAdd(ctx, actingUserId, email);
+    }
+
+    return this.cloudSendInvite(ctx, actingUserId, email);
+  }
+
+  /**
+   * Self-hosted mode: create the user account if it doesn't exist,
+   * then add them directly to the organization (no email invite flow).
+   */
+  private async selfHostedDirectAdd(
+    ctx: OrganizationMemberContext,
+    actingUserId: number,
+    email: string,
+  ): Promise<{ message: string; notice?: string }> {
+    let invitee = await this.users
+      .createQueryBuilder('u')
+      .where('LOWER(u.email) = :email', { email })
+      .getOne();
+
+    let userCreated = false;
+
+    if (!invitee) {
+      const tempPassword = crypto.randomUUID();
+      const hash = await bcrypt.hash(tempPassword, 10);
+      const localPart = email.split('@')[0] ?? '';
+      const now = new Date();
+      invitee = this.users.create({
+        firstName: localPart || 'User',
+        lastName: '',
+        email,
+        passwordHash: hash,
+        provider: AuthProvider.LOCAL,
+        role: Role.USER,
+        enabled: true,
+        emailVerified: false,
+        locked: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      invitee = await this.users.save(invitee);
+      userCreated = true;
+    }
+
+    const already = await this.orgRepo.findMembership(invitee.id, ctx.internalId);
+    if (already) {
+      throw new ConflictException('This user is already a member.');
+    }
+
+    await this.organizationsService.addMemberByUserId(
+      ctx.internalId,
+      invitee.id,
+    );
+
+    await this.organizationsService.appendOrganizationAuditEvent(
+      ctx.internalId,
+      actingUserId,
+      'member.invited',
+      {
+        metadata: {
+          endpoint: `POST /api/organizations/${encodeURIComponent(ctx.publicId)}/members`,
+          targetEmail: email,
+          selfHostedDirectAdd: true,
+          userCreated,
+        },
+      },
+    );
+
+    if (userCreated) {
+      return {
+        message: `Account created for ${email} and added to the organization. They need to reset their password on first login.`,
+      };
+    }
+    return {
+      message: `${email} has been added to the organization.`,
+    };
+  }
+
+  /** Cloud mode: existing email-based invite flow. */
+  private async cloudSendInvite(
+    ctx: OrganizationMemberContext,
+    actingUserId: number,
+    email: string,
+  ): Promise<{ message: string; notice?: string }> {
     const invitee = await this.users
       .createQueryBuilder('u')
       .where('LOWER(u.email) = :email', { email })
       .getOne();
     if (!invitee) {
-      /** Do not reveal whether the address exists; no email or token is created. */
       return {
         message: 'Your request was processed.',
         notice:
