@@ -103,9 +103,11 @@ export class CreateRemoteServerDto {
 
   @ApiProperty({
     description:
-      'Organization publicId (`org_…`); server is created in this organization.',
+      'Organization publicId (`org_…`); server is created in this organization. Optional if an active organization is set server-side.',
+    required: false,
   })
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
-  organizationPublicId!: string;
+  organizationPublicId?: string;
 }

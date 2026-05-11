@@ -492,10 +492,22 @@ export class RemoteServersController {
   @ApiOperation({
     summary: 'Create remote server (privateKey PEM stored encrypted in DB)',
   })
-  create(
+  async create(
     @Body() dto: CreateRemoteServerDto,
     @Req() req: { user?: { userId: number } },
   ) {
+    if (!dto.organizationPublicId?.trim()) {
+      const ctx =
+        await this.activeOrganizationService.resolveRequiredMemberContext(
+          this.uid(req),
+          null,
+          {
+            requireWorkspaceArea:
+              ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER_ADD,
+          },
+        );
+      dto.organizationPublicId = ctx.publicId;
+    }
     return this.remoteServersService.create(dto, this.uid(req));
   }
 

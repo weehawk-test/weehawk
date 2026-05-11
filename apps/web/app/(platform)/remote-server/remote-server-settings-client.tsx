@@ -253,7 +253,7 @@ export function RemoteServerSettingsClient({
         setForm((f) => ({ ...f, privateKey: data.privateKey }));
         toast({
           title: "Key pair generated",
-          description: "Copy the public key to the remote servers, then save the host.",
+          description: "Copy the public key to the remote servers, then save the server.",
         });
       }
     },
@@ -274,7 +274,7 @@ export function RemoteServerSettingsClient({
         });
       } else {
         toast({
-          title: "Local host restored",
+          title: "Local server restored",
           description: `This Server (${sshTarget}) was added back to Remote servers.`,
         });
       }
@@ -284,7 +284,7 @@ export function RemoteServerSettingsClient({
     },
     onError: (err) => {
       toast({
-        title: "Could not restore local host",
+        title: "Could not restore local server",
         description: err instanceof Error ? err.message : "Unknown error",
         variant: "destructive",
       });
@@ -318,7 +318,7 @@ export function RemoteServerSettingsClient({
       setForm(emptyForm());
       setGeneratedPublicKey(null);
       setShowPrivateKeyCreate(false);
-      toast({ title: "Remote host saved" });
+      toast({ title: "Remote server saved" });
       if (pageVariant === "add-host") {
         router.push("/remote-server");
       }
@@ -602,12 +602,12 @@ export function RemoteServerSettingsClient({
               {
                 value: "deploy" as const,
                 title: "Deploy",
-                hint: "Run docker stack / compose on this host",
+                hint: "Run docker stack / compose on this server",
               },
               {
                 value: "build" as const,
                 title: "Build",
-                hint: "Image builds only; pick a deploy host for running containers",
+                hint: "Image builds only; pick a deploy server for running containers",
               },
             ] as const
           ).map((opt) => (
@@ -640,7 +640,7 @@ export function RemoteServerSettingsClient({
           />
         </label>
         <label className="space-y-1 block">
-          <span className="text-xs text-muted-foreground">Host / IP</span>
+          <span className="text-xs text-muted-foreground">Server / IP</span>
           <input
             value={form.host}
             onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
@@ -669,7 +669,7 @@ export function RemoteServerSettingsClient({
         </label>
         <label className="space-y-1 block sm:col-span-2">
           <span className="text-xs text-muted-foreground">
-            Certificate email (For Let&apos;s Encrypt notices)
+            Certificate email (For Let&apos;s Encrypt)
           </span>
           <input
             type="email"
@@ -736,7 +736,7 @@ export function RemoteServerSettingsClient({
       <header className="space-y-2">
         <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Remote servers</h1>
         <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
-          Connect and manage remote hosts via SSH keys. Assign each server a specific role,{" "}
+          Connect and manage remote servers via SSH keys. Assign each server a specific role,{" "}
           <strong className="font-semibold text-violet-900 dark:text-violet-100">Deploy</strong> for running containers and
           stacks, or{" "}
           <strong className="font-semibold text-violet-900 dark:text-violet-100">Build</strong> to handle heavy Docker builds
@@ -746,12 +746,12 @@ export function RemoteServerSettingsClient({
 
       <div className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Hosts</h2>
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Servers</h2>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
             {showRestoreLocalHost ? (
               <Link
                 href="/remote-server/add-this-machine"
-                title={`Re-add the default This Server (root@${SELF_HOSTED_BOOTSTRAP_SSH_HOST}) deploy host for this instance`}
+                title={`Re-add the default This Server (root@${SELF_HOSTED_BOOTSTRAP_SSH_HOST}) deploy server for this instance`}
                 className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm sm:min-h-0 sm:w-auto"
               >
                 <PlugZap className="size-3.5" />
@@ -760,20 +760,20 @@ export function RemoteServerSettingsClient({
             ) : null}
             {inOrgRemoteServerPage && !allowOrgAdd ? (
               <span
-                title="Your role cannot add remote hosts in this organization"
+                title="Your role cannot add remote servers in this organization"
                 className="btn-primary inline-flex min-h-11 w-full cursor-not-allowed items-center justify-center gap-1.5 text-sm opacity-40 sm:min-h-0 sm:w-auto"
               >
                 <Plus className="size-3.5" />
-                Add host
+                Add Server
               </span>
             ) : (
               <Link
                 href="/remote-server/add-host"
-                title="Add a remote host"
+                title="Add a remote server"
                 className="btn-primary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm sm:min-h-0 sm:w-auto"
               >
                 <Plus className="size-3.5" />
-                Add host
+                Add Server
               </Link>
             )}
           </div>
@@ -782,13 +782,13 @@ export function RemoteServerSettingsClient({
         <div className="space-y-2">
           {(list.data ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground px-3 py-8 text-center border border-dashed border-border rounded-xl sm:px-4">
-              No remote hosts yet.{" "}
+              No remote servers yet.{" "}
               {inOrgRemoteServerPage && !allowOrgAdd ? (
-                <>Ask an admin to add a host, or switch workspace.</>
+                <>Ask an admin to add a server, or switch workspace.</>
               ) : (
                 <>
                   <Link href="/remote-server/add-host" className="font-medium text-primary hover:underline">
-                    Add a host
+                    Add a server
                   </Link>{" "}
                   and paste a private key, or generate a new pair.
                 </>
@@ -856,7 +856,7 @@ export function RemoteServerSettingsClient({
                           href={`/docker-manager/${remoteServerRouteId(row)}/images`}
                           scroll={false}
                           className="btn-secondary col-span-2 inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs sm:col-span-1 sm:min-h-0 sm:w-auto sm:py-1.5"
-                          title="Open Docker console for this host (full Docker UI)"
+                          title="Open Docker console for this server (full Docker UI)"
                         >
                           <Container className="size-3.5 shrink-0" />
                           <span className="truncate">Docker Manager</span>
@@ -934,7 +934,7 @@ export function RemoteServerSettingsClient({
                         disabled={inOrgRemoteServerPage && !allowOrgEdit}
                         title={
                           inOrgRemoteServerPage && !allowOrgEdit
-                            ? "Your role cannot edit remote hosts in this organization"
+                            ? "Your role cannot edit remote servers in this organization"
                             : isBootstrapHost
                               ? "Rotate SSH key or view details (connection target is fixed)"
                               : undefined
@@ -953,15 +953,15 @@ export function RemoteServerSettingsClient({
                         disabled={deleteMut.isPending || (inOrgRemoteServerPage && !allowOrgDelete)}
                         title={
                           inOrgRemoteServerPage && !allowOrgDelete
-                            ? "Your role cannot delete remote hosts in this organization"
-                            : "Delete host"
+                            ? "Your role cannot delete remote servers in this organization"
+                            : "Delete server"
                         }
                         onClick={async () => {
                           const ok = await confirm({
-                            title: `Delete remote host “${row.name}”?`,
+                            title: `Delete remote server “${row.name}”?`,
                             description:
-                              "This removes the stored host and encrypted key. Services using this host may fail until you add a replacement.",
-                            confirmLabel: "Delete host",
+                              "This removes the stored server and encrypted key. Services using this server may fail until you add a replacement.",
+                            confirmLabel: "Delete server",
                             cancelLabel: "Cancel",
                             variant: "destructive",
                           });
@@ -969,7 +969,7 @@ export function RemoteServerSettingsClient({
                           deleteMut.mutate(remoteServerRouteId(row));
                         }}
                         className="inline-flex min-h-10 items-center justify-center rounded-lg border border-destructive/45 bg-destructive/10 p-2 text-destructive transition-colors hover:bg-destructive/15 disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:p-1.5"
-                        aria-label="Delete host"
+                        aria-label="Delete server"
                       >
                         <Trash2 className="size-3.5" aria-hidden />
                       </button>
@@ -1005,7 +1005,7 @@ export function RemoteServerSettingsClient({
                   <div className="min-w-0 pr-2">
                     <h3 className="text-base font-semibold">Add This Server</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Re-add the default deploy host (
+                      Re-add the default deploy server (
                       <span className="font-mono">root@{SELF_HOSTED_BOOTSTRAP_SSH_HOST}</span>) if it was removed from the
                       list.
                     </p>
@@ -1024,7 +1024,7 @@ export function RemoteServerSettingsClient({
                   <>
                     <label className="space-y-1 block">
                       <span className="text-xs text-muted-foreground">
-                        Certificate email (For Let&apos;s Encrypt notices)
+                        Certificate email (For Let&apos;s Encrypt)
                       </span>
                       <input
                         type="email"
@@ -1076,22 +1076,22 @@ export function RemoteServerSettingsClient({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 pr-2">
-                    <h3 className="text-base font-semibold">Add host</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">New remote Docker host</p>
+                    <h3 className="text-base font-semibold">Add Server</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">New remote server</p>
                   </div>
                   <button
                     type="button"
                     disabled={createMut.isPending}
                     onClick={dismissAddSubModal}
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 sm:h-8 sm:w-8"
-                    aria-label="Close add host dialog"
+                    aria-label="Close add server dialog"
                   >
                     <X className="size-4" />
                   </button>
                 </div>
                 {inOrgRemoteServerPage && !allowOrgAdd ? (
                   <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-3 py-4">
-                    Your role cannot add remote hosts in this organization.
+                    Your role cannot add remote servers in this organization.
                   </p>
                 ) : (
                   <>
@@ -1136,7 +1136,7 @@ export function RemoteServerSettingsClient({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 pr-2">
-                    <h3 className="text-base font-semibold">Edit host</h3>
+                    <h3 className="text-base font-semibold">Edit server</h3>
                     <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground sm:text-xs sm:truncate">
                       {editingRow.name} · {editingRow.sshUser}@{editingRow.host}
                       {editingRow.port !== 22 ? `:${editingRow.port}` : ""}
@@ -1147,7 +1147,7 @@ export function RemoteServerSettingsClient({
                     disabled={updateMut.isPending}
                     onClick={dismissEditHostModal}
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 sm:h-8 sm:w-8"
-                    aria-label="Close edit host dialog"
+                    aria-label="Close edit server dialog"
                   >
                     <X className="size-4" />
                   </button>
@@ -1197,7 +1197,7 @@ export function RemoteServerSettingsClient({
                         {
                           value: "build" as const,
                           title: "Build",
-                          hint: "Dedicated docker build host",
+                          hint: "Dedicated docker build server",
                         },
                       ] as const
                     ).map((opt) => (
@@ -1230,7 +1230,7 @@ export function RemoteServerSettingsClient({
                     />
                   </label>
                   <label className="space-y-1 block">
-                    <span className="text-xs text-muted-foreground">Host / IP</span>
+                    <span className="text-xs text-muted-foreground">Server / IP</span>
                     <input
                       value={editDraft.host}
                       onChange={(e) => setEditDraft((d) => ({ ...d, host: e.target.value }))}
@@ -1259,7 +1259,7 @@ export function RemoteServerSettingsClient({
                   </label>
                   <label className="space-y-1 block sm:col-span-2">
                     <span className="text-xs text-muted-foreground">
-                      Certificate email (For Let&apos;s Encrypt notices)
+                      Certificate email (For Let&apos;s Encrypt)
                     </span>
                     <input
                       type="email"

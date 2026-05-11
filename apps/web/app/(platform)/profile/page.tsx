@@ -72,6 +72,7 @@ export default function ProfilePage() {
   const [setPasswordValue, setSetPasswordValue] = useState("");
   const [setPasswordConfirmValue, setSetPasswordConfirmValue] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [accountEmail, setAccountEmail] = useState(user?.email ?? "");
   const [hasPassword, setHasPassword] = useState(user?.provider === "LOCAL");
   const [changingPassword, setChangingPassword] = useState(false);
   const [settingPassword, setSettingPassword] = useState(false);
@@ -141,6 +142,17 @@ export default function ProfilePage() {
 
     setSaving(true);
     try {
+      if (isSelfHosted && accountEmail.trim().toLowerCase() !== (user.email ?? "").trim().toLowerCase()) {
+        const emailVal = accountEmail.trim().toLowerCase();
+        if (!emailVal || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
+          toast({ title: "Invalid email", description: "Please enter a valid email address.", variant: "destructive" });
+          setSaving(false);
+          return;
+        }
+        await requestEmailChange({ newEmail: emailVal });
+        updateUser({ email: emailVal });
+        setAccountEmail(emailVal);
+      }
       const profile = await updateProfile({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
@@ -568,7 +580,7 @@ export default function ProfilePage() {
             <div className="space-y-1">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="text-sm text-muted-foreground">Account email</label>
-                {user?.emailVerified === false ? (
+                {!isSelfHosted && user?.emailVerified === false ? (
                   <div className="flex items-center gap-2">
                     <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
                       Unverified
@@ -587,15 +599,26 @@ export default function ProfilePage() {
                   </div>
                 ) : null}
               </div>
-              <input
-                type="email"
-                value={user?.email ?? ""}
-                className="input-field opacity-70 bg-muted/40"
-                placeholder="your@email.com"
-                disabled
-              />
+              {isSelfHosted ? (
+                <input
+                  type="email"
+                  value={accountEmail}
+                  onChange={(e) => setAccountEmail(e.target.value)}
+                  className="input-field"
+                  placeholder="your@email.com"
+                  autoComplete="email"
+                />
+              ) : (
+                <input
+                  type="email"
+                  value={user?.email ?? ""}
+                  className="input-field opacity-70 bg-muted/40"
+                  placeholder="your@email.com"
+                  disabled
+                />
+              )}
             </div>
-            {user?.provider === "LOCAL" || user?.provider === "GOOGLE" ? (
+            {!isSelfHosted && (user?.provider === "LOCAL" || user?.provider === "GOOGLE") ? (
               <div className="rounded-xl border border-border/70 bg-muted/20 dark:bg-muted/10 p-4 space-y-3">
                 <div>
                   <p className="text-sm font-medium text-foreground">Change account email</p>
@@ -713,7 +736,7 @@ export default function ProfilePage() {
           </div>
         ) : null}
 
-        {user ? (
+        {user && !(isSelfHosted && user.role === "ADMIN") ? (
           <>
             <div className="rounded-xl border border-red-500/30 bg-red-500/[0.06] dark:bg-red-500/[0.08] p-4 space-y-3">
               <div>

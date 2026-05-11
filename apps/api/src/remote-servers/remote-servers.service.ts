@@ -3793,7 +3793,7 @@ curl -fsS -o /dev/null "$U"
     const serverRole: 'deploy' | 'build' =
       dto.serverRole === 'build' ? 'build' : 'deploy';
 
-    const rawOrg = dto.organizationPublicId.trim();
+    const rawOrg = (dto.organizationPublicId ?? '').trim();
     const ctx = await this.organizationsService.requireMemberContext(
       rawOrg,
       userId,

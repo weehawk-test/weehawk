@@ -206,7 +206,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
         </label>
         <label className="space-y-1 block sm:col-span-2">
           <span className="text-xs text-muted-foreground">
-            Certificate email (For Let&apos;s Encrypt notices)
+            Certificate email (For Let&apos;s Encrypt)
           </span>
           <input
             type="email"

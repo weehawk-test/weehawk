@@ -35,6 +35,11 @@ export class ChangeEmailService {
     ).replace(/\/$/, '');
   }
 
+  isSelfHosted(): boolean {
+    const raw = this.config.get<string>('INSTANCE_MODE') ?? 'cloud';
+    return raw.trim().toLowerCase() === 'self-hosted';
+  }
+
   async requestEmailChange(
     currentEmail: string,
     newEmail: string,
@@ -67,6 +72,28 @@ export class ChangeEmailService {
         user.firstName,
       );
     }
+  }
+
+  async directEmailChange(
+    currentEmail: string,
+    newEmail: string,
+  ): Promise<void> {
+    const user = await this.userRepo.findOne({
+      where: { email: currentEmail },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    const normalized = newEmail.trim().toLowerCase();
+    if (normalized === user.email.trim().toLowerCase()) {
+      return;
+    }
+    if (
+      await this.userRepo.exists({ where: { email: normalized } })
+    ) {
+      throw new ConflictException('Email already in use');
+    }
+    user.email = normalized;
+    await this.userRepo.save(user);
+    await this.refreshTokenService.deleteByUserId(user.id);
   }
 
   async confirmEmailChange(token: string): Promise<void> {

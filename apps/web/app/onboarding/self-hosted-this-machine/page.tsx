@@ -14,7 +14,7 @@ import {
   readSelfHostedFirstInstallState,
   writeSelfHostedFirstInstallState,
 } from "@/lib/self-hosted-first-install";
-import { getActiveOrganizationPublicId } from "@/lib/organizations-api";
+import { fetchOrganizations, setActiveOrganizationPublicId } from "@/lib/organizations-api";
 
 function isSelfHostedInstance(): boolean {
   return (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
@@ -47,7 +47,11 @@ export default function SelfHostedThisMachineOnboardingPage() {
 
   const restoreMut = useMutation({
     mutationFn: async () => {
-      const orgId = (await getActiveOrganizationPublicId().catch(() => null))?.trim() || null;
+      const orgs = await fetchOrganizations();
+      const orgId = orgs[0]?.publicId ?? null;
+      if (orgId) {
+        await setActiveOrganizationPublicId(orgId).catch(() => {});
+      }
       return restoreSelfHostedLocalHostApi(accessToken ?? "", orgId, acmeEmail.trim());
     },
     onSuccess: (result) => {
@@ -110,7 +114,7 @@ export default function SelfHostedThisMachineOnboardingPage() {
 
         <label className="space-y-1 block">
           <span className="text-xs text-muted-foreground">
-            Certificate email (For Let&apos;s Encrypt notices)
+            Certificate email (For Let&apos;s Encrypt)
           </span>
           <input
             type="email"

@@ -1,12 +1,15 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../auth/entities/user.entity';
+import { Role } from '../auth/entities/role.enum';
 import { UserProfileResponseDto } from '../auth/dto/user-profile-response.dto';
 import { UpdateProfileRequestDto } from '../auth/dto/update-profile-request.dto';
 import { AuthProvider } from '../auth/entities/auth-provider.enum';
@@ -20,6 +23,7 @@ export class UserService {
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly organizationsService: OrganizationsService,
+    private readonly config: ConfigService,
   ) {}
 
   async getProfile(email: string): Promise<UserProfileResponseDto> {
@@ -65,6 +69,15 @@ export class UserService {
   async deleteAccount(email: string): Promise<void> {
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
+
+    const rawMode = this.config.get<string>('INSTANCE_MODE') ?? 'cloud';
+    const isSelfHosted = rawMode.trim().toLowerCase() === 'self-hosted';
+    if (isSelfHosted && user.role === Role.ADMIN) {
+      throw new ForbiddenException(
+        'The instance administrator account cannot be deleted in self-hosted mode.',
+      );
+    }
+
     await this.deleteUserAndRelatedRows(user.id);
   }
 

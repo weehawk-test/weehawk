@@ -64,6 +64,10 @@ export class UserController {
   ): Promise<{ message: string }> {
     const email = req.user?.email;
     if (!email) throw new Error('User email missing');
+    if (this.changeEmailService.isSelfHosted()) {
+      await this.changeEmailService.directEmailChange(email, dto.newEmail);
+      return { message: 'Email updated successfully' };
+    }
     await this.changeEmailService.requestEmailChange(email, dto.newEmail);
     return { message: 'Confirmation email sent to your new email' };
   }

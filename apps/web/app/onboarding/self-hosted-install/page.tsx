@@ -92,10 +92,10 @@ export default function SelfHostedInstallOnboardingPage() {
     <OnboardingPageShell wide cozy subtitle="Step 3 of 3 — Install & maintenance">
       <p className="text-xs sm:text-sm text-muted-foreground text-center mb-3">
         <Link
-          href="/onboarding/self-hosted-deploy"
+          href="/onboarding/self-hosted-this-machine"
           className="text-primary hover:underline underline-offset-4"
         >
-          Back to step 1
+          Back to step 2
         </Link>
       </p>
 
