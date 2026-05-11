@@ -63,8 +63,8 @@ export default function SelfHostedThisMachineOnboardingPage() {
           description: `This Server (${sshTarget}) is ready for deployments.`,
         });
       }
-      writeSelfHostedFirstInstallState("done");
-      router.replace("/");
+      const sid = result.remoteServer.publicId || String(result.remoteServer.id);
+      router.replace(`/onboarding/self-hosted-install?serverId=${encodeURIComponent(sid)}`);
     },
     onError: (err) => {
       toast({
