@@ -1,12 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Minus, Plus, Server } from "lucide-react";
-import { useAuth } from "@/contexts/auth-context";
 import {
-  fetchRemoteServers,
   updateRemoteServerApi,
   type RemoteServerRow,
 } from "@/lib/remote-servers-api";
@@ -14,11 +11,6 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
-import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
-import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
-import { orgScopedQuerySegment } from "@/lib/react-query-scope";
-import { orgMemberAllowsDomainsAddSites } from "@/lib/org-workspace-permissions";
 
 let rowIdSeq = 0;
 function newRowId(): number {
@@ -117,7 +109,7 @@ function hostsToStoredJson(hosts: string[], previousRaw: string | null): string 
   return JSON.stringify(hosts);
 }
 
-function ServerDomainsCard({
+export function ServerDomainsCard({
   server,
   accessToken,
   domainsEnabled,
@@ -299,124 +291,6 @@ function ServerDomainsCard({
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-export function DeployDomainsClient({
-  initialRemoteServers,
-  activeOrgPublicId = null,
-  initialRemoteServersOrganizationId = null,
-}: {
-  initialRemoteServers?: RemoteServerRow[];
-  activeOrgPublicId?: string | null;
-  /** Must match the org used for SSR `initialRemoteServers` so TanStack Query does not reuse the wrong list. */
-  initialRemoteServersOrganizationId?: string | null;
-}) {
-  const { accessToken } = useAuth();
-  const orgWorkspace = useOptionalOrgWorkspace();
-  const trimmedOrg = activeOrgPublicId?.trim() ?? "";
-  const trimmedSsrOrg = initialRemoteServersOrganizationId?.trim() ?? "";
-  const useSsrRemoteInitial =
-    initialRemoteServers !== undefined && trimmedOrg === trimmedSsrOrg;
-  const inOrgDomains = trimmedOrg !== "";
-  const allowOrgAddSites =
-    !inOrgDomains ||
-    (orgWorkspace != null && orgMemberAllowsDomainsAddSites(orgWorkspace.workspacePermissions));
-  const orgScopeSegment = orgScopedQuerySegment(trimmedOrg);
-  const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
-  const remoteServerHref = "/remote-server";
-
-  const q = useQuery({
-    queryKey: remoteServersQueryKey,
-    queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken),
-    initialData: useSsrRemoteInitial ? initialRemoteServers : undefined,
-    initialDataUpdatedAt: useSsrRemoteInitial ? Date.now() : undefined,
-    staleTime: 10_000,
-    refetchOnMount: true,
-  });
-
-  const deployServers = useMemo(
-    () => filterSshDeployServers(q.data ?? []),
-    [q.data],
-  );
-
-  if (!accessToken) {
-    return (
-      <div className="flex items-center justify-center py-24 text-muted-foreground">
-        <Loader2 className="size-6 animate-spin" />
-      </div>
-    );
-  }
-
-  if (q.isLoading) {
-    return (
-      <div className="flex items-center justify-center py-24 text-muted-foreground gap-2">
-        <Loader2 className="size-6 animate-spin" />
-        Loading servers…
-      </div>
-    );
-  }
-
-  if (q.isError) {
-    return (
-      <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-red-200 text-sm">
-        {(q.error as Error).message}
-      </div>
-    );
-  }
-
-  return (
-    <div className="w-full space-y-8">
-      <header className="space-y-2">
-        <h1 className="text-2xl font-bold tracking-tight">Domains</h1>
-        <p className="text-sm text-muted-foreground max-w-2xl">
-          List site addresses per server.{" "}
-          <Link href={remoteServerHref} className="text-primary hover:underline">
-            Servers
-          </Link>
-        </p>
-        {inOrgDomains && orgWorkspace ? (
-          <p className="text-xs text-muted-foreground max-w-2xl">
-            Site addresses apply to{" "}
-            <span className="font-medium text-foreground">{orgWorkspace.name}</span> only.
-          </p>
-        ) : null}
-      </header>
-
-      {deployServers.length === 0 ? (
-        <div
-          className="rounded-2xl border border-border/70 bg-muted/20 px-6 py-8 text-center dark:border-white/10 dark:bg-card/40 dark:shadow-sm"
-          role="status"
-        >
-          <p className="text-sm text-foreground">
-            <span className="text-muted-foreground">No deploy servers.</span>{" "}
-            <Link
-              href={remoteServerHref}
-              className="font-medium text-primary underline-offset-2 hover:underline"
-            >
-              Add one
-            </Link>
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          {deployServers.map((s) => {
-            const serverDomainsEnabled =
-              isLetsEncryptEmailConfigured(s.acmeEmail) && allowOrgAddSites;
-            return (
-              <ServerDomainsCard
-                key={s.id}
-                server={s}
-                accessToken={accessToken}
-                domainsEnabled={serverDomainsEnabled}
-                remoteServersQueryKey={remoteServersQueryKey}
-              />
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }

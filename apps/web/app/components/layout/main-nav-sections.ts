@@ -16,7 +16,6 @@ import {
   Clock3,
   GitBranch,
   Server,
-  Globe,
   Building2,
 } from "lucide-react";
 import {
@@ -73,12 +72,6 @@ export function buildMainNavSections(): MainNavSection[] {
           label: "Servers",
           icon: Server,
           orgPermission: ORG_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
-        },
-        {
-          href: "/domains",
-          label: "Domains",
-          icon: Globe,
-          orgPermission: ORG_WORKSPACE_PERMISSIONS.DOMAINS,
         },
       ],
     },

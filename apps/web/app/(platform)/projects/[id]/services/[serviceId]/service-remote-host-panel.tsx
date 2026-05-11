@@ -732,8 +732,8 @@ export function ServiceRemoteHostPanel({
                     {webhookHostOptions.length === 0 ? (
                       <p className="text-[11px] text-muted-foreground leading-relaxed">
                         Add at least one hostname for this deploy server on{" "}
-                        <Link href="/domains" className="text-primary hover:underline">
-                          Domains
+                        <Link href="/remote-server" className="text-primary hover:underline">
+                          Servers
                         </Link>{" "}
                         to choose the public URL. Saving the deploy host still works without it.
                       </p>

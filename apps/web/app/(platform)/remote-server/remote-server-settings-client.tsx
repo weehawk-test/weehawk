@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Container,
+  Globe,
   KeyRound,
   Loader2,
   Plus,
@@ -43,6 +44,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import { orgScopedQuerySegment } from "@/lib/react-query-scope";
 import {
+  orgMemberAllowsDomainsAddSites,
   orgMemberAllowsRemoteServerAdd,
   orgMemberAllowsRemoteServerDelete,
   orgMemberAllowsRemoteServerDockerManager,
@@ -152,6 +154,10 @@ export function RemoteServerSettingsClient({
     !inOrgRemoteServerPage ||
     (orgWorkspace != null &&
       orgMemberAllowsRemoteServerInstallMaintenance(orgWorkspace.workspacePermissions));
+  const allowOrgDomains =
+    !inOrgRemoteServerPage ||
+    (orgWorkspace != null &&
+      orgMemberAllowsDomainsAddSites(orgWorkspace.workspacePermissions));
   const showConnectionTests =
     allowOrgTest && (allowOrgTerminal || allowOrgDocker);
   const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
@@ -902,6 +908,27 @@ export function RemoteServerSettingsClient({
                         <Terminal className="size-3.5 shrink-0" />
                         Terminal
                       </button>
+                      {row.serverRole === "deploy" ? (
+                        allowOrgDomains ? (
+                          <Link
+                            href={`/domains/${remoteServerRouteId(row)}`}
+                            scroll={false}
+                            className="btn-secondary inline-flex min-h-10 items-center justify-center gap-1 px-2.5 py-2 text-xs sm:min-h-0 sm:py-1.5"
+                            title="Manage site domains for this server"
+                          >
+                            <Globe className="size-3.5 shrink-0" />
+                            Domains
+                          </Link>
+                        ) : (
+                          <span
+                            className="btn-secondary inline-flex min-h-10 cursor-not-allowed items-center justify-center gap-1 px-2.5 py-2 text-xs opacity-40 sm:min-h-0 sm:py-1.5"
+                            title="Domains management is disabled for your role in this organization"
+                          >
+                            <Globe className="size-3.5 shrink-0" />
+                            Domains
+                          </span>
+                        )
+                      ) : null}
                       <button
                         type="button"
                         disabled={inOrgRemoteServerPage && !allowOrgEdit}

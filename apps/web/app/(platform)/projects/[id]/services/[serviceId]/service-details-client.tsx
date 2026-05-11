@@ -6162,9 +6162,9 @@ function DomainsPanel({
         <div>
           <p className="text-sm text-muted-foreground">Domains</p>
           <p className="text-xs text-muted-foreground/80 mt-1 max-w-2xl">
-            Add a domain to your service. Register hostnames on the{" "}
-            <Link href="/domains" className="text-primary hover:underline">
-              Domains
+            Add a domain to your service. Register hostnames via the Domains button on the{" "}
+            <Link href="/remote-server" className="text-primary hover:underline">
+              Servers
             </Link>{" "}
             page.
           </p>
@@ -6342,17 +6342,17 @@ function DomainsPanel({
               </div>
               {!deployServer ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Set deploy server under <strong>Remote</strong>, then add hostnames on{" "}
-                  <Link href="/domains" className="text-primary hover:underline">
-                    Domains
+                  Set deploy server under <strong>Remote</strong>, then add hostnames via Domains on{" "}
+                  <Link href="/remote-server" className="text-primary hover:underline">
+                    Servers
                   </Link>
                   .
                 </p>
               ) : serverHostnames.length === 0 ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Add hostnames on{" "}
-                  <Link href="/domains" className="text-primary hover:underline">
-                    Domains
+                  Add hostnames via Domains on{" "}
+                  <Link href="/remote-server" className="text-primary hover:underline">
+                    Servers
                   </Link>{" "}
                   first.
                 </p>
