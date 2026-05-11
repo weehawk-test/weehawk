@@ -4138,6 +4138,18 @@ curl -fsS -o /dev/null "$U"
 
   async remove(id: number, userId: number): Promise<void> {
     const rs = await this.findEntityOrFail(id, userId);
+    const rawMode =
+      (this.configService.get<string>('INSTANCE_MODE') ?? 'cloud')
+        .trim()
+        .toLowerCase();
+    if (
+      rawMode === 'self-hosted' &&
+      isSelfHostedBootstrapRemoteServer(rs)
+    ) {
+      throw new ForbiddenException(
+        'The default This Server entry cannot be deleted in self-hosted mode.',
+      );
+    }
     await this.assertOrgServerDeleteIfNeeded(rs, userId);
     const repo = this.remoteServerRepository.manager.getRepository(Service);
     const nDeploy = await repo.count({ where: { remoteServer: { id } } });

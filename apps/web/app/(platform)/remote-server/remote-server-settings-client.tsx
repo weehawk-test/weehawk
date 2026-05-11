@@ -164,11 +164,6 @@ export function RemoteServerSettingsClient({
     .trim()
     .toLowerCase();
   const isSelfHosted = instanceMode === "self-hosted";
-  const showRestoreLocalHost =
-    isSelfHosted &&
-    user?.role === "ADMIN" &&
-    inOrgRemoteServerPage &&
-    allowOrgAdd;
   const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
   const listNeeded =
     pageVariant === "list" ||
@@ -183,6 +178,14 @@ export function RemoteServerSettingsClient({
     staleTime: 10_000,
     refetchOnMount: true,
   });
+  const bootstrapAlreadyExists =
+    (list?.data ?? []).some((r) => isSelfHostedBootstrapRemoteServer(r));
+  const showRestoreLocalHost =
+    isSelfHosted &&
+    user?.role === "ADMIN" &&
+    inOrgRemoteServerPage &&
+    allowOrgAdd &&
+    !bootstrapAlreadyExists;
 
   const [showPrivateKeyCreate, setShowPrivateKeyCreate] = useState(false);
   const [showPrivateKeyEdit, setShowPrivateKeyEdit] = useState(false);
@@ -948,6 +951,7 @@ export function RemoteServerSettingsClient({
                       >
                         Edit
                       </button>
+                      {!(isSelfHosted && isBootstrapHost) && (
                       <button
                         type="button"
                         disabled={deleteMut.isPending || (inOrgRemoteServerPage && !allowOrgDelete)}
@@ -973,6 +977,7 @@ export function RemoteServerSettingsClient({
                       >
                         <Trash2 className="size-3.5" aria-hidden />
                       </button>
+                      )}
                     </div>
                   </div>
                   <RemoteServerInstallBlock

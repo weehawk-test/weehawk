@@ -8,6 +8,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { OrganizationAuditLog } from './entities/organization-audit-log.entity';
@@ -115,6 +116,7 @@ export class OrganizationsService implements OnModuleInit {
     private readonly projects: Repository<Project>,
     @InjectRepository(OrganizationAuditLog)
     private readonly auditLogs: Repository<OrganizationAuditLog>,
+    private readonly config: ConfigService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -486,7 +488,17 @@ export class OrganizationsService implements OnModuleInit {
   /**
    * Default org uses the same label users see on their account (e.g. "Adam D"), not "…'s organization".
    */
+  private isSelfHosted(): boolean {
+    const raw = (this.config.get<string>('INSTANCE_MODE') ?? 'cloud')
+      .trim()
+      .toLowerCase();
+    return raw === 'self-hosted';
+  }
+
   private defaultOrganizationNameForNewUser(user: User): string {
+    if (this.isSelfHosted()) {
+      return 'Root Org';
+    }
     const parts = [user.firstName?.trim(), user.lastName?.trim()].filter(
       (p) => p && p.length > 0,
     );
@@ -939,6 +951,19 @@ export class OrganizationsService implements OnModuleInit {
     );
   }
 
+  private async assertNotSelfHostedRootOrg(
+    organizationId: number,
+    action: string,
+  ): Promise<void> {
+    if (!this.isSelfHosted()) return;
+    const org = await this.repo.findById(organizationId);
+    if (org?.name === 'Root Org') {
+      throw new ForbiddenException(
+        `The Root Org cannot be ${action} in self-hosted mode.`,
+      );
+    }
+  }
+
   /**
    * Permanently removes all org-scoped workspace rows, then memberships and the organization.
    * Used when the sole member (owner) leaves: no resource transfer to another organization.
@@ -946,6 +971,7 @@ export class OrganizationsService implements OnModuleInit {
   private async deleteOrganizationAndScopedResources(
     organizationId: number,
   ): Promise<void> {
+    await this.assertNotSelfHostedRootOrg(organizationId, 'deleted');
     await this.dataSource.transaction(async (em) => {
       await em.delete(OrganizationAuditLog, { organizationId });
       await em.delete(Webhook, { organizationId });
@@ -1138,6 +1164,7 @@ export class OrganizationsService implements OnModuleInit {
     ctx: OrganizationMemberContext,
     userId: number,
   ): Promise<{ message: string }> {
+    await this.assertNotSelfHostedRootOrg(ctx.internalId, 'left');
     const outcome = await this.leaveOrganizationAsUser(userId, ctx.internalId, {
       accountDeletion: false,
     });
