@@ -3,34 +3,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Mail, Minus, Plus, Server } from "lucide-react";
+import { Loader2, Minus, Plus, Server } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import {
   fetchRemoteServers,
   updateRemoteServerApi,
   type RemoteServerRow,
 } from "@/lib/remote-servers-api";
-import {
-  fetchTraefikSettings,
-  updateTraefikSettings,
-  type TraefikSettingsPayload,
-} from "@/lib/traefik-api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filterSshDeployServers, isSelfHostedBootstrapRemoteServer } from "@/lib/loopback-ssh-host";
-import {
-  isBlockedAcmeContactEmail,
-  isLetsEncryptEmailConfigured,
-  isValidEmailShape,
-} from "@/lib/traefik-acme-email";
+import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
+import { isLetsEncryptEmailConfigured } from "@/lib/traefik-acme-email";
 import { useOptionalOrgWorkspace } from "@/(platform)/org-workspace/org-workspace-context";
 import { orgScopedQuerySegment } from "@/lib/react-query-scope";
-import {
-  orgMemberAllowsDomainsAddSites,
-  orgMemberAllowsDomainsCertificateEmail,
-} from "@/lib/org-workspace-permissions";
+import { orgMemberAllowsDomainsAddSites } from "@/lib/org-workspace-permissions";
 
 let rowIdSeq = 0;
 function newRowId(): number {
@@ -317,52 +305,27 @@ function ServerDomainsCard({
 
 export function DeployDomainsClient({
   initialRemoteServers,
-  initialTraefikSettings,
   activeOrgPublicId = null,
   initialRemoteServersOrganizationId = null,
-  initialTraefikOrganizationId = null,
 }: {
   initialRemoteServers?: RemoteServerRow[];
-  initialTraefikSettings?: TraefikSettingsPayload | null;
   activeOrgPublicId?: string | null;
   /** Must match the org used for SSR `initialRemoteServers` so TanStack Query does not reuse the wrong list. */
   initialRemoteServersOrganizationId?: string | null;
-  /** Must match the org used for SSR Traefik fetch. */
-  initialTraefikOrganizationId?: string | null;
 }) {
   const { accessToken } = useAuth();
-  const { toast } = useToast();
-  const qc = useQueryClient();
   const orgWorkspace = useOptionalOrgWorkspace();
   const trimmedOrg = activeOrgPublicId?.trim() ?? "";
   const trimmedSsrOrg = initialRemoteServersOrganizationId?.trim() ?? "";
-  const trimmedSsrTraefikOrg = initialTraefikOrganizationId?.trim() ?? "";
   const useSsrRemoteInitial =
     initialRemoteServers !== undefined && trimmedOrg === trimmedSsrOrg;
-  const useSsrTraefikInitial =
-    initialTraefikSettings != null && trimmedOrg === trimmedSsrTraefikOrg;
   const inOrgDomains = trimmedOrg !== "";
-  const allowOrgCertEmail =
-    !inOrgDomains ||
-    (orgWorkspace != null &&
-      orgMemberAllowsDomainsCertificateEmail(orgWorkspace.workspacePermissions));
   const allowOrgAddSites =
     !inOrgDomains ||
     (orgWorkspace != null && orgMemberAllowsDomainsAddSites(orgWorkspace.workspacePermissions));
   const orgScopeSegment = orgScopedQuerySegment(trimmedOrg);
   const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
-  const traefikSettingsQueryKey = ["traefik", "settings", orgScopeSegment] as const;
   const remoteServerHref = "/remote-server";
-
-  const traefikQ = useQuery({
-    queryKey: traefikSettingsQueryKey,
-    queryFn: () => fetchTraefikSettings(accessToken ?? ""),
-    enabled: Boolean(accessToken && trimmedOrg),
-    initialData: useSsrTraefikInitial ? (initialTraefikSettings ?? undefined) : undefined,
-    initialDataUpdatedAt: useSsrTraefikInitial ? Date.now() : undefined,
-    staleTime: 0,
-    refetchOnMount: "always",
-  });
 
   const q = useQuery({
     queryKey: remoteServersQueryKey,
@@ -374,71 +337,10 @@ export function DeployDomainsClient({
     refetchOnMount: true,
   });
 
-  const [acmeEmailLocal, setAcmeEmailLocal] = useState(
-    initialTraefikSettings?.acmeEmail ?? "",
-  );
-  const [acmeEmailDirty, setAcmeEmailDirty] = useState(false);
-
-  useEffect(() => {
-    if (traefikQ.data != null && !acmeEmailDirty) {
-      setAcmeEmailLocal(traefikQ.data.acmeEmail ?? "");
-    }
-  }, [traefikQ.data, acmeEmailDirty]);
-
-  const emailMutation = useMutation({
-    mutationFn: (args: { email: string }) =>
-      updateTraefikSettings(accessToken ?? "", { acmeEmail: args.email.trim() }),
-    onSuccess: async (updated) => {
-      qc.setQueryData(traefikSettingsQueryKey, updated);
-      await qc.invalidateQueries({ queryKey: traefikSettingsQueryKey });
-      // Provision script depends on ACME email; force refresh across pages.
-      await qc.invalidateQueries({ queryKey: ["provision-script"] });
-      await qc.invalidateQueries({ queryKey: remoteServersQueryKey });
-      setAcmeEmailDirty(false);
-      toast({ title: "Email saved" });
-    },
-    onError: (e: Error) => {
-      toast({ title: "Could not save email", description: e.message, variant: "destructive" });
-    },
-  });
-
-  const onSaveAcmeEmail = () => {
-    const t = acmeEmailLocal.trim();
-    if (!isValidEmailShape(t)) {
-      toast({ title: "Enter a valid email address", variant: "destructive" });
-      return;
-    }
-    if (isBlockedAcmeContactEmail(t)) {
-      toast({
-        title: "Use your real email",
-        description: "That address is a placeholder and cannot be used for Let's Encrypt.",
-        variant: "destructive",
-      });
-      return;
-    }
-    emailMutation.mutate({
-      email: t,
-    });
-  };
-
-  const savedAcme = traefikQ.data?.acmeEmail ?? "";
-  const acmeEmailChanged =
-    traefikQ.data != null && acmeEmailLocal.trim() !== savedAcme.trim();
-  const domainsUnlocked = isLetsEncryptEmailConfigured(savedAcme);
-
   const deployServers = useMemo(
     () => filterSshDeployServers(q.data ?? []),
     [q.data],
   );
-
-  const hasBootstrapLocalhost = useMemo(
-    () => deployServers.some((s) => isSelfHostedBootstrapRemoteServer(s)),
-    [deployServers],
-  );
-
-  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase();
-  const isSelfHosted = instanceMode === "self-hosted";
-  const showOrgCertEmail = isSelfHosted && hasBootstrapLocalhost;
 
   if (!accessToken) {
     return (
@@ -483,93 +385,6 @@ export function DeployDomainsClient({
         ) : null}
       </header>
 
-      {showOrgCertEmail && (
-        <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20">
-          <div className="rounded-[0.875rem] bg-card/50 p-5 space-y-4">
-            <div className="flex items-start gap-3">
-              <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shrink-0">
-                <Mail className="size-5 text-primary" />
-              </div>
-              <div className="min-w-0 space-y-1">
-                <h2 className="font-semibold text-sm tracking-tight">Certificate email</h2>
-                <p className="text-xs text-muted-foreground">
-                  For Let&apos;s Encrypt notices on This Server (localhost). Save it before editing addresses below.
-                </p>
-              </div>
-            </div>
-
-            {traefikQ.isLoading && !traefikQ.data ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                <Loader2 className="size-4 animate-spin" />
-                Loading settings…
-              </div>
-            ) : traefikQ.isError ? (
-              <p className="text-sm text-destructive">{(traefikQ.error as Error).message}</p>
-            ) : (
-              <>
-                <div className="space-y-1.5">
-                  <label htmlFor="domains-acme-email" className="text-xs font-medium text-foreground/80">
-                    Email
-                  </label>
-                  <Input
-                    id="domains-acme-email"
-                    type="email"
-                    autoComplete="email"
-                    value={acmeEmailLocal}
-                    onChange={(e) => {
-                      setAcmeEmailDirty(true);
-                      setAcmeEmailLocal(e.target.value);
-                    }}
-                    placeholder="you@weehawk.io"
-                    disabled={inOrgDomains && !allowOrgCertEmail}
-                    title={
-                      inOrgDomains && !allowOrgCertEmail
-                        ? "Your role cannot change certificate email in this organization"
-                        : undefined
-                    }
-                    className="w-full"
-                  />
-                </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  {domainsUnlocked && (
-                    <span className="text-xs text-emerald-600 dark:text-emerald-400/90">Ready</span>
-                  )}
-                  <button
-                    type="button"
-                    className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
-                    disabled={
-                      emailMutation.isPending ||
-                      !acmeEmailChanged ||
-                      !isValidEmailShape(acmeEmailLocal) ||
-                      isBlockedAcmeContactEmail(acmeEmailLocal) ||
-                      (inOrgDomains && !allowOrgCertEmail)
-                    }
-                    title={
-                      inOrgDomains && !allowOrgCertEmail
-                        ? "Your role cannot change certificate email in this organization"
-                        : undefined
-                    }
-                    onClick={onSaveAcmeEmail}
-                  >
-                    {emailMutation.isPending ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      "Save email"
-                    )}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </section>
-      )}
-
-      {showOrgCertEmail && !domainsUnlocked && traefikQ.data != null && (
-        <p className="text-sm text-amber-600/90 dark:text-amber-400/85">
-          Save your email above first.
-        </p>
-      )}
-
       {deployServers.length === 0 ? (
         <div
           className="rounded-2xl border border-border/70 bg-muted/20 px-6 py-8 text-center dark:border-white/10 dark:bg-card/40 dark:shadow-sm"
@@ -588,10 +403,8 @@ export function DeployDomainsClient({
       ) : (
         <div className="space-y-5">
           {deployServers.map((s) => {
-            const isBootstrap = isSelfHostedBootstrapRemoteServer(s);
-            const serverDomainsEnabled = isBootstrap
-              ? (domainsUnlocked && allowOrgAddSites)
-              : (isLetsEncryptEmailConfigured(s.acmeEmail) && allowOrgAddSites);
+            const serverDomainsEnabled =
+              isLetsEncryptEmailConfigured(s.acmeEmail) && allowOrgAddSites;
             return (
               <ServerDomainsCard
                 key={s.id}

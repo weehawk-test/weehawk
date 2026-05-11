@@ -464,6 +464,7 @@ export class RemoteServersController {
   })
   async restoreSelfHostedLocalHost(
     @Query('organizationPublicId') organizationPublicId: string,
+    @Body() body: { acmeEmail?: string },
     @Req()
     req: { user?: { userId: number; email: string; role?: string } },
   ) {
@@ -482,6 +483,7 @@ export class RemoteServersController {
       this.uid(req),
       role,
       ctx.publicId,
+      body?.acmeEmail,
     );
   }
 

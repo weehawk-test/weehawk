@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useMutation } from "@tanstack/react-query";
@@ -42,10 +42,13 @@ export default function SelfHostedThisMachineOnboardingPage() {
     }
   }, [isReady, user, router]);
 
+  const [acmeEmail, setAcmeEmail] = useState("");
+  const canAdd = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(acmeEmail.trim());
+
   const restoreMut = useMutation({
     mutationFn: async () => {
       const orgId = (await getActiveOrganizationPublicId().catch(() => null))?.trim() || null;
-      return restoreSelfHostedLocalHostApi(accessToken ?? "", orgId);
+      return restoreSelfHostedLocalHostApi(accessToken ?? "", orgId, acmeEmail.trim());
     },
     onSuccess: (result) => {
       const sshTarget = `${result.remoteServer.sshUser}@${result.remoteServer.host}`;
@@ -105,9 +108,24 @@ export default function SelfHostedThisMachineOnboardingPage() {
           </p>
         </div>
 
+        <label className="space-y-1 block">
+          <span className="text-xs text-muted-foreground">
+            Certificate email (For Let&apos;s Encrypt notices)
+          </span>
+          <input
+            type="email"
+            value={acmeEmail}
+            onChange={(e) => setAcmeEmail(e.target.value)}
+            className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+            placeholder="you@example.com"
+            autoComplete="email"
+            required
+          />
+        </label>
+
         <button
           type="button"
-          disabled={restoreMut.isPending}
+          disabled={restoreMut.isPending || !canAdd}
           onClick={() => restoreMut.mutate()}
           className="btn-primary inline-flex w-full min-h-10 sm:min-h-11 items-center justify-center gap-2 text-xs sm:text-sm disabled:opacity-50"
         >

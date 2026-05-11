@@ -46,15 +46,22 @@ export type RestoreSelfHostedLocalHostResult = {
 export async function restoreSelfHostedLocalHostApi(
   accessToken: string,
   organizationPublicId?: string | null,
+  acmeEmail?: string,
 ): Promise<RestoreSelfHostedLocalHostResult> {
   const q = new URLSearchParams();
   const org = organizationPublicId?.trim();
   if (org) q.set("organizationPublicId", org);
   const suffix = q.toString() ? `?${q.toString()}` : "";
+  const body: Record<string, string> = {};
+  if (acmeEmail?.trim()) body.acmeEmail = acmeEmail.trim();
   const res = await authFetch(
     accessToken,
     `${API_BASE}/api/remote-servers/self-hosted/restore-local-host${suffix}`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
   );
   const text = await res.text();
   if (!res.ok) {

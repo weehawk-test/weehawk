@@ -190,6 +190,7 @@ export function RemoteServerSettingsClient({
   const terminalFailureNotifiedRef = useRef(false);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalConnecting, setTerminalConnecting] = useState(false);
+  const [localHostAcmeEmail, setLocalHostAcmeEmail] = useState("");
 
   useEffect(() => {
     if (!accessToken) return;
@@ -256,7 +257,7 @@ export function RemoteServerSettingsClient({
 
   const restoreLocalHostMut = useMutation({
     mutationFn: () =>
-      restoreSelfHostedLocalHostApi(accessToken ?? "", trimmedOrg || null),
+      restoreSelfHostedLocalHostApi(accessToken ?? "", trimmedOrg || null, localHostAcmeEmail),
     onSuccess: (result) => {
       void qc.invalidateQueries({ queryKey: remoteServersQueryKey });
       const sshTarget = `${result.remoteServer.sshUser}@${result.remoteServer.host}`;
@@ -993,19 +994,35 @@ export function RemoteServerSettingsClient({
                   </button>
                 </div>
                 {showRestoreLocalHost ? (
-                  <button
-                    type="button"
-                    disabled={restoreLocalHostMut.isPending}
-                    onClick={() => restoreLocalHostMut.mutate()}
-                    className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:w-auto"
-                  >
-                    {restoreLocalHostMut.isPending ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <PlugZap className="size-3.5" />
-                    )}
-                    Add This Server
-                  </button>
+                  <>
+                    <label className="space-y-1 block">
+                      <span className="text-xs text-muted-foreground">
+                        Certificate email (For Let&apos;s Encrypt notices)
+                      </span>
+                      <input
+                        type="email"
+                        value={localHostAcmeEmail}
+                        onChange={(e) => setLocalHostAcmeEmail(e.target.value)}
+                        className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                        placeholder="you@example.com"
+                        autoComplete="email"
+                        required
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      disabled={restoreLocalHostMut.isPending || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(localHostAcmeEmail.trim())}
+                      onClick={() => restoreLocalHostMut.mutate()}
+                      className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:w-auto"
+                    >
+                      {restoreLocalHostMut.isPending ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <PlugZap className="size-3.5" />
+                      )}
+                      Add This Server
+                    </button>
+                  </>
                 ) : (
                   <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-3 py-4">
                     This action is only available to organization admins on self-hosted Weehawk, while working in an

@@ -3594,6 +3594,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
     preferredOrganizationPublicId?: string | null,
     auditEndpoint = 'self_hosted_bootstrap',
+    acmeEmail?: string,
   ): Promise<boolean> {
     const rawMode =
       this.configService.get<string>('INSTANCE_MODE') ?? 'cloud';
@@ -3678,6 +3679,7 @@ curl -fsS -o /dev/null "$U"
       serverRole: 'deploy',
       privateKeyEncrypted,
       publicIpv4: null,
+      acmeEmail: acmeEmail?.trim() ?? '',
       domainsJson: JSON.stringify({
         weehawkBootstrap: SELF_HOSTED_BOOTSTRAP_MARKER,
         domains: [],
@@ -3723,6 +3725,7 @@ curl -fsS -o /dev/null "$U"
     userId: number,
     actingRole: string,
     organizationPublicId: string,
+    acmeEmail?: string,
   ): Promise<{ remoteServer: RemoteServerSafe; alreadyPresent: boolean }> {
     const rawMode =
       this.configService.get<string>('INSTANCE_MODE') ?? 'cloud';
@@ -3744,6 +3747,7 @@ curl -fsS -o /dev/null "$U"
       userId,
       rawOrg,
       'self_hosted_restore_local_host',
+      acmeEmail,
     );
     const rows = await this.findAll(userId, rawOrg);
     const bootstrap = rows.find((r) =>
@@ -3759,6 +3763,14 @@ curl -fsS -o /dev/null "$U"
       throw new BadRequestException(
         'The local host entry could not be created or found. Check organization membership and permissions.',
       );
+    }
+    const trimmedEmail = acmeEmail?.trim() ?? '';
+    if (trimmedEmail && bootstrap.acmeEmail !== trimmedEmail) {
+      await this.remoteServerRepository.update(
+        { publicId: bootstrap.publicId },
+        { acmeEmail: trimmedEmail },
+      );
+      bootstrap.acmeEmail = trimmedEmail;
     }
     return {
       remoteServer: bootstrap,
