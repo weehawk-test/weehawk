@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { filterSshDeployServers } from "@/lib/loopback-ssh-host";
+import { filterSshDeployServers, isSelfHostedBootstrapRemoteServer } from "@/lib/loopback-ssh-host";
 import {
   isBlockedAcmeContactEmail,
   isLetsEncryptEmailConfigured,
@@ -425,12 +425,20 @@ export function DeployDomainsClient({
   const acmeEmailChanged =
     traefikQ.data != null && acmeEmailLocal.trim() !== savedAcme.trim();
   const domainsUnlocked = isLetsEncryptEmailConfigured(savedAcme);
-  const sitesEditingEnabled = domainsUnlocked && allowOrgAddSites;
 
   const deployServers = useMemo(
     () => filterSshDeployServers(q.data ?? []),
     [q.data],
   );
+
+  const hasBootstrapLocalhost = useMemo(
+    () => deployServers.some((s) => isSelfHostedBootstrapRemoteServer(s)),
+    [deployServers],
+  );
+
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase();
+  const isSelfHosted = instanceMode === "self-hosted";
+  const showOrgCertEmail = isSelfHosted && hasBootstrapLocalhost;
 
   if (!accessToken) {
     return (
@@ -462,99 +470,101 @@ export function DeployDomainsClient({
       <header className="space-y-2">
         <h1 className="text-2xl font-bold tracking-tight">Domains</h1>
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Save your certificate email, then list site addresses per server.{" "}
+          List site addresses per server.{" "}
           <Link href={remoteServerHref} className="text-primary hover:underline">
             Servers
           </Link>
         </p>
         {inOrgDomains && orgWorkspace ? (
           <p className="text-xs text-muted-foreground max-w-2xl">
-            Site addresses and certificate email apply to{" "}
+            Site addresses apply to{" "}
             <span className="font-medium text-foreground">{orgWorkspace.name}</span> only.
           </p>
         ) : null}
       </header>
 
-      <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20">
-        <div className="rounded-[0.875rem] bg-card/50 p-5 space-y-4">
-          <div className="flex items-start gap-3">
-            <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shrink-0">
-              <Mail className="size-5 text-primary" />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <h2 className="font-semibold text-sm tracking-tight">Certificate email</h2>
-              <p className="text-xs text-muted-foreground">
-                For Let&apos;s Encrypt notices. Save it before editing addresses below.
-              </p>
-            </div>
-          </div>
-
-          {traefikQ.isLoading && !traefikQ.data ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-              <Loader2 className="size-4 animate-spin" />
-              Loading settings…
-            </div>
-          ) : traefikQ.isError ? (
-            <p className="text-sm text-destructive">{(traefikQ.error as Error).message}</p>
-          ) : (
-            <>
-              <div className="space-y-1.5">
-                <label htmlFor="domains-acme-email" className="text-xs font-medium text-foreground/80">
-                  Email
-                </label>
-                <Input
-                  id="domains-acme-email"
-                  type="email"
-                  autoComplete="email"
-                  value={acmeEmailLocal}
-                  onChange={(e) => {
-                    setAcmeEmailDirty(true);
-                    setAcmeEmailLocal(e.target.value);
-                  }}
-                  placeholder="you@weehawk.io"
-                  disabled={inOrgDomains && !allowOrgCertEmail}
-                  title={
-                    inOrgDomains && !allowOrgCertEmail
-                      ? "Your role cannot change certificate email in this organization"
-                      : undefined
-                  }
-                  className="w-full"
-                />
+      {showOrgCertEmail && (
+        <section className="rounded-2xl border border-white/10 bg-gradient-to-br from-card/50 to-card/30 p-1 shadow-sm shadow-black/20">
+          <div className="rounded-[0.875rem] bg-card/50 p-5 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl bg-primary/15 border border-primary/25 p-2.5 shrink-0">
+                <Mail className="size-5 text-primary" />
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                {domainsUnlocked && (
-                  <span className="text-xs text-emerald-600 dark:text-emerald-400/90">Ready</span>
-                )}
-                <button
-                  type="button"
-                  className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
-                  disabled={
-                    emailMutation.isPending ||
-                    !acmeEmailChanged ||
-                    !isValidEmailShape(acmeEmailLocal) ||
-                    isBlockedAcmeContactEmail(acmeEmailLocal) ||
-                    (inOrgDomains && !allowOrgCertEmail)
-                  }
-                  title={
-                    inOrgDomains && !allowOrgCertEmail
-                      ? "Your role cannot change certificate email in this organization"
-                      : undefined
-                  }
-                  onClick={onSaveAcmeEmail}
-                >
-                  {emailMutation.isPending ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    "Save email"
+              <div className="min-w-0 space-y-1">
+                <h2 className="font-semibold text-sm tracking-tight">Certificate email</h2>
+                <p className="text-xs text-muted-foreground">
+                  For Let&apos;s Encrypt notices on This Server (localhost). Save it before editing addresses below.
+                </p>
+              </div>
+            </div>
+
+            {traefikQ.isLoading && !traefikQ.data ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                <Loader2 className="size-4 animate-spin" />
+                Loading settings…
+              </div>
+            ) : traefikQ.isError ? (
+              <p className="text-sm text-destructive">{(traefikQ.error as Error).message}</p>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <label htmlFor="domains-acme-email" className="text-xs font-medium text-foreground/80">
+                    Email
+                  </label>
+                  <Input
+                    id="domains-acme-email"
+                    type="email"
+                    autoComplete="email"
+                    value={acmeEmailLocal}
+                    onChange={(e) => {
+                      setAcmeEmailDirty(true);
+                      setAcmeEmailLocal(e.target.value);
+                    }}
+                    placeholder="you@weehawk.io"
+                    disabled={inOrgDomains && !allowOrgCertEmail}
+                    title={
+                      inOrgDomains && !allowOrgCertEmail
+                        ? "Your role cannot change certificate email in this organization"
+                        : undefined
+                    }
+                    className="w-full"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {domainsUnlocked && (
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400/90">Ready</span>
                   )}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </section>
+                  <button
+                    type="button"
+                    className="btn-primary inline-flex items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40"
+                    disabled={
+                      emailMutation.isPending ||
+                      !acmeEmailChanged ||
+                      !isValidEmailShape(acmeEmailLocal) ||
+                      isBlockedAcmeContactEmail(acmeEmailLocal) ||
+                      (inOrgDomains && !allowOrgCertEmail)
+                    }
+                    title={
+                      inOrgDomains && !allowOrgCertEmail
+                        ? "Your role cannot change certificate email in this organization"
+                        : undefined
+                    }
+                    onClick={onSaveAcmeEmail}
+                  >
+                    {emailMutation.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      "Save email"
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
 
-      {!domainsUnlocked && traefikQ.data != null && (
+      {showOrgCertEmail && !domainsUnlocked && traefikQ.data != null && (
         <p className="text-sm text-amber-600/90 dark:text-amber-400/85">
           Save your email above first.
         </p>
@@ -577,15 +587,21 @@ export function DeployDomainsClient({
         </div>
       ) : (
         <div className="space-y-5">
-          {deployServers.map((s) => (
-            <ServerDomainsCard
-              key={s.id}
-              server={s}
-              accessToken={accessToken}
-              domainsEnabled={sitesEditingEnabled}
-              remoteServersQueryKey={remoteServersQueryKey}
-            />
-          ))}
+          {deployServers.map((s) => {
+            const isBootstrap = isSelfHostedBootstrapRemoteServer(s);
+            const serverDomainsEnabled = isBootstrap
+              ? (domainsUnlocked && allowOrgAddSites)
+              : (isLetsEncryptEmailConfigured(s.acmeEmail) && allowOrgAddSites);
+            return (
+              <ServerDomainsCard
+                key={s.id}
+                server={s}
+                accessToken={accessToken}
+                domainsEnabled={serverDomainsEnabled}
+                remoteServersQueryKey={remoteServersQueryKey}
+              />
+            );
+          })}
         </div>
       )}
     </div>

@@ -17,6 +17,8 @@ export type RemoteServerRow = {
   hasPrivateKey: boolean;
   /** Public IPv4 for Magic traefik.me hostnames on deployed services. */
   publicIpv4: string | null;
+  /** ACME (Let's Encrypt) contact email for this server's certificate resolver. */
+  acmeEmail: string;
   /** JSON string: domain labels / metadata (Domains page; deploy servers). */
   domainsJson: string | null;
   createdAt: string;
@@ -111,6 +113,7 @@ function mapRemoteServer(row: unknown): RemoteServerRow {
       r.publicIpv4 === null || r.publicIpv4 === undefined
         ? null
         : String(r.publicIpv4),
+    acmeEmail: typeof r.acmeEmail === "string" ? r.acmeEmail : "",
     domainsJson:
       r.domainsJson === null || r.domainsJson === undefined || r.domainsJson === ""
         ? null
@@ -149,6 +152,7 @@ export async function createRemoteServerApi(
     privateKey: string;
     serverRole?: RemoteServerRole;
     publicIpv4?: string;
+    acmeEmail: string;
     domainsJson?: string;
     organizationPublicId?: string;
   },
@@ -176,6 +180,7 @@ export async function updateRemoteServerApi(
     privateKey: string;
     serverRole: RemoteServerRole;
     publicIpv4: string | null;
+    acmeEmail: string;
     domainsJson?: string | null;
   }>,
 ): Promise<RemoteServerRow> {
@@ -299,9 +304,11 @@ export async function fetchNixpacksInstallScriptApi(
 export async function fetchProvisionScriptApi(
   accessToken: string,
   role: RemoteServerRole,
+  serverId?: string,
 ): Promise<{ script: string }> {
   const params = new URLSearchParams();
   params.set("role", role === "build" ? "build" : "deploy");
+  if (serverId) params.set("serverId", serverId);
   const res = await authFetch(
     accessToken,
     `${API_BASE}/api/remote-servers/provision-script?${params.toString()}`,

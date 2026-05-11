@@ -6,12 +6,18 @@ import Link from "next/link";
 import { OnboardingPageShell } from "@/components/onboarding/page-shell";
 import { RegisterRemoteServerOnboarding } from "@/components/onboarding/register-remote-server-onboarding";
 import { writeServerDeployChoice } from "@/lib/server-deploy-preference";
+import { writeSelfHostedFirstInstallState } from "@/lib/self-hosted-first-install";
 import { useAuth } from "@/contexts/auth-context";
 import { Loader2 } from "lucide-react";
+
+function isSelfHostedInstance(): boolean {
+  return (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
+}
 
 export default function OnboardingSshPage() {
   const router = useRouter();
   const { accessToken, isReady } = useAuth();
+  const selfHosted = isSelfHostedInstance();
 
   useEffect(() => {
     if (isReady && !accessToken) router.replace("/login");
@@ -23,6 +29,7 @@ export default function OnboardingSshPage() {
 
   const skipDeploySetupAndEnterApp = () => {
     writeServerDeployChoice("later");
+    if (selfHosted) writeSelfHostedFirstInstallState("done");
     finishAndEnter();
   };
 
@@ -36,16 +43,25 @@ export default function OnboardingSshPage() {
   }
 
   return (
-    <OnboardingPageShell wide subtitle="Step 2 of 2 — SSH connection">
+    <OnboardingPageShell
+      wide
+      cozy={selfHosted}
+      subtitle={selfHosted ? "Step 2 of 3 — SSH connection" : "Step 2 of 2 — SSH connection"}
+    >
       <p className="text-sm text-muted-foreground text-center mb-2">
         <Link
-          href="/onboarding/server"
+          href={selfHosted ? "/onboarding/self-hosted-deploy" : "/onboarding/server"}
           className="text-primary hover:underline underline-offset-4"
         >
           Back to step 1
         </Link>
       </p>
-      <RegisterRemoteServerOnboarding accessToken={accessToken} />
+      <RegisterRemoteServerOnboarding
+        accessToken={accessToken}
+        onSaved={() => {
+          if (selfHosted) writeSelfHostedFirstInstallState("done");
+        }}
+      />
       <div className="flex flex-col items-center gap-1 border-t border-white/10 pt-4 mt-4">
         <button
           type="button"

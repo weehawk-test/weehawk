@@ -237,6 +237,8 @@ export type RemoteServerSafe = {
   hasPrivateKey: boolean;
   /** Public IPv4 for Magic Traefik.me hostnames (optional). */
   publicIpv4: string | null;
+  /** ACME (Let's Encrypt) contact email for this server's Traefik certificate resolver. */
+  acmeEmail: string;
   /** Optional JSON: domain labels / metadata (primarily for deploy servers). */
   domainsJson: string | null;
   /** OpenSSH SHA256 host key fingerprint when trust-on-first-use has run; null until first successful SSH. */
@@ -524,6 +526,7 @@ export class RemoteServersService {
       authMode,
       hasPrivateKey,
       publicIpv4: rs.publicIpv4?.trim() ? rs.publicIpv4.trim() : null,
+      acmeEmail: rs.acmeEmail ?? '',
       domainsJson: rs.domainsJson?.trim() ? rs.domainsJson.trim() : null,
       sshHostKeySha256: rs.sshHostKeySha256?.trim()
         ? rs.sshHostKeySha256.trim()
@@ -3065,6 +3068,22 @@ done
     return this.toSafe(rs);
   }
 
+  async findByPublicIdOrNumericId(
+    idOrPublicId: string,
+    userId: number,
+  ): Promise<RemoteServer | null> {
+    const raw = idOrPublicId.trim();
+    if (!raw) return null;
+    try {
+      if (/^\d+$/.test(raw)) {
+        return await this.findEntityOrFail(Number(raw), userId);
+      }
+      return await this.findEntityByPublicIdOrFail(raw, userId);
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Resolve a deploy server for building a webhook trigger URL when the caller may lack a user
    * (e.g. org-owned project context). Uses membership-scoped lookup when `actingUserId` is set.
@@ -3786,6 +3805,7 @@ curl -fsS -o /dev/null "$U"
       serverRole,
       privateKeyEncrypted,
       publicIpv4: dto.publicIpv4?.trim() ? dto.publicIpv4.trim() : null,
+      acmeEmail: dto.acmeEmail?.trim() ?? '',
       domainsJson:
         dto.domainsJson !== undefined && String(dto.domainsJson).trim()
           ? normalizeDomainsJsonInput(String(dto.domainsJson))
@@ -3848,6 +3868,7 @@ curl -fsS -o /dev/null "$U"
       'serverRole',
       'privateKey',
       'publicIpv4',
+      'acmeEmail',
       'domainsJson',
       'organizationPublicId',
     ];
@@ -3966,6 +3987,10 @@ curl -fsS -o /dev/null "$U"
           : dto.publicIpv4 != null && String(dto.publicIpv4).trim()
             ? String(dto.publicIpv4).trim()
             : null,
+      acmeEmail:
+        dto.acmeEmail !== undefined
+          ? dto.acmeEmail.trim()
+          : existing.acmeEmail,
       domainsJson:
         dto.domainsJson === undefined
           ? (existing.domainsJson ?? null)

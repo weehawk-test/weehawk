@@ -99,6 +99,7 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
     role: 'deploy' | 'build',
     userId: number,
     organizationPublicId: string,
+    serverId?: string,
   ): Promise<{ script: string }> {
     const orgPub = organizationPublicId?.trim();
     if (!orgPub) {
@@ -111,14 +112,29 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
         requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
       },
     );
-    const traefikSettings =
-      await this.traefikService.getSettingsForOrganization(ctx.internalId);
+
+    let acmeEmail = '';
+    if (serverId) {
+      const server = await this.remoteServersService.findByPublicIdOrNumericId(
+        serverId,
+        userId,
+      );
+      if (server) {
+        acmeEmail = (server.acmeEmail ?? '').trim();
+      }
+    }
+    if (!acmeEmail) {
+      const traefikSettings =
+        await this.traefikService.getSettingsForOrganization(ctx.internalId);
+      acmeEmail = traefikSettings.acmeEmail;
+    }
+
     return {
       script: buildWeehawkProvisionScript({
         role,
         isProvisionJobPreview: role === 'deploy',
         webhookAgent: { mode: 'none' },
-        acmeEmail: traefikSettings.acmeEmail,
+        acmeEmail,
       }),
     };
   }
@@ -360,18 +376,23 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
           ctx.server.serverRole === 'build'
             ? undefined
             : await this.remoteServersService.getWebhookAgentProvisionInput();
-        const traefikOrg =
-          await this.traefikService.resolveOrganizationInternalIdForTraefik(
-            ctx.server.organizationId,
-            ownerId,
-          );
-        const traefikSettings =
-          await this.traefikService.getSettingsForOrganization(traefikOrg);
+        const serverAcmeEmail = (ctx.server.acmeEmail ?? '').trim();
+        let acmeEmail = serverAcmeEmail;
+        if (!acmeEmail) {
+          const traefikOrg =
+            await this.traefikService.resolveOrganizationInternalIdForTraefik(
+              ctx.server.organizationId,
+              ownerId,
+            );
+          const traefikSettings =
+            await this.traefikService.getSettingsForOrganization(traefikOrg);
+          acmeEmail = traefikSettings.acmeEmail;
+        }
         script = buildWeehawkProvisionScript({
           role: ctx.server.serverRole === 'build' ? 'build' : 'deploy',
           webhookAgent,
           isProvisionJobPreview: false,
-          acmeEmail: traefikSettings.acmeEmail,
+          acmeEmail,
         });
       }
       this.logger.log(

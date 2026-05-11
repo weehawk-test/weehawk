@@ -97,9 +97,10 @@ export function RemoteServerInstallBlock({
   }, [jobId]);
 
   const orgForProvision = activeOrgPublicIdForProvision.trim();
+  const serverRouteId = row.publicId?.trim() || String(row.id);
   const scriptQ = useQuery({
-    queryKey: ["provision-script", row.serverRole, orgForProvision],
-    queryFn: () => fetchProvisionScriptApi(accessToken, row.serverRole),
+    queryKey: ["provision-script", row.serverRole, orgForProvision, serverRouteId],
+    queryFn: () => fetchProvisionScriptApi(accessToken, row.serverRole, serverRouteId),
     enabled: installDialog === "provision" && Boolean(orgForProvision),
   });
 

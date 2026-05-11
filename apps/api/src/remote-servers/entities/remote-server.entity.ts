@@ -67,6 +67,13 @@ export class RemoteServer {
   publicIpv4?: string | null;
 
   /**
+   * ACME (Let's Encrypt) contact email for this server's Traefik certificate resolver.
+   * Required for remote deploy servers; used in the provision script instead of the org-level setting.
+   */
+  @Column({ type: 'varchar', length: 254, default: '' })
+  acmeEmail!: string;
+
+  /**
    * Optional JSON string: domain names / metadata per deploy server (for UI notes and tooling).
    * Example: `["app.example.com","api.example.com"]` or `{"domains":["a.com"],"notes":"prod"}`.
    */

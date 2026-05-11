@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmProvider } from "@/components/confirm/ConfirmProvider";
 import { AuthProvider, type AuthUser, useAuth } from "@/contexts/auth-context";
 import { ThemeProvider } from "@/contexts/theme-context";
+import { SelfHostedFirstInstallRouteGuard } from "@/components/self-hosted-first-install-route-guard";
 
 const queryClientDefaults = {
   defaultOptions: {
@@ -143,6 +144,7 @@ export function Providers({
         <UserScopedQueryClientProvider>
           <PerformanceMeasureGuard />
           <RefreshRscOnAuthChange />
+          <SelfHostedFirstInstallRouteGuard />
           <TooltipProvider>
             <ConfirmProvider>
               {children}

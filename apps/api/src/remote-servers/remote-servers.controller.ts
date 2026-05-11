@@ -106,9 +106,16 @@ export class RemoteServersController {
     description:
       'Organization workspace; optional if an active organization is set server-side.',
   })
+  @ApiQuery({
+    name: 'serverId',
+    required: false,
+    description:
+      'Remote server publicId or numeric id; when provided, uses the server-level acmeEmail instead of org Traefik settings.',
+  })
   async getProvisionScript(
     @Query('organizationPublicId') organizationPublicId: string,
     @Query('role') role?: string,
+    @Query('serverId') serverId?: string,
     @Req() req?: { user?: { userId: number } },
   ) {
     const ctx = await this.activeOrganizationService.resolveRequiredMemberContext(
@@ -123,6 +130,7 @@ export class RemoteServersController {
       r,
       this.uid(req),
       ctx.publicId,
+      serverId?.trim() || undefined,
     );
   }
 

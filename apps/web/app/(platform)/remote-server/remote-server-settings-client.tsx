@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Container,
@@ -70,6 +71,7 @@ function emptyForm() {
     sshUser: "",
     privateKey: "",
     serverRole: "deploy" as RemoteServerRole,
+    acmeEmail: "",
   };
 }
 
@@ -80,6 +82,7 @@ type EditDraft = {
   sshUser: string;
   privateKeyReplace: string;
   serverRole: RemoteServerRole;
+  acmeEmail: string;
 };
 
 function emptyEditDraft(): EditDraft {
@@ -90,6 +93,7 @@ function emptyEditDraft(): EditDraft {
     sshUser: "",
     privateKeyReplace: "",
     serverRole: "deploy",
+    acmeEmail: "",
   };
 }
 
@@ -98,16 +102,21 @@ function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): str
   return pub && pub.length > 0 ? pub : String(row.id);
 }
 
+export type RemoteServerSettingsPageVariant = "list" | "add-this-machine" | "add-host";
+
 export function RemoteServerSettingsClient({
   initialRemoteServers,
   activeOrgPublicId = null,
   initialRemoteServersOrganizationId = null,
+  pageVariant = "list",
 }: {
   initialRemoteServers?: RemoteServerRow[];
   /** When set (org workspace), list/create servers scoped to this organization. */
   activeOrgPublicId?: string | null;
   initialRemoteServersOrganizationId?: string | null;
+  pageVariant?: RemoteServerSettingsPageVariant;
 }) {
+  const router = useRouter();
   const { accessToken, user } = useAuth();
   const { toast } = useToast();
   const confirm = useConfirm();
@@ -155,17 +164,20 @@ export function RemoteServerSettingsClient({
     inOrgRemoteServerPage &&
     allowOrgAdd;
   const remoteServersQueryKey = ["remote-servers", orgScopeSegment] as const;
+  const listNeeded =
+    pageVariant === "list" ||
+    pageVariant === "add-this-machine" ||
+    pageVariant === "add-host";
   const list = useQuery({
     queryKey: remoteServersQueryKey,
     queryFn: () => fetchRemoteServers(accessToken ?? ""),
-    enabled: Boolean(accessToken),
-    initialData: useSsrRemoteInitial ? initialRemoteServers : undefined,
-    initialDataUpdatedAt: useSsrRemoteInitial ? Date.now() : undefined,
+    enabled: Boolean(accessToken) && listNeeded,
+    initialData: useSsrRemoteInitial && listNeeded ? initialRemoteServers : undefined,
+    initialDataUpdatedAt: useSsrRemoteInitial && listNeeded ? Date.now() : undefined,
     staleTime: 10_000,
     refetchOnMount: true,
   });
 
-  const [creating, setCreating] = useState(false);
   const [showPrivateKeyCreate, setShowPrivateKeyCreate] = useState(false);
   const [showPrivateKeyEdit, setShowPrivateKeyEdit] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -187,6 +199,13 @@ export function RemoteServerSettingsClient({
   }, [accessToken, qc]);
 
   useEffect(() => {
+    if (pageVariant !== "add-host") return;
+    setForm(emptyForm());
+    setGeneratedPublicKey(null);
+    setShowPrivateKeyCreate(false);
+  }, [pageVariant]);
+
+  useEffect(() => {
     if (editingId != null && list.data) {
       const row = list.data.find((r) => r.id === editingId);
       if (row) {
@@ -197,6 +216,7 @@ export function RemoteServerSettingsClient({
           sshUser: row.sshUser,
           privateKeyReplace: "",
           serverRole: row.serverRole,
+          acmeEmail: row.acmeEmail ?? "",
         });
       }
     }
@@ -251,6 +271,9 @@ export function RemoteServerSettingsClient({
           description: `This Server (${sshTarget}) was added back to Remote servers.`,
         });
       }
+      if (pageVariant === "add-this-machine") {
+        router.push("/remote-server");
+      }
     },
     onError: (err) => {
       toast({
@@ -271,6 +294,7 @@ export function RemoteServerSettingsClient({
         sshUser: form.sshUser.trim(),
         privateKey: form.privateKey.trim(),
         serverRole: form.serverRole,
+        acmeEmail: form.acmeEmail.trim(),
         ...(pip ? { publicIpv4: pip } : {}),
         ...(activeOrgPublicId?.trim()
           ? { organizationPublicId: activeOrgPublicId.trim() }
@@ -287,8 +311,10 @@ export function RemoteServerSettingsClient({
       setForm(emptyForm());
       setGeneratedPublicKey(null);
       setShowPrivateKeyCreate(false);
-      setCreating(false);
       toast({ title: "Remote host saved" });
+      if (pageVariant === "add-host") {
+        router.push("/remote-server");
+      }
     },
     onError: (e: Error) =>
       toast({ title: "Could not save", description: e.message, variant: "destructive" }),
@@ -303,6 +329,7 @@ export function RemoteServerSettingsClient({
         sshUser: editDraft.sshUser.trim(),
         serverRole: editDraft.serverRole,
         publicIpv4: parseDottedPublicIpv4(editDraft.host),
+        acmeEmail: editDraft.acmeEmail.trim(),
       };
       const pem = editDraft.privateKeyReplace.trim();
       if (pem) {
@@ -336,17 +363,17 @@ export function RemoteServerSettingsClient({
       toast({ title: "Delete failed", description: e.message, variant: "destructive" }),
   });
 
-  function dismissCreateHostModal() {
-    setCreating(false);
-    setForm(emptyForm());
-    setGeneratedPublicKey(null);
-    setShowPrivateKeyCreate(false);
-  }
-
   function dismissEditHostModal() {
     setEditingId(null);
     setGeneratedPublicKey(null);
     setShowPrivateKeyEdit(false);
+  }
+
+  function dismissAddSubModal() {
+    setForm(emptyForm());
+    setGeneratedPublicKey(null);
+    setShowPrivateKeyCreate(false);
+    router.push("/remote-server");
   }
 
   const testMut = useMutation({
@@ -542,6 +569,131 @@ export function RemoteServerSettingsClient({
     };
   }, [terminalModalRow, toast, accessToken]);
 
+  const addHostFormBody = (
+    <>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <button
+          type="button"
+          disabled={generateMut.isPending || createMut.isPending}
+          onClick={() => generateMut.mutate("create")}
+          className="btn-secondary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-50 sm:w-auto sm:py-1.5"
+        >
+          {generateMut.isPending ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <KeyRound className="size-3.5" />
+          )}
+          Generate key pair
+        </button>
+      </div>
+      {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
+      <div className="space-y-2">
+        <span className="text-xs text-muted-foreground">Server role</span>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {(
+            [
+              {
+                value: "deploy" as const,
+                title: "Deploy",
+                hint: "Run docker stack / compose on this host",
+              },
+              {
+                value: "build" as const,
+                title: "Build",
+                hint: "Image builds only; pick a deploy host for running containers",
+              },
+            ] as const
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, serverRole: opt.value }))}
+              className={`w-full text-left rounded-lg border px-3 py-2 transition-colors sm:min-w-[140px] sm:flex-1 ${
+                form.serverRole === opt.value
+                  ? "border-primary/40 bg-primary/10 text-foreground"
+                  : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
+              }`}
+            >
+              <span className="text-xs font-medium block">{opt.title}</span>
+              <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">
+                {opt.hint}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="space-y-1 block">
+          <span className="text-xs text-muted-foreground">Label</span>
+          <input
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+            placeholder="Production"
+          />
+        </label>
+        <label className="space-y-1 block">
+          <span className="text-xs text-muted-foreground">Host / IP</span>
+          <input
+            value={form.host}
+            onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
+            className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+            placeholder="203.0.113.10"
+            autoComplete="off"
+          />
+        </label>
+        <label className="space-y-1 block">
+          <span className="text-xs text-muted-foreground">SSH port</span>
+          <input
+            value={form.port}
+            onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
+            className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+            placeholder="22"
+          />
+        </label>
+        <label className="space-y-1 block">
+          <span className="text-xs text-muted-foreground">SSH user</span>
+          <input
+            value={form.sshUser}
+            onChange={(e) => setForm((f) => ({ ...f, sshUser: e.target.value }))}
+            className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+            placeholder="deploy"
+          />
+        </label>
+        <label className="space-y-1 block sm:col-span-2">
+          <span className="text-xs text-muted-foreground">
+            Certificate email (For Let&apos;s Encrypt notices)
+          </span>
+          <input
+            type="email"
+            value={form.acmeEmail}
+            onChange={(e) => setForm((f) => ({ ...f, acmeEmail: e.target.value }))}
+            className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+            placeholder="you@example.com"
+            autoComplete="email"
+            required
+          />
+        </label>
+        <div className="space-y-1 sm:col-span-2">
+          <span className="block text-xs text-muted-foreground">Private key (PEM)</span>
+          <MaskedPemTextarea
+            revealed={showPrivateKeyCreate}
+            onRevealedChange={setShowPrivateKeyCreate}
+            value={form.privateKey}
+            onChange={(e) => {
+              setForm((f) => ({ ...f, privateKey: e.target.value }));
+              setGeneratedPublicKey(null);
+            }}
+            className="w-full min-h-[140px] rounded-lg border border-border bg-muted px-3 py-2 text-xs font-mono dark:bg-black/40"
+            placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </div>
+      </div>
+    </>
+  );
+
   if (!accessToken) {
     return (
       <div className="flex items-center justify-center py-24 text-muted-foreground">
@@ -550,7 +702,7 @@ export function RemoteServerSettingsClient({
     );
   }
 
-  if (list.isLoading) {
+  if (listNeeded && list.isLoading) {
     return (
       <div className="flex items-center justify-center py-24 text-muted-foreground gap-2">
         <Loader2 className="size-6 animate-spin" />
@@ -559,7 +711,7 @@ export function RemoteServerSettingsClient({
     );
   }
 
-  if (list.isError) {
+  if (listNeeded && list.isError) {
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-6 text-red-200 text-sm">
         {(list.error as Error).message}
@@ -588,53 +740,52 @@ export function RemoteServerSettingsClient({
       <div className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Hosts</h2>
-          {!creating ? (
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
-              {showRestoreLocalHost ? (
-                <button
-                  type="button"
-                  disabled={restoreLocalHostMut.isPending || (inOrgRemoteServerPage && !allowOrgAdd)}
-                  title={
-                    inOrgRemoteServerPage && !allowOrgAdd
-                      ? "Your role cannot add remote hosts in this organization"
-                      : `Re-add the default This Server (root@${SELF_HOSTED_BOOTSTRAP_SSH_HOST}) deploy host for this instance`
-                  }
-                  onClick={() => restoreLocalHostMut.mutate()}
-                  className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
-                >
-                  {restoreLocalHostMut.isPending ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <PlugZap className="size-3.5" />
-                  )}
-                  Add This Server
-                </button>
-              ) : null}
-              <button
-                type="button"
-                disabled={inOrgRemoteServerPage && !allowOrgAdd}
-                title={
-                  inOrgRemoteServerPage && !allowOrgAdd
-                    ? "Your role cannot add remote hosts in this organization"
-                    : "Add a remote host"
-                }
-                onClick={() => {
-                  setShowPrivateKeyCreate(false);
-                  setCreating(true);
-                }}
-                className="btn-primary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+            {showRestoreLocalHost ? (
+              <Link
+                href="/remote-server/add-this-machine"
+                title={`Re-add the default This Server (root@${SELF_HOSTED_BOOTSTRAP_SSH_HOST}) deploy host for this instance`}
+                className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm sm:min-h-0 sm:w-auto"
+              >
+                <PlugZap className="size-3.5" />
+                Add This Server
+              </Link>
+            ) : null}
+            {inOrgRemoteServerPage && !allowOrgAdd ? (
+              <span
+                title="Your role cannot add remote hosts in this organization"
+                className="btn-primary inline-flex min-h-11 w-full cursor-not-allowed items-center justify-center gap-1.5 text-sm opacity-40 sm:min-h-0 sm:w-auto"
               >
                 <Plus className="size-3.5" />
                 Add host
-              </button>
-            </div>
-          ) : null}
+              </span>
+            ) : (
+              <Link
+                href="/remote-server/add-host"
+                title="Add a remote host"
+                className="btn-primary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm sm:min-h-0 sm:w-auto"
+              >
+                <Plus className="size-3.5" />
+                Add host
+              </Link>
+            )}
+          </div>
         </div>
 
         <div className="space-y-2">
-          {(list.data ?? []).length === 0 && !creating ? (
+          {(list.data ?? []).length === 0 ? (
             <p className="text-sm text-muted-foreground px-3 py-8 text-center border border-dashed border-border rounded-xl sm:px-4">
-              No remote hosts yet. Add a host and paste a private key, or generate a new pair.
+              No remote hosts yet.{" "}
+              {inOrgRemoteServerPage && !allowOrgAdd ? (
+                <>Ask an admin to add a host, or switch workspace.</>
+              ) : (
+                <>
+                  <Link href="/remote-server/add-host" className="font-medium text-primary hover:underline">
+                    Add a host
+                  </Link>{" "}
+                  and paste a private key, or generate a new pair.
+                </>
+              )}
             </p>
           ) : null}
 
@@ -809,13 +960,70 @@ export function RemoteServerSettingsClient({
         </div>
 
       </div>
-      {typeof document !== "undefined" && creating
+      {typeof document !== "undefined" && pageVariant === "add-this-machine"
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto bg-black/40 p-0 backdrop-blur-xl dark:bg-black/55 sm:items-center sm:p-4"
+              onClick={() => {
+                if (restoreLocalHostMut.isPending) return;
+                dismissAddSubModal();
+              }}
+            >
+              <div
+                className="glass-panel max-h-[calc(100dvh-env(safe-area-inset-bottom))] w-full max-w-2xl space-y-3 overflow-y-auto rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl sm:max-h-[90vh] sm:rounded-2xl sm:p-5 sm:pb-5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 pr-2">
+                    <h3 className="text-base font-semibold">Add This Server</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Re-add the default deploy host (
+                      <span className="font-mono">root@{SELF_HOSTED_BOOTSTRAP_SSH_HOST}</span>) if it was removed from the
+                      list.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={restoreLocalHostMut.isPending}
+                    onClick={dismissAddSubModal}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 sm:h-8 sm:w-8"
+                    aria-label="Close dialog"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+                {showRestoreLocalHost ? (
+                  <button
+                    type="button"
+                    disabled={restoreLocalHostMut.isPending}
+                    onClick={() => restoreLocalHostMut.mutate()}
+                    className="btn-secondary inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:w-auto"
+                  >
+                    {restoreLocalHostMut.isPending ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <PlugZap className="size-3.5" />
+                    )}
+                    Add This Server
+                  </button>
+                ) : (
+                  <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-3 py-4">
+                    This action is only available to organization admins on self-hosted Weehawk, while working in an
+                    organization workspace.
+                  </p>
+                )}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {typeof document !== "undefined" && pageVariant === "add-host"
         ? createPortal(
             <div
               className="fixed inset-0 z-[120] flex min-h-[100dvh] items-end justify-center overflow-y-auto bg-black/40 p-0 backdrop-blur-xl dark:bg-black/55 sm:items-center sm:p-4"
               onClick={() => {
                 if (createMut.isPending) return;
-                dismissCreateHostModal();
+                dismissAddSubModal();
               }}
             >
               <div
@@ -830,138 +1038,40 @@ export function RemoteServerSettingsClient({
                   <button
                     type="button"
                     disabled={createMut.isPending}
-                    onClick={dismissCreateHostModal}
+                    onClick={dismissAddSubModal}
                     className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:opacity-40 sm:h-8 sm:w-8"
                     aria-label="Close add host dialog"
                   >
                     <X className="size-4" />
                   </button>
                 </div>
-
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                  <button
-                    type="button"
-                    disabled={generateMut.isPending || createMut.isPending}
-                    onClick={() => generateMut.mutate("create")}
-                    className="btn-secondary inline-flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-50 sm:w-auto sm:py-1.5"
-                  >
-                    {generateMut.isPending ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <KeyRound className="size-3.5" />
-                    )}
-                    Generate key pair
-                  </button>
-                </div>
-                {generatedPublicKey ? <PublicKeyCopyBlock publicKey={generatedPublicKey} /> : null}
-                <div className="space-y-2">
-                  <span className="text-xs text-muted-foreground">Server role</span>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                    {(
-                      [
-                        {
-                          value: "deploy" as const,
-                          title: "Deploy",
-                          hint: "Run docker stack / compose on this host",
-                        },
-                        {
-                          value: "build" as const,
-                          title: "Build",
-                          hint: "Image builds only; pick a deploy host for running containers",
-                        },
-                      ] as const
-                    ).map((opt) => (
+                {inOrgRemoteServerPage && !allowOrgAdd ? (
+                  <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-3 py-4">
+                    Your role cannot add remote hosts in this organization.
+                  </p>
+                ) : (
+                  <>
+                    {addHostFormBody}
+                    <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                       <button
-                        key={opt.value}
                         type="button"
-                        onClick={() => setForm((f) => ({ ...f, serverRole: opt.value }))}
-                        className={`w-full text-left rounded-lg border px-3 py-2 transition-colors sm:min-w-[140px] sm:flex-1 ${
-                          form.serverRole === opt.value
-                            ? "border-primary/40 bg-primary/10 text-foreground"
-                            : "border-border bg-muted/60 dark:bg-black/20 text-muted-foreground hover:border-border"
-                        }`}
+                        disabled={createMut.isPending}
+                        onClick={dismissAddSubModal}
+                        className="btn-secondary order-2 w-full text-sm disabled:opacity-40 sm:order-1 sm:w-auto"
                       >
-                        <span className="text-xs font-medium block">{opt.title}</span>
-                        <span className="text-[10px] text-muted-foreground leading-snug block mt-0.5">
-                          {opt.hint}
-                        </span>
+                        Cancel
                       </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-1 block">
-                    <span className="text-xs text-muted-foreground">Label</span>
-                    <input
-                      value={form.name}
-                      onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                      placeholder="Production"
-                    />
-                  </label>
-                  <label className="space-y-1 block">
-                    <span className="text-xs text-muted-foreground">Host / IP</span>
-                    <input
-                      value={form.host}
-                      onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                      placeholder="203.0.113.10"
-                      autoComplete="off"
-                    />
-                  </label>
-                  <label className="space-y-1 block">
-                    <span className="text-xs text-muted-foreground">SSH port</span>
-                    <input
-                      value={form.port}
-                      onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                      placeholder="22"
-                    />
-                  </label>
-                  <label className="space-y-1 block">
-                    <span className="text-xs text-muted-foreground">SSH user</span>
-                    <input
-                      value={form.sshUser}
-                      onChange={(e) => setForm((f) => ({ ...f, sshUser: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
-                      placeholder="deploy"
-                    />
-                  </label>
-                  <div className="space-y-1 sm:col-span-2">
-                    <span className="block text-xs text-muted-foreground">Private key (PEM)</span>
-                    <MaskedPemTextarea
-                      revealed={showPrivateKeyCreate}
-                      onRevealedChange={setShowPrivateKeyCreate}
-                      value={form.privateKey}
-                      onChange={(e) => {
-                        setForm((f) => ({ ...f, privateKey: e.target.value }));
-                        setGeneratedPublicKey(null);
-                      }}
-                      className="w-full min-h-[140px] rounded-lg border border-border bg-muted px-3 py-2 text-xs font-mono dark:bg-black/40"
-                      placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-                  <button
-                    type="button"
-                    disabled={createMut.isPending}
-                    onClick={dismissCreateHostModal}
-                    className="btn-secondary order-2 w-full text-sm disabled:opacity-40 sm:order-1 sm:w-auto"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={createMut.isPending}
-                    onClick={() => createMut.mutate()}
-                    className="btn-primary order-1 inline-flex w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:order-2 sm:w-auto"
-                  >
-                    {createMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-                  </button>
-                </div>
+                      <button
+                        type="button"
+                        disabled={createMut.isPending}
+                        onClick={() => createMut.mutate()}
+                        className="btn-primary order-1 inline-flex w-full items-center justify-center gap-1.5 text-sm disabled:pointer-events-none disabled:opacity-40 sm:order-2 sm:w-auto"
+                      >
+                        {createMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             </div>,
             document.body,
@@ -1101,6 +1211,19 @@ export function RemoteServerSettingsClient({
                       onChange={(e) => setEditDraft((d) => ({ ...d, sshUser: e.target.value }))}
                       disabled={editingBootstrapHost}
                       className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    />
+                  </label>
+                  <label className="space-y-1 block sm:col-span-2">
+                    <span className="text-xs text-muted-foreground">
+                      Certificate email (For Let&apos;s Encrypt notices)
+                    </span>
+                    <input
+                      type="email"
+                      value={editDraft.acmeEmail}
+                      onChange={(e) => setEditDraft((d) => ({ ...d, acmeEmail: e.target.value }))}
+                      className="w-full rounded-lg border border-border bg-muted dark:bg-black/40 px-3 py-2 text-sm"
+                      placeholder="you@example.com"
+                      autoComplete="email"
                     />
                   </label>
                   <div className="space-y-1 sm:col-span-2">

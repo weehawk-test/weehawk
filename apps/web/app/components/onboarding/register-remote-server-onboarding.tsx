@@ -30,6 +30,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
   const [privateKey, setPrivateKey] = useState("");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [serverRole, setServerRole] = useState<RemoteServerRole>("deploy");
+  const [acmeEmail, setAcmeEmail] = useState("");
   const [generatedPublicKey, setGeneratedPublicKey] = useState<string | null>(null);
   const [savedRow, setSavedRow] = useState<RemoteServerRow | null>(null);
 
@@ -58,6 +59,7 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
         sshUser: sshUser.trim(),
         privateKey: privateKey.trim(),
         serverRole,
+        acmeEmail: acmeEmail.trim(),
       }),
     onSuccess: (row) => {
       void qc.invalidateQueries({ queryKey: ["remote-servers"] });
@@ -100,7 +102,8 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
     name.trim().length > 0 &&
     host.trim().length > 0 &&
     sshUser.trim().length > 0 &&
-    privateKey.trim().length >= 64;
+    privateKey.trim().length >= 64 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(acmeEmail.trim());
 
   return (
     <div className="mt-5 space-y-4 rounded-xl border border-border bg-white/[0.02] p-4 sm:p-5 text-left">
@@ -199,6 +202,22 @@ export function RegisterRemoteServerOnboarding({ accessToken, onSaved }: Props) 
             }}
             className="w-full rounded-lg border border-border bg-black/40 px-3 py-2 text-sm"
             placeholder="deploy"
+          />
+        </label>
+        <label className="space-y-1 block sm:col-span-2">
+          <span className="text-xs text-muted-foreground">
+            Certificate email (For Let&apos;s Encrypt notices)
+          </span>
+          <input
+            type="email"
+            value={acmeEmail}
+            onChange={(e) => {
+              setAcmeEmail(e.target.value);
+              setSavedRow(null);
+            }}
+            className="w-full rounded-lg border border-border bg-black/40 px-3 py-2 text-sm"
+            placeholder="you@example.com"
+            autoComplete="email"
           />
         </label>
         <div className="space-y-1 sm:col-span-2">

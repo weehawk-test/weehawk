@@ -6,6 +6,8 @@ export function pageLabelFromPathname(pathname: string): string {
   if (path === "/projects") return "Projects";
   if (path.startsWith("/projects/")) return "Services";
   if (path.startsWith("/docker-manager/")) return "Docker Manager";
+  if (path === "/remote-server/add-this-machine") return "Add This Server";
+  if (path === "/remote-server/add-host") return "Add host";
   if (path.startsWith("/remote-server")) return "Remote Servers";
   if (path.startsWith("/domains")) return "Domains";
   if (path.startsWith("/webhooks")) return "Webhooks";
@@ -20,6 +22,8 @@ export function pageLabelFromPathname(pathname: string): string {
   if (path.startsWith("/register")) return "Register";
   if (path.startsWith("/forgot-password")) return "Forgot Password";
   if (path.startsWith("/reset-password")) return "Reset Password";
+  if (path === "/onboarding/self-hosted-deploy") return "Install — Deploy target";
+  if (path === "/onboarding/self-hosted-this-machine") return "Install — This machine";
   if (path.startsWith("/onboarding")) return "Onboarding";
   if (path.startsWith("/docker")) return "Docker";
 

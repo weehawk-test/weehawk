@@ -8,20 +8,29 @@ import { ServerDeployChoiceSection } from "@/components/onboarding/server-deploy
 import type { ServerDeployTarget } from "@/lib/server-deploy-preference";
 import { writeServerDeployChoice } from "@/lib/server-deploy-preference";
 
+function isSelfHostedInstance(): boolean {
+  return (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
+}
+
 export default function OnboardingServerPage() {
   const router = useRouter();
+  const selfHosted = isSelfHostedInstance();
   const [gateOk, setGateOk] = useState(false);
   const [deployTarget, setDeployTarget] = useState<ServerDeployTarget>("localhost");
 
   useEffect(() => {
+    if (selfHosted) {
+      router.replace("/onboarding/self-hosted-deploy");
+      return;
+    }
     setGateOk(true);
-  }, [router]);
+  }, [router, selfHosted]);
 
   useEffect(() => {
-    if (!gateOk) return;
+    if (!gateOk || selfHosted) return;
     setDeployTarget("localhost");
     writeServerDeployChoice("localhost");
-  }, [gateOk]);
+  }, [gateOk, selfHosted]);
 
   const finishAndEnter = useCallback(() => {
     router.replace("/");
@@ -32,7 +41,7 @@ export default function OnboardingServerPage() {
     finishAndEnter();
   }, [finishAndEnter]);
 
-  if (!gateOk) {
+  if (!gateOk || selfHosted) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background gap-3 px-4">
         <>

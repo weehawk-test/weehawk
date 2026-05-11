@@ -9,13 +9,21 @@ export function OnboardingPageShell({
   subtitle,
   children,
   wide = false,
+  /** Slightly smaller padding and type (self-hosted install wizard only). */
+  cozy = false,
 }: {
   subtitle: React.ReactNode;
   children: React.ReactNode;
   wide?: boolean;
+  cozy?: boolean;
 }) {
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background relative overflow-hidden px-4 py-12">
+    <div
+      className={cn(
+        "min-h-screen flex flex-col items-center justify-center bg-background relative overflow-hidden px-4",
+        cozy ? "py-10" : "py-12",
+      )}
+    >
       <div className="fixed top-4 right-4 z-20">
         <ThemeToggle />
       </div>
@@ -27,23 +35,36 @@ export function OnboardingPageShell({
         animate={{ opacity: 1, y: 0 }}
         className={cn(
           "w-full glass-panel rounded-2xl border border-border shadow-xl relative z-10",
-          wide ? "max-w-2xl p-8 sm:p-10" : "max-w-md p-8",
+          wide && cozy && "max-w-2xl p-6 sm:p-8",
+          wide && !cozy && "max-w-2xl p-8 sm:p-10",
+          !wide && cozy && "max-w-md p-6 sm:p-7",
+          !wide && !cozy && "max-w-md p-8",
         )}
       >
-        <div className="flex flex-col items-center gap-3 mb-8">
-          <div className="relative w-12 h-12 rounded-xl overflow-hidden border border-primary/20 ring-1 ring-border/60 dark:ring-white/5">
+        <div className={cn("flex flex-col items-center", cozy ? "gap-2.5 mb-6" : "gap-3 mb-8")}>
+          <div
+            className={cn(
+              "relative rounded-xl overflow-hidden border border-primary/20 ring-1 ring-border/60 dark:ring-white/5",
+              cozy ? "w-11 h-11" : "w-12 h-12",
+            )}
+          >
             <Image
               src="/weehawk-logo.svg"
               alt="Weehawk"
-              width={48}
-              height={48}
-              className="logo-adaptive object-contain size-12 p-0.5 scale-90"
+              width={cozy ? 44 : 48}
+              height={cozy ? 44 : 48}
+              className={cn(
+                "logo-adaptive object-contain p-0.5 scale-90",
+                cozy ? "size-11" : "size-12",
+              )}
               priority
             />
           </div>
           <div className="text-center">
-            <h1 className="text-xl font-bold tracking-tight">Weehawk</h1>
-            <div className="text-sm text-muted-foreground mt-1">{subtitle}</div>
+            <h1 className={cn("font-bold tracking-tight", cozy ? "text-lg" : "text-xl")}>Weehawk</h1>
+            <div className={cn("text-muted-foreground mt-1", cozy ? "text-xs sm:text-sm" : "text-sm")}>
+              {subtitle}
+            </div>
           </div>
         </div>
 

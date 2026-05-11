@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  IsEmail,
   IsIn,
   IsInt,
   IsNotEmpty,
@@ -88,6 +89,17 @@ export class CreateRemoteServerDto {
   @IsString()
   @MaxLength(DOMAINS_JSON_MAX)
   domainsJson?: string;
+
+  @ApiProperty({
+    description:
+      "ACME (Let's Encrypt) contact email for this server's certificate resolver.",
+    example: 'admin@example.com',
+  })
+  @IsString()
+  @IsNotEmpty({ message: 'acmeEmail is required for remote servers' })
+  @IsEmail({}, { message: 'acmeEmail must be a valid email address' })
+  @MaxLength(254)
+  acmeEmail!: string;
 
   @ApiProperty({
     description:
