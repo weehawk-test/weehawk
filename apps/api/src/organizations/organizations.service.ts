@@ -1282,6 +1282,86 @@ export class OrganizationsService implements OnModuleInit {
   }
 
   /**
+   * Owners may remove members from the organization.
+   * Removing owners is allowed only when another owner remains.
+   */
+  async removeMember(
+    ctx: OrganizationMemberContext,
+    actingUserId: number,
+    rawEmail: string,
+  ): Promise<{ message: string }> {
+    if (!ctx.actingIsOwner) {
+      throw new ForbiddenException(
+        'Only organization owners can remove members.',
+      );
+    }
+    const email = String(rawEmail ?? '')
+      .trim()
+      .toLowerCase();
+    if (!email) {
+      throw new BadRequestException('email is required');
+    }
+    const target = await this.users
+      .createQueryBuilder('u')
+      .where('LOWER(u.email) = :email', { email })
+      .getOne();
+    if (!target) {
+      throw new NotFoundException('No user with this email was found.');
+    }
+    if (target.id === actingUserId) {
+      throw new BadRequestException(
+        'You cannot remove yourself from this screen. Use leave organization instead.',
+      );
+    }
+    const membership = await this.repo.findMembership(target.id, ctx.internalId);
+    if (!membership) {
+      throw new BadRequestException(
+        'That user is not a member of this organization.',
+      );
+    }
+    const targetWasOwner = membership.role === ORGANIZATION_MEMBER_ROLE.OWNER;
+    if (targetWasOwner) {
+      const ownerCount = await this.repo.countOwnersForOrganization(ctx.internalId);
+      if (ownerCount <= 1) {
+        throw new BadRequestException(
+          'Cannot remove the last owner. Promote another member to owner first.',
+        );
+      }
+      await this.assertKeepsAtLeastOneOwnedOrganizationAfterLosingOwnerHere(
+        target.id,
+        ctx.internalId,
+      );
+    }
+
+    const n = await this.repo.deleteMembership(target.id, ctx.internalId);
+    if (n === 0) {
+      throw new NotFoundException('Organization membership not found');
+    }
+    if (targetWasOwner) {
+      await this.syncLegacyOwnerIdColumn(ctx.internalId);
+    }
+
+    await this.appendOrganizationAuditEvent(
+      ctx.internalId,
+      actingUserId,
+      'member.removed',
+      {
+        metadata: {
+          endpoint: `DELETE /api/organizations/${encodeURIComponent(ctx.publicId)}/members`,
+          targetEmail: email,
+          targetWasOwner,
+        },
+      },
+    );
+
+    return {
+      message: targetWasOwner
+        ? 'Owner removed from the organization.'
+        : 'Member removed from the organization.',
+    };
+  }
+
+  /**
    * Validates publicId, resolves org, verifies membership. Same 404 for unknown org and non-member.
    */
   async requireMemberContext(

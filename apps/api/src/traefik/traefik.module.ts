@@ -9,7 +9,7 @@ import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
 @Module({
   imports: [
     TypeOrmModule.forFeature([TraefikSettings]),
-    OrganizationsModule,
+    forwardRef(() => OrganizationsModule),
     forwardRef(() => OrgRealtimeModule),
   ],
   controllers: [TraefikController],

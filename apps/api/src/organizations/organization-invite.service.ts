@@ -3,8 +3,10 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -16,6 +18,7 @@ import { EmailService } from '../email/email.service';
 import { TokenStoreService } from '../email/token-store.service';
 import { OrganizationsRepository } from './organizations.repository';
 import { OrganizationsService } from './organizations.service';
+import { NotificationService } from '../notifications/notification.service';
 import type {
   OrganizationMemberContext,
   OrganizationMemberPublicDto,
@@ -33,6 +36,8 @@ const TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
 /** Stored value: `${organizationInternalId}||${inviteeEmailLower}` */
 @Injectable()
 export class OrganizationInviteService {
+  private readonly logger = new Logger(OrganizationInviteService.name);
+
   constructor(
     private readonly organizationsService: OrganizationsService,
     private readonly orgRepo: OrganizationsRepository,
@@ -40,7 +45,28 @@ export class OrganizationInviteService {
     private readonly emailService: EmailService,
     private readonly tokenStore: TokenStoreService,
     private readonly config: ConfigService,
+    private readonly moduleRef: ModuleRef,
   ) {}
+
+  /**
+   * Resolves NotificationService at runtime from the global container.
+   * OrganizationsModule deliberately does not import NotificationsModule (to
+   * avoid a deep circular dependency through Remote/Traefik/OrgRealtime),
+   * so we look the provider up via ModuleRef with strict:false.
+   * Returns null if NotificationsModule is not registered.
+   */
+  private resolveNotificationService(): NotificationService | null {
+    try {
+      return this.moduleRef.get(NotificationService, { strict: false });
+    } catch (e) {
+      this.logger.warn(
+        `Notification service not available: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      return null;
+    }
+  }
 
   private getFrontendBaseUrl(): string {
     return (
@@ -57,6 +83,8 @@ export class OrganizationInviteService {
     ctx: OrganizationMemberContext,
     actingUserId: number,
     rawEmail: string,
+    notificationChannelId?: string,
+    notificationRemoteServerId?: number,
   ): Promise<{ message: string; notice?: string }> {
     if (!ctx.actingIsOwner) {
       throw new ForbiddenException(
@@ -71,7 +99,27 @@ export class OrganizationInviteService {
     }
 
     if (this.isSelfHosted()) {
-      return this.selfHostedDirectAdd(ctx, actingUserId, email);
+      const ch = String(notificationChannelId ?? '').trim();
+      if (!ch) {
+        throw new BadRequestException(
+          'notificationChannelId is required in self-hosted mode.',
+        );
+      }
+      if (
+        !Number.isInteger(notificationRemoteServerId) ||
+        (notificationRemoteServerId ?? 0) < 1
+      ) {
+        throw new BadRequestException(
+          'notificationRemoteServerId is required in self-hosted mode.',
+        );
+      }
+      return this.selfHostedDirectAdd(
+        ctx,
+        actingUserId,
+        email,
+        ch,
+        notificationRemoteServerId,
+      );
     }
 
     return this.cloudSendInvite(ctx, actingUserId, email);
@@ -85,6 +133,8 @@ export class OrganizationInviteService {
     ctx: OrganizationMemberContext,
     actingUserId: number,
     email: string,
+    notificationChannelId?: string,
+    notificationRemoteServerId?: number,
   ): Promise<{ message: string; notice?: string }> {
     let invitee = await this.users
       .createQueryBuilder('u')
@@ -113,6 +163,23 @@ export class OrganizationInviteService {
       });
       invitee = await this.users.save(invitee);
       userCreated = true;
+      await this.sendSelfHostedInviteNotification(
+        ctx,
+        notificationChannelId,
+        notificationRemoteServerId,
+        email,
+        tempPassword,
+        true,
+      );
+    } else if (notificationChannelId?.trim()) {
+      await this.sendSelfHostedInviteNotification(
+        ctx,
+        notificationChannelId,
+        notificationRemoteServerId,
+        email,
+        null,
+        false,
+      );
     }
 
     const already = await this.orgRepo.findMembership(invitee.id, ctx.internalId);
@@ -147,6 +214,56 @@ export class OrganizationInviteService {
     return {
       message: `${email} has been added to the organization.`,
     };
+  }
+
+  private selfHostedInviteNotificationMessage(input: {
+    organizationName: string;
+    inviteeEmail: string;
+    frontendBaseUrl: string;
+    temporaryPassword: string | null;
+    userCreated: boolean;
+  }): string {
+    const lines = [
+      `Welcome to ${input.organizationName}!`,
+      '',
+      `Organization: ${input.organizationName}`,
+      `Site: ${input.frontendBaseUrl}`,
+      `Email: ${input.inviteeEmail}`,
+    ];
+    if (input.userCreated && input.temporaryPassword) {
+      lines.push(`Temporary password: ${input.temporaryPassword}`);
+      lines.push('Sign in with this temporary password and change it immediately.');
+    } else {
+      lines.push('Your existing account was added to the organization.');
+    }
+    return lines.join('\n');
+  }
+
+  private async sendSelfHostedInviteNotification(
+    ctx: OrganizationMemberContext,
+    notificationChannelId: string | undefined,
+    notificationRemoteServerId: number | undefined,
+    inviteeEmail: string,
+    temporaryPassword: string | null,
+    userCreated: boolean,
+  ): Promise<void> {
+    const channelId = notificationChannelId?.trim();
+    if (!channelId) return;
+    const notificationService = this.resolveNotificationService();
+    if (!notificationService) return;
+    const msg = this.selfHostedInviteNotificationMessage({
+      organizationName: ctx.name,
+      inviteeEmail,
+      frontendBaseUrl: this.getFrontendBaseUrl(),
+      temporaryPassword,
+      userCreated,
+    });
+    await notificationService.sendMessageForOrganization(
+      ctx.internalId,
+      channelId,
+      msg,
+      notificationRemoteServerId,
+    );
   }
 
   /** Cloud mode: existing email-based invite flow. */

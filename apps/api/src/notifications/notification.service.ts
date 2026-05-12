@@ -205,11 +205,14 @@ export class NotificationService {
   private async sendWithRetry(
     channel: NotificationChannel,
     plainText: string,
+    remoteServerIdOverride?: number,
   ): Promise<ProviderSendResult> {
     try {
       return await withRetry(
         async () => {
-          if (channel.remoteServerId == null) {
+          const effectiveRemoteServerId =
+            remoteServerIdOverride ?? channel.remoteServerId ?? null;
+          if (effectiveRemoteServerId == null) {
             return {
               ok: false,
               description:
@@ -224,7 +227,7 @@ export class NotificationService {
           };
           const result =
             await this.remoteServersService.deliverNotificationChannelForOrganization(
-              channel.remoteServerId,
+              effectiveRemoteServerId,
               channel.organizationId,
               runtime,
               plainText,
@@ -261,7 +264,12 @@ export class NotificationService {
     const channel = await this.findChannelForUser(userId, String(channelId));
     if (!channel) throw new NotFoundException('Channel not found');
     const text = formatNotificationPlainText('Notification', message);
-    await this.sendWithRetry(channel, text);
+    const result = await this.sendWithRetry(channel, text);
+    if (!result.ok) {
+      throw new BadRequestException(
+        (result.description ?? '').trim() || 'Notification delivery failed',
+      );
+    }
   }
 
   async getChannelRuntimeConfig(
@@ -301,6 +309,7 @@ export class NotificationService {
     organizationInternalId: number,
     channelId: number | string,
     message: string,
+    remoteServerIdOverride?: number,
   ): Promise<void> {
     const channel = await this.findChannelInOrganization(
       organizationInternalId,
@@ -308,7 +317,16 @@ export class NotificationService {
     );
     if (!channel) throw new NotFoundException('Channel not found');
     const text = formatNotificationPlainText('Notification', message);
-    await this.sendWithRetry(channel, text);
+    const result = await this.sendWithRetry(
+      channel,
+      text,
+      remoteServerIdOverride,
+    );
+    if (!result.ok) {
+      throw new BadRequestException(
+        (result.description ?? '').trim() || 'Notification delivery failed',
+      );
+    }
   }
 
   async listChannels(

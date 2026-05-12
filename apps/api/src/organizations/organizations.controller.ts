@@ -35,6 +35,7 @@ import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { SetOrgMemberWorkspacePermissionsDto } from './dto/set-org-member-workspace-permissions.dto';
 import { ActiveOrganizationService } from './active-organization.service';
 import { SetActiveOrganizationDto } from './dto/set-active-organization.dto';
+import { RemoveOrganizationMemberDto } from './dto/remove-organization-member.dto';
 
 @ApiTags('Organizations')
 @ApiBearerAuth()
@@ -226,6 +227,32 @@ export class OrganizationsController {
     @Req() req: { user?: { userId: number } },
   ) {
     return this.organizationInviteService.sendMemberInvite(
+      ctx,
+      this.uid(req),
+      dto.email,
+      dto.notificationChannelId,
+      dto.notificationRemoteServerId,
+    );
+  }
+
+  @Delete(':publicId/members')
+  @UseGuards(OrgMembershipGuard)
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  @ApiOperation({
+    summary: 'Remove a member from organization (owners only; cannot remove last owner)',
+  })
+  removeMember(
+    @OrgMemberContextParam() ctx: OrganizationMemberContext,
+    @Body() dto: RemoveOrganizationMemberDto,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.organizationsService.removeMember(
       ctx,
       this.uid(req),
       dto.email,

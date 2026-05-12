@@ -235,12 +235,26 @@ export async function setOrganizationMemberRole(
 export async function inviteOrganizationMember(
   activeOrgPublicId: string,
   email: string,
+  notificationChannelId?: string,
+  notificationRemoteServerId?: number,
 ): Promise<{ message: string; notice?: string }> {
+  const payload: {
+    email: string;
+    notificationChannelId?: string;
+    notificationRemoteServerId?: number;
+  } = {
+    email: email.trim().toLowerCase(),
+  };
+  const channelId = notificationChannelId?.trim();
+  if (channelId) payload.notificationChannelId = channelId;
+  if (Number.isInteger(notificationRemoteServerId) && (notificationRemoteServerId ?? 0) > 0) {
+    payload.notificationRemoteServerId = notificationRemoteServerId;
+  }
   const res = await apiFetch(
     `/api/organizations/${encodeURIComponent(activeOrgPublicId.trim())}/members`,
     {
       method: "POST",
-      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      body: JSON.stringify(payload),
     },
   );
   const text = await res.text();
@@ -251,6 +265,26 @@ export async function inviteOrganizationMember(
   return {
     message: typeof data.message === "string" ? data.message : "Invitation sent.",
     notice: typeof data.notice === "string" && data.notice.trim() !== "" ? data.notice : undefined,
+  };
+}
+
+export async function removeOrganizationMember(
+  activeOrgPublicId: string,
+  email: string,
+): Promise<{ message: string }> {
+  const id = activeOrgPublicId.trim();
+  if (!id) throw new Error("Organization id required");
+  const res = await apiFetch(`/api/organizations/${encodeURIComponent(id)}/members`, {
+    method: "DELETE",
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const data = JSON.parse(text) as { message?: string };
+  return {
+    message: typeof data.message === "string" ? data.message : "Member removed.",
   };
 }
 

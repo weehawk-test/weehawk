@@ -20,7 +20,7 @@ import { OrgRealtimeModule } from '../org-realtime/org-realtime.module';
       OrganizationMembership,
     ]),
     forwardRef(() => TraefikModule),
-    OrganizationsModule,
+    forwardRef(() => OrganizationsModule),
     forwardRef(() => OrgRealtimeModule),
     forwardRef(() => AuthModule),
   ],

@@ -490,6 +490,7 @@ export function NotificationsChannelsClient({
         channelsPage,
         CHANNELS_PAGE_SIZE,
         channelsQ,
+        activeOrgPublicId,
       ),
     enabled: Boolean(accessToken && orgSegment),
     initialData:
@@ -655,10 +656,18 @@ export function NotificationsChannelsClient({
         organizationPublicId: org,
       });
       try {
-        return await testNotificationChannel(accessToken!, tempChannel.id);
+        return await testNotificationChannel(
+          accessToken!,
+          tempChannel.id,
+          activeOrgPublicId,
+        );
       } finally {
         try {
-          await deleteNotificationChannel(accessToken!, tempChannel.id);
+          await deleteNotificationChannel(
+            accessToken!,
+            tempChannel.id,
+            activeOrgPublicId,
+          );
         } catch {}
       }
     },
@@ -692,7 +701,7 @@ export function NotificationsChannelsClient({
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
-      deleteNotificationChannel(accessToken!, id),
+      deleteNotificationChannel(accessToken!, id, activeOrgPublicId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels", "paged"] });
@@ -702,7 +711,7 @@ export function NotificationsChannelsClient({
   });
   const bulkDeleteChannelsMutation = useMutation({
     mutationFn: (ids: string[]) =>
-      bulkDeleteNotificationChannels(accessToken!, ids),
+      bulkDeleteNotificationChannels(accessToken!, ids, activeOrgPublicId),
     onSuccess: () => {
       channelsBulk.clear();
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -723,9 +732,14 @@ export function NotificationsChannelsClient({
     }) => {
       if (!accessToken) throw new Error("Not signed in.");
       if (remoteServerId !== previousRemoteId) {
-        await updateNotificationChannel(accessToken, channelId, { remoteServerId });
+        await updateNotificationChannel(
+          accessToken,
+          channelId,
+          { remoteServerId },
+          activeOrgPublicId,
+        );
       }
-      return testNotificationChannel(accessToken, channelId);
+      return testNotificationChannel(accessToken, channelId, activeOrgPublicId);
     },
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["notifications", "channels"] });
@@ -753,6 +767,7 @@ export function NotificationsChannelsClient({
           name: editName.trim(),
           remoteServerId: editDeployServerId as number,
         },
+        activeOrgPublicId,
       );
     },
     onSuccess: () => {
