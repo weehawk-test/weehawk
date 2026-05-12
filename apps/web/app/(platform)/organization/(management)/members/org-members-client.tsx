@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dialog";
 
 const isSelfHosted =
-  (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
+  (process.env.NEXT_PUBLIC_INSTANCE_MODE || "cloud").trim().toLowerCase() === "self-hosted";
 
 export function OrgMembersClient({
   activeOrgPublicId,

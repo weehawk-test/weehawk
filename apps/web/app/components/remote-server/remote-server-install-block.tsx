@@ -15,10 +15,12 @@ import {
   enqueueRemoteDockerPurgeApi,
   enqueueRemoteNixpacksInstallApi,
   enqueueRemoteProvisionApi,
+  enqueueRemoteTraefikRedeployApi,
   fetchDockerPurgeScriptApi,
   fetchNixpacksInstallScriptApi,
   fetchProvisionJobApi,
   fetchProvisionScriptApi,
+  fetchTraefikRedeployScriptApi,
   type ProvisionJobKind,
   type RemoteServerRow,
 } from "@/lib/remote-servers-api";
@@ -34,7 +36,7 @@ type Props = {
   activeOrgPublicIdForProvision?: string;
 };
 
-type InstallDialog = "provision" | "nixpacks" | "purge" | null;
+type InstallDialog = "provision" | "nixpacks" | "purge" | "traefik_redeploy" | null;
 
 function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): string {
   const pub = row.publicId?.trim();
@@ -44,6 +46,7 @@ function remoteServerRouteId(row: Pick<RemoteServerRow, "id" | "publicId">): str
 function provisionJobKindLabel(kind: ProvisionJobKind | undefined): string {
   if (kind === "docker_purge") return "purge";
   if (kind === "nixpacks_install") return "nixpacks";
+  if (kind === "traefik_redeploy") return "traefik redeploy";
   return "install";
 }
 
@@ -81,6 +84,7 @@ export function RemoteServerInstallBlock({
   const [ack, setAck] = useState(false);
   const [nixAck, setNixAck] = useState(false);
   const [purgeAck, setPurgeAck] = useState(false);
+  const [traefikAck, setTraefikAck] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobLogDismissed, setJobLogDismissed] = useState(false);
   const jobLogPreRef = useRef<HTMLPreElement | null>(null);
@@ -114,6 +118,12 @@ export function RemoteServerInstallBlock({
     queryKey: ["docker-purge-script"],
     queryFn: () => fetchDockerPurgeScriptApi(accessToken),
     enabled: installDialog === "purge" && showDockerPurgeOption,
+  });
+
+  const traefikRedeployScriptQ = useQuery({
+    queryKey: ["traefik-redeploy-script", serverRouteId],
+    queryFn: () => fetchTraefikRedeployScriptApi(accessToken, serverRouteId),
+    enabled: installDialog === "traefik_redeploy" && row.serverRole === "deploy",
   });
 
   const jobQ = useQuery({
@@ -197,6 +207,21 @@ export function RemoteServerInstallBlock({
       toast({ title: "Could not queue purge", description: e.message, variant: "destructive" }),
   });
 
+  const traefikRedeployMut = useMutation({
+    mutationFn: () => enqueueRemoteTraefikRedeployApi(accessToken, remoteServerRouteId(row)),
+    onSuccess: (data) => {
+      setJobId(data.jobId);
+      setInstallDialog(null);
+      void qc.invalidateQueries({ queryKey: ["provision-job"] });
+      toast({
+        title: "Traefik redeploy queued",
+        description: "Updating Traefik config over SSH. Watch the log below.",
+      });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Could not queue Traefik redeploy", description: e.message, variant: "destructive" }),
+  });
+
   const terminalOk = jobQ.data?.status === "done";
   const terminalErr = jobQ.data?.status === "error";
 
@@ -264,6 +289,18 @@ export function RemoteServerInstallBlock({
                   After setup — Dockerfile-less builds
                 </span>
               </button>
+              {row.serverRole === "deploy" ? (
+                <button
+                  type="button"
+                  className="rounded-md px-2.5 py-2 text-left text-xs text-foreground hover:bg-muted/80 dark:hover:bg-muted/50"
+                  onClick={() => openInstallFlow("traefik_redeploy")}
+                >
+                  <span className="font-medium">Traefik redeploy</span>
+                  <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
+                    Apply certificate email &amp; config changes
+                  </span>
+                </button>
+              ) : null}
               {showDockerPurgeOption ? (
                 <button
                   type="button"
@@ -392,6 +429,58 @@ export function RemoteServerInstallBlock({
                   >
                     {nixpacksOnlyMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
                     Install Nixpacks only
+                  </button>
+                  {!row.hasPrivateKey ? (
+                    <span className="text-[11px] text-amber-500/85">Save a private key for this host first.</span>
+                  ) : null}
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {installDialog === "traefik_redeploy" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-base">Traefik redeploy</DialogTitle>
+                <DialogDescription className="text-left text-xs leading-relaxed">
+                  Rewrites the Traefik static config (certificate email, entrypoints) and redeploys the Traefik
+                  stack on this server. Does <strong className="text-foreground">not</strong> reinstall Docker, Swarm, or
+                  the overlay network.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="min-w-0 space-y-3">
+                {traefikRedeployScriptQ.isLoading && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    Loading script…
+                  </div>
+                )}
+                {traefikRedeployScriptQ.isError && (
+                  <p className="text-xs text-red-400">{(traefikRedeployScriptQ.error as Error).message}</p>
+                )}
+                {traefikRedeployScriptQ.data?.script ? (
+                  <pre className={scriptPreviewPreClassName}>{traefikRedeployScriptQ.data.script}</pre>
+                ) : null}
+                <label className="flex items-start gap-2 text-[11px] text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 rounded border-border"
+                    checked={traefikAck}
+                    onChange={(e) => setTraefikAck(e.target.checked)}
+                  />
+                  <span>
+                    Redeploy Traefik config on <strong className="text-foreground">{row.host}</strong> now.
+                  </span>
+                </label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <button
+                    type="button"
+                    disabled={!row.hasPrivateKey || !traefikAck || traefikRedeployMut.isPending}
+                    onClick={() => traefikRedeployMut.mutate()}
+                    className="btn-secondary inline-flex min-h-10 w-full items-center justify-center gap-1.5 text-xs disabled:pointer-events-none disabled:opacity-40 sm:min-h-0 sm:w-auto"
+                  >
+                    {traefikRedeployMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                    Redeploy Traefik
                   </button>
                   {!row.hasPrivateKey ? (
                     <span className="text-[11px] text-amber-500/85">Save a private key for this host first.</span>

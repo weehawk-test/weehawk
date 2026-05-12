@@ -8,6 +8,7 @@ import {
   scheduleServiceRuntimeRefetchBurst,
 } from "@/lib/invalidate-service-queries";
 import { useAuth } from "@/contexts/auth-context";
+import { randomId } from "@/lib/random-id";
 
 const STORAGE_KEY = "deploy_logs_data";
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -60,7 +61,7 @@ export function useDeploy() {
       /** Live stdout/stderr (same as local `docker` on the API host, or remote SSH). */
       onStreamChunk?: (chunk: string) => void;
     }) => {
-      const id = crypto.randomUUID();
+      const id = randomId();
       const startedAt = new Date().toISOString();
 
       try {

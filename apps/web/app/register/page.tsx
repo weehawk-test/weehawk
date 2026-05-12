@@ -14,10 +14,13 @@ import { PasswordInput } from "@/components/inputs/password-input";
 import { normalizeApiBase } from "@/lib/api";
 
 export default function RegisterPage() {
-  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+  const envInstanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE || "cloud")
     .trim()
     .toLowerCase();
-  const isSelfHosted = instanceMode === "self-hosted";
+  const [resolvedMode, setResolvedMode] = useState<"cloud" | "self-hosted">(
+    envInstanceMode === "self-hosted" ? "self-hosted" : "cloud",
+  );
+  const isSelfHosted = resolvedMode === "self-hosted";
   const router = useRouter();
   const { accessToken, isReady, setSession } = useAuth();
   const { toast } = useToast();
@@ -37,23 +40,21 @@ export default function RegisterPage() {
   }, [isReady, accessToken, router]);
 
   useEffect(() => {
-    if (!isSelfHosted) {
-      setCheckingStatus(false);
-      return;
-    }
     let active = true;
     (async () => {
       try {
         const status = await getAuthStatusApi();
-        if (
-          active &&
-          status.instanceMode === "self-hosted" &&
-          status.userConfigured
-        ) {
-          router.replace(
-            `/login?error=${encodeURIComponent("Registration is closed for this instance.")}`,
-          );
-          return;
+        if (!active) return;
+        if (status.instanceMode === "self-hosted") {
+          setResolvedMode("self-hosted");
+          if (status.userConfigured) {
+            router.replace(
+              `/login?error=${encodeURIComponent("Registration is closed for this instance.")}`,
+            );
+            return;
+          }
+        } else {
+          setResolvedMode("cloud");
         }
       } catch {
         // Keep register available if status probe fails unexpectedly.
@@ -64,7 +65,7 @@ export default function RegisterPage() {
     return () => {
       active = false;
     };
-  }, [isSelfHosted, router]);
+  }, [router]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

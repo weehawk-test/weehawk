@@ -16,6 +16,7 @@ import { RemoteServersService } from './remote-servers.service';
 import {
   buildDockerPurgeScript,
   buildNixpacksOnlyInstallScript,
+  buildTraefikRedeployScript,
   buildWeehawkProvisionScript,
 } from './remote-server-provision.script';
 import { TraefikService } from '../traefik/traefik.service';
@@ -114,6 +115,7 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
     );
 
     let acmeEmail = '';
+    let platformDomain = '';
     if (serverId) {
       const server = await this.remoteServersService.findByPublicIdOrNumericId(
         serverId,
@@ -121,12 +123,21 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
       );
       if (server) {
         acmeEmail = (server.acmeEmail ?? '').trim();
+        try {
+          const dj = server.domainsJson ? JSON.parse(server.domainsJson) : null;
+          if (dj && typeof dj === 'object' && typeof dj.primaryDomain === 'string') {
+            platformDomain = dj.primaryDomain.trim();
+          }
+        } catch { /* ignore */ }
       }
     }
+    const traefikSettings =
+      await this.traefikService.getSettingsForOrganization(ctx.internalId);
     if (!acmeEmail) {
-      const traefikSettings =
-        await this.traefikService.getSettingsForOrganization(ctx.internalId);
       acmeEmail = traefikSettings.acmeEmail;
+    }
+    if (!platformDomain) {
+      platformDomain = (traefikSettings.platformDomain ?? '').trim();
     }
 
     return {
@@ -135,6 +146,7 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
         isProvisionJobPreview: role === 'deploy',
         webhookAgent: { mode: 'none' },
         acmeEmail,
+        platformDomain,
       }),
     };
   }
@@ -147,6 +159,55 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
   /** Bash run for `nixpacks_install` jobs — UI preview. */
   getNixpacksOnlyInstallScriptPreview(): { script: string } {
     return { script: buildNixpacksOnlyInstallScript() };
+  }
+
+  /** Bash for `traefik_redeploy` jobs — rewrites config + stack deploy (no Docker/Swarm). */
+  async getTraefikRedeployScriptPreview(
+    userId: number,
+    organizationPublicId: string,
+    serverId?: string,
+  ): Promise<{ script: string }> {
+    const orgPub = organizationPublicId?.trim();
+    if (!orgPub) {
+      throw new BadRequestException('organizationPublicId is required');
+    }
+    const ctx = await this.organizationsService.requireMemberContext(
+      orgPub,
+      userId,
+      {
+        requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+      },
+    );
+
+    let acmeEmail = '';
+    let platformDomain = '';
+    if (serverId) {
+      const server = await this.remoteServersService.findByPublicIdOrNumericId(
+        serverId,
+        userId,
+      );
+      if (server) {
+        acmeEmail = (server.acmeEmail ?? '').trim();
+        try {
+          const dj = server.domainsJson ? JSON.parse(server.domainsJson) : null;
+          if (dj && typeof dj === 'object' && typeof dj.primaryDomain === 'string') {
+            platformDomain = dj.primaryDomain.trim();
+          }
+        } catch { /* ignore */ }
+      }
+    }
+    const traefikSettings =
+      await this.traefikService.getSettingsForOrganization(ctx.internalId);
+    if (!acmeEmail) {
+      acmeEmail = traefikSettings.acmeEmail;
+    }
+    if (!platformDomain) {
+      platformDomain = (traefikSettings.platformDomain ?? '').trim();
+    }
+
+    return {
+      script: buildTraefikRedeployScript({ acmeEmail, platformDomain }),
+    };
   }
 
   async enqueueProvision(
@@ -279,6 +340,50 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
     return { jobId: saved.id };
   }
 
+  async enqueueTraefikRedeploy(
+    remoteServerId: number,
+    userId: number,
+  ): Promise<{ jobId: string }> {
+    const rs =
+      await this.remoteServersService.assertRemoteServerProvisionEnqueueAllowed(
+        remoteServerId,
+        userId,
+      );
+    if (rs.serverRole === 'build') {
+      throw new BadRequestException(
+        'Traefik redeploy is only available for deploy servers.',
+      );
+    }
+    const row = this.jobRepo.create({
+      remoteServerId,
+      organizationId: rs.organizationId,
+      userId,
+      status: 'pending',
+      log: '',
+      jobKind: 'traefik_redeploy',
+    });
+    const saved = await this.jobRepo.save(row);
+    if (rs.organizationId != null) {
+      void this.organizationsService
+        .appendOrganizationAuditEvent(
+          rs.organizationId,
+          userId,
+          'security.remote_server.provision_enqueued',
+          {
+            metadata: {
+              endpoint: `POST /api/remote-servers/${remoteServerId}/traefik-redeploy`,
+              jobKind: 'traefik_redeploy',
+              jobId: saved.id,
+              remoteServerPublicId: rs.publicId ?? null,
+              remoteServerName: rs.name,
+            },
+          },
+        )
+        .catch(() => undefined);
+    }
+    return { jobId: saved.id };
+  }
+
   async getJob(
     jobId: string,
     userId: number,
@@ -371,6 +476,30 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
         script = buildDockerPurgeScript();
       } else if (kind === 'nixpacks_install') {
         script = buildNixpacksOnlyInstallScript();
+      } else if (kind === 'traefik_redeploy') {
+        const serverAcmeEmail = (ctx.server.acmeEmail ?? '').trim();
+        let acmeEmail = serverAcmeEmail;
+        let platformDomain = '';
+        try {
+          const dj = ctx.server.domainsJson ? JSON.parse(ctx.server.domainsJson) : null;
+          if (dj && typeof dj === 'object' && typeof dj.primaryDomain === 'string') {
+            platformDomain = dj.primaryDomain.trim();
+          }
+        } catch { /* ignore */ }
+        const traefikOrg =
+          await this.traefikService.resolveOrganizationInternalIdForTraefik(
+            ctx.server.organizationId,
+            ownerId,
+          );
+        const traefikSettings =
+          await this.traefikService.getSettingsForOrganization(traefikOrg);
+        if (!acmeEmail) {
+          acmeEmail = traefikSettings.acmeEmail;
+        }
+        if (!platformDomain) {
+          platformDomain = (traefikSettings.platformDomain ?? '').trim();
+        }
+        script = buildTraefikRedeployScript({ acmeEmail, platformDomain });
       } else {
         const webhookAgent =
           ctx.server.serverRole === 'build'
@@ -378,21 +507,32 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
             : await this.remoteServersService.getWebhookAgentProvisionInput();
         const serverAcmeEmail = (ctx.server.acmeEmail ?? '').trim();
         let acmeEmail = serverAcmeEmail;
+        let provisionPlatformDomain = '';
+        try {
+          const dj = ctx.server.domainsJson ? JSON.parse(ctx.server.domainsJson) : null;
+          if (dj && typeof dj === 'object' && typeof dj.primaryDomain === 'string') {
+            provisionPlatformDomain = dj.primaryDomain.trim();
+          }
+        } catch { /* ignore */ }
+        const traefikOrg =
+          await this.traefikService.resolveOrganizationInternalIdForTraefik(
+            ctx.server.organizationId,
+            ownerId,
+          );
+        const traefikSettings =
+          await this.traefikService.getSettingsForOrganization(traefikOrg);
         if (!acmeEmail) {
-          const traefikOrg =
-            await this.traefikService.resolveOrganizationInternalIdForTraefik(
-              ctx.server.organizationId,
-              ownerId,
-            );
-          const traefikSettings =
-            await this.traefikService.getSettingsForOrganization(traefikOrg);
           acmeEmail = traefikSettings.acmeEmail;
+        }
+        if (!provisionPlatformDomain) {
+          provisionPlatformDomain = (traefikSettings.platformDomain ?? '').trim();
         }
         script = buildWeehawkProvisionScript({
           role: ctx.server.serverRole === 'build' ? 'build' : 'deploy',
           webhookAgent,
           isProvisionJobPreview: false,
           acmeEmail,
+          platformDomain: provisionPlatformDomain,
         });
       }
       this.logger.log(
@@ -435,11 +575,11 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
 
   /**
    * Read `job_kind` with QueryBuilder so mapping issues cannot pick the wrong script.
-   * Kinds: `provision`, `docker_purge`, `nixpacks_install`.
+   * Kinds: `provision`, `docker_purge`, `nixpacks_install`, `traefik_redeploy`.
    */
   private async resolveJobKindFromDb(
     jobId: string,
-  ): Promise<'provision' | 'docker_purge' | 'nixpacks_install'> {
+  ): Promise<'provision' | 'docker_purge' | 'nixpacks_install' | 'traefik_redeploy'> {
     const raw = await this.jobRepo
       .createQueryBuilder('j')
       .select('j.job_kind', 'jobKind')
@@ -448,6 +588,7 @@ export class RemoteServerProvisionService implements OnApplicationBootstrap {
     const k = raw?.jobKind?.trim();
     if (k === 'docker_purge') return 'docker_purge';
     if (k === 'nixpacks_install') return 'nixpacks_install';
+    if (k === 'traefik_redeploy') return 'traefik_redeploy';
     return 'provision';
   }
 

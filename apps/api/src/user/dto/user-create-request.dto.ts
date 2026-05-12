@@ -24,7 +24,7 @@ export class UserCreateRequestDto {
   @MaxLength(60)
   lastName!: string;
 
-  @ApiProperty({ example: 'admin@example.com', maxLength: 254 })
+  @ApiProperty({ example: 'you@weehawk.io', maxLength: 254 })
   @IsEmail()
   @MaxLength(254)
   email!: string;

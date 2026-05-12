@@ -14,6 +14,9 @@ function isPublicPassThroughPath(path: string[] | undefined): boolean {
   return (
     p.startsWith("/oauth2/") ||
     p.startsWith("/login/oauth2/") ||
+    p === "/auth/login" ||
+    p === "/auth/register" ||
+    p === "/auth/status" ||
     p === "/auth/confirm-email" ||
     p === "/auth/forgot-password" ||
     p === "/auth/reset-password" ||
@@ -28,12 +31,21 @@ function isAllowedAppRequest(req: Request): boolean {
   const explicitClient = (req.headers.get("x-weehawk-client") ?? "").trim().toLowerCase();
   if (explicitClient === "web-ui") return true;
 
-  // Allow only same-origin browser fetch/XHR calls (application traffic).
-  // Direct URL navigation is `navigate` + `document` and should be denied.
+  // Prefer allowing application fetch/XHR and blocking only direct document navigation.
+  // The API itself still enforces auth/authorization via cookies/JWT.
   const secFetchSite = (req.headers.get("sec-fetch-site") ?? "").trim().toLowerCase();
   const secFetchMode = (req.headers.get("sec-fetch-mode") ?? "").trim().toLowerCase();
   const secFetchDest = (req.headers.get("sec-fetch-dest") ?? "").trim().toLowerCase();
-  return secFetchSite === "same-origin" && secFetchMode !== "navigate" && secFetchDest !== "document";
+  if (secFetchSite === "same-origin" && secFetchMode !== "navigate" && secFetchDest !== "document") {
+    return true;
+  }
+
+  // Fallback for browsers/privacy modes that strip Sec-Fetch-* headers:
+  // deny only obvious page navigation; allow API-style calls.
+  const accept = (req.headers.get("accept") ?? "").toLowerCase();
+  const looksLikeDocumentNavigation =
+    accept.includes("text/html") || secFetchMode === "navigate" || secFetchDest === "document";
+  return !looksLikeDocumentNavigation;
 }
 
 async function proxy(req: Request, ctx: Ctx): Promise<Response> {

@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Minus, Plus, Server } from "lucide-react";
 import {
+  enqueueRemoteTraefikRedeployApi,
   updateRemoteServerApi,
   type RemoteServerRow,
 } from "@/lib/remote-servers-api";
+import { updateTraefikSettings } from "@/lib/traefik-api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -110,7 +112,7 @@ function hostsToStoredJson(hosts: string[], previousRaw: string | null): string 
 }
 
 const isSelfHosted =
-  (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud").trim().toLowerCase() === "self-hosted";
+  (process.env.NEXT_PUBLIC_INSTANCE_MODE || "cloud").trim().toLowerCase() === "self-hosted";
 
 export function ServerDomainsCard({
   server,
@@ -166,15 +168,31 @@ export function ServerDomainsCard({
           }
         } catch { /* ignore */ }
       }
-      const next = { ...base, primaryDomain: primaryDomain.trim() };
-      return updateRemoteServerApi(accessToken, server.publicId?.trim() || String(server.id), {
+      const pd = primaryDomain.trim();
+      const next = { ...base, primaryDomain: pd };
+      const serverId = server.publicId?.trim() || String(server.id);
+      const updated = await updateRemoteServerApi(accessToken, serverId, {
         acmeEmail: acmeEmail.trim(),
         domainsJson: JSON.stringify(next),
       });
+      await updateTraefikSettings(accessToken, {
+        acmeEmail: acmeEmail.trim(),
+        platformDomain: pd,
+      }).catch(() => undefined);
+      if (server.hasPrivateKey && server.serverRole === "deploy") {
+        await enqueueRemoteTraefikRedeployApi(accessToken, serverId).catch(() => undefined);
+      }
+      return updated;
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: remoteServersQueryKey });
-      toast({ title: "Server settings saved" });
+      const hasKey = server.hasPrivateKey && server.serverRole === "deploy";
+      toast({
+        title: "Server settings saved",
+        description: hasKey
+          ? "Traefik redeploy queued — changes will apply shortly."
+          : undefined,
+      });
     },
     onError: (e: Error) =>
       toast({ title: "Save failed", description: e.message, variant: "destructive" }),
@@ -282,7 +300,7 @@ export function ServerDomainsCard({
                 type="email"
                 value={acmeEmail}
                 onChange={(e) => setAcmeEmail(e.target.value)}
-                placeholder="admin@example.com"
+                placeholder="you@weehawk.io"
                 className="h-9 text-sm"
               />
             </div>
@@ -295,7 +313,7 @@ export function ServerDomainsCard({
                 type="text"
                 value={primaryDomain}
                 onChange={(e) => setPrimaryDomain(e.target.value)}
-                placeholder="weehawk.example.com"
+                placeholder="weehawk.io"
                 className="h-9 text-sm"
                 spellCheck={false}
               />

@@ -104,7 +104,7 @@ export class TraefikService {
         dirty = true;
       }
       // Legacy default was a placeholder; treat as unset so Certificate email starts empty.
-      if (row.acmeEmail.trim().toLowerCase() === 'admin@example.com') {
+      if (row.acmeEmail.trim().toLowerCase() === 'you@weehawk.io') {
         row.acmeEmail = '';
         dirty = true;
       }

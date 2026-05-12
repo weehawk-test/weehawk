@@ -203,6 +203,59 @@ export class RemoteServersController {
     );
   }
 
+  @Get('traefik-redeploy-script')
+  @ApiOperation({
+    summary:
+      'Preview the bash that rewrites Traefik config and redeploys the stack (no Docker/Swarm changes)',
+  })
+  @ApiQuery({
+    name: 'organizationPublicId',
+    required: true,
+    description: 'Organization workspace scope.',
+  })
+  @ApiQuery({
+    name: 'serverId',
+    required: false,
+    description:
+      'Remote server publicId or numeric id; uses server-level acmeEmail if set.',
+  })
+  async getTraefikRedeployScript(
+    @Query('organizationPublicId') organizationPublicId: string,
+    @Query('serverId') serverId?: string,
+    @Req() req?: { user?: { userId: number } },
+  ) {
+    const ctx =
+      await this.activeOrganizationService.resolveRequiredMemberContext(
+        this.uid(req),
+        organizationPublicId,
+        {
+          requireWorkspaceArea: ORGANIZATION_WORKSPACE_PERMISSIONS.REMOTE_SERVER,
+        },
+      );
+    return this.remoteServerProvisionService.getTraefikRedeployScriptPreview(
+      this.uid(req),
+      ctx.publicId,
+      serverId?.trim() || undefined,
+    );
+  }
+
+  @Post(':id/traefik-redeploy')
+  @ApiOperation({
+    summary:
+      'Queue Traefik config redeploy over SSH (rewrites traefik.yml + stack deploy). No Docker/Swarm changes. Same worker; poll provision-jobs.',
+  })
+  enqueueTraefikRedeploy(
+    @Param('id') id: string,
+    @Req() req: { user?: { userId: number } },
+  ) {
+    return this.rid(id, req).then((resolvedId) =>
+      this.remoteServerProvisionService.enqueueTraefikRedeploy(
+        resolvedId,
+        this.uid(req),
+      ),
+    );
+  }
+
   @Post('generate-keypair')
   @ApiOperation({
     summary:

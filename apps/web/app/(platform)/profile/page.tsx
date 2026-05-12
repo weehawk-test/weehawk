@@ -84,7 +84,7 @@ export default function ProfilePage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmPhrase, setDeleteConfirmPhrase] = useState("");
   const [deletingAccount, setDeletingAccount] = useState(false);
-  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE || "cloud")
     .trim()
     .toLowerCase();
   const isSelfHosted = instanceMode === "self-hosted";

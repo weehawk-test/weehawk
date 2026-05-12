@@ -160,7 +160,7 @@ export function RemoteServerSettingsClient({
       orgMemberAllowsDomainsAddSites(orgWorkspace.workspacePermissions));
   const showConnectionTests =
     allowOrgTest && (allowOrgTerminal || allowOrgDocker);
-  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE || "cloud")
     .trim()
     .toLowerCase();
   const isSelfHosted = instanceMode === "self-hosted";

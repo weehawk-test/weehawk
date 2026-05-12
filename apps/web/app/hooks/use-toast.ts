@@ -5,6 +5,7 @@
 // OR we can implement a real context-based toast. For a standalone elegant UI, let's build a quick context.
 
 import { useState, useEffect } from "react";
+import { randomId } from "@/lib/random-id";
 
 type ToastProps = {
   title: string;
@@ -19,7 +20,7 @@ let listeners: Function[] = [];
 const notifyListeners = () => listeners.forEach(l => l(toastQueue));
 
 export function toast(props: ToastProps) {
-  const id = crypto.randomUUID();
+  const id = randomId();
   toastQueue = [...toastQueue, { ...props, id }];
   notifyListeners();
 

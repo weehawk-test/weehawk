@@ -336,7 +336,7 @@ export async function fetchProvisionScriptApi(
 
 export type ProvisionJobStatus = "pending" | "running" | "done" | "error";
 
-export type ProvisionJobKind = "provision" | "docker_purge" | "nixpacks_install";
+export type ProvisionJobKind = "provision" | "docker_purge" | "nixpacks_install" | "traefik_redeploy";
 
 export type ProvisionJobRow = {
   id: string;
@@ -403,6 +403,46 @@ export async function enqueueRemoteNixpacksInstallApi(
   return { jobId: j.jobId };
 }
 
+export async function enqueueRemoteTraefikRedeployApi(
+  accessToken: string,
+  serverId: string | number,
+): Promise<{ jobId: string }> {
+  const res = await authFetch(accessToken, `${API_BASE}/api/remote-servers/${serverId}/traefik-redeploy`, {
+    method: "POST",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { jobId?: string };
+  if (typeof j.jobId !== "string") {
+    throw new Error("Invalid traefik-redeploy enqueue response");
+  }
+  return { jobId: j.jobId };
+}
+
+export async function fetchTraefikRedeployScriptApi(
+  accessToken: string,
+  serverId: string | number,
+): Promise<{ script: string }> {
+  const qs = new URLSearchParams();
+  if (serverId) qs.set("serverId", String(serverId));
+  const res = await authFetch(
+    accessToken,
+    `${API_BASE}/api/remote-servers/traefik-redeploy-script?${qs.toString()}`,
+    { method: "GET" },
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
+  }
+  const j = JSON.parse(text) as { script?: string };
+  if (typeof j.script !== "string") {
+    throw new Error("Invalid traefik-redeploy-script response");
+  }
+  return { script: j.script };
+}
+
 export async function fetchProvisionJobApi(
   accessToken: string,
   jobId: string,
@@ -423,7 +463,9 @@ export async function fetchProvisionJobApi(
       ? "docker_purge"
       : rawKind === "nixpacks_install"
         ? "nixpacks_install"
-        : "provision";
+        : rawKind === "traefik_redeploy"
+          ? "traefik_redeploy"
+          : "provision";
   return {
     id: String(j.id ?? jobId),
     remoteServerId: typeof j.remoteServerId === "number" ? j.remoteServerId : Number(j.remoteServerId),

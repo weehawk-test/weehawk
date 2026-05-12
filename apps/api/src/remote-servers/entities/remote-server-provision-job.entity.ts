@@ -36,7 +36,8 @@ export class RemoteServerProvisionJob {
 
   /**
    * `provision` = full install; `docker_purge` = remove Docker;
-   * `nixpacks_install` = install Nixpacks CLI only (host already provisioned).
+   * `nixpacks_install` = install Nixpacks CLI only (host already provisioned);
+   * `traefik_redeploy` = rewrite Traefik config + stack deploy (no Docker/Swarm changes).
    */
   @Column({
     name: 'job_kind',
@@ -44,7 +45,7 @@ export class RemoteServerProvisionJob {
     length: 24,
     default: 'provision',
   })
-  jobKind!: 'provision' | 'docker_purge' | 'nixpacks_install';
+  jobKind!: 'provision' | 'docker_purge' | 'nixpacks_install' | 'traefik_redeploy';
 
   @CreateDateColumn()
   createdAt!: Date;

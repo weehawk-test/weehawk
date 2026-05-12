@@ -83,7 +83,7 @@ export class CreateRemoteServerDto {
     required: false,
     description:
       'Optional JSON string listing domains or metadata for this server (shown on the Domains page for deploy hosts).',
-    example: '["app.example.com","api.example.com"]',
+    example: '["app.weehawk.io","api.weehawk.io"]',
   })
   @IsOptional()
   @IsString()
@@ -93,7 +93,7 @@ export class CreateRemoteServerDto {
   @ApiProperty({
     description:
       "ACME (Let's Encrypt) contact email for this server's certificate resolver.",
-    example: 'admin@example.com',
+    example: 'you@weehawk.io',
   })
   @IsString()
   @IsNotEmpty({ message: 'acmeEmail is required for remote servers' })

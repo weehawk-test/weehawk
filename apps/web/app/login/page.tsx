@@ -21,10 +21,13 @@ function safeInternalNext(raw: string | null | undefined): string | null {
 }
 
 export default function LoginPage() {
-  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE ?? "cloud")
+  const envInstanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE || "cloud")
     .trim()
     .toLowerCase();
-  const isSelfHosted = instanceMode === "self-hosted";
+  const [resolvedMode, setResolvedMode] = useState<"cloud" | "self-hosted">(
+    envInstanceMode === "self-hosted" ? "self-hosted" : "cloud",
+  );
+  const isSelfHosted = resolvedMode === "self-hosted";
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextAfterAuth = useMemo(
@@ -63,16 +66,19 @@ export default function LoginPage() {
   }, [router, toast, nextAfterAuth, searchParams]);
 
   useEffect(() => {
-    if (!isSelfHosted) return;
     let active = true;
     (async () => {
       try {
         const status = await getAuthStatusApi();
-        if (active && status.instanceMode === "self-hosted") {
+        if (!active) return;
+        if (status.instanceMode === "self-hosted") {
+          setResolvedMode("self-hosted");
           setUserConfigured(status.userConfigured);
           if (!status.userConfigured) {
             router.replace("/register");
           }
+        } else {
+          setResolvedMode("cloud");
         }
       } catch {
         // Keep default enabled state if status endpoint is temporarily unavailable.
@@ -81,7 +87,7 @@ export default function LoginPage() {
     return () => {
       active = false;
     };
-  }, [isSelfHosted, router]);
+  }, [router]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
