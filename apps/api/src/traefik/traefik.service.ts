@@ -254,8 +254,29 @@ export class TraefikService {
     const port = WEEHAWK_PLATFORM_UI_HOST_PORT;
     return `# Place this file in: ${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}/weehawk-platform.yml
 # Weehawk UI listens on the Traefik host at port ${port} (e.g. next start -p ${port}).
+# /api/ws/*   -> API (stripPrefix /api -> /ws/* on :8080)
+# /api/*      -> Web (Next.js proxy attaches X-Weehawk-Api-Key + same-origin cookies)
+# Host(...)   -> Web UI
 http:
   routers:
+    weehawk-api-ws:
+      rule: "Host(\`${host}\`) && PathPrefix(\`/api/ws\`)"
+      entryPoints:
+        - ${ep}
+      service: weehawk-api
+      middlewares:
+        - weehawk-api-strip
+      tls:
+        certResolver: ${cr}
+      priority: 500
+    weehawk-api:
+      rule: "Host(\`${host}\`) && PathPrefix(\`/api\`)"
+      entryPoints:
+        - ${ep}
+      service: weehawk-ui
+      tls:
+        certResolver: ${cr}
+      priority: 400
     weehawk-ui:
       rule: "Host(\`${host}\`)"
       entryPoints:
@@ -263,11 +284,21 @@ http:
       service: weehawk-ui
       tls:
         certResolver: ${cr}
+      priority: 100
+  middlewares:
+    weehawk-api-strip:
+      stripPrefix:
+        prefixes:
+          - "/api"
   services:
     weehawk-ui:
       loadBalancer:
         servers:
           - url: "http://host.docker.internal:${port}"
+    weehawk-api:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:8080"
 `;
   }
 
