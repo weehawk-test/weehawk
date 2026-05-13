@@ -1,8 +1,10 @@
-<div align="center">
+<div align="center" style="margin-bottom: 2rem;">
   <a href="https://weehawk.io/">
-    <img src="https://weehawk.io/og-image.png" alt="Weehawk — weehawk.io" width="720" />
+    <img src="https://weehawk.io/og-image.png" alt="Weehawk — weehawk.io" width="840" style="border-radius: 16px; max-width: 100%; height: auto;" />
   </a>
 </div>
+
+<br />
 
 Weehawk is an open-source platform to deploy apps and databases on your own infrastructure with ease, while allowing you to effortlessly create webhooks and cron jobs linked to any script or command.
 

@@ -56,7 +56,6 @@ export class CreateServiceDto {
     example: 'version: "3.8"\nservices:\n  web:\n    image: nginx',
   })
   @IsString()
-  @IsNotEmpty()
   dockerConfig!: string;
 
   @ApiProperty({ example: 'PORT=3000\nNODE_ENV=production', required: false })

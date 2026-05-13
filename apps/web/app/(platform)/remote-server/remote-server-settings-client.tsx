@@ -733,6 +733,16 @@ export function RemoteServerSettingsClient({
     editingId != null ? (list.data ?? []).find((r) => r.id === editingId) ?? null : null;
   const editingBootstrapHost =
     editingRow != null && isSelfHostedBootstrapRemoteServer(editingRow);
+  const listedRemoteServers = list.data ?? [];
+  const visibleRemoteServers =
+    isSelfHosted && listedRemoteServers.length > 1
+      ? [...listedRemoteServers].sort((a, b) => {
+          const aBootstrap = isSelfHostedBootstrapRemoteServer(a);
+          const bBootstrap = isSelfHostedBootstrapRemoteServer(b);
+          if (aBootstrap === bBootstrap) return 0;
+          return aBootstrap ? -1 : 1;
+        })
+      : listedRemoteServers;
 
   return (
     <div className="w-full space-y-6 pb-[max(1rem,env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-0">
@@ -783,7 +793,7 @@ export function RemoteServerSettingsClient({
         </div>
 
         <div className="space-y-2">
-          {(list.data ?? []).length === 0 ? (
+          {visibleRemoteServers.length === 0 ? (
             <p className="text-sm text-muted-foreground px-3 py-8 text-center border border-dashed border-border rounded-xl sm:px-4">
               No remote servers yet.{" "}
               {inOrgRemoteServerPage && !allowOrgAdd ? (
@@ -799,7 +809,7 @@ export function RemoteServerSettingsClient({
             </p>
           ) : null}
 
-          {(list.data ?? []).map((row) => {
+          {visibleRemoteServers.map((row) => {
             const isBootstrapHost = isSelfHostedBootstrapRemoteServer(row);
             return (
               <div

@@ -24,10 +24,23 @@ export default async function PlatformLayout({
   const h = await headers();
   const pathname = h.get(PATHNAME_HEADER) ?? "";
   if (isPlatformPathExemptFromOrgWorkspaceShell(pathname)) {
+    /**
+     * Exempt routes (e.g. `/docker-manager/...`, `/profile`) render the personal Sidebar,
+     * not the OrganizationSidebar. Resolve the active org SSR-side so the workspace switcher
+     * shows the correct organization name on first paint (no client fetch flicker).
+     */
+    const exemptOrgId = await getServerActiveOrganizationPublicId().catch(() => null);
+    const exemptOrg = exemptOrgId
+      ? await fetchOrganizationSSR(exemptOrgId).catch(() => null)
+      : null;
+    const initialActiveOrg = exemptOrg
+      ? { publicId: exemptOrg.publicId, name: exemptOrg.name }
+      : null;
     return (
       <AppLayout
         initialSidebarCollapsed={initialSidebarCollapsed}
         initialMobileNavOpen={initialMobileNavOpen}
+        initialActiveOrg={initialActiveOrg}
       >
         {children}
       </AppLayout>
@@ -47,6 +60,7 @@ export default async function PlatformLayout({
     <AppLayout
       initialSidebarCollapsed={initialSidebarCollapsed}
       initialMobileNavOpen={initialMobileNavOpen}
+      initialActiveOrg={{ publicId: org.publicId, name: org.name }}
     >
       <OrgWorkspaceShell org={org}>{children}</OrgWorkspaceShell>
     </AppLayout>

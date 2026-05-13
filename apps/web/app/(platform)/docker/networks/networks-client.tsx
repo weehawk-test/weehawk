@@ -168,7 +168,7 @@ export function DockerNetworksClient({ consoleTarget, urlPage, urlQ }: Props) {
         <div>
           <h1 className="text-3xl font-bold">Docker Networks</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            <span className="font-mono text-xs">docker network ls</span> via the API (server-paged). Use Refresh to update.
+            <span className="font-mono text-xs">docker network ls.</span> Use Refresh to update.
           </p>
         </div>
         <div className="flex items-center gap-2">

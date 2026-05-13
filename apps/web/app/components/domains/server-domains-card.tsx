@@ -8,6 +8,7 @@ import {
   updateRemoteServerApi,
   type RemoteServerRow,
 } from "@/lib/remote-servers-api";
+import { isSelfHostedBootstrapRemoteServer } from "@/lib/loopback-ssh-host";
 import { updateTraefikSettings } from "@/lib/traefik-api";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -288,7 +289,7 @@ export function ServerDomainsCard({
           </div>
         </div>
 
-        {isSelfHosted && orgName === "Root Org" && (
+        {isSelfHosted && orgName === "Root Org" && isSelfHostedBootstrapRemoteServer(server) && (
           <div className="space-y-4">
             <p className="text-xs font-medium text-foreground/80 tracking-wide uppercase">Server settings</p>
 

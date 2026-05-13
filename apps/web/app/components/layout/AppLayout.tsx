@@ -16,13 +16,23 @@ import {
 } from "@/lib/organizations-api";
 import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
 
+export type InitialActiveOrg = { publicId: string; name: string };
+
 interface AppLayoutProps {
   children: ReactNode;
   initialSidebarCollapsed?: boolean;
   initialMobileNavOpen?: boolean;
+  /** Server-resolved active org for SSR-correct sidebar label (avoids client fetch flicker). */
+  initialActiveOrg?: InitialActiveOrg | null;
 }
 
-function PlatformShell({ children }: { children: ReactNode }) {
+function PlatformShell({
+  children,
+  initialActiveOrg,
+}: {
+  children: ReactNode;
+  initialActiveOrg?: InitialActiveOrg | null;
+}) {
   const { isMobileNav, mobileNavOpen, closeMobileNav, openMobileNav } = useSidebarLayout();
   const pathname = usePathname();
   const mainScrollRef = useRef<HTMLElement>(null);
@@ -87,7 +97,7 @@ function PlatformShell({ children }: { children: ReactNode }) {
           onClick={closeMobileNav}
         />
       ) : null}
-      {!orgWorkspace ? <Sidebar /> : null}
+      {!orgWorkspace ? <Sidebar initialActiveOrg={initialActiveOrg ?? null} /> : null}
       <main
         ref={mainScrollRef}
         className={cn(
@@ -181,6 +191,7 @@ export function AppLayout({
   children,
   initialSidebarCollapsed = false,
   initialMobileNavOpen = false,
+  initialActiveOrg = null,
 }: AppLayoutProps) {
   const { isReady, allowed } = useRequireAuth();
   const router = useRouter();
@@ -208,7 +219,7 @@ export function AppLayout({
         <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-primary/[0.06] dark:bg-white/[0.04] rounded-full blur-[120px] pointer-events-none" />
         <div className="fixed bottom-[-20%] right-[-10%] w-[40%] h-[40%] bg-primary/[0.04] dark:bg-white/[0.03] rounded-full blur-[100px] pointer-events-none" />
 
-        <PlatformShell>{children}</PlatformShell>
+        <PlatformShell initialActiveOrg={initialActiveOrg}>{children}</PlatformShell>
       </div>
     </SidebarLayoutProvider>
   );

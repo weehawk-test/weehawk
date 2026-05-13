@@ -10,7 +10,11 @@ import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NavRow } from "./sidebar-nav-row";
 import { buildMainNavSections, buildDockerNavItems } from "./main-nav-sections";
-import { fetchOrganizations, ORGANIZATIONS_LIST_CHANGED_EVENT } from "@/lib/organizations-api";
+import {
+  fetchOrganizations,
+  getActiveOrganizationPublicId,
+  ORGANIZATIONS_LIST_CHANGED_EVENT,
+} from "@/lib/organizations-api";
 import type { OrganizationPublic } from "@/lib/organizations-types";
 import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
 import { firstOrgManagementPathSegment } from "@/lib/org-workspace-permissions";
@@ -26,7 +30,13 @@ import {
 import { ProfileThemeMenuItems } from "./profile-theme-menu-items";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 
-export function Sidebar() {
+type SidebarInitialActiveOrg = { publicId: string; name: string };
+
+export function Sidebar({
+  initialActiveOrg = null,
+}: {
+  initialActiveOrg?: SidebarInitialActiveOrg | null;
+} = {}) {
   const { collapsed, toggle, isMobileNav, mobileNavOpen, closeMobileNav } = useSidebarLayout();
   /** Icon-only rail on desktop when collapsed; on phone the drawer is always full labels. */
   const railMode = collapsed && !isMobileNav;
@@ -50,24 +60,49 @@ export function Sidebar() {
 
   const mainNavSections = useMemo(() => buildMainNavSections(), []);
   const [myOrganizations, setMyOrganizations] = useState<OrganizationPublic[]>([]);
+  const [activeOrgPublicId, setActiveOrgPublicId] = useState<string>(
+    initialActiveOrg?.publicId ?? "",
+  );
+  const [activeOrgNameFallback, setActiveOrgNameFallback] = useState<string>(
+    initialActiveOrg?.name ?? "",
+  );
 
   useEffect(() => {
     if (!user?.userId) {
-      queueMicrotask(() => setMyOrganizations([]));
+      queueMicrotask(() => {
+        setMyOrganizations([]);
+        setActiveOrgPublicId("");
+        setActiveOrgNameFallback("");
+      });
       return;
     }
     let cancelled = false;
-    const load = () => {
-      void fetchOrganizations()
-        .then((list) => {
-          if (!cancelled) setMyOrganizations(list);
-        })
-        .catch(() => {
-          if (!cancelled) setMyOrganizations([]);
-        });
+    const load = async () => {
+      try {
+        const [list, activeId] = await Promise.all([
+          fetchOrganizations(),
+          getActiveOrganizationPublicId().catch(() => null),
+        ]);
+        if (cancelled) return;
+        setMyOrganizations(list);
+        const nextId = (activeId ?? "").trim();
+        setActiveOrgPublicId(nextId);
+        if (nextId) {
+          const match = list.find((o) => o.publicId === nextId);
+          if (match) setActiveOrgNameFallback(match.name);
+        } else {
+          setActiveOrgNameFallback("");
+        }
+      } catch {
+        if (!cancelled) {
+          setMyOrganizations([]);
+        }
+      }
     };
-    load();
-    const onListChanged = () => load();
+    void load();
+    const onListChanged = () => {
+      void load();
+    };
     window.addEventListener(ORGANIZATIONS_LIST_CHANGED_EVENT, onListChanged);
     return () => {
       cancelled = true;
@@ -78,6 +113,23 @@ export function Sidebar() {
   useEffect(() => {
     closeMobileNav();
   }, [location, closeMobileNav]);
+
+  const activeOrgForSwitcher = useMemo<{
+    publicId: string;
+    name: string;
+  } | null>(() => {
+    const id = activeOrgPublicId.trim();
+    if (!id) return null;
+    const match = myOrganizations.find((o) => o.publicId === id);
+    if (match) {
+      return { publicId: match.publicId, name: match.name };
+    }
+    const fallbackName = activeOrgNameFallback.trim();
+    if (fallbackName) {
+      return { publicId: id, name: fallbackName };
+    }
+    return null;
+  }, [activeOrgPublicId, activeOrgNameFallback, myOrganizations]);
 
   const consoleMatch = /^\/docker-manager\/([^/]+)/.exec(location);
   const consoleNavBase =
@@ -165,7 +217,12 @@ export function Sidebar() {
                 priority
               />
             </Link>
-            <WorkspaceSwitcher className="min-w-0 flex-1" onNavigate={closeMobileNav} />
+            <WorkspaceSwitcher
+              className="min-w-0 flex-1"
+              currentLabel={activeOrgForSwitcher?.name ?? ""}
+              activeOrgPublicId={activeOrgForSwitcher?.publicId ?? null}
+              onNavigate={closeMobileNav}
+            />
             <div className="flex shrink-0 items-center gap-0.5">
               {isMobileNav ? (
                 <button
