@@ -1,4 +1,8 @@
-
+<div align="center">
+  <a href="https://weehawk.io/">
+    <img src="https://weehawk.io/og-image.png" alt="Weehawk — weehawk.io" width="720" />
+  </a>
+</div>
 
 Weehawk is an open-source platform to deploy apps and databases on your own infrastructure with ease, while allowing you to effortlessly create webhooks and cron jobs linked to any script or command.
 
@@ -27,4 +31,3 @@ curl -sSL https://weehawk.io/install.sh | bash
 
 ## Contributing and license
 
-This repository is **private** (`private: true` at the repo root). Update this section when you add an official `LICENSE` file.
