@@ -347,7 +347,15 @@ export function WorkspaceSwitcher({
               >
                 <div className={rowLinkClass}>
                   <WorkspaceRowAvatar imageUrl={null} initials={orgInitials} alt={o.name} />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{o.name}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">{o.name}</div>
+                    <div
+                      className="truncate font-mono text-[10px] leading-tight tracking-wide text-muted-foreground"
+                      title={o.publicId}
+                    >
+                      {o.publicId}
+                    </div>
+                  </div>
                   {active ? (
                     <span className="flex shrink-0 items-center gap-1">
                       {o.isOwner ? (
