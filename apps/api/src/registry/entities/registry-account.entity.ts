@@ -10,7 +10,7 @@ import {
 } from 'typeorm';
 import { generatePublicId } from '../../common/public-id';
 
-/** Platform registry login (Dokploy-style: stored encrypted, used for push without relying on host ~/.docker only). */
+/** Platform registry login (stored encrypted, used for push without relying on host ~/.docker only). */
 @Entity('registry_accounts')
 @Index(['organizationId', 'providerUrl'])
 export class RegistryAccount {

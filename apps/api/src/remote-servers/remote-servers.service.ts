@@ -2858,7 +2858,7 @@ done
   }
 
   /**
-   * Dockerode-over-SSH (ssh2), same approach as Dokploy — avoids spawning `docker` + system `ssh`
+   * Dockerode-over-SSH (ssh2); avoids spawning `docker` + system `ssh`
    * so Windows hosts are not blocked by DOCKER_SSH_OPTS / interactive host-key prompts.
    */
   private createDockerodeForRemote(

@@ -31,5 +31,6 @@ curl -sSL https://weehawk.io/install.sh | bash
 
 ---
 
-## Contributing and license
+## Contributing
 
+We welcome contributions from the community. Check out the [Contributing Guide](CONTRIBUTING.md) for development setup, project structure, and how to submit changes.

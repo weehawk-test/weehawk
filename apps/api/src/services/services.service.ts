@@ -477,7 +477,7 @@ export class ServicesService {
     return m?.[1]?.trim() || null;
   }
 
-  /** Dokploy-style: build tags this ref, push, stack deploy pulls on deploy host (after `docker login` on API host). */
+  /** Build tags this ref, push, stack deploy pulls on deploy host (after `docker login` on API host). */
   private mergeRegistryPushHeader(
     config: string,
     ref: string | null | undefined,

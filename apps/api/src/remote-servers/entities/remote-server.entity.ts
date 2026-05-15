@@ -36,7 +36,7 @@ export class RemoteServer {
   sshUser!: string;
 
   /**
-   * `deploy` = run containers / stack deploy (default). `build` = dedicated image build host (Dokploy-style).
+   * `deploy` = run containers / stack deploy (default). `build` = dedicated image build host.
    */
   @Column({ type: 'varchar', length: 16, default: 'deploy' })
   serverRole!: 'deploy' | 'build';

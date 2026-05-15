@@ -590,7 +590,7 @@ export class RemoteServersController {
   @Post(':id/test')
   @ApiOperation({
     summary:
-      'Test SSH + remote Docker (Dockerode over ssh2, like Dokploy — no local `docker`/`ssh` CLI for this check)',
+      'Test SSH + remote Docker (Dockerode over ssh2 — no local `docker`/`ssh` CLI for this check)',
   })
   test(@Param('id') id: string, @Req() req: { user?: { userId: number } }) {
     return this.rid(id, req).then((resolvedId) =>

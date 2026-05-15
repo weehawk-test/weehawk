@@ -717,7 +717,7 @@ export class RegistryService {
   }
 
   /**
-   * Merge credentials from DB into env via isolated DOCKER_CONFIG (Dokploy-style: no reliance on host ~/.docker only).
+   * Merge credentials from DB into env via isolated DOCKER_CONFIG (no reliance on host ~/.docker only).
    */
   async mergePushEnvForImageRef(
     imageRef: string,

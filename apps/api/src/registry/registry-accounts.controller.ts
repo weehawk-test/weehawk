@@ -46,7 +46,7 @@ export class RegistryAccountsController {
   @Get()
   @ApiOperation({
     summary:
-      'List saved registry credentials for an organization (passwords never returned; Dokploy-style DB storage)',
+      'List saved registry credentials for an organization (passwords never returned; stored in DB)',
   })
   @ApiQuery({
     name: 'organizationPublicId',
