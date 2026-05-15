@@ -1,5 +1,6 @@
 <h1 align="center">Weehawk</h1>
-<hr align="center" width="50%" />
+
+---
 
 <div align="center" style="margin-bottom: 2rem;">
   <a href="https://weehawk.io/">
