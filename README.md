@@ -1,6 +1,9 @@
+<h1 align="center">Weehawk</h1>
+<hr align="center" width="50%" />
+
 <div align="center" style="margin-bottom: 2rem;">
   <a href="https://weehawk.io/">
-    <img src="https://weehawk.io/og-image.png" alt="Weehawk — weehawk.io" width="840" style="border-radius: 16px; max-width: 100%; height: auto;" />
+    <img src="assets/preview.png" alt="Weehawk — weehawk.io" width="840" style="border-radius: 16px; max-width: 100%; height: auto;" />
   </a>
 </div>
 
