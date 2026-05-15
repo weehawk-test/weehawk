@@ -1,7 +1,5 @@
 <h1 align="center">Weehawk</h1>
 
----
-
 <div align="center" style="margin-bottom: 2rem;">
   <a href="https://weehawk.io/">
     <img src="assets/preview.png" alt="Weehawk — weehawk.io" width="840" style="border-radius: 16px; max-width: 100%; height: auto;" />
@@ -21,8 +19,6 @@ Weehawk is an open-source platform to deploy apps and databases on your own infr
 - **Deep Visibility & Control:** Gain full transparency over your environment. Inspect, monitor, and operate containers and Docker images across every connected host—local or remote—directly from your dashboard.
 - **Instant Notifications:** Stay informed with real-time alerts. Get notified about deployment status and infrastructure health via Telegram, Discord, Slack, Email, etc.
 
----
-
 ## Get started
 
 Run Weehawk on **your own** server:
@@ -32,8 +28,6 @@ curl -sSL https://weehawk.io/install.sh | bash
 ```
 
 **Don't want to install it on your server?** **[Try Weehawk Cloud](https://app.weehawk.io)**.
-
----
 
 ## Contributing
 
