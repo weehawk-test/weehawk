@@ -3,7 +3,16 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { PanelLeft, PanelRight, Server, LogOut, UserCog, ChevronDown, X, Settings } from "lucide-react";
+import {
+  PanelLeft,
+  PanelRight,
+  Server,
+  LogOut,
+  UserCog,
+  ChevronDown,
+  X,
+  KeyRound,
+} from "lucide-react";
 import { LayoutGroup } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 import { useSidebarLayout } from "@/contexts/sidebar-layout-context";
@@ -16,9 +25,7 @@ import {
   ORGANIZATIONS_LIST_CHANGED_EVENT,
 } from "@/lib/organizations-api";
 import type { OrganizationPublic } from "@/lib/organizations-types";
-import { pickDefaultWorkspaceOrganization } from "@/lib/pick-primary-owned-org";
-import { firstOrgManagementPathSegment } from "@/lib/org-workspace-permissions";
-import { isOrgManagementSectionActive, ORGANIZATION_MANAGEMENT_BASE } from "@/lib/org-nav-utils";
+import { isOrgManagementSectionActive, orgPersonalNavIsActive } from "@/lib/org-nav-utils";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import {
@@ -57,6 +64,10 @@ export function Sidebar({
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("") || "WU";
+
+  const instanceMode = (process.env.NEXT_PUBLIC_INSTANCE_MODE || "cloud").trim().toLowerCase();
+  const isSelfHosted = instanceMode === "self-hosted";
+  const showEnterpriseLicenseMenu = user?.role === "ADMIN";
 
   const mainNavSections = useMemo(() => buildMainNavSections(), []);
   const [myOrganizations, setMyOrganizations] = useState<OrganizationPublic[]>([]);
@@ -176,6 +187,11 @@ export function Sidebar({
   const handleEditProfile = () => {
     setProfileMenuOpen(false);
     router.push("/profile");
+  };
+
+  const handleEnterpriseLicense = () => {
+    setProfileMenuOpen(false);
+    router.push("/profile/enterprise-license");
   };
 
   const handleLogout = async () => {
@@ -358,22 +374,15 @@ export function Sidebar({
                   <div className="space-y-px">
                     {section.items.flatMap((item) => {
                       if (item.orgManagementEntry) {
-                        const primary = pickDefaultWorkspaceOrganization(myOrganizations);
-                        if (!primary) return [];
-                        const mgmtSeg = firstOrgManagementPathSegment(
-                          primary.workspacePermissions,
-                          primary.isOwner,
-                        );
-                        const href = `${ORGANIZATION_MANAGEMENT_BASE}/${mgmtSeg}`;
-                        const active = isOrgManagementSectionActive(location, "");
+                        /** Same as OrganizationSidebar: flat org URLs + per-item icon (personal shell). */
                         return [
                           <NavRow
-                            key={`${item.href}-personal-mgmt`}
+                            key={item.href}
                             collapsed={railMode}
-                            href={href}
+                            href={item.href}
                             label={item.label}
-                            active={active}
-                            icon={Settings}
+                            active={orgPersonalNavIsActive(location, "", item.href)}
+                            icon={item.icon}
                             activeLayoutId={activeLayoutId}
                           />,
                         ];
@@ -531,6 +540,12 @@ export function Sidebar({
               <UserCog className="w-4 h-4" />
               Edit profile
             </DropdownMenuItem>
+            {showEnterpriseLicenseMenu ? (
+              <DropdownMenuItem onSelect={handleEnterpriseLicense}>
+                <KeyRound className="w-4 h-4" />
+                Enterprise license
+              </DropdownMenuItem>
+            ) : null}
             <ProfileThemeMenuItems />
             <DropdownMenuItem
               onSelect={() => void handleLogout()}

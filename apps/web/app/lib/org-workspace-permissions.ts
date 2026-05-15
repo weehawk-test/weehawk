@@ -476,12 +476,18 @@ export function orgMemberHasAnyOrgManagementTab(p: OrganizationWorkspacePermissi
 export function firstOrgManagementPathSegment(
   p: OrganizationWorkspacePermissions,
   isOwner: boolean,
+  enterpriseLicensed = true,
 ): string {
   if (isOwner) return "members";
   for (const k of ORG_MANAGEMENT_ADVANCED_PERMISSION_KEYS) {
     if (p[k]) {
       if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_OVERVIEW) return "members";
-      if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG) return "audit";
+      if (
+        k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG &&
+        enterpriseLicensed
+      ) {
+        return "audit";
+      }
       if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_MEMBERS) return "members";
       if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_PERMISSIONS) return "members";
       if (k === ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_SETTINGS) return "members";

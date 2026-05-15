@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { AuditHttpContextInterceptor } from './common/audit-http-context.interceptor';
-import { OrganizationHttpFailureAuditInterceptor } from './organizations/organization-http-failure-audit.interceptor';
+import { AuditHttpContextInterceptor } from './ee/audit/audit-http-context.interceptor';
+import { OrganizationHttpFailureAuditInterceptor } from './ee/audit/organization-http-failure-audit.interceptor';
 import { ServicesModule } from './services/services.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -26,7 +26,7 @@ import { DevThrottlerGuard } from './common/dev-throttler.guard';
 import { existsSync } from 'fs';
 import { DataSource, type DataSourceOptions } from 'typeorm';
 import { runOrgScopeSchemaBackfill } from './database/org-scope-backfill';
-import { migrateOrganizationAuditLogTargetEmailToMetadata } from './database/organization-audit-log-target-email-migration';
+import { migrateOrganizationAuditLogTargetEmailToMetadata } from './ee/audit/organization-audit-log-target-email-migration';
 import { migrateGitIntegrationSettingsToOrganizationScope } from './database/git-integration-org-migration';
 import { migrateRegistryAccountsToOrganizationScope } from './database/registry-account-org-migration';
 import { migrateRegistryAccountPublicIds } from './database/registry-account-public-id-migration';

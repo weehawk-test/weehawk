@@ -1,13 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { OrganizationAuditLogEntry } from "@/lib/organizations-types";
+import type { OrganizationAuditLogEntry } from "@/ee/audit/types";
 import {
   organizationAuditActionLabel,
   organizationAuditEndpoint,
   organizationAuditHttpStatus,
   organizationAuditTargetSummary,
-} from "@/lib/organization-audit-log-labels";
+} from "@/ee/audit/organization-audit-log-labels";
 
 /** Compact defaults; drag handles still expand any column. */
 const DEFAULT_WIDTHS = [118, 128, 148, 198, 56, 124] as const;

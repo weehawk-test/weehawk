@@ -9,8 +9,11 @@ import type {
   OrganizationPublic,
   UpdateOrganizationInput,
 } from "./organizations-types";
-import type { OrgWorkspacePermissionKey } from "./org-workspace-permissions";
 import { parseWorkspacePermissions } from "./org-workspace-permissions";
+import {
+  parseEnterpriseLicensed,
+  parseEnterpriseSalesUrl,
+} from "./weehawk-enterprise";
 
 export type {
   CreateOrganizationInput,
@@ -71,6 +74,8 @@ function mapOrg(raw: unknown): OrganizationPublic {
     createdAt,
     memberCount,
     workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
+    enterpriseLicensed: parseEnterpriseLicensed(row.enterpriseLicensed),
+    enterpriseSalesUrl: parseEnterpriseSalesUrl(row.enterpriseSalesUrl),
   };
 }
 
@@ -129,30 +134,6 @@ function mapMember(raw: unknown): OrganizationMemberPublic {
         ? row.joinedAt.toISOString()
         : String(row.joinedAt ?? new Date().toISOString()),
     workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
-  };
-}
-
-export async function setMemberWorkspacePermissions(
-  activeOrgPublicId: string,
-  email: string,
-  permissions: Partial<Record<OrgWorkspacePermissionKey, boolean>>,
-): Promise<{ message: string }> {
-  const id = activeOrgPublicId.trim();
-  if (!id) throw new Error("Organization id required");
-  const res = await apiFetch(
-    `/api/organizations/${encodeURIComponent(id)}/members/permissions`,
-    {
-      method: "PATCH",
-      body: JSON.stringify({ email: email.trim().toLowerCase(), permissions }),
-    },
-  );
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(nestErrorMessage(text, res.statusText || `HTTP ${res.status}`));
-  }
-  const data = JSON.parse(text) as unknown as { message?: string };
-  return {
-    message: typeof data.message === "string" ? data.message : "Permissions updated.",
   };
 }
 

@@ -1,14 +1,11 @@
 import {
   Body,
   Controller,
-  DefaultValuePipe,
   Delete,
   Get,
-  ParseIntPipe,
   Patch,
   Post,
   Put,
-  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -18,7 +15,6 @@ import {
 import {
   ApiBearerAuth,
   ApiOperation,
-  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { LocalSessionGuard } from '../common/guards/local-session.guard';
@@ -32,7 +28,6 @@ import { OrgMemberContextParam } from './decorators/organization-member-context.
 import { OrganizationInviteService } from './organization-invite.service';
 import { SetOrganizationMemberRoleDto } from './dto/set-organization-member-role.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
-import { SetOrgMemberWorkspacePermissionsDto } from './dto/set-org-member-workspace-permissions.dto';
 import { ActiveOrganizationService } from './active-organization.service';
 import { SetActiveOrganizationDto } from './dto/set-active-organization.dto';
 import { RemoveOrganizationMemberDto } from './dto/remove-organization-member.dto';
@@ -145,30 +140,6 @@ export class OrganizationsController {
     return this.organizationsService.listMembers(ctx);
   }
 
-  @Patch(':publicId/members/permissions')
-  @UseGuards(OrgMembershipGuard)
-  @UsePipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-    }),
-  )
-  @ApiOperation({
-    summary:
-      'Update workspace area permissions for a non-owner member (organization owners only)',
-  })
-  setMemberWorkspacePermissions(
-    @OrgMemberContextParam() ctx: OrganizationMemberContext,
-    @Body() dto: SetOrgMemberWorkspacePermissionsDto,
-  ) {
-    return this.organizationsService.setMemberWorkspacePermissions(
-      ctx,
-      dto.email,
-      dto.permissions,
-    );
-  }
-
   @Delete(':publicId/membership')
   @UseGuards(OrgMembershipGuard)
   @ApiOperation({
@@ -266,26 +237,6 @@ export class OrganizationsController {
   })
   listOrgProjects(@OrgMemberContextParam() ctx: OrganizationMemberContext) {
     return this.organizationsService.listProjectsForOrg(ctx);
-  }
-
-  @Get(':publicId/audit-log')
-  @UseGuards(OrgMembershipGuard)
-  @ApiOperation({
-    summary:
-      'List organization audit log (owners always; otherwise requires Management · Audit log permission)',
-  })
-  @ApiQuery({ name: 'page', required: false, description: '1-based page index (default 1)' })
-  @ApiQuery({
-    name: 'pageSize',
-    required: false,
-    description: 'Rows per page (default 12, max 50)',
-  })
-  listAuditLog(
-    @OrgMemberContextParam() ctx: OrganizationMemberContext,
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('pageSize', new DefaultValuePipe(12), ParseIntPipe) pageSize: number,
-  ) {
-    return this.organizationsService.listAuditLogsForOrg(ctx, { page, pageSize });
   }
 
   @Patch(':publicId')

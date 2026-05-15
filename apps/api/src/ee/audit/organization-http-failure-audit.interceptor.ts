@@ -8,17 +8,17 @@ import {
 import type { Request } from 'express';
 import { Observable, throwError } from 'rxjs';
 import { catchError } from 'rxjs/operators';
-import { OrganizationsService } from './organizations.service';
+import { OrganizationAuditService } from './organization-audit.service';
 
 /**
  * Records organization-scoped HTTP 4xx responses in the org audit log.
- * Successful mutations usually call {@link OrganizationsService.appendOrganizationAuditEvent}
+ * Successful mutations usually call {@link OrganizationAuditService.appendOrganizationAuditEvent}
  * explicitly; failures throw before that runs, so without this interceptor the audit trail
  * would only show successes.
  */
 @Injectable()
 export class OrganizationHttpFailureAuditInterceptor implements NestInterceptor {
-  constructor(private readonly organizationsService: OrganizationsService) {}
+  constructor(private readonly organizationAuditService: OrganizationAuditService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'http') {
@@ -28,7 +28,7 @@ export class OrganizationHttpFailureAuditInterceptor implements NestInterceptor 
     return next.handle().pipe(
       catchError((err: unknown) => {
         if (err instanceof HttpException) {
-          void this.organizationsService
+          void this.organizationAuditService
             .appendOrganizationSecurityFailureAuditIfApplicable(req, err)
             .catch(() => undefined);
         }

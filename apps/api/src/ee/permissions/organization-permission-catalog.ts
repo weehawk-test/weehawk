@@ -3,7 +3,7 @@ import {
   isOrganizationWorkspacePermission,
   ORGANIZATION_WORKSPACE_PERMISSIONS,
   type OrganizationWorkspacePermission,
-} from './organization-workspace-permissions';
+} from '../../organizations/organization-workspace-permissions';
 
 /**
  * Finer-grained flags under a top-level workspace area. Stored in `organization_memberships.permissions`

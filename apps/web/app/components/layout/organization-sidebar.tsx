@@ -12,6 +12,7 @@ import {
   Menu,
   Server,
   UserCog,
+  KeyRound,
 } from "lucide-react";
 import { LayoutGroup } from "framer-motion";
 import type { OrganizationPublic } from "@/lib/organizations-types";
@@ -75,6 +76,8 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
       .map((part) => part[0]?.toUpperCase() ?? "")
       .join("") || "WU";
 
+  const showEnterpriseLicenseMenu = user?.role === "ADMIN";
+
   useEffect(() => {
     onMobileOpenChange(false);
   }, [pathname, onMobileOpenChange]);
@@ -98,6 +101,12 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
     setProfileMenuOpen(false);
     closeMobile();
     router.push("/profile");
+  };
+
+  const handleEnterpriseLicense = () => {
+    setProfileMenuOpen(false);
+    closeMobile();
+    router.push("/profile/enterprise-license");
   };
 
   const handleLogout = async () => {
@@ -461,6 +470,12 @@ export function OrganizationSidebar({ org, mobileOpen, onMobileOpenChange }: Org
                 <UserCog className="h-4 w-4" />
                 Edit profile
               </DropdownMenuItem>
+              {showEnterpriseLicenseMenu ? (
+                <DropdownMenuItem onSelect={handleEnterpriseLicense}>
+                  <KeyRound className="h-4 w-4" />
+                  Enterprise license
+                </DropdownMenuItem>
+              ) : null}
               <ProfileThemeMenuItems />
               <DropdownMenuItem
                 onSelect={() => void handleLogout()}

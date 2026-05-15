@@ -114,7 +114,7 @@ export function buildMainNavSections(): MainNavSection[] {
         },
         {
           href: "/organization/audit",
-          label: "Audit log",
+          label: "Audit logs",
           icon: ClipboardList,
           orgPermission: ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT,
           orgManagementEntry: true,

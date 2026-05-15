@@ -9,6 +9,10 @@ export type OrganizationPublic = {
   memberCount: number;
   /** Effective workspace areas for the signed-in member. */
   workspacePermissions: OrganizationWorkspacePermissions;
+  /** Instance has an enterprise license (audit log + permissions matrix APIs). */
+  enterpriseLicensed: boolean;
+  /** Contact / licensing URL from the API (defaults to weehawk.io). */
+  enterpriseSalesUrl: string;
 };
 
 export type CreateOrganizationInput = {
@@ -42,19 +46,4 @@ export type OrganizationProjectListItem = {
   serviceCount: number;
 };
 
-export type OrganizationAuditLogEntry = {
-  id: number;
-  action: string;
-  createdAt: string;
-  actorUserId: number;
-  actorEmail: string;
-  metadata: Record<string, unknown> | null;
-};
-
-export type OrganizationAuditLogPage = {
-  items: OrganizationAuditLogEntry[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-};
+export type { OrganizationAuditLogEntry, OrganizationAuditLogPage } from "@/ee/audit/types";

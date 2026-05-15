@@ -10,11 +10,10 @@ import type { RegistryAccountRow } from "./registry-api";
 import type { S3ProfilePublic, S3BucketListResponse, S3PrefixSummaryResponse } from "./s3-api";
 import type { RemoteServerRow } from "./remote-servers-api";
 import type { TraefikSettingsPayload } from "./traefik-api";
+import type { InstanceEnterpriseLicenseState } from "./instance-enterprise-license-api";
 import type { PaginatedSecretsResponse } from "./docker-paged-fetch";
 import type { GitSettingsPublic } from "./git-api";
 import type {
-  OrganizationAuditLogEntry,
-  OrganizationAuditLogPage,
   OrganizationMemberPublic,
   OrganizationProjectListItem,
   OrganizationPublic,
@@ -34,6 +33,10 @@ import {
 import { getServerApiBase } from "./server-api";
 import { getServerApiKey } from "./server-api-key";
 import { parseWorkspacePermissions } from "./org-workspace-permissions";
+import {
+  parseEnterpriseLicensed,
+  parseEnterpriseSalesUrl,
+} from "./weehawk-enterprise";
 
 const SERVICE_RUNTIME_SSR_TIMEOUT_MS = 1_200;
 
@@ -365,6 +368,8 @@ export async function fetchOrganizationsListSSR(): Promise<OrganizationPublic[]>
       createdAt,
       memberCount,
       workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
+      enterpriseLicensed: parseEnterpriseLicensed(row.enterpriseLicensed),
+      enterpriseSalesUrl: parseEnterpriseSalesUrl(row.enterpriseSalesUrl),
     };
   });
 }
@@ -411,97 +416,6 @@ export async function fetchOrganizationMembersSSR(
       workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
     };
   });
-}
-
-function parseOrganizationAuditLogEntry(raw: unknown): OrganizationAuditLogEntry | null {
-  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const row = raw as Record<string, unknown>;
-  const created = row.createdAt;
-  let createdAt: string;
-  if (created instanceof Date) createdAt = created.toISOString();
-  else if (typeof created === "string") createdAt = created;
-  else createdAt = new Date().toISOString();
-  const meta = row.metadata;
-  const metadata =
-    meta != null && typeof meta === "object" && !Array.isArray(meta)
-      ? (meta as Record<string, unknown>)
-      : null;
-  return {
-    id: typeof row.id === "number" ? row.id : Number(row.id ?? 0),
-    action: String(row.action ?? ""),
-    createdAt,
-    actorUserId: typeof row.actorUserId === "number" ? row.actorUserId : Number(row.actorUserId ?? 0),
-    actorEmail: String(row.actorEmail ?? ""),
-    metadata,
-  };
-}
-
-function emptyAuditLogPage(pageSize: number): OrganizationAuditLogPage {
-  return { items: [], total: 0, page: 1, pageSize, totalPages: 0 };
-}
-
-/** Server-only: organization audit log (requires Management · Audit log or owner). */
-export async function fetchOrganizationAuditLogSSR(
-  activeOrgPublicId: string,
-  opts?: { page?: number; pageSize?: number },
-): Promise<OrganizationAuditLogPage> {
-  const pageSize = opts?.pageSize ?? 12;
-  const page = opts?.page ?? 1;
-  const id = activeOrgPublicId.trim();
-  if (!id) return emptyAuditLogPage(pageSize);
-
-  const qs = new URLSearchParams();
-  qs.set("page", String(page));
-  qs.set("pageSize", String(pageSize));
-  const res = await fetch(
-    `${apiBase()}/api/organizations/${encodeURIComponent(id)}/audit-log?${qs.toString()}`,
-    {
-      headers: await cookieHeaders(),
-      cache: "no-store",
-    },
-  );
-  if (!res.ok) return emptyAuditLogPage(pageSize);
-
-  const data = (await res.json()) as unknown;
-  if (data != null && typeof data === "object" && !Array.isArray(data)) {
-    const obj = data as Record<string, unknown>;
-    const itemsRaw = obj.items;
-    const items: OrganizationAuditLogEntry[] = [];
-    if (Array.isArray(itemsRaw)) {
-      for (const raw of itemsRaw) {
-        const e = parseOrganizationAuditLogEntry(raw);
-        if (e) items.push(e);
-      }
-    }
-    const total = typeof obj.total === "number" ? obj.total : Number(obj.total ?? 0);
-    const p = typeof obj.page === "number" ? obj.page : Number(obj.page ?? 1);
-    const ps = typeof obj.pageSize === "number" ? obj.pageSize : Number(obj.pageSize ?? pageSize);
-    const tp = typeof obj.totalPages === "number" ? obj.totalPages : Number(obj.totalPages ?? 0);
-    return {
-      items,
-      total: Number.isFinite(total) ? total : 0,
-      page: Number.isFinite(p) && p >= 1 ? p : 1,
-      pageSize: Number.isFinite(ps) && ps >= 1 ? ps : pageSize,
-      totalPages: Number.isFinite(tp) ? Math.max(0, tp) : 0,
-    };
-  }
-
-  if (Array.isArray(data)) {
-    const items: OrganizationAuditLogEntry[] = [];
-    for (const raw of data) {
-      const e = parseOrganizationAuditLogEntry(raw);
-      if (e) items.push(e);
-    }
-    return {
-      items,
-      total: items.length,
-      page: 1,
-      pageSize: items.length || pageSize,
-      totalPages: items.length > 0 ? 1 : 0,
-    };
-  }
-
-  return emptyAuditLogPage(pageSize);
 }
 
 export async function fetchOrganizationProjectsSSR(
@@ -562,6 +476,8 @@ export async function fetchOrganizationSSR(
     createdAt,
     memberCount,
     workspacePermissions: parseWorkspacePermissions(row.workspacePermissions),
+    enterpriseLicensed: parseEnterpriseLicensed(row.enterpriseLicensed),
+    enterpriseSalesUrl: parseEnterpriseSalesUrl(row.enterpriseSalesUrl),
   };
 }
 
@@ -593,5 +509,15 @@ export async function fetchS3PrefixSummarySSR(
   );
   if (!res.ok) return null;
   return (await res.json()) as S3PrefixSummaryResponse;
+}
+
+/** Server-only: instance enterprise license status (forwards cookies; no client Network tab on first paint). */
+export async function fetchInstanceEnterpriseLicenseSSR(): Promise<InstanceEnterpriseLicenseState | null> {
+  const res = await fetch(`${apiBase()}/api/enterprise/instance-license`, {
+    headers: await cookieHeaders(),
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as InstanceEnterpriseLicenseState;
 }
 

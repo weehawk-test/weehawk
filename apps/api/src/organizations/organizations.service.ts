@@ -11,7 +11,6 @@ import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
-import { OrganizationAuditLog } from './entities/organization-audit-log.entity';
 import { Organization } from './entities/organization.entity';
 import { OrganizationMembership } from './entities/organization-membership.entity';
 import { OrganizationsRepository } from './organizations.repository';
@@ -32,18 +31,18 @@ import { RemoteServerProvisionJob } from '../remote-servers/entities/remote-serv
 import { GitIntegrationSettings } from '../git/entities/git-integration.entity';
 import { RegistryAccount } from '../registry/entities/registry-account.entity';
 import { generatePublicId } from '../common/public-id';
-import { auditHttpContextStorage } from '../common/audit-http-context.storage';
 import type { ResolveOrganizationWorkspaceOptions } from '../common/organization-workspace-scope';
 import {
   allWorkspacePermissionsAllowed,
   effectiveWorkspacePermissions,
-  isOrganizationWorkspacePermission,
   membershipAllowsWorkspaceArea,
   membershipHasOrgServerAccess,
-  mergeWorkspacePermissionPatch,
   ORGANIZATION_WORKSPACE_PERMISSIONS,
   type OrganizationWorkspacePermission,
 } from './organization-workspace-permissions';
+import { OrganizationAuditService } from '../ee/audit/organization-audit.service';
+import type { OrganizationMemberContext } from './organization-member-context';
+import { EnterpriseLicenseService } from '../ee/license-token';
 
 export type OrganizationPublicDto = {
   publicId: string;
@@ -54,21 +53,13 @@ export type OrganizationPublicDto = {
   memberCount: number;
   /** Effective workspace area access for the current user. */
   workspacePermissions: Record<OrganizationWorkspacePermission, boolean>;
+  /** Instance has a valid enterprise license (audit log + permissions matrix). */
+  enterpriseLicensed: boolean;
+  /** Marketing / contact URL when enterprise features are locked (default weehawk.io). */
+  enterpriseSalesUrl: string;
 };
 
-export type OrganizationMemberContext = {
-  internalId: number;
-  publicId: string;
-  name: string;
-  /** Legacy column; kept in sync with membership roles for older code paths. */
-  ownerId: number;
-  createdAt: Date;
-  /** Session user whose membership was resolved for this request. */
-  actingUserId: number;
-  /** True when the acting user’s membership role is owner. */
-  actingIsOwner: boolean;
-  workspacePermissions: Record<OrganizationWorkspacePermission, boolean>;
-};
+export type { OrganizationMemberContext } from './organization-member-context';
 
 export type OrganizationMemberPublicDto = {
   email: string;
@@ -87,23 +78,6 @@ export type OrganizationProjectPublicDto = {
   serviceCount: number;
 };
 
-export type OrganizationAuditLogPublicDto = {
-  id: number;
-  action: string;
-  createdAt: string;
-  actorUserId: number;
-  actorEmail: string;
-  metadata: Record<string, unknown> | null;
-};
-
-export type OrganizationAuditLogPageDto = {
-  items: OrganizationAuditLogPublicDto[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-};
-
 @Injectable()
 export class OrganizationsService implements OnModuleInit {
   constructor(
@@ -114,9 +88,9 @@ export class OrganizationsService implements OnModuleInit {
     private readonly users: Repository<User>,
     @InjectRepository(Project)
     private readonly projects: Repository<Project>,
-    @InjectRepository(OrganizationAuditLog)
-    private readonly auditLogs: Repository<OrganizationAuditLog>,
     private readonly config: ConfigService,
+    private readonly organizationAudit: OrganizationAuditService,
+    private readonly enterpriseLicense: EnterpriseLicenseService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -193,6 +167,8 @@ export class OrganizationsService implements OnModuleInit {
       workspacePermissions: membership
         ? effectiveWorkspacePermissions(membership)
         : allWorkspacePermissionsAllowed(),
+      enterpriseLicensed: this.enterpriseLicense.isLicensed(),
+      enterpriseSalesUrl: this.enterpriseLicense.getSalesUrl(),
     };
   }
 
@@ -207,38 +183,12 @@ export class OrganizationsService implements OnModuleInit {
       createdAt: ctx.createdAt,
       memberCount,
       workspacePermissions: ctx.workspacePermissions,
+      enterpriseLicensed: this.enterpriseLicense.isLicensed(),
+      enterpriseSalesUrl: this.enterpriseLicense.getSalesUrl(),
     };
   }
 
-  /** Merge `httpStatus` from the current HTTP response when missing from metadata. */
-  private mergeAuditMetadataWithHttpStatus(
-    metadata: Record<string, unknown> | null | undefined,
-  ): Record<string, unknown> | null {
-    const base: Record<string, unknown> =
-      metadata != null && typeof metadata === 'object' && !Array.isArray(metadata)
-        ? { ...metadata }
-        : {};
-    const explicit = base.httpStatus;
-    const hasExplicit =
-      explicit !== undefined &&
-      explicit !== null &&
-      !(typeof explicit === 'string' && explicit.trim() === '');
-    if (!hasExplicit) {
-      const res = auditHttpContextStorage.getStore()?.res;
-      const code = res?.statusCode;
-      if (
-        typeof code === 'number' &&
-        Number.isFinite(code) &&
-        code >= 100 &&
-        code <= 599
-      ) {
-        base.httpStatus = code;
-      }
-    }
-    return Object.keys(base).length > 0 ? base : null;
-  }
-
-  /** Append a row to the organization audit log (best-effort callers await). */
+  /** Delegates to enterprise audit service (same public API for feature modules). */
   async appendOrganizationAuditEvent(
     organizationInternalId: number,
     actorUserId: number,
@@ -247,196 +197,22 @@ export class OrganizationsService implements OnModuleInit {
       metadata?: Record<string, unknown> | null;
     },
   ): Promise<void> {
-    const row = this.auditLogs.create({
-      organizationId: organizationInternalId,
+    return this.organizationAudit.appendOrganizationAuditEvent(
+      organizationInternalId,
       actorUserId,
-      action: action.trim().slice(0, 64),
-      metadata: this.mergeAuditMetadataWithHttpStatus(options?.metadata),
-    });
-    await this.auditLogs.save(row);
+      action,
+      options,
+    );
   }
 
-  private static tryParseOrganizationPublicIdForAudit(
-    raw: unknown,
-  ): string | null {
-    try {
-      return parseOrganizationPublicIdParam(raw);
-    } catch {
-      return null;
-    }
-  }
-
-  private static shouldSkipHttpFailureAuditPath(urlPath: string): boolean {
-    if (!urlPath.startsWith('/api/')) {
-      return true;
-    }
-    if (
-      urlPath.startsWith('/api/webhooks') ||
-      urlPath.startsWith('/api/cron-jobs')
-    ) {
-      return true;
-    }
-    return false;
-  }
-
-  private static summarizeHttpException(exception: HttpException): string {
-    const r = exception.getResponse();
-    if (typeof r === 'string') {
-      return r.trim().slice(0, 400);
-    }
-    if (r && typeof r === 'object' && 'message' in r) {
-      const m = (r as { message: unknown }).message;
-      if (typeof m === 'string') return m.trim().slice(0, 400);
-      if (Array.isArray(m)) {
-        return m
-          .map((x) => String(x))
-          .join('; ')
-          .trim()
-          .slice(0, 400);
-      }
-    }
-    return exception.message.trim().slice(0, 400);
-  }
-
-  /**
-   * When an org-scoped API call returns 4xx, append a row so the audit log includes
-   * denied / validation failures, not only successful mutations.
-   */
   async appendOrganizationSecurityFailureAuditIfApplicable(
     req: Request,
     exception: HttpException,
   ): Promise<void> {
-    const status = exception.getStatus();
-    if (!Number.isFinite(status) || status < 400 || status >= 500) {
-      return;
-    }
-    const userIdRaw = (req as Request & { user?: { userId?: number } }).user
-      ?.userId;
-    if (
-      typeof userIdRaw !== 'number' ||
-      !Number.isFinite(userIdRaw) ||
-      userIdRaw < 1
-    ) {
-      return;
-    }
-    const userId = Math.trunc(userIdRaw);
-
-    const q = req.query as Record<string, unknown> | undefined;
-    const b = req.body as Record<string, unknown> | undefined;
-    const rawOrg = q?.['organizationPublicId'] ?? b?.['organizationPublicId'];
-    const orgPublicId =
-      OrganizationsService.tryParseOrganizationPublicIdForAudit(rawOrg);
-    if (!orgPublicId) {
-      return;
-    }
-
-    const path =
-      typeof req.path === 'string' && req.path.length > 0
-        ? req.path
-        : new URL(req.url, 'http://localhost').pathname;
-    if (OrganizationsService.shouldSkipHttpFailureAuditPath(path)) {
-      return;
-    }
-
-    const org = await this.repo.findByPublicId(orgPublicId);
-    if (!org) {
-      return;
-    }
-
-    const member = await this.repo.findMembership(userId, org.id);
-    const isMember = Boolean(member);
-    const reason: string = !isMember
-      ? 'not_organization_member'
-      : status === 403
-        ? 'forbidden'
-        : status === 404
-          ? 'not_found'
-          : status === 422
-            ? 'validation'
-            : status === 409
-              ? 'conflict'
-              : 'client_error';
-
-    const method = String(req.method ?? 'GET').toUpperCase();
-    const fullPath =
-      typeof req.originalUrl === 'string' && req.originalUrl.length > 0
-        ? req.originalUrl.split('?')[0] ?? path
-        : path;
-    const endpoint = `${method} ${fullPath}`.slice(0, 512);
-    const errorSummary =
-      OrganizationsService.summarizeHttpException(exception);
-
-    await this.appendOrganizationAuditEvent(
-      org.id,
-      userId,
-      'security.http.request_rejected',
-      {
-        metadata: {
-          endpoint,
-          httpStatus: status,
-          organizationPublicId: orgPublicId,
-          reason,
-          errorSummary,
-        },
-      },
+    return this.organizationAudit.appendOrganizationSecurityFailureAuditIfApplicable(
+      req,
+      exception,
     );
-  }
-
-  async listAuditLogsForOrg(
-    ctx: OrganizationMemberContext,
-    opts?: { page?: number; pageSize?: number },
-  ): Promise<OrganizationAuditLogPageDto> {
-    if (
-      !ctx.actingIsOwner &&
-      !ctx.workspacePermissions[
-        ORGANIZATION_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG
-      ]
-    ) {
-      throw new ForbiddenException(
-        'You do not have permission to view the organization audit log.',
-      );
-    }
-    const rawPage = Number(opts?.page ?? 1);
-    const rawSize = Number(opts?.pageSize ?? 12);
-    const pageSize = Math.min(50, Math.max(1, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 12));
-    let page = Math.max(1, Number.isFinite(rawPage) ? Math.trunc(rawPage) : 1);
-
-    const total = await this.auditLogs.count({
-      where: { organizationId: ctx.internalId },
-    });
-    const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
-    if (totalPages > 0) {
-      page = Math.min(page, totalPages);
-    }
-
-    const skip = (page - 1) * pageSize;
-    const rows = await this.auditLogs.find({
-      where: { organizationId: ctx.internalId },
-      order: { createdAt: 'DESC' },
-      skip,
-      take: pageSize,
-    });
-    if (rows.length === 0) {
-      return {
-        items: [],
-        total,
-        page: total === 0 ? 1 : page,
-        pageSize,
-        totalPages,
-      };
-    }
-    const actorIds = [...new Set(rows.map((r) => r.actorUserId))];
-    const actors = await this.users.find({ where: { id: In(actorIds) } });
-    const emailById = new Map(actors.map((u) => [u.id, u.email]));
-    const items = rows.map((r) => ({
-      id: r.id,
-      action: r.action,
-      createdAt: r.createdAt.toISOString(),
-      actorUserId: r.actorUserId,
-      actorEmail: emailById.get(r.actorUserId) ?? '(unknown)',
-      metadata: r.metadata,
-    }));
-    return { items, total, page, pageSize, totalPages };
   }
 
   async getOnePublicForMember(
@@ -575,82 +351,6 @@ export class OrganizationsService implements OnModuleInit {
     const memberCount = await this.repo.countMembershipsForOrganization(ctx.internalId);
     const nextCtx: OrganizationMemberContext = { ...ctx, name };
     return this.memberContextToPublicDto(nextCtx, memberCount);
-  }
-
-  /**
-   * Organization owners may restrict workspace areas for non-owner members.
-   * Use `permissions: { cron_jobs: false }` to block; `cron_jobs: true` clears a block.
-   */
-  async setMemberWorkspacePermissions(
-    ctx: OrganizationMemberContext,
-    rawEmail: string,
-    permissions: Record<string, unknown>,
-  ): Promise<{ message: string }> {
-    if (!ctx.actingIsOwner) {
-      throw new ForbiddenException(
-        'Only organization owners can change member workspace permissions.',
-      );
-    }
-    const email = String(rawEmail ?? '')
-      .trim()
-      .toLowerCase();
-    if (!email) {
-      throw new BadRequestException('email is required');
-    }
-    const target = await this.users
-      .createQueryBuilder('u')
-      .where('LOWER(u.email) = :email', { email })
-      .getOne();
-    if (!target) {
-      throw new NotFoundException('No user with this email was found.');
-    }
-    const membership = await this.repo.findMembership(target.id, ctx.internalId);
-    if (!membership) {
-      throw new BadRequestException(
-        'That user is not a member of this organization.',
-      );
-    }
-    if (membership.role === ORGANIZATION_MEMBER_ROLE.OWNER) {
-      throw new BadRequestException(
-        'Organization owners always have full workspace access.',
-      );
-    }
-    const patch: Partial<Record<OrganizationWorkspacePermission, boolean>> = {};
-    if (permissions != null && typeof permissions === 'object') {
-      for (const [k, v] of Object.entries(permissions)) {
-        if (typeof v !== 'boolean') {
-          throw new BadRequestException(
-            `Permission "${k}" must be a boolean.`,
-          );
-        }
-        if (!isOrganizationWorkspacePermission(k)) {
-          throw new BadRequestException(`Unknown permission key: ${k}`);
-        }
-        patch[k as OrganizationWorkspacePermission] = v;
-      }
-    }
-    const next = mergeWorkspacePermissionPatch(membership.permissions, patch);
-    const n = await this.repo.updateMembershipPermissions(
-      target.id,
-      ctx.internalId,
-      next,
-    );
-    if (n === 0) {
-      throw new NotFoundException('Organization membership not found');
-    }
-    await this.appendOrganizationAuditEvent(
-      ctx.internalId,
-      ctx.actingUserId,
-      'member.permissions_updated',
-      {
-        metadata: {
-          endpoint: `PATCH /api/organizations/${encodeURIComponent(ctx.publicId)}/members/permissions`,
-          patch,
-          targetEmail: email,
-        },
-      },
-    );
-    return { message: 'Member workspace permissions updated.' };
   }
 
   /**
@@ -973,7 +673,10 @@ export class OrganizationsService implements OnModuleInit {
   ): Promise<void> {
     await this.assertNotSelfHostedRootOrg(organizationId, 'deleted');
     await this.dataSource.transaction(async (em) => {
-      await em.delete(OrganizationAuditLog, { organizationId });
+      await this.organizationAudit.deleteAllForOrganizationInTransaction(
+        em,
+        organizationId,
+      );
       await em.delete(Webhook, { organizationId });
       await em.delete(CronJob, { organizationId });
       await em.delete(TraefikSettings, { organizationId });

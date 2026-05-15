@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Loader2 } from "lucide-react";
 import type { OrganizationMemberPublic } from "@/lib/organizations-types";
-import { setMemberWorkspacePermissions } from "@/lib/organizations-api";
+import { setMemberWorkspacePermissions } from "@/ee/permissions/set-member-workspace-permissions-api";
 import {
   ORG_WORKSPACE_PERMISSION_LABELS,
   ORG_WORKSPACE_PERMISSIONS,

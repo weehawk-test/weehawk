@@ -2,7 +2,8 @@ import { fetchOrganizationMembersSSR, fetchOrganizationSSR } from "@/lib/server-
 import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
 import { requireOrgManagementTabForActiveOrg } from "@/lib/org-management-page-guard";
 import { OrgMembersClient } from "./org-members-client";
-import { OrgPermissionsClient } from "../permissions/org-permissions-client";
+import { OrgPermissionsClient } from "@/ee/permissions/org-permissions-client";
+import { EnterpriseLicenseUpsell } from "@/ee/enterprise-license-upsell";
 
 export default async function OrganizationMembersPage() {
   const publicId = await requireOrgManagementTabForActiveOrg(
@@ -33,7 +34,15 @@ export default async function OrganizationMembersPage() {
         }
       />
       {showPermissions ? (
-        <OrgPermissionsClient activeOrgPublicId={publicId} initialMembers={members} />
+        org.enterpriseLicensed ? (
+          <OrgPermissionsClient activeOrgPublicId={publicId} initialMembers={members} />
+        ) : (
+          <EnterpriseLicenseUpsell
+            salesUrl={org.enterpriseSalesUrl}
+            title="Permissions is an enterprise feature"
+            description="Changing workspace-area permissions for members requires an enterprise license on this server."
+          />
+        )
       ) : null}
     </div>
   );

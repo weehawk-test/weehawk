@@ -2,9 +2,11 @@ import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import { ORG_WORKSPACE_PERMISSIONS } from "@/lib/org-workspace-permissions";
 import { requireOrgManagementTabForActiveOrg } from "@/lib/org-management-page-guard";
-import { fetchOrganizationAuditLogSSR } from "@/lib/server-fetch";
+import { fetchOrganizationSSR } from "@/lib/server-fetch";
+import { fetchOrganizationAuditLogSSR } from "@/ee/audit/fetch-organization-audit-log-ssr";
 import { ORGANIZATION_MANAGEMENT_BASE } from "@/lib/org-nav-utils";
-import { OrganizationAuditResizableTable } from "@/components/org/organization-audit-resizable-table";
+import { OrganizationAuditResizableTable } from "@/ee/audit/organization-audit-resizable-table";
+import { EnterpriseLicenseUpsell } from "@/ee/enterprise-license-upsell";
 
 const PAGE_SIZE = 12;
 
@@ -22,6 +24,26 @@ export default async function OrganizationAuditPage({
   const publicId = await requireOrgManagementTabForActiveOrg(
     ORG_WORKSPACE_PERMISSIONS.ORGANIZATION_MANAGEMENT_AUDIT_LOG,
   );
+  const org = await fetchOrganizationSSR(publicId);
+
+  if (!org?.enterpriseLicensed) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Audit Log</h1>
+          <p className="mt-1 text-muted-foreground">
+            Track membership changes, projects, servers, webhooks, cron jobs, and more.
+          </p>
+        </div>
+        <EnterpriseLicenseUpsell
+          salesUrl={org?.enterpriseSalesUrl}
+          title="Audit log is an enterprise feature"
+          description="Your organization role allows viewing the audit log, but this server does not have an active enterprise license yet."
+        />
+      </div>
+    );
+  }
+
   const sp = (await searchParams) ?? {};
   const requestedPage = parsePage(sp.page);
   const { items: entries, total, page, totalPages } = await fetchOrganizationAuditLogSSR(publicId, {
