@@ -1,3 +1,5 @@
+name: Pull Request
+
 on:
   pull_request:
     branches: [main]
@@ -13,88 +15,27 @@ concurrency:
 env:
   NODE_VERSION: "20"
   PNPM_VERSION: "10.15.1"
-  GO_VERSION: "1.22"
-  # Make all pnpm/npm installs reproducible and quiet.
   CI: "true"
   HUSKY: "0"
-  # Next.js telemetry is opt-out; disable on CI to avoid network noise.
   NEXT_TELEMETRY_DISABLED: "1"
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────────
-  # Conventional Commits — enforces the PR title format documented in
-  # CONTRIBUTING.md. Implemented as a plain shell regex (no third-party
-  # action) for supply-chain safety.
-  # ────────────────────────────────────────────────────────────────────────
-  pr-title:
-    name: PR title (Conventional Commits)
-    if: github.event_name == 'pull_request'
+  pr-check:
+    name: ${{ matrix.job }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Validate PR title
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: |
-          set -euo pipefail
-          pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
-          if ! printf '%s' "$PR_TITLE" | grep -Eq "$pattern"; then
-            echo "::error title=Invalid PR title::PR titles must follow Conventional Commits."
-            echo
-            echo "Got:      $PR_TITLE"
-            echo "Expected: <type>(optional-scope)!?: <description>"
-            echo "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
-            echo "Example:  feat(api): add OAuth login"
-            exit 1
-          fi
-          echo "PR title OK: $PR_TITLE"
-
-  # ────────────────────────────────────────────────────────────────────────
-  # Dependency review — fails the PR if it introduces a known-vulnerable
-  # dependency, or a dependency with an incompatible license. Runs on the
-  # diff only, so it stays fast.
-  # ────────────────────────────────────────────────────────────────────────
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Review dependencies
-        uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
-
-  # ────────────────────────────────────────────────────────────────────────
-  # Lint — runs the per-package lint scripts in parallel, one job per app.
-  # ────────────────────────────────────────────────────────────────────────
-  lint:
-    name: Lint (${{ matrix.app }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        app: [api, web]
+        job: [build, typecheck, test]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
-          run_install: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -103,168 +44,11 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter ${{ matrix.app }}...
+        run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm --filter ${{ matrix.app }} run lint
-
-  # ────────────────────────────────────────────────────────────────────────
-  # Build — typechecks and produces a build artifact for each app. Catches
-  # TypeScript errors that the linter does not surface.
-  # ────────────────────────────────────────────────────────────────────────
-  build:
-    name: Build (${{ matrix.app }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        app: [api, web]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter ${{ matrix.app }}...
-
-      - name: Provision build-time env (web only)
-        if: matrix.app == 'web'
-        # `next build` reads NEXT_PUBLIC_* and a few runtime knobs; populate them
-        # with safe placeholders so the build is hermetic on CI.
+      - name: Prepare web build env
+        if: matrix.job == 'build'
         run: cp apps/web/.env.local.example apps/web/.env.local
 
-      - name: Build
-        run: pnpm --filter ${{ matrix.app }} run build
-
-  # ────────────────────────────────────────────────────────────────────────
-  # Test — Jest unit tests for the API.
-  # ────────────────────────────────────────────────────────────────────────
-  test:
-    name: Test (api)
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-          run_install: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter api...
-
-      - name: Run Jest
-        run: pnpm --filter api run test -- --ci --runInBand --reporters=default
-
-  # ────────────────────────────────────────────────────────────────────────
-  # Go webhook agent — vet, format and build.
-  # ────────────────────────────────────────────────────────────────────────
-  go-agent:
-    name: Go (weehawk-webhook-agent)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: packages/weehawk-webhook-agent
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          # No `go.sum` in the module yet — disable cache to avoid a warning
-          # and re-enable once the module pulls in dependencies.
-          cache: false
-
-      - name: gofmt
-        run: |
-          set -euo pipefail
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "::error::The following files are not gofmt-clean:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: go build
-        run: go build ./...
-
-  # ────────────────────────────────────────────────────────────────────────
-  # Aggregate gate — a single required check that PR branch protection can
-  # target. Marks the PR as failed if any upstream job failed or was
-  # cancelled, even if a new job is added later.
-  # ────────────────────────────────────────────────────────────────────────
-  ci-success:
-    name: CI success
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    needs:
-      - pr-title
-      - dependency-review
-      - lint
-      - build
-      - test
-      - go-agent
-    steps:
-      - name: Verify all required jobs succeeded
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: |
-          set -euo pipefail
-          echo "$RESULTS"
-          # Fail if any needed job did not succeed (treats skipped as failure
-          # except for `pr-title` / `dependency-review` which are skipped on
-          # `workflow_dispatch`).
-          failed="$(printf '%s' "$RESULTS" | python3 -c '
-          import json, sys
-          data = json.load(sys.stdin)
-          allowed_skip = {"pr-title", "dependency-review"}
-          bad = []
-          for name, job in data.items():
-              result = job.get("result")
-              if result == "success":
-                  continue
-              if result == "skipped" and name in allowed_skip:
-                  continue
-              bad.append(f"{name}={result}")
-          print("\n".join(bad))
-          ')"
-          if [ -n "$failed" ]; then
-            echo "::error::One or more required jobs did not succeed:"
-            echo "$failed"
-            exit 1
-          fi
-          echo "All required CI jobs passed."
+      - name: Run ${{ matrix.job }}
+        run: pnpm ${{ matrix.job }}

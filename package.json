@@ -2,6 +2,9 @@
   "name": "weehawk",
   "private": true,
   "scripts": {
+    "build": "pnpm --filter api build && pnpm --filter web build",
+    "test": "pnpm --filter api run test:ci",
+    "typecheck": "pnpm --filter api exec tsc --noEmit -p tsconfig.build.json && pnpm --filter web exec tsc --noEmit",
     "dev": "pnpm -r --parallel dev",
     "dev:cron-worker": "pnpm --filter cron-worker dev",
     "dev:provision-worker": "pnpm --filter provision-worker dev",
