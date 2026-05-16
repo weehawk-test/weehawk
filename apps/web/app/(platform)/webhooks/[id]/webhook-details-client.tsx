@@ -23,6 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { motion } from "framer-motion";
 import { webhookRouteId, type WebhookDetail } from "@/lib/webhooks-api";
+import { copyToClipboard } from "@/lib/copy-to-clipboard";
 
 type Props = {
   initialWebhook: WebhookDetail;
@@ -44,7 +45,8 @@ export function WebhookDetailsClient({ initialWebhook, activeOrgPublicId }: Prop
   const handleCopyRemote = async () => {
     if (!remoteAgentUrl) return;
     try {
-      await navigator.clipboard.writeText(remoteAgentUrl);
+      const didCopy = await copyToClipboard(remoteAgentUrl);
+      if (!didCopy) throw new Error("copy-failed");
       setCopiedRemote(true);
       toast({
         title: "Copied",

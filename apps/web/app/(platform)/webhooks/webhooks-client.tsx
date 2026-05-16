@@ -14,6 +14,7 @@ import {
   webhookRouteId,
   type WebhookListItem,
 } from "@/lib/webhooks-api";
+import { copyToClipboard } from "@/lib/copy-to-clipboard";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useAuth } from "@/contexts/auth-context";
@@ -201,7 +202,8 @@ export function WebhooksClient({
 
   const handleCopyWebhookUrl = async (id: number, triggerUrl: string) => {
     try {
-      await navigator.clipboard.writeText(triggerUrl);
+      const didCopy = await copyToClipboard(triggerUrl);
+      if (!didCopy) throw new Error("copy-failed");
       setCopiedWebhookId(id);
       window.setTimeout(() => setCopiedWebhookId((current) => (current === id ? null : current)), 1500);
       toast({ title: "Copied", description: "Trigger URL copied to clipboard." });
