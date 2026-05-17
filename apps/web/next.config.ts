@@ -27,6 +27,15 @@ const apiBase = publicApiOriginForConfig();
 const nextConfig: NextConfig = {
   reactStrictMode: false,
   output: "standalone",
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "raw.githubusercontent.com",
+        pathname: "/coollabsio/coolify/**",
+      },
+    ],
+  },
   /** If the public webhook base URL points at this web app host, proxy /weehawk-hooks/* to the API (avoids Next.js 404). */
   async rewrites() {
     return [

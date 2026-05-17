@@ -1,6 +1,11 @@
 import { API_BASE, wsBase, wsBaseCandidates } from "./api";
 import { authFetch } from "./auth-fetch";
 import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
+import {
+  buildCoolifyTemplateDockerConfig,
+  isCoolifyTemplateServiceConfig,
+} from "./coolify-templates";
+import { buildCoolifyTemplateEnvFromCompose } from "./coolify-template-env";
 import type { DatabaseEngineId } from "./database-engines";
 import type { DatabaseBackupConfig } from "./database-backup-preview";
 import { getServerApiBase } from "./server-api";
@@ -111,10 +116,12 @@ function composeTypeToApi(t: ServiceType): "COMPOSE" | "STACK" | "APPLICATION" |
   if (t === "stack") return "STACK";
   if (t === "application") return "APPLICATION";
   if (t === "databases") return "DATABASES";
+  if (t === "template") return "COMPOSE";
   return "COMPOSE";
 }
 
-function composeTypeFromApi(raw: string): ServiceType {
+function composeTypeFromApi(raw: string, dockerConfig: string): ServiceType {
+  if (isCoolifyTemplateServiceConfig(dockerConfig)) return "template";
   const u = String(raw).toUpperCase();
   if (u === "STACK") return "stack";
   if (u === "APPLICATION") return "application";
@@ -223,7 +230,7 @@ export function mapApiServiceToService(row: unknown): Service {
         ? undefined
         : String(projectPublicIdRaw),
     name: String(s.name ?? ""),
-    type: composeTypeFromApi(String(s.composeType ?? "COMPOSE")),
+    type: composeTypeFromApi(String(s.composeType ?? "COMPOSE"), cfg),
     config: cfg,
     env: typeof s.env === "string" ? s.env : "",
     description: typeof s.description === "string" ? s.description : "",
@@ -352,9 +359,30 @@ export async function clearMagicTraefikMeApi(serviceId: string): Promise<Service
 }
 
 export async function createServiceApi(input: CreateServiceInput): Promise<Service> {
-  const { databaseEngine, postgres: _postgres, appExternalNetworkNames, appStackNetworkKeys, ...rest } = input;
+  const {
+    databaseEngine,
+    postgres: _postgres,
+    coolifyTemplateId,
+    coolifyTemplatePort,
+    appExternalNetworkNames,
+    appStackNetworkKeys,
+    ...rest
+  } = input;
   let dockerConfig = rest.config?.trim() ? rest.config : "";
-  if (rest.type === "databases" && databaseEngine) {
+  let env = "";
+  if (rest.type === "template" && coolifyTemplateId?.trim()) {
+    const templateId = coolifyTemplateId.trim();
+    const composeBody = rest.config?.trim() ?? "";
+    dockerConfig = buildCoolifyTemplateDockerConfig(templateId, composeBody, {
+      port: coolifyTemplatePort?.trim() || undefined,
+    });
+    env = buildCoolifyTemplateEnvFromCompose(composeBody, {
+      appName: deriveAppNameFromServiceName(rest.name),
+      serviceName: rest.name,
+      templateId,
+      templatePort: coolifyTemplatePort?.trim() || undefined,
+    });
+  } else if (rest.type === "databases" && databaseEngine) {
     dockerConfig = `# weehawk database service\n# engine: ${databaseEngine}\n`;
   } else if (rest.type === "application") {
     const extRaw = (appExternalNetworkNames ?? []).map((s) => s.trim()).filter(Boolean);
@@ -370,12 +398,14 @@ export async function createServiceApi(input: CreateServiceInput): Promise<Servi
     if (stk.length) header += `# app.networks.stack: ${stk.join("|")}\n`;
     dockerConfig = header;
   }
+  const apiType = rest.type === "template" ? "docker-compose" : rest.type;
   const body = {
     name: rest.name,
     appName: deriveAppNameFromServiceName(rest.name),
-    composeType: composeTypeToApi(rest.type),
+    composeType: composeTypeToApi(apiType as ServiceType),
     description: rest.description?.trim() || undefined,
     dockerConfig,
+    ...(env ? { env } : {}),
     projectId: Number(rest.projectId),
   };
   const res = await apiFetch("/api/services", {

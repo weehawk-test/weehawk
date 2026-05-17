@@ -25,6 +25,7 @@ import {
   PackageOpen,
   ArrowDownToLine,
   Search,
+  LayoutTemplate,
 } from "lucide-react";
 import {
   useService,
@@ -96,6 +97,12 @@ import {
   parseYamlPublishPort,
   parseYamlReplicas,
 } from "@/lib/env-utils";
+import { buildCoolifyTemplateEnvFromCompose } from "@/lib/coolify-template-env";
+import {
+  isCoolifyTemplateServiceConfig,
+  parseCoolifyTemplateIdFromConfig,
+  parseTemplatePortFromConfig,
+} from "@/lib/coolify-templates";
 import { ApplicationConnectionsPanel } from "./application-connections-panel";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceRemoteHostPanel } from "./service-remote-host-panel";
@@ -227,6 +234,13 @@ networks:
     color: "bg-sky-500/10 text-sky-800 border-sky-400/45 dark:text-sky-200 dark:border-sky-500/25",
     glow: "shadow-[0_0_20px_rgba(56,189,248,0.14)] dark:shadow-[0_0_24px_rgba(56,189,248,0.08)]",
     icon: Database,
+    placeholder: "",
+  },
+  template: {
+    label: "Template",
+    color: "bg-amber-500/10 text-amber-900 border-amber-400/45 dark:text-amber-200 dark:border-amber-500/25",
+    glow: "shadow-[0_0_20px_rgba(245,158,11,0.12)] dark:shadow-[0_0_24px_rgba(245,158,11,0.08)]",
+    icon: LayoutTemplate,
     placeholder: "",
   },
 };
@@ -5743,6 +5757,39 @@ function EnvFilePanel({ service }: { service: Service }) {
 
   const envText = service.env ?? "";
   const entries = countEnvEntries(editing ? draft : envText);
+  const isCoolifyTemplate =
+    service.type === "template" || isCoolifyTemplateServiceConfig(service.config);
+  const canGenerateFromCompose = isCoolifyTemplate && entries === 0 && !editing;
+
+  const handleGenerateFromCompose = () => {
+    const generated = buildCoolifyTemplateEnvFromCompose(service.config, {
+      appName: service.appName ?? service.name,
+      serviceName: service.name,
+      templateId: parseCoolifyTemplateIdFromConfig(service.config) ?? undefined,
+      templatePort: parseTemplatePortFromConfig(service.config),
+    });
+    if (!generated.trim()) {
+      toast({
+        title: "Nothing to generate",
+        description: "No environment variables were found in the compose file.",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateService.mutate(
+      { id: serviceQueryKeyId(service), patch: { env: generated } },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Environment generated",
+            description: "Variables were created from the Coolify template compose.",
+          });
+        },
+        onError: (e: Error) =>
+          toast({ title: "Could not save", description: e.message, variant: "destructive" }),
+      },
+    );
+  };
   const displayEnvText = useMemo(() => {
     if (!hideSecrets) return envText;
     return envText
@@ -5821,17 +5868,34 @@ function EnvFilePanel({ service }: { service: Service }) {
             </>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(envText);
-                  toast({ title: "Copied", description: ".env copied to clipboard." });
-                }}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                Copy
-              </button>
+              {canGenerateFromCompose && (
+                <button
+                  type="button"
+                  onClick={handleGenerateFromCompose}
+                  disabled={updateService.isPending}
+                  className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-200 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 transition-colors disabled:opacity-50"
+                >
+                  {updateService.isPending ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Variable className="w-3.5 h-3.5" />
+                  )}
+                  Generate from template
+                </button>
+              )}
+              {entries > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(envText);
+                    toast({ title: "Copied", description: ".env copied to clipboard." });
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -5860,7 +5924,11 @@ function EnvFilePanel({ service }: { service: Service }) {
           {envText.trim() ? (
             displayEnvText
           ) : (
-            <span className="text-zinc-600 italic">No environment variables. Click Edit to add a .env file.</span>
+            <span className="text-zinc-600 italic">
+              {canGenerateFromCompose
+                ? "No environment variables yet. Use Generate from template or Edit to add a .env file."
+                : "No environment variables. Click Edit to add a .env file."}
+            </span>
           )}
         </pre>
       )}
@@ -5974,12 +6042,19 @@ function DomainsPanel({
     setEditingIndex(null);
   };
 
+  const defaultInternalPort = useMemo(() => {
+    if (service.type === "template" || isCoolifyTemplateServiceConfig(service.config)) {
+      return parseTemplatePortFromConfig(service.config) ?? "";
+    }
+    return "";
+  }, [service.type, service.config]);
+
   const openAddDialog = () => {
     setEditingIndex(null);
     setDraftRouter("");
     setDraftPath("");
     setDraftHost("");
-    setDraftInternalPort("");
+    setDraftInternalPort(defaultInternalPort);
     setDialogOpen(true);
   };
 
@@ -6024,7 +6099,13 @@ function DomainsPanel({
       },
       {
         onSuccess: () => {
-          toast({ title: "Saved", description: "Redeploy the stack to apply Traefik labels." });
+          toast({
+            title: "Saved",
+            description:
+              service.type === "template"
+                ? "Redeploy to publish the domain (templates with domains deploy as a Swarm stack for Traefik)."
+                : "Redeploy the stack to apply Traefik labels.",
+          });
           onDone?.();
         },
         onError: (e: Error) =>

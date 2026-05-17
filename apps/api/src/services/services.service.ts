@@ -44,6 +44,12 @@ import { TraefikService } from '../traefik/traefik.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import {
+  firstComposeServiceName,
+  parseConfigHeaderValue,
+  parseContainerPortFromComposeYaml,
+} from '../executor/executor-compose-parse';
+import { injectTraefikIntoComposeYaml } from '../executor/compose-traefik-inject';
+import {
   buildTraefikMeMagicHostname,
   parseIpv4Octets,
 } from '../common/magic-traefik-me';
@@ -1298,6 +1304,58 @@ export class ServicesService {
     return `${lines.join('\n')}\n`;
   }
 
+  /**
+   * Apply Domains-tab Traefik labels at deploy time for compose/template services (not persisted in DB).
+   */
+  async applyTraefikToComposeDeployYaml(
+    service: Service,
+    composeYaml: string,
+  ): Promise<string> {
+    if (service.composeType !== composeType.COMPOSE) {
+      return composeYaml;
+    }
+    const hasRoutes = (service.traefikRoutes?.length ?? 0) > 0;
+    const hasDomains = (service.domains?.length ?? 0) > 0;
+    if (!hasRoutes && !hasDomains) {
+      return composeYaml;
+    }
+
+    const port = this.resolveComposeDeployContainerPort(service, composeYaml);
+    const traefik = await this.buildTraefikIngressForCompose(service, port);
+    if (!traefik?.routes?.length) {
+      return composeYaml;
+    }
+
+    const targetService = firstComposeServiceName(composeYaml);
+    return injectTraefikIntoComposeYaml(composeYaml, {
+      targetServiceName: targetService,
+      traefik,
+      externalNetwork: WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+    });
+  }
+
+  private resolveComposeDeployContainerPort(
+    service: Service,
+    composeYaml: string,
+  ): number {
+    for (const r of service.traefikRoutes ?? []) {
+      if (r.port != null && Number.isFinite(Number(r.port))) {
+        return Math.min(
+          65535,
+          Math.max(1, Math.floor(Number(r.port))),
+        );
+      }
+    }
+    const templatePort = parseConfigHeaderValue(composeYaml, 'template.port');
+    if (templatePort) {
+      const p = parseInt(templatePort, 10);
+      if (Number.isFinite(p) && p > 0) return p;
+    }
+    const fromYaml = parseContainerPortFromComposeYaml(composeYaml);
+    if (fromYaml) return fromYaml;
+    return 80;
+  }
+
   private async buildTraefikIngressForCompose(
     service: Service,
     containerPort: number,
@@ -1315,7 +1373,10 @@ export class ServicesService {
       }
     | undefined
   > {
-    if (service.composeType !== composeType.APPLICATION) {
+    if (
+      service.composeType !== composeType.APPLICATION &&
+      service.composeType !== composeType.COMPOSE
+    ) {
       return undefined;
     }
     const svc = await this.ensureServiceForMagicDomains(service);

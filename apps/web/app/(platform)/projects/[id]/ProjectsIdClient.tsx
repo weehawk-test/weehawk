@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff, X } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff, X, LayoutTemplate } from "lucide-react";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
@@ -39,6 +39,15 @@ import {
   defaultDatabaseVolumePath,
 } from "@/lib/database-engines";
 import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
+import { CoolifyTemplatePicker } from "@/components/coolify-template-picker";
+import {
+  coolifyTemplateDisplayName,
+  coolifyTemplateLogoUrl,
+  decodeCoolifyComposeBase64,
+  parseCoolifyTemplateIdFromConfig,
+  type CoolifyServiceTemplate,
+} from "@/lib/coolify-templates";
+import { useCoolifyTemplates } from "@/hooks/use-coolify-templates";
 
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
@@ -63,6 +72,12 @@ const SERVICE_TYPE_CONFIG = {
     label: "Databases",
     color: "bg-sky-500/10 text-sky-800 border-sky-400/45 dark:text-sky-200 dark:border-sky-500/25",
     icon: Database,
+    placeholder: "",
+  },
+  template: {
+    label: "Template",
+    color: "bg-amber-500/10 text-amber-900 border-amber-400/45 dark:text-amber-200 dark:border-amber-500/25",
+    icon: LayoutTemplate,
     placeholder: "",
   },
 } as const;
@@ -247,6 +262,7 @@ function CreateServiceModal({
   const create = useCreateService();
   const { toast } = useToast();
   const [dbPickerOpen, setDbPickerOpen] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [dockerModePickerOpen, setDockerModePickerOpen] = useState(false);
   const [imageUnlocked, setImageUnlocked] = useState(false);
   const [showDbUserPass, setShowDbUserPass] = useState(false);
@@ -261,6 +277,8 @@ function CreateServiceModal({
       config: "",
       description: "",
       databaseEngine: undefined,
+      coolifyTemplateId: undefined,
+      coolifyTemplatePort: undefined,
       postgres: {
         dbName: "",
         user: "",
@@ -278,12 +296,23 @@ function CreateServiceModal({
 
   const type = watch("type");
   const databaseEngine = watch("databaseEngine");
+  const coolifyTemplateId = watch("coolifyTemplateId");
   const isDockerAdvancedType = type === "docker-compose" || type === "stack";
 
   useEffect(() => {
     if (type !== "databases") {
       setValue("databaseEngine", undefined);
       setImageUnlocked(false);
+    }
+  }, [type, setValue]);
+
+  useEffect(() => {
+    if (type !== "template") {
+      setValue("coolifyTemplateId", undefined);
+      setValue("coolifyTemplatePort", undefined);
+      if (type !== "docker-compose" && type !== "stack") {
+        setValue("config", "");
+      }
     }
   }, [type, setValue]);
 
@@ -324,6 +353,28 @@ function CreateServiceModal({
     }
   }, [type, databaseEngine]);
 
+  useEffect(() => {
+    if (type === "template" && !coolifyTemplateId) {
+      setTemplatePickerOpen(true);
+    }
+  }, [type, coolifyTemplateId]);
+
+  const applyCoolifyTemplate = (tpl: CoolifyServiceTemplate) => {
+    const yaml = decodeCoolifyComposeBase64(tpl.compose);
+    const svcName =
+      getValues("name")?.trim() || tpl.id.replace(/[^a-z0-9-]/gi, "-").slice(0, 50);
+    setValue("coolifyTemplateId", tpl.id, { shouldDirty: true, shouldValidate: true });
+    setValue("coolifyTemplatePort", tpl.port ?? "", { shouldDirty: true });
+    setValue("config", yaml, { shouldDirty: true });
+    if (!getValues("name")?.trim()) {
+      setValue("name", svcName, { shouldDirty: true });
+    }
+    if (!getValues("description")?.trim()) {
+      setValue("description", tpl.slogan, { shouldDirty: true });
+    }
+    setTemplatePickerOpen(false);
+  };
+
   const onSubmit = async (data: CreateServiceInput) => {
     try {
       const created = await create.mutateAsync(data);
@@ -349,7 +400,9 @@ function CreateServiceModal({
         description:
           data.type === "databases" && data.databaseEngine
             ? "Database stack and credentials are saved. Deploy from the service page when ready."
-            : "Your new service is ready.",
+            : data.type === "template"
+              ? "Template compose is ready. Review env vars and deploy from the service page."
+              : "Your new service is ready.",
       });
       onCreated?.();
       onClose();
@@ -399,6 +452,17 @@ function CreateServiceModal({
           setDockerModePickerOpen(false);
         }}
       />
+      <CoolifyTemplatePicker
+        open={templatePickerOpen}
+        selectedId={coolifyTemplateId}
+        onSelect={applyCoolifyTemplate}
+        onCancel={() => {
+          setTemplatePickerOpen(false);
+          if (!getValues("coolifyTemplateId")) {
+            setValue("type", "application");
+          }
+        }}
+      />
       <div
         className="glass-panel rounded-2xl p-8 w-full max-w-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
@@ -441,7 +505,11 @@ function CreateServiceModal({
                       setDockerModePickerOpen(true);
                       return;
                     }
-                    if (next === "application" || next === "databases") {
+                    if (
+                      next === "application" ||
+                      next === "databases" ||
+                      next === "template"
+                    ) {
                       setValue("type", next, { shouldDirty: true });
                     }
                   }}
@@ -450,6 +518,7 @@ function CreateServiceModal({
                 >
                   <option value="application" className="bg-card">Application</option>
                   <option value="databases" className="bg-card">Databases</option>
+                  <option value="template" className="bg-card">Template</option>
                   <option value="docker-advanced" className="bg-card">Docker (Advanced)</option>
                 </select>
                 <ChevronDown
@@ -487,8 +556,26 @@ function CreateServiceModal({
                   </button>
                 </div>
               )}
+              {type === "template" && coolifyTemplateId && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Stack:</span>
+                  <span className="text-xs font-medium text-amber-800 border border-amber-500/30 rounded-full px-2.5 py-0.5 bg-amber-500/10 dark:text-amber-200">
+                    {coolifyTemplateDisplayName(coolifyTemplateId)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setTemplatePickerOpen(true)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
               {errors.databaseEngine && (
                 <p className="text-destructive text-xs mt-1">{errors.databaseEngine.message}</p>
+              )}
+              {errors.coolifyTemplateId && (
+                <p className="text-destructive text-xs mt-1">{errors.coolifyTemplateId.message}</p>
               )}
             </div>
           </div>
@@ -499,6 +586,18 @@ function CreateServiceModal({
             </label>
             <input {...register("description")} className="input-field" placeholder="Short description of this service" />
           </div>
+
+          {type === "template" && coolifyTemplateId && (
+            <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 space-y-2">
+              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                {coolifyTemplateDisplayName(coolifyTemplateId)}
+              </h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Compose is loaded from Coolify&apos;s catalog. Set environment variables on the service page before
+                deploy.
+              </p>
+            </div>
+          )}
 
           {type === "databases" && databaseEngine && (
             <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4 space-y-4">
@@ -839,6 +938,12 @@ export default function ProjectsIdClient({
     }
     return map;
   }, [runtimeSnapshot.data?.data]);
+  const hasTemplateServices = items.some((s) => s.type === "template");
+  const { data: coolifyTemplates = [] } = useCoolifyTemplates(hasTemplateServices);
+  const coolifyTemplateById = useMemo(
+    () => new Map(coolifyTemplates.map((t) => [t.id, t])),
+    [coolifyTemplates],
+  );
   const limit = servicesPageData?.limit ?? SERVICES_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const from = total > 0 ? (page - 1) * limit + 1 : 0;
@@ -1071,7 +1176,7 @@ export default function ProjectsIdClient({
             <p className="text-muted-foreground mb-6 text-sm max-w-sm">
               {q.trim()
                 ? "Try a different search."
-                : "Add your first service (Docker Compose, Stack, Application, or Databases) to this project."}
+                : "Add your first service (Application, Databases, Template, or Docker Advanced) to this project."}
             </p>
             {!q.trim() && (
               <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
@@ -1089,6 +1194,13 @@ export default function ProjectsIdClient({
                 const dbEngineId =
                   service.type === "databases" ? parseDatabaseEngineFromConfig(service.config) : undefined;
                 const dbLogo = dbEngineId ? getDatabaseEngineById(dbEngineId)?.logoSrc : undefined;
+                const templateId =
+                  service.type === "template" ? parseCoolifyTemplateIdFromConfig(service.config) : undefined;
+                const templateEntry = templateId ? coolifyTemplateById.get(templateId) : undefined;
+                const tplLogo =
+                  templateId && templateEntry
+                    ? coolifyTemplateLogoUrl(templateEntry.logo, templateId)
+                    : undefined;
 
                 return (
                   <div
@@ -1102,8 +1214,10 @@ export default function ProjectsIdClient({
                         <div
                           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg overflow-hidden ${
                             service.isActive
-                              ? dbLogo
-                                ? "border border-sky-500/25 bg-transparent p-0.5"
+                              ? dbLogo || tplLogo
+                                ? dbLogo
+                                  ? "border border-sky-500/25 bg-transparent p-0.5"
+                                  : "border border-amber-500/25 bg-transparent p-0.5"
                                 : `border ${typeConf.color}`
                               : "border border-border bg-muted/50 text-muted-foreground"
                           }`}
@@ -1116,6 +1230,16 @@ export default function ProjectsIdClient({
                               height={28}
                               className={`object-contain h-auto w-auto max-h-7 ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                               sizes="36px"
+                            />
+                          ) : tplLogo ? (
+                            <Image
+                              src={tplLogo}
+                              alt=""
+                              width={28}
+                              height={28}
+                              className="object-contain h-auto w-auto max-h-7 dark:brightness-110"
+                              sizes="36px"
+                              unoptimized
                             />
                           ) : (
                             <Icon className="h-4 w-4" />

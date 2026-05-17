@@ -23,7 +23,13 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
 // ─── Services ────────────────────────────────────────────────────────────────
 
-export const serviceTypeSchema = z.enum(["docker-compose", "stack", "application", "databases"]);
+export const serviceTypeSchema = z.enum([
+  "docker-compose",
+  "stack",
+  "application",
+  "databases",
+  "template",
+]);
 export type ServiceType = z.infer<typeof serviceTypeSchema>;
 
 export const traefikRouteRuleSchema = z.object({
@@ -116,10 +122,21 @@ export const createServiceSchema = z
     /** Compose network keys to create in this stack (overlay; Docker name `{stack}_{key}`). */
     appStackNetworkKeys: z.array(z.string()).default([]),
     databaseEngine: databaseEngineIdSchema.optional(),
+    /** Coolify template id when type is template (from service-templates.json). */
+    coolifyTemplateId: z.string().optional(),
+    /** Catalog port hint for template URL env vars. */
+    coolifyTemplatePort: z.string().optional(),
     /** Required when type is databases (set at service creation). */
     postgres: postgresCreateFieldsSchema.optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.type === "template" && !data.coolifyTemplateId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a template.",
+        path: ["coolifyTemplateId"],
+      });
+    }
     if (data.type === "databases" && !data.databaseEngine) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
