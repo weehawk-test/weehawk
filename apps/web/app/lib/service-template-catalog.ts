@@ -1,12 +1,12 @@
-/** Coolify service templates (v4.x). Source: https://github.com/coollabsio/coolify/tree/v4.x/templates */
+/** Public service template catalog (compose stacks). */
 
-import { ensureComposeNamedVolumesDeclared } from "./compose-volume-normalize";
+import { normalizeTemplateComposeForDeploy } from "./compose-volume-normalize";
 
-export const COOLIFY_TEMPLATES_BRANCH = "v4.x";
-export const COOLIFY_TEMPLATES_JSON_URL = `https://raw.githubusercontent.com/coollabsio/coolify/${COOLIFY_TEMPLATES_BRANCH}/templates/service-templates.json`;
-export const COOLIFY_PUBLIC_RAW_BASE = `https://raw.githubusercontent.com/coollabsio/coolify/${COOLIFY_TEMPLATES_BRANCH}/public`;
+export const TEMPLATE_CATALOG_BRANCH = "v4.x";
+export const SERVICE_TEMPLATE_CATALOG_JSON_URL = `https://raw.githubusercontent.com/coollabsio/coolify/${TEMPLATE_CATALOG_BRANCH}/templates/service-templates.json`;
+export const TEMPLATE_CATALOG_PUBLIC_RAW_BASE = `https://raw.githubusercontent.com/coollabsio/coolify/${TEMPLATE_CATALOG_BRANCH}/public`;
 
-export type CoolifyServiceTemplateRaw = {
+export type ServiceTemplateCatalogEntryRaw = {
   documentation?: string;
   slogan: string;
   compose: string;
@@ -17,16 +17,17 @@ export type CoolifyServiceTemplateRaw = {
   port?: string;
 };
 
-export type CoolifyServiceTemplate = CoolifyServiceTemplateRaw & {
+export type ServiceTemplateCatalogEntry = ServiceTemplateCatalogEntryRaw & {
   id: string;
   displayName: string;
 };
 
-let templateCatalogCache: { at: number; templates: CoolifyServiceTemplate[] } | null = null;
-let inflight: Promise<CoolifyServiceTemplate[]> | null = null;
+let templateCatalogCache: { at: number; templates: ServiceTemplateCatalogEntry[] } | null =
+  null;
+let inflight: Promise<ServiceTemplateCatalogEntry[]> | null = null;
 const CACHE_MS = 60 * 60 * 1000;
 
-export function coolifyTemplateDisplayName(id: string): string {
+export function templateCatalogDisplayName(id: string): string {
   return id
     .split(/[-_]+/)
     .filter(Boolean)
@@ -34,13 +35,16 @@ export function coolifyTemplateDisplayName(id: string): string {
     .join(" ");
 }
 
-export function coolifyTemplateLogoUrl(logoPath: string | undefined, templateId: string): string {
+export function templateCatalogLogoUrl(
+  logoPath: string | undefined,
+  templateId: string,
+): string {
   const path = logoPath?.trim() || `svgs/${templateId}.svg`;
   const normalized = path.startsWith("/") ? path.slice(1) : path;
-  return `${COOLIFY_PUBLIC_RAW_BASE}/${normalized}`;
+  return `${TEMPLATE_CATALOG_PUBLIC_RAW_BASE}/${normalized}`;
 }
 
-export function decodeCoolifyComposeBase64(encoded: string): string {
+export function decodeTemplateComposeBase64(encoded: string): string {
   const trimmed = encoded.trim();
   if (!trimmed) return "";
   try {
@@ -55,17 +59,19 @@ export function decodeCoolifyComposeBase64(encoded: string): string {
   }
 }
 
-function normalizeCatalog(raw: Record<string, CoolifyServiceTemplateRaw>): CoolifyServiceTemplate[] {
+function normalizeCatalog(
+  raw: Record<string, ServiceTemplateCatalogEntryRaw>,
+): ServiceTemplateCatalogEntry[] {
   return Object.entries(raw)
     .map(([id, entry]) => ({
       id,
       ...entry,
-      displayName: coolifyTemplateDisplayName(id),
+      displayName: templateCatalogDisplayName(id),
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
-export async function fetchCoolifyServiceTemplates(): Promise<CoolifyServiceTemplate[]> {
+export async function fetchServiceTemplateCatalog(): Promise<ServiceTemplateCatalogEntry[]> {
   const now = Date.now();
   if (
     templateCatalogCache &&
@@ -77,11 +83,11 @@ export async function fetchCoolifyServiceTemplates(): Promise<CoolifyServiceTemp
   if (inflight) return inflight;
 
   inflight = (async () => {
-    const res = await fetch(COOLIFY_TEMPLATES_JSON_URL, { cache: "force-cache" });
+    const res = await fetch(SERVICE_TEMPLATE_CATALOG_JSON_URL, { cache: "force-cache" });
     if (!res.ok) {
-      throw new Error(`Could not load Coolify templates (HTTP ${res.status})`);
+      throw new Error(`Could not load service templates (HTTP ${res.status})`);
     }
-    const json = (await res.json()) as Record<string, CoolifyServiceTemplateRaw>;
+    const json = (await res.json()) as Record<string, ServiceTemplateCatalogEntryRaw>;
     const templates = normalizeCatalog(json);
     templateCatalogCache = { at: Date.now(), templates };
     return templates;
@@ -94,23 +100,23 @@ export async function fetchCoolifyServiceTemplates(): Promise<CoolifyServiceTemp
   }
 }
 
-export function parseCoolifyTemplateIdFromConfig(config: string): string | null {
+export function parseTemplateIdFromConfig(config: string): string | null {
   const m = config.match(/^\s*#\s*template:\s*([^\s#]+)/m);
   const id = m?.[1]?.trim();
   return id || null;
 }
 
-export function isCoolifyTemplateServiceConfig(config: string): boolean {
+export function isWeehawkTemplateServiceConfig(config: string): boolean {
   return /^\s*#\s*weehawk template service/m.test(config);
 }
 
-export function buildCoolifyTemplateDockerConfig(
+export function buildTemplateDockerConfig(
   templateId: string,
   composeYaml: string,
   options?: { port?: string },
 ): string {
-  const body = ensureComposeNamedVolumesDeclared(composeYaml.trim());
-  let header = `# weehawk template service\n# template: ${templateId}\n# source: coolify/${COOLIFY_TEMPLATES_BRANCH}\n`;
+  const body = normalizeTemplateComposeForDeploy(composeYaml.trim());
+  let header = `# weehawk template service\n# template: ${templateId}\n# catalog: ${TEMPLATE_CATALOG_BRANCH}\n`;
   const port = options?.port?.trim();
   if (port) header += `# template.port: ${port}\n`;
   return `${header}\n${body}\n`;
@@ -122,7 +128,9 @@ export function parseTemplatePortFromConfig(config: string): string | undefined 
   return p || undefined;
 }
 
-export function coolifyTemplateCategories(templates: CoolifyServiceTemplate[]): string[] {
+export function templateCatalogCategories(
+  templates: ServiceTemplateCatalogEntry[],
+): string[] {
   const set = new Set<string>();
   for (const t of templates) {
     const c = t.category?.trim();

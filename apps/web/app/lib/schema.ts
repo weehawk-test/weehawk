@@ -122,19 +122,19 @@ export const createServiceSchema = z
     /** Compose network keys to create in this stack (overlay; Docker name `{stack}_{key}`). */
     appStackNetworkKeys: z.array(z.string()).default([]),
     databaseEngine: databaseEngineIdSchema.optional(),
-    /** Coolify template id when type is template (from service-templates.json). */
-    coolifyTemplateId: z.string().optional(),
+    /** Template catalog id when type is template. */
+    templateCatalogId: z.string().optional(),
     /** Catalog port hint for template URL env vars. */
-    coolifyTemplatePort: z.string().optional(),
+    templateCatalogPort: z.string().optional(),
     /** Required when type is databases (set at service creation). */
     postgres: postgresCreateFieldsSchema.optional(),
   })
   .superRefine((data, ctx) => {
-    if (data.type === "template" && !data.coolifyTemplateId?.trim()) {
+    if (data.type === "template" && !data.templateCatalogId?.trim()) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Choose a template.",
-        path: ["coolifyTemplateId"],
+        path: ["templateCatalogId"],
       });
     }
     if (data.type === "databases" && !data.databaseEngine) {

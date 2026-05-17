@@ -99,6 +99,24 @@ function bashExportBlockForStackDeploy(env: Record<string, string>): string {
   return lines.join('\n');
 }
 
+/** Idempotent Swarm overlay used by Traefik and template stacks (`external: true` in compose). */
+function bashEnsureWeehawkOverlayNetwork(
+  networkName: string = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+): string {
+  const netQ = networkName.replace(/'/g, `'\\''`);
+  return `if ! docker info 2>/dev/null | grep -q 'Swarm: active'; then
+  echo "Docker Swarm is not active on this host. Use a Weehawk deploy server (provision installs Swarm + the weehawk overlay)." >&2
+  exit 1
+fi
+if docker network ls --filter "name=^${netQ}$" --format '{{.Scope}}' 2>/dev/null | grep -qx swarm; then
+  echo "Swarm overlay ${netQ} exists."
+else
+  docker network rm "${netQ}" 2>/dev/null || true
+  docker network create --driver overlay --attachable "${netQ}"
+  echo "Created Swarm overlay ${netQ}."
+fi`;
+}
+
 /**
  * Maps common Node/ssh2/Dockerode errors to clearer copy; keeps the original for debugging.
  */
@@ -727,7 +745,9 @@ export class RemoteServersService {
       .map((a) => shSingleQuoteRemote(String(a)))
       .join(' ');
     const envBlock = bashExportBlockForStackDeploy(params.deployEnv ?? {});
+    const netEnsure = bashEnsureWeehawkOverlayNetwork();
     const script = `set -euo pipefail
+${netEnsure}
 ${envBlock}
 PERSIST=${persistQ}
 cd "$PERSIST"
@@ -2366,7 +2386,9 @@ fi
         const envExports = bashExportBlockForStackDeploy(
           params.deployEnv ?? {},
         );
+        const netEnsure = bashEnsureWeehawkOverlayNetwork();
         const deployScript = `set -euo pipefail
+${netEnsure}
 ${envExports}
 cd '${remoteDir}'
 if [ -f docker-config/config.json ]; then

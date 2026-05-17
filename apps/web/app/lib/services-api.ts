@@ -2,10 +2,10 @@ import { API_BASE, wsBase, wsBaseCandidates } from "./api";
 import { authFetch } from "./auth-fetch";
 import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
 import {
-  buildCoolifyTemplateDockerConfig,
-  isCoolifyTemplateServiceConfig,
-} from "./coolify-templates";
-import { buildCoolifyTemplateEnvFromCompose } from "./coolify-template-env";
+  buildTemplateDockerConfig,
+  isWeehawkTemplateServiceConfig,
+} from "./service-template-catalog";
+import { buildTemplateEnvFromCompose } from "./template-env";
 import type { DatabaseEngineId } from "./database-engines";
 import type { DatabaseBackupConfig } from "./database-backup-preview";
 import { getServerApiBase } from "./server-api";
@@ -121,7 +121,7 @@ function composeTypeToApi(t: ServiceType): "COMPOSE" | "STACK" | "APPLICATION" |
 }
 
 function composeTypeFromApi(raw: string, dockerConfig: string): ServiceType {
-  if (isCoolifyTemplateServiceConfig(dockerConfig)) return "template";
+  if (isWeehawkTemplateServiceConfig(dockerConfig)) return "template";
   const u = String(raw).toUpperCase();
   if (u === "STACK") return "stack";
   if (u === "APPLICATION") return "application";
@@ -362,25 +362,25 @@ export async function createServiceApi(input: CreateServiceInput): Promise<Servi
   const {
     databaseEngine,
     postgres: _postgres,
-    coolifyTemplateId,
-    coolifyTemplatePort,
+    templateCatalogId,
+    templateCatalogPort,
     appExternalNetworkNames,
     appStackNetworkKeys,
     ...rest
   } = input;
   let dockerConfig = rest.config?.trim() ? rest.config : "";
   let env = "";
-  if (rest.type === "template" && coolifyTemplateId?.trim()) {
-    const templateId = coolifyTemplateId.trim();
+  if (rest.type === "template" && templateCatalogId?.trim()) {
+    const templateId = templateCatalogId.trim();
     const composeBody = rest.config?.trim() ?? "";
-    dockerConfig = buildCoolifyTemplateDockerConfig(templateId, composeBody, {
-      port: coolifyTemplatePort?.trim() || undefined,
+    dockerConfig = buildTemplateDockerConfig(templateId, composeBody, {
+      port: templateCatalogPort?.trim() || undefined,
     });
-    env = buildCoolifyTemplateEnvFromCompose(composeBody, {
+    env = buildTemplateEnvFromCompose(composeBody, {
       appName: deriveAppNameFromServiceName(rest.name),
       serviceName: rest.name,
       templateId,
-      templatePort: coolifyTemplatePort?.trim() || undefined,
+      templatePort: templateCatalogPort?.trim() || undefined,
     });
   } else if (rest.type === "databases" && databaseEngine) {
     dockerConfig = `# weehawk database service\n# engine: ${databaseEngine}\n`;

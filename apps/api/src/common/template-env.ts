@@ -1,11 +1,11 @@
 /**
- * Unified Coolify-template environment generation (create + deploy).
+ * Unified template environment generation (create + deploy).
  * Fills every SERVICE_* / compose placeholder so `docker stack deploy` does not warn.
  */
 
 import { randomBytes } from 'crypto';
 
-export type CoolifyEnvBuildContext = {
+export type TemplateEnvBuildContext = {
   appName: string;
   serviceName: string;
   templateId?: string;
@@ -43,8 +43,10 @@ function randomBase64Url(byteLength: number): string {
     .slice(0, 64);
 }
 
-/** Collect every env key referenced anywhere in a Coolify compose file. */
-export function extractCoolifyEnvKeysFromCompose(composeYaml: string): ExtractedVar[] {
+/** Collect every env key referenced anywhere in a template compose file. */
+export function extractTemplateEnvKeysFromCompose(
+  composeYaml: string,
+): ExtractedVar[] {
   const byKey = new Map<string, ExtractedVar>();
   const add = (key: string, defaultValue?: string) => {
     const k = key.trim();
@@ -82,7 +84,6 @@ export function extractCoolifyEnvKeysFromCompose(composeYaml: string): Extracted
     add(m[1]!);
   }
 
-  /** Coolify magic vars (all services in multi-container templates). */
   for (const m of text.matchAll(/\b(SERVICE_[A-Z][A-Z0-9_]*)\b/g)) {
     add(m[1]!);
   }
@@ -90,9 +91,28 @@ export function extractCoolifyEnvKeysFromCompose(composeYaml: string): Extracted
   return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
 }
 
+/** User-provided integrations — never invent random credentials. */
+function isOptionalExternalIntegrationKey(key: string): boolean {
+  const u = key.toUpperCase();
+  return (
+    u.startsWith('SMTP_') ||
+    u.startsWith('INF_APP_CONNECTION_') ||
+    u.startsWith('MAILGUN_') ||
+    u.startsWith('SENDGRID_') ||
+    u.startsWith('OAUTH_') ||
+    u.startsWith('OIDC_') ||
+    u.startsWith('SAML_') ||
+    u.startsWith('LDAP_') ||
+    u.startsWith('STRIPE_') ||
+    u.startsWith('TWILIO_') ||
+    u.startsWith('DISCORD_') ||
+    u.startsWith('SLACK_')
+  );
+}
+
 function inferDefaultForKey(
   key: string,
-  ctx: CoolifyEnvBuildContext,
+  ctx: TemplateEnvBuildContext,
 ): string | undefined {
   const slug = (ctx.templateId ?? ctx.appName)
     .replace(/-/g, '_')
@@ -145,13 +165,18 @@ function looksLikeSecretKey(key: string): boolean {
 
 function generateValueForKey(
   key: string,
-  ctx: CoolifyEnvBuildContext,
+  ctx: TemplateEnvBuildContext,
   defaultValue?: string,
 ): string {
+  if (isOptionalExternalIntegrationKey(key)) {
+    return defaultValue?.length ? defaultValue : '';
+  }
+
+  // ${VAR:-default} in compose (e.g. ALLOW_EMPTY_PASSWORD:-yes, NODE_ENV:-production)
   if (
     defaultValue !== undefined &&
     defaultValue.length > 0 &&
-    !looksLikeSecretKey(key)
+    !key.startsWith('SERVICE_PASSWORD')
   ) {
     return defaultValue;
   }
@@ -189,12 +214,12 @@ function generateValueForKey(
   return randomAlphanumeric(16);
 }
 
-export function buildCoolifyTemplateEnvVars(
+export function buildTemplateEnvVars(
   composeYaml: string,
-  ctx: CoolifyEnvBuildContext,
+  ctx: TemplateEnvBuildContext,
 ): Record<string, string> {
   const vars: Record<string, string> = {};
-  for (const { key, defaultValue } of extractCoolifyEnvKeysFromCompose(
+  for (const { key, defaultValue } of extractTemplateEnvKeysFromCompose(
     composeYaml,
   )) {
     vars[key] = generateValueForKey(key, ctx, defaultValue);
@@ -202,12 +227,12 @@ export function buildCoolifyTemplateEnvVars(
   return vars;
 }
 
-/** Merge auto-generated Coolify vars; `userEnv` wins on conflict. */
-export function mergeCoolifyTemplateDeployEnv(
+/** Merge auto-generated template vars; `userEnv` wins on conflict. */
+export function mergeTemplateDeployEnv(
   composeYaml: string,
-  ctx: CoolifyEnvBuildContext,
+  ctx: TemplateEnvBuildContext,
   userEnv: Record<string, string>,
 ): Record<string, string> {
-  const generated = buildCoolifyTemplateEnvVars(composeYaml, ctx);
+  const generated = buildTemplateEnvVars(composeYaml, ctx);
   return { ...generated, ...userEnv };
 }

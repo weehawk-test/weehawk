@@ -97,12 +97,14 @@ import {
   parseYamlPublishPort,
   parseYamlReplicas,
 } from "@/lib/env-utils";
-import { buildCoolifyTemplateEnvFromCompose } from "@/lib/coolify-template-env";
+import { buildTemplateEnvFromCompose } from "@/lib/template-env";
 import {
-  isCoolifyTemplateServiceConfig,
-  parseCoolifyTemplateIdFromConfig,
+  templateCatalogLogoUrl,
+  isWeehawkTemplateServiceConfig,
+  parseTemplateIdFromConfig,
   parseTemplatePortFromConfig,
-} from "@/lib/coolify-templates";
+} from "@/lib/service-template-catalog";
+import { useServiceTemplates } from "@/hooks/use-service-templates";
 import { ApplicationConnectionsPanel } from "./application-connections-panel";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceRemoteHostPanel } from "./service-remote-host-panel";
@@ -852,10 +854,15 @@ export default function ServiceDetails({
     }
   }, [isLoading, projectLoading, isDeletingService, service, project, router]);
 
-  const secretsRemoteId = (service ?? initialService)?.remoteServerId ?? null;
+  const svcForUi = service ?? initialService;
+  const isTemplateService =
+    svcForUi?.type === "template" ||
+    Boolean(svcForUi?.config && isWeehawkTemplateServiceConfig(svcForUi.config));
+
+  const secretsRemoteId = svcForUi?.remoteServerId ?? null;
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(secretsRemoteId, 1, "", {
     initialData: initialSecretsPaged ?? undefined,
-    enabled: (service ?? initialService)?.type !== "application",
+    enabled: svcForUi?.type !== "application" && !isTemplateService,
   });
   const deleteService = useDeleteService();
   const shutdownService = useShutdownService();
@@ -884,6 +891,16 @@ export default function ServiceDetails({
   const isDockerComposeService = service?.type === "docker-compose";
   const isStackOrComposeService = service?.type === "stack" || service?.type === "docker-compose";
   const hasDatabaseCompose = Boolean(service?.config?.includes("services:"));
+  const templateIdFromConfig = isTemplateService
+    ? parseTemplateIdFromConfig(service?.config ?? "")
+    : null;
+  const { data: serviceTemplates = [] } = useServiceTemplates(isTemplateService);
+  const templateCatalogEntry = templateIdFromConfig
+    ? serviceTemplates.find((t) => t.id === templateIdFromConfig)
+    : undefined;
+  const templateLogoSrc = templateIdFromConfig
+    ? templateCatalogLogoUrl(templateCatalogEntry?.logo, templateIdFromConfig)
+    : undefined;
 
   const runningOnHost = runtime?.running ?? false;
   const actionBusy = deploy.isPending || startService.isPending || shutdownService.isPending;
@@ -922,8 +939,11 @@ export default function ServiceDetails({
     const withoutComposeSecrets = isDockerComposeService
       ? withoutAppComposeTabs.filter((t) => t.id !== "secrets")
       : withoutAppComposeTabs;
-    if (!isDatabaseService) return withoutComposeSecrets;
-    const withoutDomainSecrets = withoutComposeSecrets.filter(
+    const withoutTemplateSecrets = isTemplateService
+      ? withoutComposeSecrets.filter((t) => t.id !== "secrets")
+      : withoutComposeSecrets;
+    if (!isDatabaseService) return withoutTemplateSecrets;
+    const withoutDomainSecrets = withoutTemplateSecrets.filter(
       (t) =>
         t.id !== "domain" &&
         t.id !== "secrets" &&
@@ -940,6 +960,7 @@ export default function ServiceDetails({
     isDockerComposeService,
     hasDatabaseCompose,
     isStackOrComposeService,
+    isTemplateService,
     envEntryCount,
     service?.domains?.length,
     service?.traefikRoutes,
@@ -1217,7 +1238,9 @@ export default function ServiceDetails({
                 className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl sm:h-16 sm:w-16 ${
                   dbEngineLogoSrc
                     ? "border border-sky-500/25 bg-transparent p-2"
-                    : typeConf.color
+                    : templateLogoSrc
+                      ? "border border-amber-500/25 bg-transparent p-2"
+                      : typeConf.color
                 }`}
               >
                 {dbEngineLogoSrc && dbEngineId ? (
@@ -1228,6 +1251,16 @@ export default function ServiceDetails({
                     height={56}
                     className={`object-contain h-auto w-auto max-h-12 max-w-[3.5rem] ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                     sizes="64px"
+                  />
+                ) : templateLogoSrc ? (
+                  <Image
+                    src={templateLogoSrc}
+                    alt=""
+                    width={56}
+                    height={56}
+                    className="object-contain h-auto w-auto max-h-12 max-w-[3.5rem] dark:brightness-110"
+                    sizes="64px"
+                    unoptimized
                   />
                 ) : (
                   <TypeIcon className="w-8 h-8" />
@@ -1266,7 +1299,11 @@ export default function ServiceDetails({
                     </span>
                   )}
                 </div>
-                {service.description && <p className="text-muted-foreground text-sm">{service.description}</p>}
+                {service.description && (
+                  <p className="mt-1 max-w-md line-clamp-2 text-xs leading-snug text-muted-foreground">
+                    {service.description}
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
                   <Calendar className="w-3 h-3" />
                   Created {formatServiceDateUtc(service.createdAt)}
@@ -5757,15 +5794,15 @@ function EnvFilePanel({ service }: { service: Service }) {
 
   const envText = service.env ?? "";
   const entries = countEnvEntries(editing ? draft : envText);
-  const isCoolifyTemplate =
-    service.type === "template" || isCoolifyTemplateServiceConfig(service.config);
-  const canGenerateFromCompose = isCoolifyTemplate && entries === 0 && !editing;
+  const isTemplateServiceEnv =
+    service.type === "template" || isWeehawkTemplateServiceConfig(service.config);
+  const canGenerateFromCompose = isTemplateServiceEnv && entries === 0 && !editing;
 
   const handleGenerateFromCompose = () => {
-    const generated = buildCoolifyTemplateEnvFromCompose(service.config, {
+    const generated = buildTemplateEnvFromCompose(service.config, {
       appName: service.appName ?? service.name,
       serviceName: service.name,
-      templateId: parseCoolifyTemplateIdFromConfig(service.config) ?? undefined,
+      templateId: parseTemplateIdFromConfig(service.config) ?? undefined,
       templatePort: parseTemplatePortFromConfig(service.config),
     });
     if (!generated.trim()) {
@@ -5782,7 +5819,7 @@ function EnvFilePanel({ service }: { service: Service }) {
         onSuccess: () => {
           toast({
             title: "Environment generated",
-            description: "Variables were created from the Coolify template compose.",
+            description: "Variables were created from the template compose.",
           });
         },
         onError: (e: Error) =>
@@ -6043,7 +6080,7 @@ function DomainsPanel({
   };
 
   const defaultInternalPort = useMemo(() => {
-    if (service.type === "template" || isCoolifyTemplateServiceConfig(service.config)) {
+    if (service.type === "template" || isWeehawkTemplateServiceConfig(service.config)) {
       return parseTemplatePortFromConfig(service.config) ?? "";
     }
     return "";

@@ -1,5 +1,5 @@
 /**
- * Coolify template compose files often mount named volumes without a top-level
+ * Template compose files often mount named volumes without a top-level
  * `volumes:` declaration. Docker Compose then fails with "undefined volume".
  */
 

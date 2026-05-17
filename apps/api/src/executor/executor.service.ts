@@ -41,15 +41,18 @@ import {
   composeServiceHasTraefikIngress,
   isSwarmStackService,
 } from './executor-swarm';
-import { mergeCoolifyTemplateDeployEnv } from '../common/coolify-template-env';
+import { mergeTemplateDeployEnv } from '../common/template-env';
 import {
   composeBodyFromDockerConfig,
-  isCoolifyTemplateDockerConfig,
-  parseCoolifyTemplateIdFromDockerConfig,
+  isWeehawkTemplateDockerConfig,
+  parseTemplateIdFromDockerConfig,
   parseTemplatePortFromDockerConfig,
-} from '../common/coolify-template-service';
+} from '../common/template-service';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
+import { ensureComposeDependsOnListForSwarm } from './compose-depends-on-normalize';
+import { attachAllServicesToWeehawkStackNetworks } from './compose-traefik-inject';
 import { ensureComposeNamedVolumesDeclared } from './compose-volume-normalize';
+import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import { runStructuredDatabaseBackupOnRemoteHost } from './executor-structured-db-backup';
 import {
   runStructuredDatabaseImport,
@@ -333,6 +336,13 @@ fi
       c = c.replace(/\/var\/lib\/postgresql\/data/g, '/var/lib/postgresql');
     }
     c = ensureComposeNamedVolumesDeclared(c);
+    c = ensureComposeDependsOnListForSwarm(c);
+    if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+      c = attachAllServicesToWeehawkStackNetworks(
+        c,
+        WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+      );
+    }
     return c;
   }
 
@@ -343,7 +353,7 @@ fi
   }
 
   /**
-   * Coolify templates: auto-fill every SERVICE_* / compose placeholder at deploy time.
+   * Template services: auto-fill every SERVICE_* / compose placeholder at deploy time.
    * Saved `service.env` overrides generated defaults.
    */
   private resolveDeployEnvForService(
@@ -352,17 +362,17 @@ fi
   ): Record<string, string> {
     const userEnv = parseEnv(service.env || '');
     const stored = service.dockerConfig || '';
-    if (!isCoolifyTemplateDockerConfig(stored)) {
+    if (!isWeehawkTemplateDockerConfig(stored)) {
       return userEnv;
     }
     const body = composeBodyFromDockerConfig(composeYaml);
-    return mergeCoolifyTemplateDeployEnv(
+    return mergeTemplateDeployEnv(
       body,
       {
         appName: service.appName,
         serviceName: service.name,
         templateId:
-          parseCoolifyTemplateIdFromDockerConfig(stored) ?? service.appName,
+          parseTemplateIdFromDockerConfig(stored) ?? service.appName,
         templatePort: parseTemplatePortFromDockerConfig(stored),
       },
       userEnv,

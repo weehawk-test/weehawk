@@ -5,37 +5,40 @@ import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
 import { Loader2, Search, X } from "lucide-react";
 import {
-  coolifyTemplateCategories,
-  coolifyTemplateLogoUrl,
-  type CoolifyServiceTemplate,
-} from "@/lib/coolify-templates";
-import { useCoolifyTemplates } from "@/hooks/use-coolify-templates";
+  templateCatalogCategories,
+  templateCatalogLogoUrl,
+  type ServiceTemplateCatalogEntry,
+} from "@/lib/service-template-catalog";
+import { useServiceTemplates } from "@/hooks/use-service-templates";
 
-type CoolifyTemplatePickerProps = {
+type ServiceTemplatePickerProps = {
   open: boolean;
   selectedId?: string;
-  onSelect: (template: CoolifyServiceTemplate) => void;
+  onSelect: (template: ServiceTemplateCatalogEntry) => void;
   onCancel: () => void;
 };
 
-export function CoolifyTemplatePicker({
+export function ServiceTemplatePicker({
   open,
   selectedId,
   onSelect,
   onCancel,
-}: CoolifyTemplatePickerProps) {
-  const { data: templates = [], isLoading, isError, error, refetch } = useCoolifyTemplates(open);
+}: ServiceTemplatePickerProps) {
+  const { data: templates = [], isLoading, isError, error, refetch } =
+    useServiceTemplates(open);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<string | "all">("all");
 
-  const categories = useMemo(() => coolifyTemplateCategories(templates), [templates]);
+  const categories = useMemo(() => templateCatalogCategories(templates), [templates]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return templates.filter((t) => {
       if (category !== "all" && (t.category ?? "") !== category) return false;
       if (!q) return true;
-      const hay = [t.id, t.displayName, t.slogan, t.category ?? "", ...(t.tags ?? [])].join(" ").toLowerCase();
+      const hay = [t.id, t.displayName, t.slogan, t.category ?? "", ...(t.tags ?? [])]
+        .join(" ")
+        .toLowerCase();
       return hay.includes(q);
     });
   }, [templates, query, category]);
@@ -70,16 +73,7 @@ export function CoolifyTemplatePicker({
                     Choose a template
                   </h2>
                   <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
-                    One-click stacks from{" "}
-                    <a
-                      href="https://github.com/coollabsio/coolify/tree/v4.x/templates"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline"
-                    >
-                      Coolify templates
-                    </a>
-                    . Deploy as Docker Compose.
+                    One-click stacks from the public template catalog. Deploy as Docker Compose.
                   </p>
                 </div>
                 <button
@@ -139,7 +133,7 @@ export function CoolifyTemplatePicker({
               {isLoading && (
                 <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
                   <Loader2 className="h-8 w-8 animate-spin" />
-                  <p className="text-sm">Loading templates from GitHub…</p>
+                  <p className="text-sm">Loading templates…</p>
                 </div>
               )}
 
@@ -173,7 +167,7 @@ export function CoolifyTemplatePicker({
                         >
                           <span className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-border bg-background/60 p-1.5">
                             <Image
-                              src={coolifyTemplateLogoUrl(tpl.logo, tpl.id)}
+                              src={templateCatalogLogoUrl(tpl.logo, tpl.id)}
                               alt=""
                               width={40}
                               height={40}

@@ -39,15 +39,16 @@ import {
   defaultDatabaseVolumePath,
 } from "@/lib/database-engines";
 import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
-import { CoolifyTemplatePicker } from "@/components/coolify-template-picker";
+import { ServiceTemplatePicker } from "@/components/service-template-picker";
 import {
-  coolifyTemplateDisplayName,
-  coolifyTemplateLogoUrl,
-  decodeCoolifyComposeBase64,
-  parseCoolifyTemplateIdFromConfig,
-  type CoolifyServiceTemplate,
-} from "@/lib/coolify-templates";
-import { useCoolifyTemplates } from "@/hooks/use-coolify-templates";
+  templateCatalogDisplayName,
+  templateCatalogLogoUrl,
+  decodeTemplateComposeBase64,
+  isWeehawkTemplateServiceConfig,
+  parseTemplateIdFromConfig,
+  type ServiceTemplateCatalogEntry,
+} from "@/lib/service-template-catalog";
+import { useServiceTemplates } from "@/hooks/use-service-templates";
 
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
@@ -277,8 +278,8 @@ function CreateServiceModal({
       config: "",
       description: "",
       databaseEngine: undefined,
-      coolifyTemplateId: undefined,
-      coolifyTemplatePort: undefined,
+      templateCatalogId: undefined,
+      templateCatalogPort: undefined,
       postgres: {
         dbName: "",
         user: "",
@@ -296,7 +297,7 @@ function CreateServiceModal({
 
   const type = watch("type");
   const databaseEngine = watch("databaseEngine");
-  const coolifyTemplateId = watch("coolifyTemplateId");
+  const templateCatalogId = watch("templateCatalogId");
   const isDockerAdvancedType = type === "docker-compose" || type === "stack";
 
   useEffect(() => {
@@ -308,8 +309,8 @@ function CreateServiceModal({
 
   useEffect(() => {
     if (type !== "template") {
-      setValue("coolifyTemplateId", undefined);
-      setValue("coolifyTemplatePort", undefined);
+      setValue("templateCatalogId", undefined);
+      setValue("templateCatalogPort", undefined);
       if (type !== "docker-compose" && type !== "stack") {
         setValue("config", "");
       }
@@ -354,17 +355,17 @@ function CreateServiceModal({
   }, [type, databaseEngine]);
 
   useEffect(() => {
-    if (type === "template" && !coolifyTemplateId) {
+    if (type === "template" && !templateCatalogId) {
       setTemplatePickerOpen(true);
     }
-  }, [type, coolifyTemplateId]);
+  }, [type, templateCatalogId]);
 
-  const applyCoolifyTemplate = (tpl: CoolifyServiceTemplate) => {
-    const yaml = decodeCoolifyComposeBase64(tpl.compose);
+  const applyServiceTemplate = (tpl: ServiceTemplateCatalogEntry) => {
+    const yaml = decodeTemplateComposeBase64(tpl.compose);
     const svcName =
       getValues("name")?.trim() || tpl.id.replace(/[^a-z0-9-]/gi, "-").slice(0, 50);
-    setValue("coolifyTemplateId", tpl.id, { shouldDirty: true, shouldValidate: true });
-    setValue("coolifyTemplatePort", tpl.port ?? "", { shouldDirty: true });
+    setValue("templateCatalogId", tpl.id, { shouldDirty: true, shouldValidate: true });
+    setValue("templateCatalogPort", tpl.port ?? "", { shouldDirty: true });
     setValue("config", yaml, { shouldDirty: true });
     if (!getValues("name")?.trim()) {
       setValue("name", svcName, { shouldDirty: true });
@@ -452,13 +453,13 @@ function CreateServiceModal({
           setDockerModePickerOpen(false);
         }}
       />
-      <CoolifyTemplatePicker
+      <ServiceTemplatePicker
         open={templatePickerOpen}
-        selectedId={coolifyTemplateId}
-        onSelect={applyCoolifyTemplate}
+        selectedId={templateCatalogId}
+        onSelect={applyServiceTemplate}
         onCancel={() => {
           setTemplatePickerOpen(false);
-          if (!getValues("coolifyTemplateId")) {
+          if (!getValues("templateCatalogId")) {
             setValue("type", "application");
           }
         }}
@@ -556,11 +557,11 @@ function CreateServiceModal({
                   </button>
                 </div>
               )}
-              {type === "template" && coolifyTemplateId && (
+              {type === "template" && templateCatalogId && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">Stack:</span>
                   <span className="text-xs font-medium text-amber-800 border border-amber-500/30 rounded-full px-2.5 py-0.5 bg-amber-500/10 dark:text-amber-200">
-                    {coolifyTemplateDisplayName(coolifyTemplateId)}
+                    {templateCatalogDisplayName(templateCatalogId)}
                   </span>
                   <button
                     type="button"
@@ -574,8 +575,8 @@ function CreateServiceModal({
               {errors.databaseEngine && (
                 <p className="text-destructive text-xs mt-1">{errors.databaseEngine.message}</p>
               )}
-              {errors.coolifyTemplateId && (
-                <p className="text-destructive text-xs mt-1">{errors.coolifyTemplateId.message}</p>
+              {errors.templateCatalogId && (
+                <p className="text-destructive text-xs mt-1">{errors.templateCatalogId.message}</p>
               )}
             </div>
           </div>
@@ -587,13 +588,13 @@ function CreateServiceModal({
             <input {...register("description")} className="input-field" placeholder="Short description of this service" />
           </div>
 
-          {type === "template" && coolifyTemplateId && (
+          {type === "template" && templateCatalogId && (
             <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 space-y-2">
               <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                {coolifyTemplateDisplayName(coolifyTemplateId)}
+                {templateCatalogDisplayName(templateCatalogId)}
               </h3>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Compose is loaded from Coolify&apos;s catalog. Set environment variables on the service page before
+                Compose is loaded from the template catalog. Set environment variables on the service page before
                 deploy.
               </p>
             </div>
@@ -938,11 +939,13 @@ export default function ProjectsIdClient({
     }
     return map;
   }, [runtimeSnapshot.data?.data]);
-  const hasTemplateServices = items.some((s) => s.type === "template");
-  const { data: coolifyTemplates = [] } = useCoolifyTemplates(hasTemplateServices);
-  const coolifyTemplateById = useMemo(
-    () => new Map(coolifyTemplates.map((t) => [t.id, t])),
-    [coolifyTemplates],
+  const hasTemplateServices = items.some(
+    (s) => s.type === "template" || isWeehawkTemplateServiceConfig(s.config),
+  );
+  const { data: serviceTemplates = [] } = useServiceTemplates(hasTemplateServices);
+  const templateCatalogById = useMemo(
+    () => new Map(serviceTemplates.map((t) => [t.id, t])),
+    [serviceTemplates],
   );
   const limit = servicesPageData?.limit ?? SERVICES_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -1194,13 +1197,16 @@ export default function ProjectsIdClient({
                 const dbEngineId =
                   service.type === "databases" ? parseDatabaseEngineFromConfig(service.config) : undefined;
                 const dbLogo = dbEngineId ? getDatabaseEngineById(dbEngineId)?.logoSrc : undefined;
-                const templateId =
-                  service.type === "template" ? parseCoolifyTemplateIdFromConfig(service.config) : undefined;
-                const templateEntry = templateId ? coolifyTemplateById.get(templateId) : undefined;
-                const tplLogo =
-                  templateId && templateEntry
-                    ? coolifyTemplateLogoUrl(templateEntry.logo, templateId)
-                    : undefined;
+                const isTemplateService =
+                  service.type === "template" ||
+                  isWeehawkTemplateServiceConfig(service.config);
+                const templateId = isTemplateService
+                  ? parseTemplateIdFromConfig(service.config)
+                  : undefined;
+                const templateEntry = templateId ? templateCatalogById.get(templateId) : undefined;
+                const tplLogo = templateId
+                  ? templateCatalogLogoUrl(templateEntry?.logo, templateId)
+                  : undefined;
 
                 return (
                   <div

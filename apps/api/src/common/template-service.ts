@@ -1,10 +1,10 @@
-/** Detect Weehawk Coolify template services from stored `dockerConfig` headers. */
+/** Detect Weehawk template services from stored `dockerConfig` headers. */
 
-export function isCoolifyTemplateDockerConfig(dockerConfig: string): boolean {
+export function isWeehawkTemplateDockerConfig(dockerConfig: string): boolean {
   return /^\s*#\s*weehawk template service/m.test(dockerConfig || '');
 }
 
-export function parseCoolifyTemplateIdFromDockerConfig(
+export function parseTemplateIdFromDockerConfig(
   dockerConfig: string,
 ): string | null {
   const m = (dockerConfig || '').match(/^\s*#\s*template:\s*([^\s#]+)/m);

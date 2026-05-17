@@ -1,5 +1,5 @@
 /**
- * Build a Weehawk `.env` from Coolify-style compose placeholders:
+ * Build a Weehawk `.env` from template compose placeholders:
  * - ${VAR:?}  required (must be set in .env)
  * - ${VAR:-default}
  * - ${VAR}
@@ -7,7 +7,7 @@
  * - bare `SERVICE_FQDN_*` list items
  */
 
-export type CoolifyEnvBuildContext = {
+export type TemplateEnvBuildContext = {
   appName: string;
   serviceName: string;
   templateId?: string;
@@ -48,8 +48,7 @@ function randomBase64Url(byteLength: number): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-/** Extract variable names referenced in compose `environment:` blocks. */
-export function extractCoolifyEnvKeysFromCompose(composeYaml: string): ExtractedVar[] {
+export function extractTemplateEnvKeysFromCompose(composeYaml: string): ExtractedVar[] {
   const byKey = new Map<string, ExtractedVar>();
   const add = (key: string, defaultValue?: string) => {
     const k = key.trim();
@@ -66,36 +65,30 @@ export function extractCoolifyEnvKeysFromCompose(composeYaml: string): Extracted
 
   const text = composeYaml || "";
 
-  // ${VAR:?} — required substitution (pgAdmin, many Coolify templates)
   for (const m of text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):\?\}/g)) {
     add(m[1]!);
   }
 
-  // ${VAR:-default} or ${VAR-default}
   for (const m of text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*)|-([^}]*))\}/g)) {
     add(m[1]!, (m[2] ?? m[3])?.trim());
   }
 
-  // ${VAR} without :- or :? modifier
   for (const m of text.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
     const full = m[0] ?? "";
     if (full.includes(":")) continue;
     add(m[1]!);
   }
 
-  // $VAR (Coolify secrets / URLs, not ${...})
   for (const m of text.matchAll(/\$([A-Za-z_][A-Za-z0-9_]+)/g)) {
     const full = m[0] ?? "";
     if (full.startsWith("${")) continue;
     add(m[1]!);
   }
 
-  // - SERVICE_FQDN_APP (value pulled from env key with same name)
   for (const m of text.matchAll(/^\s*-\s+([A-Za-z_][A-Za-z0-9_]+)\s*$/gm)) {
     add(m[1]!);
   }
 
-  // Every Coolify SERVICE_* token anywhere (multi-service templates)
   for (const m of text.matchAll(/\b(SERVICE_[A-Z][A-Z0-9_]*)\b/g)) {
     add(m[1]!);
   }
@@ -103,7 +96,26 @@ export function extractCoolifyEnvKeysFromCompose(composeYaml: string): Extracted
   return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
 }
 
-function inferDefaultForKey(key: string, ctx: CoolifyEnvBuildContext): string | undefined {
+/** User-provided integrations — never invent random credentials. */
+function isOptionalExternalIntegrationKey(key: string): boolean {
+  const u = key.toUpperCase();
+  return (
+    u.startsWith("SMTP_") ||
+    u.startsWith("INF_APP_CONNECTION_") ||
+    u.startsWith("MAILGUN_") ||
+    u.startsWith("SENDGRID_") ||
+    u.startsWith("OAUTH_") ||
+    u.startsWith("OIDC_") ||
+    u.startsWith("SAML_") ||
+    u.startsWith("LDAP_") ||
+    u.startsWith("STRIPE_") ||
+    u.startsWith("TWILIO_") ||
+    u.startsWith("DISCORD_") ||
+    u.startsWith("SLACK_")
+  );
+}
+
+function inferDefaultForKey(key: string, ctx: TemplateEnvBuildContext): string | undefined {
   const slug = (ctx.templateId ?? ctx.appName).replace(/-/g, "_").replace(/[^a-z0-9_]/gi, "").slice(0, 48);
   const port = ctx.templatePort?.trim() || "80";
   const u = key.toUpperCase();
@@ -146,8 +158,17 @@ function looksLikeSecretKey(key: string): boolean {
   );
 }
 
-function generateValueForKey(key: string, ctx: CoolifyEnvBuildContext, defaultValue?: string): string {
-  if (defaultValue !== undefined && defaultValue.length > 0 && !looksLikeSecretKey(key)) {
+function generateValueForKey(
+  key: string,
+  ctx: TemplateEnvBuildContext,
+  defaultValue?: string,
+): string {
+  if (isOptionalExternalIntegrationKey(key)) {
+    return defaultValue?.length ? defaultValue : "";
+  }
+
+  // ${VAR:-default} in compose (e.g. ALLOW_EMPTY_PASSWORD:-yes, NODE_ENV:-production)
+  if (defaultValue !== undefined && defaultValue.length > 0 && !key.startsWith("SERVICE_PASSWORD")) {
     return defaultValue;
   }
 
@@ -182,29 +203,30 @@ function generateValueForKey(key: string, ctx: CoolifyEnvBuildContext, defaultVa
   return randomAlphanumeric(16);
 }
 
-export function buildCoolifyTemplateEnvVars(
+export function buildTemplateEnvVars(
   composeYaml: string,
-  ctx: CoolifyEnvBuildContext,
+  ctx: TemplateEnvBuildContext,
 ): Record<string, string> {
   const vars: Record<string, string> = {};
-  for (const { key, defaultValue } of extractCoolifyEnvKeysFromCompose(composeYaml)) {
+  for (const { key, defaultValue } of extractTemplateEnvKeysFromCompose(composeYaml)) {
     vars[key] = generateValueForKey(key, ctx, defaultValue);
   }
   return vars;
 }
 
 function escapeEnvValue(value: string): string {
+  if (value === "") return "";
   if (/^[a-zA-Z0-9_./:@-]+$/.test(value)) return value;
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
 }
 
-export function formatCoolifyTemplateEnvFile(vars: Record<string, string>): string {
+export function formatTemplateEnvFile(vars: Record<string, string>): string {
   const keys = Object.keys(vars).sort((a, b) => a.localeCompare(b));
   if (keys.length === 0) return "";
 
   const lines = [
-    "# Generated from Coolify template compose (weehawk)",
-    "# Includes ${VAR:?} required keys — edit before production.",
+    "# Generated from template compose (weehawk)",
+    "# Required keys are filled; optional SMTP/OAuth/GitHub vars are left empty — fill before use.",
     "",
   ];
   for (const key of keys) {
@@ -213,9 +235,9 @@ export function formatCoolifyTemplateEnvFile(vars: Record<string, string>): stri
   return `${lines.join("\n")}\n`;
 }
 
-export function buildCoolifyTemplateEnvFromCompose(
+export function buildTemplateEnvFromCompose(
   composeYaml: string,
-  ctx: CoolifyEnvBuildContext,
+  ctx: TemplateEnvBuildContext,
 ): string {
-  return formatCoolifyTemplateEnvFile(buildCoolifyTemplateEnvVars(composeYaml, ctx));
+  return formatTemplateEnvFile(buildTemplateEnvVars(composeYaml, ctx));
 }
