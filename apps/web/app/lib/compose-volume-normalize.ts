@@ -135,7 +135,7 @@ export function ensureComposeDependsOnListForSwarm(composeYaml: string): string 
   return out.join("\n");
 }
 
-/** Normalize template compose for remote Swarm deploy. */
+/** Normalize template compose before save / deploy (volumes, depends_on for Swarm-style YAML). */
 export function normalizeTemplateComposeForDeploy(composeYaml: string): string {
   let c = composeYaml;
   c = ensureComposeNamedVolumesDeclared(c);

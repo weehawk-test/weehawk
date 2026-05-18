@@ -1,3 +1,5 @@
+import { templateComposeTraefikContainerName } from '../traefik/template-compose-traefik-dynamic';
+
 /**
  * Inject Traefik Docker labels and attach the external proxy network for compose deploys.
  */
@@ -21,19 +23,14 @@ function escapeTraefikLabelValue(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-/** Swarm stack `deploy.labels` (Traefik on Weehawk hosts uses `providers.docker.swarmMode`). */
-export function buildSwarmTraefikDeployBlock(
+function buildTraefikLabelEntries(
   traefik: ComposeTraefikIngress,
   dockerNetwork: string,
+  indent: string,
 ): string[] {
   const lines: string[] = [
-    '    deploy:',
-    '      replicas: 1',
-    '      restart_policy:',
-    '        condition: on-failure',
-    '      labels:',
-    '        - "traefik.enable=true"',
-    `        - "traefik.docker.network=${dockerNetwork}"`,
+    `${indent}- "traefik.enable=true"`,
+    `${indent}- "traefik.docker.network=${dockerNetwork}"`,
   ];
   const lbPortsSeen = new Set<number>();
   for (const r of traefik.routes) {
@@ -42,27 +39,42 @@ export function buildSwarmTraefikDeployBlock(
     const ep = useTls ? traefik.httpsEntrypoint : traefik.httpEntrypoint;
     const lbSvc = `whlb_${r.port}`;
     lines.push(
-      `        - "traefik.http.routers.${r.router}.rule=${ruleEsc}"`,
+      `${indent}- "traefik.http.routers.${r.router}.rule=${ruleEsc}"`,
     );
     lines.push(
-      `        - "traefik.http.routers.${r.router}.entrypoints=${ep}"`,
+      `${indent}- "traefik.http.routers.${r.router}.entrypoints=${ep}"`,
     );
     lines.push(
-      `        - "traefik.http.routers.${r.router}.service=${lbSvc}"`,
+      `${indent}- "traefik.http.routers.${r.router}.service=${lbSvc}"`,
     );
     if (useTls) {
       lines.push(
-        `        - "traefik.http.routers.${r.router}.tls.certresolver=${traefik.certResolver}"`,
+        `${indent}- "traefik.http.routers.${r.router}.tls.certresolver=${traefik.certResolver}"`,
       );
     }
     if (!lbPortsSeen.has(r.port)) {
       lbPortsSeen.add(r.port);
       lines.push(
-        `        - "traefik.http.services.${lbSvc}.loadbalancer.server.port=${r.port}"`,
+        `${indent}- "traefik.http.services.${lbSvc}.loadbalancer.server.port=${r.port}"`,
       );
     }
   }
   return lines;
+}
+
+/** Swarm stack `deploy.labels` (Traefik on Weehawk hosts uses `providers.docker.swarmMode`). */
+export function buildSwarmTraefikDeployBlock(
+  traefik: ComposeTraefikIngress,
+  dockerNetwork: string,
+): string[] {
+  return [
+    '    deploy:',
+    '      replicas: 1',
+    '      restart_policy:',
+    '        condition: on-failure',
+    '      labels:',
+    ...buildTraefikLabelEntries(traefik, dockerNetwork, '        '),
+  ];
 }
 
 function findServicesSection(lines: string[]): {
@@ -239,6 +251,13 @@ function ensureRootOverlayNetwork(
   return ensureNetworkDeclared(lines, networkName, ['    driver: overlay']);
 }
 
+function ensureRootBridgeNetwork(
+  lines: string[],
+  networkName: string,
+): string[] {
+  return ensureNetworkDeclared(lines, networkName, ['    driver: bridge']);
+}
+
 function ensureRootExternalNetwork(
   lines: string[],
   networkName: string,
@@ -268,7 +287,7 @@ function attachAllServicesToStackNetwork(
 }
 
 /**
- * Attach every service to the internal overlay + external Traefik network (template stacks).
+ * Attach every service to the internal overlay + external Traefik network (Swarm stacks).
  */
 export function attachAllServicesToWeehawkStackNetworks(
   composeYaml: string,
@@ -282,6 +301,77 @@ export function attachAllServicesToWeehawkStackNetworks(
   if (!services) return composeYaml;
 
   lines = ensureRootOverlayNetwork(lines, STACK_INTERNAL_NETWORK_NAME);
+  lines = ensureRootExternalNetwork(lines, externalNetwork);
+  lines = attachAllServicesToStackNetwork(lines, STACK_INTERNAL_NETWORK_NAME);
+  lines = attachAllServicesToStackNetwork(lines, externalNetwork);
+
+  return `${lines.join('\n').replace(/\s*$/, '')}\n`;
+}
+
+/** Set a stable `container_name` on the routed service (file-provider backend DNS on `weehawk`). */
+export function ensureTemplateComposeContainerName(
+  composeYaml: string,
+  appName: string,
+  targetServiceName: string,
+): string {
+  const raw = (composeYaml || '').trim();
+  if (!raw) return composeYaml;
+
+  const lines = raw.split(/\r?\n/);
+  const services = findServicesSection(lines);
+  if (!services) return composeYaml;
+
+  const block = findServiceBlockRange(
+    lines,
+    services.start,
+    services.indent,
+    targetServiceName,
+  );
+  if (!block) return composeYaml;
+
+  const childIndent = ' '.repeat(block.childIndent);
+  const containerLine = `${childIndent}container_name: ${templateComposeTraefikContainerName(appName, targetServiceName)}`;
+  for (let i = block.start + 1; i < block.end; i++) {
+    if (/^\s*container_name:\s*/.test(lines[i]!)) {
+      lines[i] = containerLine;
+      return `${lines.join('\n').replace(/\s*$/, '')}\n`;
+    }
+  }
+
+  const out = [...lines];
+  out.splice(block.start + 1, 0, containerLine);
+  return `${out.join('\n').replace(/\s*$/, '')}\n`;
+}
+
+/**
+ * Template compose + Domains: join Traefik network and pin container DNS (routing via file provider).
+ */
+export function prepareTemplateComposeForTraefikFileProvider(
+  composeYaml: string,
+  externalNetwork: string,
+  appName: string,
+  targetServiceName: string,
+): string {
+  let c = attachAllServicesToWeehawkComposeNetworks(composeYaml, externalNetwork);
+  c = ensureTemplateComposeContainerName(c, appName, targetServiceName);
+  return c;
+}
+
+/**
+ * Attach every service to a bridge + external Traefik network (template `docker compose`).
+ */
+export function attachAllServicesToWeehawkComposeNetworks(
+  composeYaml: string,
+  externalNetwork: string,
+): string {
+  const raw = (composeYaml || '').trim();
+  if (!raw) return composeYaml;
+
+  let lines = raw.split(/\r?\n/);
+  const services = findServicesSection(lines);
+  if (!services) return composeYaml;
+
+  lines = ensureRootBridgeNetwork(lines, STACK_INTERNAL_NETWORK_NAME);
   lines = ensureRootExternalNetwork(lines, externalNetwork);
   lines = attachAllServicesToStackNetwork(lines, STACK_INTERNAL_NETWORK_NAME);
   lines = attachAllServicesToStackNetwork(lines, externalNetwork);

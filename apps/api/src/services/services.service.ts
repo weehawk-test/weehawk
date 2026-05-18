@@ -48,7 +48,16 @@ import {
   parseConfigHeaderValue,
   parseContainerPortFromComposeYaml,
 } from '../executor/executor-compose-parse';
-import { injectTraefikIntoComposeYaml } from '../executor/compose-traefik-inject';
+import {
+  injectTraefikIntoComposeYaml,
+  prepareTemplateComposeForTraefikFileProvider,
+} from '../executor/compose-traefik-inject';
+import { isWeehawkTemplateService } from '../common/template-service';
+import {
+  buildTemplateComposeTraefikDynamicYaml,
+  templateComposeTraefikContainerName,
+  templateComposeTraefikDynamicFilename,
+} from '../traefik/template-compose-traefik-dynamic';
 import {
   buildTraefikMeMagicHostname,
   parseIpv4Octets,
@@ -1327,11 +1336,82 @@ export class ServicesService {
     }
 
     const targetService = firstComposeServiceName(composeYaml);
+    if (isWeehawkTemplateService(service)) {
+      return prepareTemplateComposeForTraefikFileProvider(
+        composeYaml,
+        WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+        service.appName,
+        targetService,
+      );
+    }
     return injectTraefikIntoComposeYaml(composeYaml, {
       targetServiceName: targetService,
       traefik,
       externalNetwork: WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
     });
+  }
+
+  /**
+   * Write or remove Traefik file-provider routing for template compose (Swarm-mode Traefik ignores container labels).
+   */
+  async syncTemplateComposeTraefikDynamicFile(
+    service: Service,
+    actingUserId: number | null,
+  ): Promise<void> {
+    if (!isWeehawkTemplateService(service)) return;
+    const remoteId = service.remoteServerId;
+    if (remoteId == null) return;
+
+    const filename = templateComposeTraefikDynamicFilename(service.appName);
+    const hasIngress =
+      (service.traefikRoutes?.length ?? 0) > 0 ||
+      (service.domains?.length ?? 0) > 0;
+
+    if (!hasIngress) {
+      await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+        remoteId,
+        actingUserId,
+        filename,
+      );
+      return;
+    }
+
+    const composeYaml = service.dockerConfig || '';
+    const port = this.resolveComposeDeployContainerPort(service, composeYaml);
+    const traefik = await this.buildTraefikIngressForCompose(service, port);
+    if (!traefik?.routes?.length) {
+      await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+        remoteId,
+        actingUserId,
+        filename,
+      );
+      return;
+    }
+
+    const targetService = firstComposeServiceName(composeYaml);
+    const containerName = templateComposeTraefikContainerName(
+      service.appName,
+      targetService,
+    );
+    const yaml = buildTemplateComposeTraefikDynamicYaml(
+      traefik,
+      targetService,
+      containerName,
+    );
+    if (!yaml.trim()) {
+      await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+        remoteId,
+        actingUserId,
+        filename,
+      );
+      return;
+    }
+
+    await this.remoteServersService.writeTraefikDynamicFileViaSsh(
+      remoteId,
+      actingUserId,
+      { filename, yaml },
+    );
   }
 
   private resolveComposeDeployContainerPort(
@@ -3503,6 +3583,19 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         where: { id: saved.id },
         relations: ['project', 'remoteServer', 'buildRemoteServer'],
       })) ?? saved;
+    if (
+      isWeehawkTemplateService(hydrated) &&
+      (updateServiceDto.traefikRoutes !== undefined ||
+        updateServiceDto.domains !== undefined)
+    ) {
+      void this.syncTemplateComposeTraefikDynamicFile(hydrated, userId).catch(
+        (e) => {
+          this.log.warn(
+            `Template Traefik dynamic sync after save failed for service #${hydrated.id}: ${getErrorMessage(e)}`,
+          );
+        },
+      );
+    }
     this.emitOrgServiceRealtime(hydrated, 'updated');
     return this.withMagicTraefikMeUrl(hydrated);
   }

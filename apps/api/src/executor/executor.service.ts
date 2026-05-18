@@ -48,11 +48,10 @@ import {
   parseTemplateIdFromDockerConfig,
   parseTemplatePortFromDockerConfig,
 } from '../common/template-service';
+import { templateComposeTraefikDynamicFilename } from '../traefik/template-compose-traefik-dynamic';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
 import { ensureComposeDependsOnListForSwarm } from './compose-depends-on-normalize';
-import { attachAllServicesToWeehawkStackNetworks } from './compose-traefik-inject';
 import { ensureComposeNamedVolumesDeclared } from './compose-volume-normalize';
-import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import { runStructuredDatabaseBackupOnRemoteHost } from './executor-structured-db-backup';
 import {
   runStructuredDatabaseImport,
@@ -336,12 +335,8 @@ fi
       c = c.replace(/\/var\/lib\/postgresql\/data/g, '/var/lib/postgresql');
     }
     c = ensureComposeNamedVolumesDeclared(c);
-    c = ensureComposeDependsOnListForSwarm(c);
-    if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
-      c = attachAllServicesToWeehawkStackNetworks(
-        c,
-        WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
-      );
+    if (!isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+      c = ensureComposeDependsOnListForSwarm(c);
     }
     return c;
   }
@@ -983,6 +978,21 @@ fi
           deployDir,
           this.configService,
         );
+        if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+          try {
+            await this.servicesService.syncTemplateComposeTraefikDynamicFile(
+              service,
+              projectUserId,
+            );
+            emitChunk('Traefik route synced (file provider).\n');
+          } catch (syncErr) {
+            const syncMsg =
+              syncErr instanceof Error ? syncErr.message : String(syncErr);
+            emitChunk(
+              `Warning: could not sync Traefik file-provider route: ${syncMsg}\n`,
+            );
+          }
+        }
       }
       return { success, output: out };
     } catch (error) {
@@ -1373,6 +1383,17 @@ fi
           );
         }
       } else if (sshIds.remoteServerId != null) {
+        if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+          try {
+            await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+              sshIds.remoteServerId,
+              projectUserId,
+              templateComposeTraefikDynamicFilename(service.appName),
+            );
+          } catch {
+            /* best-effort */
+          }
+        }
         const deployEnv = parseEnv(service.env || '');
         await this.remoteServersService.composeInPersistentDeploymentViaSsh(
           sshIds.remoteServerId,

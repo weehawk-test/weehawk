@@ -6140,7 +6140,7 @@ function DomainsPanel({
             title: "Saved",
             description:
               service.type === "template"
-                ? "Redeploy to publish the domain (templates with domains deploy as a Swarm stack for Traefik)."
+                ? "Redeploy to publish the domain (Traefik file-provider route on the deploy host)."
                 : "Redeploy the stack to apply Traefik labels.",
           });
           onDone?.();

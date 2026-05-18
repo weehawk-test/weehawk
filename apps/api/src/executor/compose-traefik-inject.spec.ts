@@ -1,6 +1,7 @@
 import {
   attachAllServicesToWeehawkStackNetworks,
   injectTraefikIntoComposeYaml,
+  prepareTemplateComposeForTraefikFileProvider,
   STACK_INTERNAL_NETWORK_NAME,
 } from './compose-traefik-inject';
 
@@ -99,6 +100,20 @@ services:
     expect(out).not.toContain('traefik.enable');
     expect(out).toMatch(/backend:[\s\S]*?- weehawk/);
     expect(out).toMatch(/db:[\s\S]*?- weehawk/);
+  });
+
+  it('prepares template compose for file provider (networks + container_name, no swarm labels)', () => {
+    const out = prepareTemplateComposeForTraefikFileProvider(
+      pgadminCompose,
+      'weehawk',
+      'myapp',
+      'pgadmin',
+    );
+    expect(out).toContain('container_name: wh-myapp-pgadmin');
+    expect(out).not.toContain('traefik.enable');
+    expect(out).toContain(`${STACK_INTERNAL_NETWORK_NAME}:`);
+    expect(out).toContain('driver: bridge');
+    expect(out).toMatch(/weehawk:\s*\n\s+external: true/);
   });
 
   it('skips duplicate traefik labels but still attaches stack networks', () => {

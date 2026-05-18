@@ -57,7 +57,10 @@ import {
 } from '../common/remote-wrapped-script-install';
 import type { NotificationChannelRuntimeConfig } from '../notifications/notification.service';
 import type { ProviderSendResult } from '../notifications/providers/provider.types';
-import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
+import {
+  WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH,
+  WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+} from '../traefik/traefik.constants';
 import { TraefikService } from '../traefik/traefik.service';
 import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
@@ -2486,6 +2489,55 @@ fi
         undefined,
       );
       await this.sftpWriteRemoteFile(client, remoteYml, yaml);
+    });
+  }
+
+  /** Write a fragment under {@link WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH} (Traefik file provider). */
+  async writeTraefikDynamicFileViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    params: { filename: string; yaml: string },
+  ): Promise<void> {
+    const safeName = path.basename(params.filename.trim());
+    if (!safeName || safeName !== params.filename.trim()) {
+      throw new BadRequestException('Invalid Traefik dynamic filename.');
+    }
+    const rs = await this.resolveRemoteServerForProjectContext(
+      remoteServerId,
+      projectUserId,
+    );
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const remotePath = `${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}/${safeName}`;
+    const dirQ = WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH.replace(/'/g, `'\\''`);
+    const fileQ = remotePath.replace(/'/g, `'\\''`);
+    await this.withSshClient(rs, pem, async (client) => {
+      await this.sshExecCollectOutput(client, `mkdir -p '${dirQ}'`, undefined);
+      await this.sftpWriteRemoteFile(client, remotePath, params.yaml);
+      await this.sshExecCollectOutput(
+        client,
+        `chmod 644 '${fileQ}' 2>/dev/null || true`,
+        undefined,
+      );
+    });
+  }
+
+  /** Remove a Traefik file-provider fragment (no-op if missing). */
+  async removeTraefikDynamicFileViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    filename: string,
+  ): Promise<void> {
+    const safeName = path.basename(filename.trim());
+    if (!safeName) return;
+    const rs = await this.resolveRemoteServerForProjectContext(
+      remoteServerId,
+      projectUserId,
+    );
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const remotePath = `${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}/${safeName}`;
+    const fileQ = remotePath.replace(/'/g, `'\\''`);
+    await this.withSshClient(rs, pem, async (client) => {
+      await this.sshExecIgnoreFailure(client, `rm -f '${fileQ}'`);
     });
   }
 

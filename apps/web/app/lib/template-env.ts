@@ -4,7 +4,7 @@
  * - ${VAR:-default}
  * - ${VAR}
  * - $SERVICE_PASSWORD_*
- * - bare `SERVICE_FQDN_*` list items
+ * - bare `SERVICE_FQDN_*` / `SERVICE_URL_*` list items
  */
 
 export type TemplateEnvBuildContext = {

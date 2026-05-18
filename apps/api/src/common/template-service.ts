@@ -4,6 +4,13 @@ export function isWeehawkTemplateDockerConfig(dockerConfig: string): boolean {
   return /^\s*#\s*weehawk template service/m.test(dockerConfig || '');
 }
 
+/** Template catalog services always deploy with `docker compose`, not Swarm stack. */
+export function isWeehawkTemplateService(service: {
+  dockerConfig?: string | null;
+}): boolean {
+  return isWeehawkTemplateDockerConfig(service.dockerConfig || '');
+}
+
 export function parseTemplateIdFromDockerConfig(
   dockerConfig: string,
 ): string | null {

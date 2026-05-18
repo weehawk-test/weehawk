@@ -3,7 +3,8 @@
 import { normalizeTemplateComposeForDeploy } from "./compose-volume-normalize";
 
 export const TEMPLATE_CATALOG_BRANCH = "v4.x";
-export const SERVICE_TEMPLATE_CATALOG_JSON_URL = `https://raw.githubusercontent.com/coollabsio/coolify/${TEMPLATE_CATALOG_BRANCH}/templates/service-templates.json`;
+/** Coolify’s “latest” catalog (SERVICE_URL_* placeholders); same keys/metadata as service-templates.json. */
+export const SERVICE_TEMPLATE_CATALOG_JSON_URL = `https://raw.githubusercontent.com/coollabsio/coolify/${TEMPLATE_CATALOG_BRANCH}/templates/service-templates-latest.json`;
 export const TEMPLATE_CATALOG_PUBLIC_RAW_BASE = `https://raw.githubusercontent.com/coollabsio/coolify/${TEMPLATE_CATALOG_BRANCH}/public`;
 
 export type ServiceTemplateCatalogEntryRaw = {
