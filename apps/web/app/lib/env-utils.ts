@@ -1,3 +1,5 @@
+import { externalNetworksWithoutWeehawk } from "./weehawk-network-preference";
+
 /** Parse KEY=value lines (same rules as backend deploy env). */
 export function parseServiceEnvLines(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -109,11 +111,12 @@ export function parseApplicationNetworkHeaders(config: string): {
   const extLine = raw.match(/^\s*#\s*app\.networks\.external:\s*(.+)$/m);
   const stackLine = raw.match(/^\s*#\s*app\.networks\.stack:\s*(.+)$/m);
   if (extLine || stackLine) {
-    const external =
+    const external = externalNetworksWithoutWeehawk(
       extLine?.[1]
         ?.split("|")
         .map((s) => s.trim())
-        .filter(Boolean) ?? [];
+        .filter(Boolean) ?? [],
+    );
     const stack =
       stackLine?.[1]
         ?.split("|")

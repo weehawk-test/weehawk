@@ -23,7 +23,13 @@ export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
 // ─── Services ────────────────────────────────────────────────────────────────
 
-export const serviceTypeSchema = z.enum(["docker-compose", "stack", "application", "databases"]);
+export const serviceTypeSchema = z.enum([
+  "docker-compose",
+  "stack",
+  "application",
+  "databases",
+  "template",
+]);
 export type ServiceType = z.infer<typeof serviceTypeSchema>;
 
 export const traefikRouteRuleSchema = z.object({
@@ -115,11 +121,24 @@ export const createServiceSchema = z
     appExternalNetworkNames: z.array(z.string()).default([]),
     /** Compose network keys to create in this stack (overlay; Docker name `{stack}_{key}`). */
     appStackNetworkKeys: z.array(z.string()).default([]),
+    /** Join shared Traefik `weehawk` overlay (applications + databases). */
+    attachToWeehawkNetwork: z.boolean().optional(),
     databaseEngine: databaseEngineIdSchema.optional(),
+    /** Template catalog id when type is template. */
+    templateCatalogId: z.string().optional(),
+    /** Catalog port hint for template URL env vars. */
+    templateCatalogPort: z.string().optional(),
     /** Required when type is databases (set at service creation). */
     postgres: postgresCreateFieldsSchema.optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.type === "template" && !data.templateCatalogId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a template.",
+        path: ["templateCatalogId"],
+      });
+    }
     if (data.type === "databases" && !data.databaseEngine) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

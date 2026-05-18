@@ -195,12 +195,10 @@ export class TraefikService {
       '      - "--providers.docker.exposedByDefault=false"',
       `      - "--providers.docker.network=${net}"`,
     );
-    if (platformHost) {
-      lines.push(
-        '      - "--providers.file.directory=/etc/traefik/dynamic"',
-        '      - "--providers.file.watch=true"',
-      );
-    }
+    lines.push(
+      '      - "--providers.file.directory=/etc/traefik/dynamic"',
+      '      - "--providers.file.watch=true"',
+    );
     lines.push(
       `      - "--entrypoints.${s.httpEntrypoint}.address=:80"`,
       `      - "--entrypoints.${s.httpsEntrypoint}.address=:443"`,
@@ -222,11 +220,7 @@ export class TraefikService {
       '      - /var/run/docker.sock:/var/run/docker.sock:ro',
       `      - ${s.acmeStorageHostPath}:/acme.json`,
     );
-    if (platformHost) {
-      lines.push(
-        `      - ${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}:/etc/traefik/dynamic`,
-      );
-    }
+    lines.push(`      - ${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}:/etc/traefik/dynamic`);
     lines.push(
       '    networks:',
       `      - ${net}`,

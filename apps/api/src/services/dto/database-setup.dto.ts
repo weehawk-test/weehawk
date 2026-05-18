@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -88,4 +89,13 @@ export class DatabaseSetupDto {
     message: 'Invalid volume path (must start with / and contain no spaces)',
   })
   volumePath?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'When true, also attach the database stack to the shared Traefik `weehawk` overlay network',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  attachToWeehawkNetwork?: boolean;
 }

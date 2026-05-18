@@ -276,7 +276,7 @@ export function RemoteServerInstallBlock({
               >
                 <span className="font-medium">Server setup &amp; install</span>
                 <span className="mt-0.5 block text-[10px] leading-snug text-muted-foreground">
-                  Docker, Swarm, network, Traefik (deploy) or build host
+                  Docker, Swarm, Traefik + file provider for template domains (deploy) or build host
                 </span>
               </button>
               <button
@@ -339,8 +339,8 @@ export function RemoteServerInstallBlock({
                   ) : (
                     <>
                       When needed, it installs Docker and the Weehawk agents, switches on Swarm, creates a shared
-                      network for your services, and opens the public web ports (80 and 443) so your deployments on this
-                      server are reachable.
+                      network, deploys Traefik (Swarm routes + file provider for template compose domains), and opens
+                      ports 80/443. Safe to re-run on an existing host to refresh Traefik config.
                     </>
                   )}{" "}
                   Nixpacks is not part of this script — use <strong className="text-foreground">Nixpacks CLI only</strong>{" "}
@@ -443,9 +443,9 @@ export function RemoteServerInstallBlock({
               <DialogHeader>
                 <DialogTitle className="text-base">Traefik redeploy</DialogTitle>
                 <DialogDescription className="text-left text-xs leading-relaxed">
-                  Rewrites the Traefik static config (certificate email, entrypoints) and redeploys the Traefik
-                  stack on this server. Does <strong className="text-foreground">not</strong> reinstall Docker, Swarm, or
-                  the overlay network.
+                  Rewrites Traefik static config (ACME email, file provider, dynamic volume) and redeploys the Traefik
+                  stack. Use this to enable template compose domains without full server setup. Does{" "}
+                  <strong className="text-foreground">not</strong> reinstall Docker or Swarm.
                 </DialogDescription>
               </DialogHeader>
               <div className="min-w-0 space-y-3">

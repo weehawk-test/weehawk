@@ -1,7 +1,10 @@
 /** Fixed external overlay Traefik and app stacks attach to (not user-configurable). */
 export const WEEHAWK_TRAEFIK_EXTERNAL_NETWORK = 'weehawk';
 
-/** Host directory mounted at /etc/traefik/dynamic for platform UI routing YAML. */
+/**
+ * Host directory mounted at /etc/traefik/dynamic (Traefik file provider).
+ * Platform UI routes and per-template compose domains (`weehawk-compose-*.yml`).
+ */
 export const WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH =
   '/var/www/weehawk/traefik/dynamic';
 

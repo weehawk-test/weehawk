@@ -44,6 +44,29 @@ import { TraefikService } from '../traefik/traefik.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 import {
+  firstComposeServiceName,
+  parseConfigHeaderValue,
+  parseContainerPortFromComposeYaml,
+} from '../executor/executor-compose-parse';
+import {
+  injectTraefikIntoComposeYaml,
+  prepareTemplateComposeForTraefikFileProvider,
+} from '../executor/compose-traefik-inject';
+import { isWeehawkTemplateService } from '../common/template-service';
+import {
+  externalNetworksWithoutWeehawk,
+  isWeehawkNetworkAttached,
+  mergeWeehawkExternalNetwork,
+  parseWeehawkNetworkMode,
+  weehawkNetworkHeaderLine,
+  type WeehawkNetworkMode,
+} from '../common/weehawk-network-preference';
+import {
+  buildTemplateComposeTraefikDynamicYaml,
+  templateComposeTraefikContainerName,
+  templateComposeTraefikDynamicFilename,
+} from '../traefik/template-compose-traefik-dynamic';
+import {
   buildTraefikMeMagicHostname,
   parseIpv4Octets,
 } from '../common/magic-traefik-me';
@@ -633,14 +656,20 @@ export class ServicesService {
           ?.split('|')
           .map((s) => s.trim())
           .filter(Boolean) ?? [];
-      return { external, stack };
+      return {
+        external: externalNetworksWithoutWeehawk(external),
+        stack,
+      };
     }
     const mode = (this.parseConfigHeaderValue(raw, 'network.mode') || 'none')
       .toLowerCase()
       .trim();
     if (mode === 'external') {
       const name = this.parseConfigHeaderValue(raw, 'network.name')?.trim();
-      return { external: name ? [name] : [], stack: [] };
+      return {
+        external: externalNetworksWithoutWeehawk(name ? [name] : []),
+        stack: [],
+      };
     }
     if (mode === 'stack') {
       const key =
@@ -655,9 +684,9 @@ export class ServicesService {
     external?: string[];
     stack?: string[];
   }): { external: string[]; stack: string[] } {
-    const ext = (dto.external ?? [])
-      .map((s) => String(s).trim())
-      .filter(Boolean);
+    const ext = externalNetworksWithoutWeehawk(
+      (dto.external ?? []).map((s) => String(s).trim()).filter(Boolean),
+    );
     const stk = (dto.stack ?? []).map((k) => String(k).trim()).filter(Boolean);
     const seen = new Set<string>();
     for (const k of stk) {
@@ -1202,21 +1231,25 @@ export class ServicesService {
     return { ...service, magicTraefikMeUrl };
   }
 
-  /**
-   * Every application (Swarm) service attaches to the external `weehawk` overlay so Traefik
-   * (deployed on the same network) can reach the app without extra user configuration.
-   */
-  private ensureTraefikExternalNetwork(
-    network: { external: string[]; stack: string[] },
+  private resolveApplicationWeehawkNetworkMode(
     service: Service,
+    override?: boolean,
+  ): WeehawkNetworkMode {
+    if (override === true) return 'attach';
+    if (override === false) return 'standalone';
+    return parseWeehawkNetworkMode(service.dockerConfig || '', {
+      defaultMode: 'attach',
+    });
+  }
+
+  private applyApplicationWeehawkNetworkPreference(
+    network: { external: string[]; stack: string[] },
+    attach: boolean,
   ): { external: string[]; stack: string[] } {
-    const proxy = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK;
-    if (service.composeType !== composeType.APPLICATION) {
-      return network;
-    }
-    const ext = [...network.external];
-    if (!ext.some((n) => n === proxy)) ext.push(proxy);
-    return { external: ext, stack: [...network.stack] };
+    return {
+      external: mergeWeehawkExternalNetwork(network.external, attach),
+      stack: [...network.stack],
+    };
   }
 
   private sanitizePathPrefixForRule(
@@ -1298,6 +1331,129 @@ export class ServicesService {
     return `${lines.join('\n')}\n`;
   }
 
+  /**
+   * Apply Domains-tab Traefik labels at deploy time for compose/template services (not persisted in DB).
+   */
+  async applyTraefikToComposeDeployYaml(
+    service: Service,
+    composeYaml: string,
+  ): Promise<string> {
+    if (service.composeType !== composeType.COMPOSE) {
+      return composeYaml;
+    }
+    const hasRoutes = (service.traefikRoutes?.length ?? 0) > 0;
+    const hasDomains = (service.domains?.length ?? 0) > 0;
+    if (!hasRoutes && !hasDomains) {
+      return composeYaml;
+    }
+
+    const port = this.resolveComposeDeployContainerPort(service, composeYaml);
+    const traefik = await this.buildTraefikIngressForCompose(service, port);
+    if (!traefik?.routes?.length) {
+      return composeYaml;
+    }
+
+    const targetService = firstComposeServiceName(composeYaml);
+    if (isWeehawkTemplateService(service)) {
+      return prepareTemplateComposeForTraefikFileProvider(
+        composeYaml,
+        WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+        service.appName,
+        targetService,
+      );
+    }
+    return injectTraefikIntoComposeYaml(composeYaml, {
+      targetServiceName: targetService,
+      traefik,
+      externalNetwork: WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+    });
+  }
+
+  /**
+   * Write or remove Traefik file-provider routing for template compose (Swarm-mode Traefik ignores container labels).
+   */
+  async syncTemplateComposeTraefikDynamicFile(
+    service: Service,
+    actingUserId: number | null,
+  ): Promise<void> {
+    if (!isWeehawkTemplateService(service)) return;
+    const remoteId = service.remoteServerId;
+    if (remoteId == null) return;
+
+    const filename = templateComposeTraefikDynamicFilename(service.appName);
+    const hasIngress =
+      (service.traefikRoutes?.length ?? 0) > 0 ||
+      (service.domains?.length ?? 0) > 0;
+
+    if (!hasIngress) {
+      await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+        remoteId,
+        actingUserId,
+        filename,
+      );
+      return;
+    }
+
+    const composeYaml = service.dockerConfig || '';
+    const port = this.resolveComposeDeployContainerPort(service, composeYaml);
+    const traefik = await this.buildTraefikIngressForCompose(service, port);
+    if (!traefik?.routes?.length) {
+      await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+        remoteId,
+        actingUserId,
+        filename,
+      );
+      return;
+    }
+
+    const targetService = firstComposeServiceName(composeYaml);
+    const containerName = templateComposeTraefikContainerName(
+      service.appName,
+      targetService,
+    );
+    const yaml = buildTemplateComposeTraefikDynamicYaml(
+      traefik,
+      targetService,
+      containerName,
+    );
+    if (!yaml.trim()) {
+      await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+        remoteId,
+        actingUserId,
+        filename,
+      );
+      return;
+    }
+
+    await this.remoteServersService.writeTraefikDynamicFileViaSsh(
+      remoteId,
+      actingUserId,
+      { filename, yaml },
+    );
+  }
+
+  private resolveComposeDeployContainerPort(
+    service: Service,
+    composeYaml: string,
+  ): number {
+    for (const r of service.traefikRoutes ?? []) {
+      if (r.port != null && Number.isFinite(Number(r.port))) {
+        return Math.min(
+          65535,
+          Math.max(1, Math.floor(Number(r.port))),
+        );
+      }
+    }
+    const templatePort = parseConfigHeaderValue(composeYaml, 'template.port');
+    if (templatePort) {
+      const p = parseInt(templatePort, 10);
+      if (Number.isFinite(p) && p > 0) return p;
+    }
+    const fromYaml = parseContainerPortFromComposeYaml(composeYaml);
+    if (fromYaml) return fromYaml;
+    return 80;
+  }
+
   private async buildTraefikIngressForCompose(
     service: Service,
     containerPort: number,
@@ -1315,7 +1471,10 @@ export class ServicesService {
       }
     | undefined
   > {
-    if (service.composeType !== composeType.APPLICATION) {
+    if (
+      service.composeType !== composeType.APPLICATION &&
+      service.composeType !== composeType.COMPOSE
+    ) {
       return undefined;
     }
     const svc = await this.ensureServiceForMagicDomains(service);
@@ -1406,13 +1565,21 @@ export class ServicesService {
       network?: { external: string[]; stack: string[] };
       volumes?: Array<{ source: string; target: string; readOnly: boolean }>;
       envKeys?: string[];
+      attachToWeehawkNetwork?: boolean;
     },
   ): Promise<string> {
     const args = this.extractApplicationComposeRegenerationArgs(service);
     let network =
       overrides?.network ??
       this.parseApplicationNetworksFromConfig(service.dockerConfig || '');
-    network = this.ensureTraefikExternalNetwork(network, service);
+    const attachWeehawk = this.resolveApplicationWeehawkNetworkMode(
+      service,
+      overrides?.attachToWeehawkNetwork,
+    );
+    network = this.applyApplicationWeehawkNetworkPreference(
+      network,
+      attachWeehawk === 'attach',
+    );
     const volumes = overrides?.volumes ?? args.volumes;
     const envKeys = overrides?.envKeys ?? args.envKeys;
     const registryPush = this.parseConfigHeaderValue(
@@ -1444,6 +1611,7 @@ export class ServicesService {
       volumes,
       network,
       traefik,
+      weehawkNetworkMode: attachWeehawk,
     });
     const marker = this.parseStoredRemoteGitMarker(service.dockerConfig || '');
     return marker ? this.injectRemoteGitHeaders(next, marker) : next;
@@ -1467,6 +1635,7 @@ export class ServicesService {
     envKeys: string[];
     volumes: Array<{ source: string; target: string; readOnly: boolean }>;
     network: { external: string[]; stack: string[] };
+    weehawkNetworkMode: WeehawkNetworkMode;
     traefik?: {
       certResolver: string;
       httpEntrypoint: string;
@@ -1573,8 +1742,9 @@ export class ServicesService {
       ? `# registry.pushImage: ${args.registryPushImage.trim()}\n`
       : '';
     const traefikLabelsSection = this.buildTraefikLabelSection(args.traefik);
+    const weehawkHeader = weehawkNetworkHeaderLine(args.weehawkNetworkMode);
     return `# weehawk application service
-${registryPushLine}# sourceDir: ${args.sourceDir}
+${weehawkHeader}${registryPushLine}# sourceDir: ${args.sourceDir}
 # buildPath: ${args.buildPath}
 # dockerfilePath: ${args.dockerfilePath}
 # buildMode: ${args.buildMode}
@@ -1600,7 +1770,11 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
    */
   async patchApplicationNetworks(
     id: number,
-    dto: { external?: string[]; stack?: string[] },
+    dto: {
+      external?: string[];
+      stack?: string[];
+      attachToWeehawkNetwork?: boolean;
+    },
     userId: number,
   ) {
     const service = await this.getScopedServiceForUser(id, userId);
@@ -1611,6 +1785,10 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     }
     const { external: ext, stack: stk } =
       this.normalizeApplicationNetworkPayload(dto);
+    const attachOverride =
+      dto.attachToWeehawkNetwork !== undefined
+        ? dto.attachToWeehawkNetwork
+        : undefined;
 
     const yamlEnvBefore = {
       dockerConfig: service.dockerConfig ?? '',
@@ -1623,6 +1801,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
           external: ext,
           stack: stk,
         },
+        attachToWeehawkNetwork: attachOverride,
       },
     );
     const saved = await this._internal_systemSaveService(service);
@@ -1782,7 +1961,11 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
-    const networkMerged = this.ensureTraefikExternalNetwork(network, service);
+    const attachWeehawk = this.resolveApplicationWeehawkNetworkMode(service);
+    const networkMerged = this.applyApplicationWeehawkNetworkPreference(
+      network,
+      attachWeehawk === 'attach',
+    );
     const volumes = this.resolveUploadVolumes(options, previousConfig);
     const traefik = await this.buildTraefikIngressForCompose(
       service,
@@ -1815,6 +1998,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       volumes,
       network: networkMerged,
       traefik,
+      weehawkNetworkMode: attachWeehawk,
     });
     nextConfig = this.injectRemoteGitHeaders(nextConfig, effectiveRemoteMarker);
     service.dockerConfig = nextConfig;
@@ -1876,6 +2060,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
         volumes: [],
         network: { external: [], stack: [] },
         traefik: undefined,
+        weehawkNetworkMode: this.resolveApplicationWeehawkNetworkMode(service),
       });
     }
     service.dockerConfig = this.injectRemoteGitHeaders(dc, marker);
@@ -2003,7 +2188,11 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
     service.env = this.mergeCredentialsIntoEnv(envWithoutManaged, valuesMap);
 
     const network = this.resolveUploadNetworks(options, previousConfig);
-    const networkMerged = this.ensureTraefikExternalNetwork(network, service);
+    const attachWeehawk = this.resolveApplicationWeehawkNetworkMode(service);
+    const networkMerged = this.applyApplicationWeehawkNetworkPreference(
+      network,
+      attachWeehawk === 'attach',
+    );
     const volumes = this.resolveUploadVolumes(options, previousConfig);
     const traefik = await this.buildTraefikIngressForCompose(
       service,
@@ -2025,6 +2214,7 @@ ${traefikLabelsSection}${envSection}${svcVolumesSection}${svcNetworkSection}${ro
       volumes,
       network: networkMerged,
       traefik,
+      weehawkNetworkMode: attachWeehawk,
     });
     const saved = await this._internal_systemSaveService(service);
     this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(
@@ -3442,6 +3632,19 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         where: { id: saved.id },
         relations: ['project', 'remoteServer', 'buildRemoteServer'],
       })) ?? saved;
+    if (
+      isWeehawkTemplateService(hydrated) &&
+      (updateServiceDto.traefikRoutes !== undefined ||
+        updateServiceDto.domains !== undefined)
+    ) {
+      void this.syncTemplateComposeTraefikDynamicFile(hydrated, userId).catch(
+        (e) => {
+          this.log.warn(
+            `Template Traefik dynamic sync after save failed for service #${hydrated.id}: ${getErrorMessage(e)}`,
+          );
+        },
+      );
+    }
     this.emitOrgServiceRealtime(hydrated, 'updated');
     return this.withMagicTraefikMeUrl(hydrated);
   }
@@ -3495,6 +3698,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         ([, v]) => String(v ?? '').trim().length > 0,
       ),
     );
+    const attachWeehawk =
+      dto.attachToWeehawkNetwork ??
+      isWeehawkNetworkAttached(service.dockerConfig || '');
     try {
       service.dockerConfig = this.databaseGenerator.buildDatabaseDockerConfig(
         engine,
@@ -3504,6 +3710,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
         dto.image,
         normalized.volumePath,
         plainEnvKeys,
+        attachWeehawk,
       );
     } catch (e) {
       if (e instanceof Error && /Invalid .* image reference/.test(e.message)) {
@@ -3543,7 +3750,11 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
     dto: PostgresStackUpdateDto,
     userId: number,
   ) {
-    if (dto.publishPort === undefined && dto.replicas === undefined) {
+    if (
+      dto.publishPort === undefined &&
+      dto.replicas === undefined &&
+      dto.attachToWeehawkNetwork === undefined
+    ) {
       return this.getScopedServiceForUser(id, userId);
     }
     const service = await this.getScopedServiceForUser(id, userId);
@@ -3606,6 +3817,9 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       dockerConfig: service.dockerConfig ?? '',
       env: service.env ?? '',
     };
+    const attachWeehawk =
+      dto.attachToWeehawkNetwork ??
+      isWeehawkNetworkAttached(service.dockerConfig || '');
     service.dockerConfig = this.databaseGenerator.buildDatabaseDockerConfig(
       engine,
       dbName,
@@ -3614,6 +3828,7 @@ docker service ps --no-trunc --format '{{.Name}}|{{.DesiredState}}|{{.CurrentSta
       currentImage,
       currentVolumePath,
       this.credentialKeysForEngine(engine),
+      attachWeehawk,
     );
     const saved = await this._internal_systemSaveService(service);
     this.mirrorDeployHostAfterYamlOrEnvChangeIfNeeded(

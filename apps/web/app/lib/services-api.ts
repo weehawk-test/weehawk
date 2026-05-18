@@ -1,6 +1,11 @@
 import { API_BASE, wsBase, wsBaseCandidates } from "./api";
 import { authFetch } from "./auth-fetch";
 import type { CreateServiceInput, Service, ServiceType, TraefikRouteRule } from "./schema";
+import {
+  buildTemplateDockerConfig,
+  isWeehawkTemplateServiceConfig,
+} from "./service-template-catalog";
+import { buildTemplateEnvFromCompose } from "./template-env";
 import type { DatabaseEngineId } from "./database-engines";
 import type { DatabaseBackupConfig } from "./database-backup-preview";
 import { getServerApiBase } from "./server-api";
@@ -111,10 +116,12 @@ function composeTypeToApi(t: ServiceType): "COMPOSE" | "STACK" | "APPLICATION" |
   if (t === "stack") return "STACK";
   if (t === "application") return "APPLICATION";
   if (t === "databases") return "DATABASES";
+  if (t === "template") return "COMPOSE";
   return "COMPOSE";
 }
 
-function composeTypeFromApi(raw: string): ServiceType {
+function composeTypeFromApi(raw: string, dockerConfig: string): ServiceType {
+  if (isWeehawkTemplateServiceConfig(dockerConfig)) return "template";
   const u = String(raw).toUpperCase();
   if (u === "STACK") return "stack";
   if (u === "APPLICATION") return "application";
@@ -223,7 +230,7 @@ export function mapApiServiceToService(row: unknown): Service {
         ? undefined
         : String(projectPublicIdRaw),
     name: String(s.name ?? ""),
-    type: composeTypeFromApi(String(s.composeType ?? "COMPOSE")),
+    type: composeTypeFromApi(String(s.composeType ?? "COMPOSE"), cfg),
     config: cfg,
     env: typeof s.env === "string" ? s.env : "",
     description: typeof s.description === "string" ? s.description : "",
@@ -352,30 +359,57 @@ export async function clearMagicTraefikMeApi(serviceId: string): Promise<Service
 }
 
 export async function createServiceApi(input: CreateServiceInput): Promise<Service> {
-  const { databaseEngine, postgres: _postgres, appExternalNetworkNames, appStackNetworkKeys, ...rest } = input;
+  const {
+    databaseEngine,
+    postgres: _postgres,
+    templateCatalogId,
+    templateCatalogPort,
+    appExternalNetworkNames,
+    appStackNetworkKeys,
+    attachToWeehawkNetwork,
+    ...rest
+  } = input;
   let dockerConfig = rest.config?.trim() ? rest.config : "";
-  if (rest.type === "databases" && databaseEngine) {
-    dockerConfig = `# weehawk database service\n# engine: ${databaseEngine}\n`;
+  let env = "";
+  if (rest.type === "template" && templateCatalogId?.trim()) {
+    const templateId = templateCatalogId.trim();
+    const composeBody = rest.config?.trim() ?? "";
+    dockerConfig = buildTemplateDockerConfig(templateId, composeBody, {
+      port: templateCatalogPort?.trim() || undefined,
+    });
+    env = buildTemplateEnvFromCompose(composeBody, {
+      appName: deriveAppNameFromServiceName(rest.name),
+      serviceName: rest.name,
+      templateId,
+      templatePort: templateCatalogPort?.trim() || undefined,
+    });
+  } else if (rest.type === "databases" && databaseEngine) {
+    const dbWeehawk = attachToWeehawkNetwork ? "attach" : "standalone";
+    dockerConfig = `# weehawk database service\n# network.weehawk: ${dbWeehawk}\n# engine: ${databaseEngine}\n`;
   } else if (rest.type === "application") {
     const extRaw = (appExternalNetworkNames ?? []).map((s) => s.trim()).filter(Boolean);
     const stk = (appStackNetworkKeys ?? []).map((s) => s.trim()).filter(Boolean);
-    const ext =
-      extRaw.length === 0
-        ? ["weehawk"]
-        : extRaw.some((n) => n.toLowerCase() === "weehawk")
-          ? extRaw
-          : ["weehawk", ...extRaw];
+    const attach = attachToWeehawkNetwork !== false;
+    const ext = attach
+      ? extRaw.some((n) => n.toLowerCase() === "weehawk")
+        ? extRaw
+        : ["weehawk", ...extRaw]
+      : extRaw;
     let header = "# weehawk application service\n";
-    header += `# app.networks.external: ${ext.join("|")}\n`;
+    header += `# network.weehawk: ${attach ? "attach" : "standalone"}\n`;
+    if (ext.length) header += `# app.networks.external: ${ext.join("|")}\n`;
+    else header += `# app.networks: none\n`;
     if (stk.length) header += `# app.networks.stack: ${stk.join("|")}\n`;
     dockerConfig = header;
   }
+  const apiType = rest.type === "template" ? "docker-compose" : rest.type;
   const body = {
     name: rest.name,
     appName: deriveAppNameFromServiceName(rest.name),
-    composeType: composeTypeToApi(rest.type),
+    composeType: composeTypeToApi(apiType as ServiceType),
     description: rest.description?.trim() || undefined,
     dockerConfig,
+    ...(env ? { env } : {}),
     projectId: Number(rest.projectId),
   };
   const res = await apiFetch("/api/services", {
@@ -430,6 +464,7 @@ export async function applyDatabaseApi(
     replicas?: number;
     publishPort?: number;
     image?: string;
+    attachToWeehawkNetwork?: boolean;
   },
 ): Promise<Service> {
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}`, {
@@ -462,7 +497,7 @@ export async function updatePostgresStackApi(
 export async function updateDatabaseStackApi(
   id: string,
   engine: DatabaseEngineId,
-  body: { publishPort?: number | null; replicas?: number },
+  body: { publishPort?: number | null; replicas?: number; attachToWeehawkNetwork?: boolean },
 ): Promise<Service> {
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}/stack`, {
     method: "PATCH",
@@ -522,7 +557,7 @@ export async function updateServiceApi(
 
 export async function patchApplicationNetworksApi(
   id: string,
-  body: { external: string[]; stack: string[] },
+  body: { external: string[]; stack: string[]; attachToWeehawkNetwork?: boolean },
 ): Promise<Service> {
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/networks`, {
     method: "PATCH",

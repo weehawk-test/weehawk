@@ -200,14 +200,10 @@ export function buildTraefikStaticYaml(opts: {
     '    exposedByDefault: false',
     '    swarmMode: true',
     `    network: ${dockerNetwork}`,
+    '  file:',
+    '    directory: /etc/traefik/dynamic',
+    '    watch: true',
   ];
-  if (hasPlatform) {
-    lines.push(
-      '  file:',
-      '    directory: /etc/traefik/dynamic',
-      '    watch: true',
-    );
-  }
   lines.push('');
   return lines.join('\n');
 }
@@ -245,12 +241,8 @@ export function buildTraefikStackYaml(opts: {
     '      - /opt/weehawk/traefik/data/acme.json:/acme.json',
     '      - /opt/weehawk/traefik/data/traefik.yml:/etc/traefik/traefik.yml:ro',
   );
-  if (hasPlatform) {
-    lines.push(
-      `      - ${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}:/etc/traefik/dynamic`,
-    );
-  }
   lines.push(
+    `      - ${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}:/etc/traefik/dynamic`,
     '    networks:',
     `      - ${dockerNetwork}`,
     '    deploy:',
@@ -264,6 +256,27 @@ export function buildTraefikStackYaml(opts: {
     '',
   );
   return lines.join('\n');
+}
+
+/**
+ * Bash run after Traefik stack deploy: ensure file provider + dynamic dir (compose template domains).
+ * Requires `TRAEFIK_DIR` and `SUDO_CMD` in the calling script.
+ */
+export function buildTraefikFileProviderPostDeployBash(): string {
+  const dynamicDir = WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH;
+  return `
+if ! grep -q 'directory: /etc/traefik/dynamic' "$TRAEFIK_DIR/data/traefik.yml" 2>/dev/null; then
+  echo "ERROR: traefik.yml missing file provider (required for template compose domains)." >&2
+  exit 1
+fi
+if ! grep -q '${dynamicDir}:/etc/traefik/dynamic' "$TRAEFIK_DIR/traefik-stack.yml" 2>/dev/null; then
+  echo "ERROR: traefik-stack.yml missing dynamic volume mount." >&2
+  exit 1
+fi
+DYNAMIC_DIR="${dynamicDir}"
+$SUDO_CMD mkdir -p "$DYNAMIC_DIR"
+$SUDO_CMD chmod 755 "$DYNAMIC_DIR" 2>/dev/null || true
+echo "Traefik file provider ready ($DYNAMIC_DIR — template compose domains + platform UI)."`;
 }
 
 function buildDeployWebhookAgentBash(
@@ -607,6 +620,7 @@ echo "Platform domain config written: ${pd}"`;
   } else {
     dynamicBashBlock = `
 DYNAMIC_DIR="${dynamicDir}"
+$SUDO_CMD mkdir -p "$DYNAMIC_DIR"
 if [ -f "$DYNAMIC_DIR/weehawk-platform.yml" ]; then
   $SUDO_CMD rm -f "$DYNAMIC_DIR/weehawk-platform.yml"
   echo "Removed previous platform domain config."
@@ -645,6 +659,7 @@ ${dynamicBashBlock}
 
 $SUDO_CMD docker stack deploy -c "$TRAEFIK_DIR/traefik-stack.yml" traefik-weehawk
 echo "Traefik stack traefik-weehawk redeployed with updated config."
+${buildTraefikFileProviderPostDeployBash()}
 ${appStackUpdateBash}
 echo "Weehawk: Traefik redeploy finished."
 `.trim();
@@ -777,7 +792,9 @@ printf '%s' '${dynamicB64}' | base64 -d | $SUDO_CMD tee "$DYNAMIC_DIR/weehawk-pl
 $SUDO_CMD chmod 644 "$DYNAMIC_DIR/weehawk-platform.yml" 2>/dev/null || true
 echo "Platform domain config written: ${pd}"`;
   } else {
-    provisionPlatformBash = '';
+    provisionPlatformBash = `
+DYNAMIC_DIR="${dynamicDir}"
+$SUDO_CMD mkdir -p "$DYNAMIC_DIR"`;
   }
 
   return `
@@ -892,6 +909,7 @@ fi
 
 $SUDO_CMD docker stack deploy -c "$TRAEFIK_DIR/traefik-stack.yml" traefik-weehawk
 echo "Traefik stack traefik-weehawk applied (config: $TRAEFIK_DIR)."
+${buildTraefikFileProviderPostDeployBash()}
 
 ${webhookBash}
 

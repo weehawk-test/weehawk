@@ -24,10 +24,17 @@ import {
 import { resolveEffectiveDockerfileRel } from '../services/weehawk-build-paths';
 import { maybeRemoveApplicationSourceAfterDeploy } from './executor-app-source';
 import {
+  extractDockerContainerIdFromOutput,
+  firstNonEmptyCliLine,
+  isDockerContainerId,
+  looksLikeDockerContainerName,
+} from './docker-container-ref';
+import {
   firstComposeServiceName,
   firstImageRefFromComposeYaml,
   parseConfigHeaderValue,
   parseEnv,
+  primaryComposeServiceNameForExec,
   resolveNixpacksNodeMajorForRemoteBuild,
 } from './executor-compose-parse';
 import { removeDeploymentFolder } from './executor-deployment-fs';
@@ -37,8 +44,24 @@ import {
   stderrIndicatesDockerFailure,
 } from './executor-docker';
 import type { ExecuteDeployOptions } from './executor-types';
-import { isSwarmStackService } from './executor-swarm';
+import {
+  composeServiceHasTraefikIngress,
+  isSwarmStackService,
+} from './executor-swarm';
+import { mergeTemplateDeployEnv } from '../common/template-env';
+import {
+  composeBodyFromDockerConfig,
+  isWeehawkTemplateDockerConfig,
+  parseTemplateIdFromDockerConfig,
+  parseTemplatePortFromDockerConfig,
+} from '../common/template-service';
+import {
+  templateComposeTraefikContainerName,
+  templateComposeTraefikDynamicFilename,
+} from '../traefik/template-compose-traefik-dynamic';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
+import { ensureComposeDependsOnListForSwarm } from './compose-depends-on-normalize';
+import { ensureComposeNamedVolumesDeclared } from './compose-volume-normalize';
 import { runStructuredDatabaseBackupOnRemoteHost } from './executor-structured-db-backup';
 import {
   runStructuredDatabaseImport,
@@ -321,7 +344,50 @@ fi
     if (service.composeType === composeType.DATABASES) {
       c = c.replace(/\/var\/lib\/postgresql\/data/g, '/var/lib/postgresql');
     }
+    c = ensureComposeNamedVolumesDeclared(c);
+    if (!isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+      c = ensureComposeDependsOnListForSwarm(c);
+    }
     return c;
+  }
+
+  /** Resolved compose YAML with Domains-tab Traefik labels for compose/template deploys. */
+  private async composeYamlForRemoteDeploy(service: Service): Promise<string> {
+    const base = this.composeYamlForResolvedDeploy(service);
+    return this.servicesService.applyTraefikToComposeDeployYaml(service, base);
+  }
+
+  /**
+   * Template services: auto-fill every SERVICE_* / compose placeholder at deploy time.
+   * Saved `service.env` overrides generated defaults.
+   */
+  /** Env for remote `docker compose` CLI (templates need generated SERVICE_* defaults). */
+  private composeDeployEnvForCli(service: Service): Record<string, string> {
+    const yaml = this.composeYamlForResolvedDeploy(service);
+    return this.resolveDeployEnvForService(service, yaml);
+  }
+
+  private resolveDeployEnvForService(
+    service: Service,
+    composeYaml: string,
+  ): Record<string, string> {
+    const userEnv = parseEnv(service.env || '');
+    const stored = service.dockerConfig || '';
+    if (!isWeehawkTemplateDockerConfig(stored)) {
+      return userEnv;
+    }
+    const body = composeBodyFromDockerConfig(composeYaml);
+    return mergeTemplateDeployEnv(
+      body,
+      {
+        appName: service.appName,
+        serviceName: service.name,
+        templateId:
+          parseTemplateIdFromDockerConfig(stored) ?? service.appName,
+        templatePort: parseTemplatePortFromDockerConfig(stored),
+      },
+      userEnv,
+    );
   }
 
   /**
@@ -360,7 +426,11 @@ fi
     }
 
     const deployDir = getServiceDeploymentDir(service.appName, service.id);
-    const finalConfig = this.composeYamlForResolvedDeploy(service);
+    const finalConfig = await this.composeYamlForRemoteDeploy(service);
+    const resolvedDeployEnv = this.resolveDeployEnvForService(
+      service,
+      finalConfig,
+    );
 
     if (sshTargets.remoteServerId != null && !isSwarmStackService(service)) {
       await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
@@ -806,6 +876,25 @@ fi
             localDockerConfigDir = dockerCfg.trim();
           }
           try {
+            if (composeServiceHasTraefikIngress(service)) {
+              emitChunk(
+                'Stopping prior compose project (domains use Swarm stack + Traefik)…\n',
+              );
+              try {
+                await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+                  remoteDeployId,
+                  projectUserId,
+                  {
+                    projectName: service.appName,
+                    composeArgvTail: ['down', '--remove-orphans'],
+                    deployEnv: resolvedDeployEnv,
+                    onChunk: deployLogEmitter ? emitChunk : undefined,
+                  },
+                );
+              } catch {
+                /* no prior compose project */
+              }
+            }
             emitChunk(
               `Deploying stack "${service.appName}" on remote host ${deployHostLabel}…\n`,
             );
@@ -817,7 +906,7 @@ fi
                 stackName: service.appName,
                 localDockerConfigDir,
                 onChunk: deployLogEmitter ? emitChunk : undefined,
-                deployEnv: parseEnv(service.env || ''),
+                deployEnv: resolvedDeployEnv,
               },
             );
             let out = [buildLogPrefix, r.stdout, r.stderr]
@@ -861,7 +950,7 @@ fi
       }
 
       const remoteComposeId = sshTargets.remoteServerId;
-      const deployEnvCompose = parseEnv(service.env || '');
+      const deployEnvCompose = resolvedDeployEnv;
       if (mode === 'redeploy') {
         try {
           await this.remoteServersService.composeInPersistentDeploymentViaSsh(
@@ -905,6 +994,21 @@ fi
           deployDir,
           this.configService,
         );
+        if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+          try {
+            await this.servicesService.syncTemplateComposeTraefikDynamicFile(
+              service,
+              projectUserId,
+            );
+            emitChunk('Traefik route synced (file provider).\n');
+          } catch (syncErr) {
+            const syncMsg =
+              syncErr instanceof Error ? syncErr.message : String(syncErr);
+            emitChunk(
+              `Warning: could not sync Traefik file-provider route: ${syncMsg}\n`,
+            );
+          }
+        }
       }
       return { success, output: out };
     } catch (error) {
@@ -961,12 +1065,16 @@ fi
       );
     }
     const deployDir = getServiceDeploymentDir(service.appName, service.id);
-    const finalConfig = this.composeYamlForResolvedDeploy(service);
+    const finalConfig = await this.composeYamlForRemoteDeploy(service);
     if (!finalConfig.trim()) {
       throw new BadRequestException(
         'Compose content is empty after resolving ${APP_NAME}. Fix the service YAML and save.',
       );
     }
+    const resolvedDeployEnv = this.resolveDeployEnvForService(
+      service,
+      finalConfig,
+    );
 
     try {
       if (!isSwarmStackService(service)) {
@@ -985,7 +1093,7 @@ fi
         parseConfigHeaderValue(rawConfig, 'registry.pushImage')?.trim() ||
         firstImageRefFromComposeYaml(finalConfig) ||
         '';
-      const deployEnv = parseEnv(service.env || '');
+      const deployEnv = resolvedDeployEnv;
       const execEnv = await this.getProcessEnvForService(service);
       if (authImageRef.trim()) {
         const merged = await this.registryService.mergePushEnvForImageRef(
@@ -1044,14 +1152,18 @@ fi
       );
     }
 
-    const finalConfig = this.composeYamlForResolvedDeploy(service);
+    const finalConfig = await this.composeYamlForRemoteDeploy(service);
+    const resolvedDeployEnv = this.resolveDeployEnvForService(
+      service,
+      finalConfig,
+    );
     const projectUserId: number | null = null;
     await this.remoteServersService.mirrorDockerComposeToRemotePersistent(
       sshIds.remoteServerId,
       projectUserId,
       { composeYaml: finalConfig, projectName: service.appName || 'service' },
     );
-    const deployEnv = parseEnv(service.env || '');
+    const deployEnv = resolvedDeployEnv;
     try {
       const r =
         await this.remoteServersService.composeInPersistentDeploymentViaSsh(
@@ -1129,21 +1241,46 @@ fi
         return { running: false };
       }
 
-      const deployEnv = parseEnv(service.env || '');
-      const r = await this.withRuntimeTimeout(
-        this.remoteServersService.composeInPersistentDeploymentViaSsh(
+      const running = await this.withRuntimeTimeout(
+        this.remoteServersService.isComposeProjectRunningOnRemoteViaSsh(
           sshIds.remoteServerId,
           projectUserId,
-          {
-            projectName: service.appName,
-            composeArgvTail: ['ps', '--status', 'running', '-q'],
-            deployEnv,
-          },
+          service.appName || 'service',
         ),
       );
-      return { running: r.stdout.trim().length > 0 };
+      return { running };
     } catch {
       return { running: false };
+    }
+  }
+
+  /**
+   * Resolve a running container ID from a name or ambiguous `docker ps`/`compose ps` output.
+   */
+  private async resolveRunningContainerIdByRefOnRemote(
+    remoteServerId: number,
+    projectUserId: number | null,
+    ref: string,
+  ): Promise<string | null> {
+    const token = ref.trim();
+    if (!token) return null;
+    if (isDockerContainerId(token)) return token.toLowerCase();
+
+    const refEsc = token.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = [
+      `cid=$(docker ps -q -f "name=^/${refEsc}$" -f status=running 2>/dev/null | head -n1 || true)`,
+      `if [ -z "$cid" ]; then cid=$(docker ps -q -f "name=${refEsc}" -f status=running 2>/dev/null | head -n1 || true); fi`,
+      `printf '%s' "$cid"`,
+    ].join('\n');
+    try {
+      const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId,
+        script,
+      );
+      return extractDockerContainerIdFromOutput(r.stdout);
+    } catch {
+      return null;
     }
   }
 
@@ -1175,6 +1312,8 @@ fi
       } catch {
         return { error: 'Invalid compose service name.' };
       }
+    } else if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+      key = primaryComposeServiceNameForExec(service.dockerConfig || '');
     } else {
       key = firstComposeServiceName(service.dockerConfig || '');
     }
@@ -1227,7 +1366,17 @@ fi
         } else {
           return { error: SWARM_NEEDS_DEPLOY_HOST_MESSAGE };
         }
-        const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
+        let cid = extractDockerContainerIdFromOutput(stdout);
+        if (!cid && sshIds.remoteServerId != null) {
+          const nameRef = firstNonEmptyCliLine(stdout);
+          if (looksLikeDockerContainerName(nameRef)) {
+            cid = await this.resolveRunningContainerIdByRefOnRemote(
+              sshIds.remoteServerId,
+              projectUserId,
+              nameRef,
+            );
+          }
+        }
         if (!cid) {
           return {
             error:
@@ -1252,7 +1401,31 @@ fi
             deployEnv,
           },
         );
-      const cid = pr.stdout.trim().split(/\r?\n/).filter(Boolean)[0];
+      let cid = extractDockerContainerIdFromOutput(pr.stdout);
+      if (!cid) {
+        const nameRef = firstNonEmptyCliLine(pr.stdout);
+        if (looksLikeDockerContainerName(nameRef)) {
+          cid = await this.resolveRunningContainerIdByRefOnRemote(
+            sshIds.remoteServerId,
+            projectUserId,
+            nameRef,
+          );
+        }
+      }
+      if (
+        !cid &&
+        isWeehawkTemplateDockerConfig(service.dockerConfig || '')
+      ) {
+        const stableName = templateComposeTraefikContainerName(
+          service.appName,
+          key,
+        );
+        cid = await this.resolveRunningContainerIdByRefOnRemote(
+          sshIds.remoteServerId,
+          projectUserId,
+          stableName,
+        );
+      }
       if (!cid) {
         return {
           error:
@@ -1287,6 +1460,17 @@ fi
           );
         }
       } else if (sshIds.remoteServerId != null) {
+        if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+          try {
+            await this.remoteServersService.removeTraefikDynamicFileViaSsh(
+              sshIds.remoteServerId,
+              projectUserId,
+              templateComposeTraefikDynamicFilename(service.appName),
+            );
+          } catch {
+            /* best-effort */
+          }
+        }
         const deployEnv = parseEnv(service.env || '');
         await this.remoteServersService.composeInPersistentDeploymentViaSsh(
           sshIds.remoteServerId,
@@ -1319,6 +1503,10 @@ fi
     }
 
     const finalConfig = this.composeYamlForResolvedDeploy(service);
+    const resolvedDeployEnv = this.resolveDeployEnvForService(
+      service,
+      finalConfig,
+    );
     const sshIds = await this.servicesService.getDockerSshTargetIds(service.id);
     const projectUserId: number | null = null;
     if (sshIds.remoteServerId == null) {
@@ -1334,7 +1522,7 @@ fi
         projectUserId,
         { composeYaml: finalConfig, projectName: service.appName || 'service' },
       );
-      const deployEnv = parseEnv(service.env || '');
+      const deployEnv = resolvedDeployEnv;
       const { stdout } =
         await this.remoteServersService.composeInPersistentDeploymentViaSsh(
           sshIds.remoteServerId,
@@ -1774,7 +1962,7 @@ ${script}
       if (sshIds.remoteServerId == null) {
         throw new BadRequestException(COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE);
       }
-      const deployEnv = parseEnv(service.env || '');
+      const deployEnv = this.composeDeployEnvForCli(service);
       await this.remoteServersService.composeInPersistentDeploymentViaSsh(
         sshIds.remoteServerId,
         projectUserId,
@@ -1784,6 +1972,23 @@ ${script}
           deployEnv,
         },
       );
+      const stillRunning =
+        await this.remoteServersService.isComposeProjectRunningOnRemoteViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          service.appName || 'service',
+        );
+      if (stillRunning) {
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['kill'],
+            deployEnv,
+          },
+        );
+      }
       return { success: true, message: 'Containers stopped' };
     } catch (error) {
       if (error instanceof BadRequestException) {

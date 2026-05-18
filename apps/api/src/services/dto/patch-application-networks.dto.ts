@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class PatchApplicationNetworksDto {
   @ApiPropertyOptional({
@@ -22,4 +22,12 @@ export class PatchApplicationNetworksDto {
   @IsArray()
   @IsString({ each: true })
   stack?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'When true, attach this stack to the shared Traefik `weehawk` overlay network',
+  })
+  @IsOptional()
+  @IsBoolean()
+  attachToWeehawkNetwork?: boolean;
 }

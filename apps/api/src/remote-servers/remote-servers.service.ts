@@ -57,7 +57,10 @@ import {
 } from '../common/remote-wrapped-script-install';
 import type { NotificationChannelRuntimeConfig } from '../notifications/notification.service';
 import type { ProviderSendResult } from '../notifications/providers/provider.types';
-import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
+import {
+  WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH,
+  WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+} from '../traefik/traefik.constants';
 import { TraefikService } from '../traefik/traefik.service';
 import { WEEHAWK_BUNDLED_WEBHOOK_AGENT_IMAGE } from './weehawk-webhook-agent.constants';
 import type { WebhookAgentProvisionInput } from './remote-server-provision.script';
@@ -97,6 +100,24 @@ function bashExportBlockForStackDeploy(env: Record<string, string>): string {
     lines.push(`export ${k}=${quoted}`);
   }
   return lines.join('\n');
+}
+
+/** Idempotent Swarm overlay used by Traefik and template stacks (`external: true` in compose). */
+function bashEnsureWeehawkOverlayNetwork(
+  networkName: string = WEEHAWK_TRAEFIK_EXTERNAL_NETWORK,
+): string {
+  const netQ = networkName.replace(/'/g, `'\\''`);
+  return `if ! docker info 2>/dev/null | grep -q 'Swarm: active'; then
+  echo "Docker Swarm is not active on this host. Use a Weehawk deploy server (provision installs Swarm + the weehawk overlay)." >&2
+  exit 1
+fi
+if docker network ls --filter "name=^${netQ}$" --format '{{.Scope}}' 2>/dev/null | grep -qx swarm; then
+  echo "Swarm overlay ${netQ} exists."
+else
+  docker network rm "${netQ}" 2>/dev/null || true
+  docker network create --driver overlay --attachable "${netQ}"
+  echo "Created Swarm overlay ${netQ}."
+fi`;
 }
 
 /**
@@ -727,7 +748,9 @@ export class RemoteServersService {
       .map((a) => shSingleQuoteRemote(String(a)))
       .join(' ');
     const envBlock = bashExportBlockForStackDeploy(params.deployEnv ?? {});
+    const netEnsure = bashEnsureWeehawkOverlayNetwork();
     const script = `set -euo pipefail
+${netEnsure}
 ${envBlock}
 PERSIST=${persistQ}
 cd "$PERSIST"
@@ -740,6 +763,30 @@ docker compose -f docker-compose.yml -p ${projQ} ${tail}
       script,
       params.onChunk,
     );
+  }
+
+  /**
+   * Whether any container in a `docker compose -p` project is running (label-based; no compose file/env).
+   */
+  async isComposeProjectRunningOnRemoteViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    projectName: string,
+  ): Promise<boolean> {
+    const projQ = shSingleQuoteRemote(
+      toSafePathSegment(projectName || 'service'),
+    );
+    const script = `docker ps -q --filter label=com.docker.compose.project=${projQ} --filter status=running 2>/dev/null | head -n 1`;
+    try {
+      const r = await this.execDockerCliOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId,
+        script,
+      );
+      return r.stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -2366,7 +2413,9 @@ fi
         const envExports = bashExportBlockForStackDeploy(
           params.deployEnv ?? {},
         );
+        const netEnsure = bashEnsureWeehawkOverlayNetwork();
         const deployScript = `set -euo pipefail
+${netEnsure}
 ${envExports}
 cd '${remoteDir}'
 if [ -f docker-config/config.json ]; then
@@ -2464,6 +2513,55 @@ fi
         undefined,
       );
       await this.sftpWriteRemoteFile(client, remoteYml, yaml);
+    });
+  }
+
+  /** Write a fragment under {@link WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH} (Traefik file provider). */
+  async writeTraefikDynamicFileViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    params: { filename: string; yaml: string },
+  ): Promise<void> {
+    const safeName = path.basename(params.filename.trim());
+    if (!safeName || safeName !== params.filename.trim()) {
+      throw new BadRequestException('Invalid Traefik dynamic filename.');
+    }
+    const rs = await this.resolveRemoteServerForProjectContext(
+      remoteServerId,
+      projectUserId,
+    );
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const remotePath = `${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}/${safeName}`;
+    const dirQ = WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH.replace(/'/g, `'\\''`);
+    const fileQ = remotePath.replace(/'/g, `'\\''`);
+    await this.withSshClient(rs, pem, async (client) => {
+      await this.sshExecCollectOutput(client, `mkdir -p '${dirQ}'`, undefined);
+      await this.sftpWriteRemoteFile(client, remotePath, params.yaml);
+      await this.sshExecCollectOutput(
+        client,
+        `chmod 644 '${fileQ}' 2>/dev/null || true`,
+        undefined,
+      );
+    });
+  }
+
+  /** Remove a Traefik file-provider fragment (no-op if missing). */
+  async removeTraefikDynamicFileViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    filename: string,
+  ): Promise<void> {
+    const safeName = path.basename(filename.trim());
+    if (!safeName) return;
+    const rs = await this.resolveRemoteServerForProjectContext(
+      remoteServerId,
+      projectUserId,
+    );
+    const pem = await this.resolvePrivateKeyPem(rs);
+    const remotePath = `${WEEHAWK_TRAEFIK_DYNAMIC_HOST_PATH}/${safeName}`;
+    const fileQ = remotePath.replace(/'/g, `'\\''`);
+    await this.withSshClient(rs, pem, async (client) => {
+      await this.sshExecIgnoreFailure(client, `rm -f '${fileQ}'`);
     });
   }
 

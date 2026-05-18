@@ -1,5 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, Max, Min, ValidateIf } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 
 /** Partial update of generated Postgres stack YAML (credentials unchanged). */
 export class PostgresStackUpdateDto {
@@ -25,4 +32,12 @@ export class PostgresStackUpdateDto {
   @Min(1)
   @Max(10)
   replicas?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'When true, attach the database stack to the shared Traefik `weehawk` overlay network',
+  })
+  @IsOptional()
+  @IsBoolean()
+  attachToWeehawkNetwork?: boolean;
 }

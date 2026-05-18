@@ -25,6 +25,7 @@ import {
   PackageOpen,
   ArrowDownToLine,
   Search,
+  LayoutTemplate,
 } from "lucide-react";
 import {
   useService,
@@ -96,7 +97,17 @@ import {
   parseYamlPublishPort,
   parseYamlReplicas,
 } from "@/lib/env-utils";
+import { buildTemplateEnvFromCompose } from "@/lib/template-env";
+import {
+  templateCatalogLogoUrl,
+  isWeehawkTemplateServiceConfig,
+  parseTemplateIdFromConfig,
+  parseTemplatePortFromConfig,
+} from "@/lib/service-template-catalog";
+import { useServiceTemplates } from "@/hooks/use-service-templates";
 import { ApplicationConnectionsPanel } from "./application-connections-panel";
+import { WeehawkNetworkOption } from "@/components/weehawk-network-option";
+import { isWeehawkNetworkAttached, parseWeehawkNetworkMode } from "@/lib/weehawk-network-preference";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceRemoteHostPanel } from "./service-remote-host-panel";
 import { ServiceSecretsTab } from "./service-secrets-tab";
@@ -227,6 +238,13 @@ networks:
     color: "bg-sky-500/10 text-sky-800 border-sky-400/45 dark:text-sky-200 dark:border-sky-500/25",
     glow: "shadow-[0_0_20px_rgba(56,189,248,0.14)] dark:shadow-[0_0_24px_rgba(56,189,248,0.08)]",
     icon: Database,
+    placeholder: "",
+  },
+  template: {
+    label: "Template",
+    color: "bg-amber-500/10 text-amber-900 border-amber-400/45 dark:text-amber-200 dark:border-amber-500/25",
+    glow: "shadow-[0_0_20px_rgba(245,158,11,0.12)] dark:shadow-[0_0_24px_rgba(245,158,11,0.08)]",
+    icon: LayoutTemplate,
     placeholder: "",
   },
 };
@@ -466,6 +484,18 @@ function applyYamlTab(
   return { next, selStart, selEnd };
 }
 
+const CONFIG_YAML_PANEL_CLASS =
+  "w-full min-h-[min(42vh,400px)] h-[min(56vh,560px)] max-h-[min(85vh,760px)] overflow-hidden border-t border-border/50 bg-zinc-100 dark:bg-black/70";
+
+function configYamlLineCount(text: string): number {
+  return Math.max(text.split("\n").length, 1);
+}
+
+function configYamlPanelMinHeightStyle(lineCount: number): React.CSSProperties {
+  const lines = Math.max(lineCount, 1);
+  return { minHeight: `${Math.min(Math.max(lines * 26 + 32, 280), 760)}px` };
+}
+
 /** Compose / stack YAML editor: gutter stays aligned with textarea scroll (shared line height). */
 function ConfigYamlTextareaWithGutter({
   value,
@@ -486,7 +516,7 @@ function ConfigYamlTextareaWithGutter({
   const [caretPos, setCaretPos] = useState(0);
   const [scrollOff, setScrollOff] = useState({ top: 0, left: 0 });
 
-  const lineCount = Math.max(value.split("\n").length, 1);
+  const lineCount = configYamlLineCount(value);
   const gutterDigits = Math.max(2, String(lineCount).length);
 
   const ghost = useMemo(() => {
@@ -570,25 +600,31 @@ function ConfigYamlTextareaWithGutter({
     setScrollOff({ top: t.scrollTop, left: t.scrollLeft });
   };
 
+  const editorPad = "pt-2 pb-2 pl-3 pr-3";
+
   return (
-    <div className="flex min-h-[420px] items-stretch">
-      <div
-        ref={gutterRef}
-        className="shrink-0 overflow-y-auto overflow-x-hidden border-r border-border/70 bg-zinc-200/95 dark:bg-zinc-950/75 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        style={{ width: `calc(${gutterDigits}ch + 1.75rem)` }}
-        aria-hidden
-      >
-        <div className={`pt-2 pb-5 pr-3 pl-5 text-right ${lineClass}`}>
-          {Array.from({ length: lineCount }, (_, i) => (
-            <div key={i} className="block h-[1.625rem] leading-[1.625rem]">
-              {i + 1}
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="relative min-h-[420px] min-w-0 flex-1 bg-zinc-100 dark:bg-black/70">
+    <div
+      className={`flex resize-y ${CONFIG_YAML_PANEL_CLASS}`}
+      style={configYamlPanelMinHeightStyle(lineCount)}
+    >
+      <div className="flex h-full min-h-0 w-full items-stretch">
         <div
-          className="pointer-events-none absolute inset-0 z-0 overflow-hidden pt-2 pb-5 pl-3 pr-5 font-mono text-xs leading-[1.625rem]"
+          ref={gutterRef}
+          className="h-full shrink-0 overflow-y-auto overflow-x-hidden border-r border-border/70 bg-zinc-200/95 dark:bg-zinc-950/75 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          style={{ width: `calc(${gutterDigits}ch + 1.75rem)` }}
+          aria-hidden
+        >
+          <div className={`${editorPad} pr-3 pl-5 text-right ${lineClass}`}>
+            {Array.from({ length: lineCount }, (_, i) => (
+              <div key={i} className="block h-[1.625rem] leading-[1.625rem]">
+                {i + 1}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <div
+            className={`pointer-events-none absolute inset-0 z-0 overflow-hidden ${editorPad} font-mono text-xs leading-[1.625rem]`}
           aria-hidden
         >
           <div
@@ -618,11 +654,12 @@ function ConfigYamlTextareaWithGutter({
           onScroll={onEditorScroll}
           placeholder={placeholder}
           wrap="off"
-          className="relative z-10 m-0 min-h-[420px] w-full resize-y overflow-x-auto overflow-y-auto border-0 bg-transparent pt-2 pb-5 pl-3 pr-5 font-mono text-xs leading-[1.625rem] text-transparent caret-zinc-900 outline-none ring-0 selection:bg-primary/25 selection:text-zinc-900 placeholder:text-muted-foreground dark:caret-emerald-400 dark:selection:bg-primary/30 dark:selection:text-emerald-200"
+          className={`absolute inset-0 z-10 m-0 box-border h-full w-full resize-none overflow-auto border-0 bg-transparent ${editorPad} font-mono text-xs leading-[1.625rem] text-transparent caret-zinc-900 outline-none ring-0 selection:bg-primary/25 selection:text-zinc-900 placeholder:text-muted-foreground dark:caret-emerald-400 dark:selection:bg-primary/30 dark:selection:text-emerald-200`}
           style={{ lineHeight: "1.625rem" }}
           spellCheck={false}
           aria-autocomplete="inline"
-        />
+          />
+        </div>
       </div>
     </div>
   );
@@ -838,10 +875,15 @@ export default function ServiceDetails({
     }
   }, [isLoading, projectLoading, isDeletingService, service, project, router]);
 
-  const secretsRemoteId = (service ?? initialService)?.remoteServerId ?? null;
+  const svcForUi = service ?? initialService;
+  const isTemplateService =
+    svcForUi?.type === "template" ||
+    Boolean(svcForUi?.config && isWeehawkTemplateServiceConfig(svcForUi.config));
+
+  const secretsRemoteId = svcForUi?.remoteServerId ?? null;
   const { data: secretsPaged } = useDockerSecretsPagedWithInitialData(secretsRemoteId, 1, "", {
     initialData: initialSecretsPaged ?? undefined,
-    enabled: (service ?? initialService)?.type !== "application",
+    enabled: svcForUi?.type !== "application" && !isTemplateService,
   });
   const deleteService = useDeleteService();
   const shutdownService = useShutdownService();
@@ -870,6 +912,16 @@ export default function ServiceDetails({
   const isDockerComposeService = service?.type === "docker-compose";
   const isStackOrComposeService = service?.type === "stack" || service?.type === "docker-compose";
   const hasDatabaseCompose = Boolean(service?.config?.includes("services:"));
+  const templateIdFromConfig = isTemplateService
+    ? parseTemplateIdFromConfig(service?.config ?? "")
+    : null;
+  const { data: serviceTemplates = [] } = useServiceTemplates(isTemplateService);
+  const templateCatalogEntry = templateIdFromConfig
+    ? serviceTemplates.find((t) => t.id === templateIdFromConfig)
+    : undefined;
+  const templateLogoSrc = templateIdFromConfig
+    ? templateCatalogLogoUrl(templateCatalogEntry?.logo, templateIdFromConfig)
+    : undefined;
 
   const runningOnHost = runtime?.running ?? false;
   const actionBusy = deploy.isPending || startService.isPending || shutdownService.isPending;
@@ -908,8 +960,11 @@ export default function ServiceDetails({
     const withoutComposeSecrets = isDockerComposeService
       ? withoutAppComposeTabs.filter((t) => t.id !== "secrets")
       : withoutAppComposeTabs;
-    if (!isDatabaseService) return withoutComposeSecrets;
-    const withoutDomainSecrets = withoutComposeSecrets.filter(
+    const withoutTemplateSecrets = isTemplateService
+      ? withoutComposeSecrets.filter((t) => t.id !== "secrets")
+      : withoutComposeSecrets;
+    if (!isDatabaseService) return withoutTemplateSecrets;
+    const withoutDomainSecrets = withoutTemplateSecrets.filter(
       (t) =>
         t.id !== "domain" &&
         t.id !== "secrets" &&
@@ -926,6 +981,7 @@ export default function ServiceDetails({
     isDockerComposeService,
     hasDatabaseCompose,
     isStackOrComposeService,
+    isTemplateService,
     envEntryCount,
     service?.domains?.length,
     service?.traefikRoutes,
@@ -1200,11 +1256,14 @@ export default function ServiceDetails({
           <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
             <div className="flex min-w-0 items-start gap-3 sm:gap-5">
               <div
-                className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl sm:h-16 sm:w-16 ${
-                  dbEngineLogoSrc
-                    ? "border border-sky-500/25 bg-transparent p-2"
-                    : typeConf.color
-                }`}
+                className={cn(
+                  "flex shrink-0 items-center justify-center overflow-hidden",
+                  templateLogoSrc
+                    ? "template-catalog-logo-tile template-catalog-logo-tile--lg"
+                    : dbEngineLogoSrc
+                      ? "h-14 w-14 rounded-2xl border border-sky-500/25 bg-transparent p-2 sm:h-16 sm:w-16"
+                      : cn("h-14 w-14 rounded-2xl sm:h-16 sm:w-16", typeConf.color),
+                )}
               >
                 {dbEngineLogoSrc && dbEngineId ? (
                   <Image
@@ -1214,6 +1273,16 @@ export default function ServiceDetails({
                     height={56}
                     className={`object-contain h-auto w-auto max-h-12 max-w-[3.5rem] ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                     sizes="64px"
+                  />
+                ) : templateLogoSrc ? (
+                  <Image
+                    src={templateLogoSrc}
+                    alt=""
+                    width={56}
+                    height={56}
+                    className="template-catalog-logo-img max-h-12 max-w-[3.5rem]"
+                    sizes="64px"
+                    unoptimized
                   />
                 ) : (
                   <TypeIcon className="w-8 h-8" />
@@ -1252,7 +1321,11 @@ export default function ServiceDetails({
                     </span>
                   )}
                 </div>
-                {service.description && <p className="text-muted-foreground text-sm">{service.description}</p>}
+                {service.description && (
+                  <p className="mt-1 max-w-md line-clamp-2 text-xs leading-snug text-muted-foreground">
+                    {service.description}
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1.5">
                   <Calendar className="w-3 h-3" />
                   Created {formatServiceDateUtc(service.createdAt)}
@@ -1479,7 +1552,11 @@ export default function ServiceDetails({
                   saveDisabled={updateService.isPending}
                 />
               ) : service.config ? (
-                <div className="bg-zinc-100 dark:bg-black/70 overflow-x-auto">
+                <div
+                  className={CONFIG_YAML_PANEL_CLASS}
+                  style={configYamlPanelMinHeightStyle(configYamlLineCount(service.config))}
+                >
+                  <div className="h-full overflow-x-auto overflow-y-auto">
                   <table className="w-full border-collapse font-mono text-xs leading-[1.625rem]">
                     <tbody>
                       {service.config.split("\n").map((line, i) => (
@@ -1497,6 +1574,7 @@ export default function ServiceDetails({
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               ) : (
                 <div className="bg-muted/55 dark:bg-black/50 p-12 text-center">
@@ -2634,6 +2712,12 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
   const [editingReplicas, setEditingReplicas] = useState(false);
   const [replicasDraft, setReplicasDraft] = useState("");
   const [replicasSaving, setReplicasSaving] = useState(false);
+  const [attachToWeehawk, setAttachToWeehawk] = useState(false);
+  const [weehawkSaving, setWeehawkSaving] = useState(false);
+
+  useEffect(() => {
+    setAttachToWeehawk(isWeehawkNetworkAttached(service.config ?? ""));
+  }, [service.config, service.id]);
 
   useEffect(() => {
     if (!editingHostPort) {
@@ -2681,6 +2765,30 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
       });
     } finally {
       setPortSaving(false);
+    }
+  };
+
+  const saveWeehawkNetwork = async (next: boolean) => {
+    if (!hasStack) return;
+    setWeehawkSaving(true);
+    try {
+      await updateDatabaseStackApi(serviceQueryKeyId(service), engine, {
+        attachToWeehawkNetwork: next,
+      });
+      await invalidateServiceScopedQueries(queryClient, serviceQueryKeyId(service), authUser?.userId ?? "none");
+      setAttachToWeehawk(next);
+      toast({
+        title: "Network updated",
+        description: "Redeploy the stack so Docker applies the network change.",
+      });
+    } catch (e: unknown) {
+      toast({
+        title: "Could not update network",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setWeehawkSaving(false);
     }
   };
 
@@ -3037,6 +3145,13 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
             </div>
           </section>
         ) : null}
+
+        <WeehawkNetworkOption
+          attached={attachToWeehawk}
+          disabled={!hasStack || weehawkSaving}
+          onAttachedChange={(next) => void saveWeehawkNetwork(next)}
+          hint="When enabled, the database also joins the Traefik overlay (e.g. for external tools). When disabled, it stays on its private internal overlay only; apps connect via Connections."
+        />
       </div>
     </div>
   );
@@ -3431,6 +3546,7 @@ function ApplicationArchivePanel({
   const [showEnvPaste, setShowEnvPaste] = useState(false);
   const [connectionExternal, setConnectionExternal] = useState<string[]>([]);
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
+  const [attachToWeehawk, setAttachToWeehawk] = useState(true);
   type AppVolumeRow = { source: string; target: string; readOnly: boolean };
   const [volumeRows, setVolumeRows] = useState<AppVolumeRow[]>([]);
   const [connectionsDirty, setConnectionsDirty] = useState(false);
@@ -3445,6 +3561,10 @@ function ApplicationArchivePanel({
   }, []);
   const setConnectionStackKeysAndDirty = useCallback((next: string[]) => {
     setConnectionStackKeys(next);
+    setConnectionsDirty(true);
+  }, []);
+  const setAttachToWeehawkAndDirty = useCallback((next: boolean) => {
+    setAttachToWeehawk(next);
     setConnectionsDirty(true);
   }, []);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "volumes" | "env" | null>(null);
@@ -3731,6 +3851,9 @@ function ApplicationArchivePanel({
     const p = parseApplicationNetworkHeaders(cfg);
     setConnectionExternal(p.external);
     setConnectionStackKeys(p.stack.length ? p.stack : []);
+    setAttachToWeehawk(
+      parseWeehawkNetworkMode(cfg, { defaultMode: "attach" }) === "attach",
+    );
     setConnectionsDirty(false);
   }, [serviceRow?.id, serviceRow?.config]);
 
@@ -3768,6 +3891,7 @@ function ApplicationArchivePanel({
           id: serviceId,
           external: connectionExternal,
           stack: connectionStackKeys,
+          attachToWeehawkNetwork: attachToWeehawk,
         })
         .then(() => setConnectionsDirty(false))
         .catch(() => {
@@ -3778,6 +3902,7 @@ function ApplicationArchivePanel({
   }, [
     connectionExternal,
     connectionStackKeys,
+    attachToWeehawk,
     connectionsDirty,
     patchAppNetworks,
     serviceId,
@@ -5419,6 +5544,8 @@ function ApplicationArchivePanel({
             stackKeys={connectionStackKeys}
             onExternalChange={setConnectionExternalAndDirty}
             onStackKeysChange={setConnectionStackKeysAndDirty}
+            attachToWeehawk={attachToWeehawk}
+            onAttachToWeehawkChange={setAttachToWeehawkAndDirty}
             open={openAppSection === "connections"}
             onOpenChange={(next) => setOpenAppSection(next ? "connections" : null)}
           />
@@ -5743,6 +5870,39 @@ function EnvFilePanel({ service }: { service: Service }) {
 
   const envText = service.env ?? "";
   const entries = countEnvEntries(editing ? draft : envText);
+  const isTemplateServiceEnv =
+    service.type === "template" || isWeehawkTemplateServiceConfig(service.config);
+  const canGenerateFromCompose = isTemplateServiceEnv && entries === 0 && !editing;
+
+  const handleGenerateFromCompose = () => {
+    const generated = buildTemplateEnvFromCompose(service.config, {
+      appName: service.appName ?? service.name,
+      serviceName: service.name,
+      templateId: parseTemplateIdFromConfig(service.config) ?? undefined,
+      templatePort: parseTemplatePortFromConfig(service.config),
+    });
+    if (!generated.trim()) {
+      toast({
+        title: "Nothing to generate",
+        description: "No environment variables were found in the compose file.",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateService.mutate(
+      { id: serviceQueryKeyId(service), patch: { env: generated } },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Environment generated",
+            description: "Variables were created from the template compose.",
+          });
+        },
+        onError: (e: Error) =>
+          toast({ title: "Could not save", description: e.message, variant: "destructive" }),
+      },
+    );
+  };
   const displayEnvText = useMemo(() => {
     if (!hideSecrets) return envText;
     return envText
@@ -5821,17 +5981,34 @@ function EnvFilePanel({ service }: { service: Service }) {
             </>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(envText);
-                  toast({ title: "Copied", description: ".env copied to clipboard." });
-                }}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                Copy
-              </button>
+              {canGenerateFromCompose && (
+                <button
+                  type="button"
+                  onClick={handleGenerateFromCompose}
+                  disabled={updateService.isPending}
+                  className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-200 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 transition-colors disabled:opacity-50"
+                >
+                  {updateService.isPending ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Variable className="w-3.5 h-3.5" />
+                  )}
+                  Generate from template
+                </button>
+              )}
+              {entries > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(envText);
+                    toast({ title: "Copied", description: ".env copied to clipboard." });
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground px-3 py-1.5 rounded-lg hover:bg-accent/60 border border-border transition-colors"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -5860,7 +6037,11 @@ function EnvFilePanel({ service }: { service: Service }) {
           {envText.trim() ? (
             displayEnvText
           ) : (
-            <span className="text-zinc-600 italic">No environment variables. Click Edit to add a .env file.</span>
+            <span className="text-zinc-600 italic">
+              {canGenerateFromCompose
+                ? "No environment variables yet. Use Generate from template or Edit to add a .env file."
+                : "No environment variables. Click Edit to add a .env file."}
+            </span>
           )}
         </pre>
       )}
@@ -5974,12 +6155,19 @@ function DomainsPanel({
     setEditingIndex(null);
   };
 
+  const defaultInternalPort = useMemo(() => {
+    if (service.type === "template" || isWeehawkTemplateServiceConfig(service.config)) {
+      return parseTemplatePortFromConfig(service.config) ?? "";
+    }
+    return "";
+  }, [service.type, service.config]);
+
   const openAddDialog = () => {
     setEditingIndex(null);
     setDraftRouter("");
     setDraftPath("");
     setDraftHost("");
-    setDraftInternalPort("");
+    setDraftInternalPort(defaultInternalPort);
     setDialogOpen(true);
   };
 
@@ -6024,7 +6212,13 @@ function DomainsPanel({
       },
       {
         onSuccess: () => {
-          toast({ title: "Saved", description: "Redeploy the stack to apply Traefik labels." });
+          toast({
+            title: "Saved",
+            description:
+              service.type === "template"
+                ? "Redeploy to publish the domain (Traefik file-provider route on the deploy host)."
+                : "Redeploy the stack to apply Traefik labels.",
+          });
           onDone?.();
         },
         onError: (e: Error) =>

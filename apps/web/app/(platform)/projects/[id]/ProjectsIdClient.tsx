@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff, X } from "lucide-react";
+import { Plus, Trash2, ChevronRight, ChevronDown, Clock, Container, Layers, Database, Server, Lock, LockOpen, PackageOpen, FolderKanban, Loader2, Search, Eye, EyeOff, X, LayoutTemplate } from "lucide-react";
 import { useBulkSelection } from "@/components/docker/useBulkSelection";
 import { DockerBulkCheckbox } from "@/components/docker/DockerBulkCheckbox";
 import { useDockerListUrl } from "@/hooks/use-docker-list-url";
@@ -25,10 +25,12 @@ import {
   type ServicesPageResponse,
 } from "@/lib/services-api";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { DatabaseEnginePicker } from "@/components/database-engine-picker";
+import { WeehawkNetworkOption } from "@/components/weehawk-network-option";
 import {
   databaseLogoBlendClass,
   databaseLogoSizeClass,
@@ -39,6 +41,16 @@ import {
   defaultDatabaseVolumePath,
 } from "@/lib/database-engines";
 import { markPendingDeletion, reconcileAndFilterPendingDeletions } from "@/lib/pending-deletions";
+import { ServiceTemplatePicker } from "@/components/service-template-picker";
+import {
+  templateCatalogDisplayName,
+  templateCatalogLogoUrl,
+  decodeTemplateComposeBase64,
+  isWeehawkTemplateServiceConfig,
+  parseTemplateIdFromConfig,
+  type ServiceTemplateCatalogEntry,
+} from "@/lib/service-template-catalog";
+import { useServiceTemplates } from "@/hooks/use-service-templates";
 
 const SERVICE_TYPE_CONFIG = {
   "docker-compose": {
@@ -63,6 +75,12 @@ const SERVICE_TYPE_CONFIG = {
     label: "Databases",
     color: "bg-sky-500/10 text-sky-800 border-sky-400/45 dark:text-sky-200 dark:border-sky-500/25",
     icon: Database,
+    placeholder: "",
+  },
+  template: {
+    label: "Template",
+    color: "bg-amber-500/10 text-amber-900 border-amber-400/45 dark:text-amber-200 dark:border-amber-500/25",
+    icon: LayoutTemplate,
     placeholder: "",
   },
 } as const;
@@ -247,6 +265,7 @@ function CreateServiceModal({
   const create = useCreateService();
   const { toast } = useToast();
   const [dbPickerOpen, setDbPickerOpen] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [dockerModePickerOpen, setDockerModePickerOpen] = useState(false);
   const [imageUnlocked, setImageUnlocked] = useState(false);
   const [showDbUserPass, setShowDbUserPass] = useState(false);
@@ -260,7 +279,10 @@ function CreateServiceModal({
       type: "application",
       config: "",
       description: "",
+      attachToWeehawkNetwork: true,
       databaseEngine: undefined,
+      templateCatalogId: undefined,
+      templateCatalogPort: undefined,
       postgres: {
         dbName: "",
         user: "",
@@ -277,13 +299,33 @@ function CreateServiceModal({
   });
 
   const type = watch("type");
+  const attachToWeehawkNetwork = watch("attachToWeehawkNetwork");
   const databaseEngine = watch("databaseEngine");
+  const templateCatalogId = watch("templateCatalogId");
   const isDockerAdvancedType = type === "docker-compose" || type === "stack";
+
+  useEffect(() => {
+    if (type === "application") {
+      setValue("attachToWeehawkNetwork", true, { shouldDirty: true });
+    } else if (type === "databases") {
+      setValue("attachToWeehawkNetwork", false, { shouldDirty: true });
+    }
+  }, [type, setValue]);
 
   useEffect(() => {
     if (type !== "databases") {
       setValue("databaseEngine", undefined);
       setImageUnlocked(false);
+    }
+  }, [type, setValue]);
+
+  useEffect(() => {
+    if (type !== "template") {
+      setValue("templateCatalogId", undefined);
+      setValue("templateCatalogPort", undefined);
+      if (type !== "docker-compose" && type !== "stack") {
+        setValue("config", "");
+      }
     }
   }, [type, setValue]);
 
@@ -324,6 +366,28 @@ function CreateServiceModal({
     }
   }, [type, databaseEngine]);
 
+  useEffect(() => {
+    if (type === "template" && !templateCatalogId) {
+      setTemplatePickerOpen(true);
+    }
+  }, [type, templateCatalogId]);
+
+  const applyServiceTemplate = (tpl: ServiceTemplateCatalogEntry) => {
+    const yaml = decodeTemplateComposeBase64(tpl.compose);
+    const svcName =
+      getValues("name")?.trim() || tpl.id.replace(/[^a-z0-9-]/gi, "-").slice(0, 50);
+    setValue("templateCatalogId", tpl.id, { shouldDirty: true, shouldValidate: true });
+    setValue("templateCatalogPort", tpl.port ?? "", { shouldDirty: true });
+    setValue("config", yaml, { shouldDirty: true });
+    if (!getValues("name")?.trim()) {
+      setValue("name", svcName, { shouldDirty: true });
+    }
+    if (!getValues("description")?.trim()) {
+      setValue("description", tpl.slogan, { shouldDirty: true });
+    }
+    setTemplatePickerOpen(false);
+  };
+
   const onSubmit = async (data: CreateServiceInput) => {
     try {
       const created = await create.mutateAsync(data);
@@ -341,6 +405,7 @@ function CreateServiceModal({
           replicas: data.postgres.replicas ?? 1,
           ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
           ...(img ? { image: img } : {}),
+          attachToWeehawkNetwork: data.attachToWeehawkNetwork === true,
         });
         await invalidateServiceScopedQueries(qc, serviceQueryKeyId(created), user?.userId ?? "none");
       }
@@ -349,7 +414,9 @@ function CreateServiceModal({
         description:
           data.type === "databases" && data.databaseEngine
             ? "Database stack and credentials are saved. Deploy from the service page when ready."
-            : "Your new service is ready.",
+            : data.type === "template"
+              ? "Template compose is ready. Review env vars and deploy from the service page."
+              : "Your new service is ready.",
       });
       onCreated?.();
       onClose();
@@ -399,6 +466,17 @@ function CreateServiceModal({
           setDockerModePickerOpen(false);
         }}
       />
+      <ServiceTemplatePicker
+        open={templatePickerOpen}
+        selectedId={templateCatalogId}
+        onSelect={applyServiceTemplate}
+        onCancel={() => {
+          setTemplatePickerOpen(false);
+          if (!getValues("templateCatalogId")) {
+            setValue("type", "application");
+          }
+        }}
+      />
       <div
         className="glass-panel rounded-2xl p-8 w-full max-w-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
@@ -441,7 +519,11 @@ function CreateServiceModal({
                       setDockerModePickerOpen(true);
                       return;
                     }
-                    if (next === "application" || next === "databases") {
+                    if (
+                      next === "application" ||
+                      next === "databases" ||
+                      next === "template"
+                    ) {
                       setValue("type", next, { shouldDirty: true });
                     }
                   }}
@@ -450,6 +532,7 @@ function CreateServiceModal({
                 >
                   <option value="application" className="bg-card">Application</option>
                   <option value="databases" className="bg-card">Databases</option>
+                  <option value="template" className="bg-card">Template</option>
                   <option value="docker-advanced" className="bg-card">Docker (Advanced)</option>
                 </select>
                 <ChevronDown
@@ -487,8 +570,26 @@ function CreateServiceModal({
                   </button>
                 </div>
               )}
+              {type === "template" && templateCatalogId && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Stack:</span>
+                  <span className="text-xs font-medium text-amber-800 border border-amber-500/30 rounded-full px-2.5 py-0.5 bg-amber-500/10 dark:text-amber-200">
+                    {templateCatalogDisplayName(templateCatalogId)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setTemplatePickerOpen(true)}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
               {errors.databaseEngine && (
                 <p className="text-destructive text-xs mt-1">{errors.databaseEngine.message}</p>
+              )}
+              {errors.templateCatalogId && (
+                <p className="text-destructive text-xs mt-1">{errors.templateCatalogId.message}</p>
               )}
             </div>
           </div>
@@ -499,6 +600,18 @@ function CreateServiceModal({
             </label>
             <input {...register("description")} className="input-field" placeholder="Short description of this service" />
           </div>
+
+          {type === "template" && templateCatalogId && (
+            <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 space-y-2">
+              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                {templateCatalogDisplayName(templateCatalogId)}
+              </h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Compose is loaded from the template catalog. Set environment variables on the service page before
+                deploy.
+              </p>
+            </div>
+          )}
 
           {type === "databases" && databaseEngine && (
             <div className="rounded-xl border border-sky-500/25 bg-sky-500/5 p-4 space-y-4">
@@ -732,6 +845,20 @@ function CreateServiceModal({
             </div>
           )}
 
+          {(type === "application" || type === "databases") && (
+            <WeehawkNetworkOption
+              attached={attachToWeehawkNetwork === true}
+              onAttachedChange={(next) =>
+                setValue("attachToWeehawkNetwork", next, { shouldDirty: true })
+              }
+              hint={
+                type === "application"
+                  ? "Recommended when you plan to expose the app through Traefik domains."
+                  : "Optional for databases. Leave off for a private internal network; apps reach the DB via Connections."
+              }
+            />
+          )}
+
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} disabled={create.isPending} className="btn-secondary">
               Cancel
@@ -839,6 +966,14 @@ export default function ProjectsIdClient({
     }
     return map;
   }, [runtimeSnapshot.data?.data]);
+  const hasTemplateServices = items.some(
+    (s) => s.type === "template" || isWeehawkTemplateServiceConfig(s.config),
+  );
+  const { data: serviceTemplates = [] } = useServiceTemplates(hasTemplateServices);
+  const templateCatalogById = useMemo(
+    () => new Map(serviceTemplates.map((t) => [t.id, t])),
+    [serviceTemplates],
+  );
   const limit = servicesPageData?.limit ?? SERVICES_PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const from = total > 0 ? (page - 1) * limit + 1 : 0;
@@ -1071,7 +1206,7 @@ export default function ProjectsIdClient({
             <p className="text-muted-foreground mb-6 text-sm max-w-sm">
               {q.trim()
                 ? "Try a different search."
-                : "Add your first service (Docker Compose, Stack, Application, or Databases) to this project."}
+                : "Add your first service (Application, Databases, Template, or Docker Advanced) to this project."}
             </p>
             {!q.trim() && (
               <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
@@ -1089,6 +1224,16 @@ export default function ProjectsIdClient({
                 const dbEngineId =
                   service.type === "databases" ? parseDatabaseEngineFromConfig(service.config) : undefined;
                 const dbLogo = dbEngineId ? getDatabaseEngineById(dbEngineId)?.logoSrc : undefined;
+                const isTemplateService =
+                  service.type === "template" ||
+                  isWeehawkTemplateServiceConfig(service.config);
+                const templateId = isTemplateService
+                  ? parseTemplateIdFromConfig(service.config)
+                  : undefined;
+                const templateEntry = templateId ? templateCatalogById.get(templateId) : undefined;
+                const tplLogo = templateId
+                  ? templateCatalogLogoUrl(templateEntry?.logo, templateId)
+                  : undefined;
 
                 return (
                   <div
@@ -1100,13 +1245,16 @@ export default function ProjectsIdClient({
                     <div className="relative flex min-h-0 flex-1 flex-col">
                       <div className="mb-2 flex items-start justify-between gap-1.5">
                         <div
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg overflow-hidden ${
-                            service.isActive
-                              ? dbLogo
-                                ? "border border-sky-500/25 bg-transparent p-0.5"
-                                : `border ${typeConf.color}`
-                              : "border border-border bg-muted/50 text-muted-foreground"
-                          }`}
+                          className={cn(
+                            "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg",
+                            tplLogo
+                              ? "template-catalog-logo-tile template-catalog-logo-tile--sm"
+                              : service.isActive
+                                ? dbLogo
+                                  ? "border border-sky-500/25 bg-transparent p-0.5"
+                                  : `border ${typeConf.color}`
+                                : "border border-border bg-muted/50 text-muted-foreground",
+                          )}
                         >
                           {dbLogo && dbEngineId ? (
                             <Image
@@ -1116,6 +1264,16 @@ export default function ProjectsIdClient({
                               height={28}
                               className={`object-contain h-auto w-auto max-h-7 ${databaseLogoBlendClass(dbEngineId)} ${databaseLogoSizeClass(dbEngineId)}`}
                               sizes="36px"
+                            />
+                          ) : tplLogo ? (
+                            <Image
+                              src={tplLogo}
+                              alt=""
+                              width={28}
+                              height={28}
+                              className="template-catalog-logo-img max-h-7 max-w-7"
+                              sizes="36px"
+                              unoptimized
                             />
                           ) : (
                             <Icon className="h-4 w-4" />

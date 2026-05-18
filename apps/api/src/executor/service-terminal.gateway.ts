@@ -9,6 +9,7 @@ import { ExecutorService } from './executor.service';
 import { ServicesService } from '../services/services.service';
 import { isRequestOriginAllowed } from '../common/cors-origin';
 import { resolveUserIdFromWsUpgradeRequest } from '../auth/ws-upgrade-auth';
+import { isDockerContainerId } from './docker-container-ref';
 
 /**
  * Interactive shell inside the service's running container on the **deploy** host (SSH + `docker exec`).
@@ -98,7 +99,7 @@ export class ServiceTerminalGateway {
     }
 
     const cid = resolved.id.trim();
-    if (!/^[a-f0-9]{12,64}$/i.test(cid)) {
+    if (!isDockerContainerId(cid)) {
       client.send(
         JSON.stringify({
           type: 'error',
