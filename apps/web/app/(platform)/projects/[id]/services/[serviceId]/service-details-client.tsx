@@ -482,6 +482,18 @@ function applyYamlTab(
   return { next, selStart, selEnd };
 }
 
+const CONFIG_YAML_PANEL_CLASS =
+  "w-full min-h-[min(42vh,400px)] h-[min(56vh,560px)] max-h-[min(85vh,760px)] overflow-hidden border-t border-border/50 bg-zinc-100 dark:bg-black/70";
+
+function configYamlLineCount(text: string): number {
+  return Math.max(text.split("\n").length, 1);
+}
+
+function configYamlPanelMinHeightStyle(lineCount: number): React.CSSProperties {
+  const lines = Math.max(lineCount, 1);
+  return { minHeight: `${Math.min(Math.max(lines * 26 + 32, 280), 760)}px` };
+}
+
 /** Compose / stack YAML editor: gutter stays aligned with textarea scroll (shared line height). */
 function ConfigYamlTextareaWithGutter({
   value,
@@ -502,7 +514,7 @@ function ConfigYamlTextareaWithGutter({
   const [caretPos, setCaretPos] = useState(0);
   const [scrollOff, setScrollOff] = useState({ top: 0, left: 0 });
 
-  const lineCount = Math.max(value.split("\n").length, 1);
+  const lineCount = configYamlLineCount(value);
   const gutterDigits = Math.max(2, String(lineCount).length);
 
   const ghost = useMemo(() => {
@@ -586,25 +598,31 @@ function ConfigYamlTextareaWithGutter({
     setScrollOff({ top: t.scrollTop, left: t.scrollLeft });
   };
 
+  const editorPad = "pt-2 pb-2 pl-3 pr-3";
+
   return (
-    <div className="flex min-h-[420px] items-stretch">
-      <div
-        ref={gutterRef}
-        className="shrink-0 overflow-y-auto overflow-x-hidden border-r border-border/70 bg-zinc-200/95 dark:bg-zinc-950/75 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        style={{ width: `calc(${gutterDigits}ch + 1.75rem)` }}
-        aria-hidden
-      >
-        <div className={`pt-2 pb-5 pr-3 pl-5 text-right ${lineClass}`}>
-          {Array.from({ length: lineCount }, (_, i) => (
-            <div key={i} className="block h-[1.625rem] leading-[1.625rem]">
-              {i + 1}
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="relative min-h-[420px] min-w-0 flex-1 bg-zinc-100 dark:bg-black/70">
+    <div
+      className={`flex resize-y ${CONFIG_YAML_PANEL_CLASS}`}
+      style={configYamlPanelMinHeightStyle(lineCount)}
+    >
+      <div className="flex h-full min-h-0 w-full items-stretch">
         <div
-          className="pointer-events-none absolute inset-0 z-0 overflow-hidden pt-2 pb-5 pl-3 pr-5 font-mono text-xs leading-[1.625rem]"
+          ref={gutterRef}
+          className="h-full shrink-0 overflow-y-auto overflow-x-hidden border-r border-border/70 bg-zinc-200/95 dark:bg-zinc-950/75 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          style={{ width: `calc(${gutterDigits}ch + 1.75rem)` }}
+          aria-hidden
+        >
+          <div className={`${editorPad} pr-3 pl-5 text-right ${lineClass}`}>
+            {Array.from({ length: lineCount }, (_, i) => (
+              <div key={i} className="block h-[1.625rem] leading-[1.625rem]">
+                {i + 1}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <div
+            className={`pointer-events-none absolute inset-0 z-0 overflow-hidden ${editorPad} font-mono text-xs leading-[1.625rem]`}
           aria-hidden
         >
           <div
@@ -634,11 +652,12 @@ function ConfigYamlTextareaWithGutter({
           onScroll={onEditorScroll}
           placeholder={placeholder}
           wrap="off"
-          className="relative z-10 m-0 min-h-[420px] w-full resize-y overflow-x-auto overflow-y-auto border-0 bg-transparent pt-2 pb-5 pl-3 pr-5 font-mono text-xs leading-[1.625rem] text-transparent caret-zinc-900 outline-none ring-0 selection:bg-primary/25 selection:text-zinc-900 placeholder:text-muted-foreground dark:caret-emerald-400 dark:selection:bg-primary/30 dark:selection:text-emerald-200"
+          className={`absolute inset-0 z-10 m-0 box-border h-full w-full resize-none overflow-auto border-0 bg-transparent ${editorPad} font-mono text-xs leading-[1.625rem] text-transparent caret-zinc-900 outline-none ring-0 selection:bg-primary/25 selection:text-zinc-900 placeholder:text-muted-foreground dark:caret-emerald-400 dark:selection:bg-primary/30 dark:selection:text-emerald-200`}
           style={{ lineHeight: "1.625rem" }}
           spellCheck={false}
           aria-autocomplete="inline"
-        />
+          />
+        </div>
       </div>
     </div>
   );
@@ -1530,7 +1549,11 @@ export default function ServiceDetails({
                   saveDisabled={updateService.isPending}
                 />
               ) : service.config ? (
-                <div className="bg-zinc-100 dark:bg-black/70 overflow-x-auto">
+                <div
+                  className={CONFIG_YAML_PANEL_CLASS}
+                  style={configYamlPanelMinHeightStyle(configYamlLineCount(service.config))}
+                >
+                  <div className="h-full overflow-x-auto overflow-y-auto">
                   <table className="w-full border-collapse font-mono text-xs leading-[1.625rem]">
                     <tbody>
                       {service.config.split("\n").map((line, i) => (
@@ -1548,6 +1571,7 @@ export default function ServiceDetails({
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               ) : (
                 <div className="bg-muted/55 dark:bg-black/50 p-12 text-center">
