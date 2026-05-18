@@ -106,6 +106,8 @@ import {
 } from "@/lib/service-template-catalog";
 import { useServiceTemplates } from "@/hooks/use-service-templates";
 import { ApplicationConnectionsPanel } from "./application-connections-panel";
+import { WeehawkNetworkOption } from "@/components/weehawk-network-option";
+import { isWeehawkNetworkAttached, parseWeehawkNetworkMode } from "@/lib/weehawk-network-preference";
 import { ServiceTerminalPanel } from "./service-terminal-panel";
 import { ServiceRemoteHostPanel } from "./service-remote-host-panel";
 import { ServiceSecretsTab } from "./service-secrets-tab";
@@ -2709,6 +2711,12 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
   const [editingReplicas, setEditingReplicas] = useState(false);
   const [replicasDraft, setReplicasDraft] = useState("");
   const [replicasSaving, setReplicasSaving] = useState(false);
+  const [attachToWeehawk, setAttachToWeehawk] = useState(false);
+  const [weehawkSaving, setWeehawkSaving] = useState(false);
+
+  useEffect(() => {
+    setAttachToWeehawk(isWeehawkNetworkAttached(service.config ?? ""));
+  }, [service.config, service.id]);
 
   useEffect(() => {
     if (!editingHostPort) {
@@ -2756,6 +2764,30 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
       });
     } finally {
       setPortSaving(false);
+    }
+  };
+
+  const saveWeehawkNetwork = async (next: boolean) => {
+    if (!hasStack) return;
+    setWeehawkSaving(true);
+    try {
+      await updateDatabaseStackApi(serviceQueryKeyId(service), engine, {
+        attachToWeehawkNetwork: next,
+      });
+      await invalidateServiceScopedQueries(queryClient, serviceQueryKeyId(service), authUser?.userId ?? "none");
+      setAttachToWeehawk(next);
+      toast({
+        title: "Network updated",
+        description: "Redeploy the stack so Docker applies the network change.",
+      });
+    } catch (e: unknown) {
+      toast({
+        title: "Could not update network",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      });
+    } finally {
+      setWeehawkSaving(false);
     }
   };
 
@@ -3112,6 +3144,13 @@ function DatabaseCredentialsReadOnly({ service, engine }: { service: Service; en
             </div>
           </section>
         ) : null}
+
+        <WeehawkNetworkOption
+          attached={attachToWeehawk}
+          disabled={!hasStack || weehawkSaving}
+          onAttachedChange={(next) => void saveWeehawkNetwork(next)}
+          hint="When enabled, the database also joins the Traefik overlay (e.g. for external tools). When disabled, it stays on its private internal overlay only; apps connect via Connections."
+        />
       </div>
     </div>
   );
@@ -3506,6 +3545,7 @@ function ApplicationArchivePanel({
   const [showEnvPaste, setShowEnvPaste] = useState(false);
   const [connectionExternal, setConnectionExternal] = useState<string[]>([]);
   const [connectionStackKeys, setConnectionStackKeys] = useState<string[]>([]);
+  const [attachToWeehawk, setAttachToWeehawk] = useState(true);
   type AppVolumeRow = { source: string; target: string; readOnly: boolean };
   const [volumeRows, setVolumeRows] = useState<AppVolumeRow[]>([]);
   const [connectionsDirty, setConnectionsDirty] = useState(false);
@@ -3520,6 +3560,10 @@ function ApplicationArchivePanel({
   }, []);
   const setConnectionStackKeysAndDirty = useCallback((next: string[]) => {
     setConnectionStackKeys(next);
+    setConnectionsDirty(true);
+  }, []);
+  const setAttachToWeehawkAndDirty = useCallback((next: boolean) => {
+    setAttachToWeehawk(next);
     setConnectionsDirty(true);
   }, []);
   const [openAppSection, setOpenAppSection] = useState<"connections" | "volumes" | "env" | null>(null);
@@ -3806,6 +3850,9 @@ function ApplicationArchivePanel({
     const p = parseApplicationNetworkHeaders(cfg);
     setConnectionExternal(p.external);
     setConnectionStackKeys(p.stack.length ? p.stack : []);
+    setAttachToWeehawk(
+      parseWeehawkNetworkMode(cfg, { defaultMode: "attach" }) === "attach",
+    );
     setConnectionsDirty(false);
   }, [serviceRow?.id, serviceRow?.config]);
 
@@ -3843,6 +3890,7 @@ function ApplicationArchivePanel({
           id: serviceId,
           external: connectionExternal,
           stack: connectionStackKeys,
+          attachToWeehawkNetwork: attachToWeehawk,
         })
         .then(() => setConnectionsDirty(false))
         .catch(() => {
@@ -3853,6 +3901,7 @@ function ApplicationArchivePanel({
   }, [
     connectionExternal,
     connectionStackKeys,
+    attachToWeehawk,
     connectionsDirty,
     patchAppNetworks,
     serviceId,
@@ -5494,6 +5543,8 @@ function ApplicationArchivePanel({
             stackKeys={connectionStackKeys}
             onExternalChange={setConnectionExternalAndDirty}
             onStackKeysChange={setConnectionStackKeysAndDirty}
+            attachToWeehawk={attachToWeehawk}
+            onAttachToWeehawkChange={setAttachToWeehawkAndDirty}
             open={openAppSection === "connections"}
             onOpenChange={(next) => setOpenAppSection(next ? "connections" : null)}
           />

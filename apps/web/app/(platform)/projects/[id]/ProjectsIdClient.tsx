@@ -29,6 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
 import { DatabaseEnginePicker } from "@/components/database-engine-picker";
+import { WeehawkNetworkOption } from "@/components/weehawk-network-option";
 import {
   databaseLogoBlendClass,
   databaseLogoSizeClass,
@@ -277,6 +278,7 @@ function CreateServiceModal({
       type: "application",
       config: "",
       description: "",
+      attachToWeehawkNetwork: true,
       databaseEngine: undefined,
       templateCatalogId: undefined,
       templateCatalogPort: undefined,
@@ -296,9 +298,18 @@ function CreateServiceModal({
   });
 
   const type = watch("type");
+  const attachToWeehawkNetwork = watch("attachToWeehawkNetwork");
   const databaseEngine = watch("databaseEngine");
   const templateCatalogId = watch("templateCatalogId");
   const isDockerAdvancedType = type === "docker-compose" || type === "stack";
+
+  useEffect(() => {
+    if (type === "application") {
+      setValue("attachToWeehawkNetwork", true, { shouldDirty: true });
+    } else if (type === "databases") {
+      setValue("attachToWeehawkNetwork", false, { shouldDirty: true });
+    }
+  }, [type, setValue]);
 
   useEffect(() => {
     if (type !== "databases") {
@@ -393,6 +404,7 @@ function CreateServiceModal({
           replicas: data.postgres.replicas ?? 1,
           ...(pp ? { publishPort: parseInt(pp, 10) } : {}),
           ...(img ? { image: img } : {}),
+          attachToWeehawkNetwork: data.attachToWeehawkNetwork === true,
         });
         await invalidateServiceScopedQueries(qc, serviceQueryKeyId(created), user?.userId ?? "none");
       }
@@ -830,6 +842,20 @@ function CreateServiceModal({
                 </div>
               </div>
             </div>
+          )}
+
+          {(type === "application" || type === "databases") && (
+            <WeehawkNetworkOption
+              attached={attachToWeehawkNetwork === true}
+              onAttachedChange={(next) =>
+                setValue("attachToWeehawkNetwork", next, { shouldDirty: true })
+              }
+              hint={
+                type === "application"
+                  ? "Recommended when you plan to expose the app through Traefik domains."
+                  : "Optional for databases. Leave off for a private internal network; apps reach the DB via Connections."
+              }
+            />
           )}
 
           <div className="flex justify-end gap-3 pt-2">

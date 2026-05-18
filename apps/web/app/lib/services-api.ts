@@ -366,6 +366,7 @@ export async function createServiceApi(input: CreateServiceInput): Promise<Servi
     templateCatalogPort,
     appExternalNetworkNames,
     appStackNetworkKeys,
+    attachToWeehawkNetwork,
     ...rest
   } = input;
   let dockerConfig = rest.config?.trim() ? rest.config : "";
@@ -383,18 +384,21 @@ export async function createServiceApi(input: CreateServiceInput): Promise<Servi
       templatePort: templateCatalogPort?.trim() || undefined,
     });
   } else if (rest.type === "databases" && databaseEngine) {
-    dockerConfig = `# weehawk database service\n# engine: ${databaseEngine}\n`;
+    const dbWeehawk = attachToWeehawkNetwork ? "attach" : "standalone";
+    dockerConfig = `# weehawk database service\n# network.weehawk: ${dbWeehawk}\n# engine: ${databaseEngine}\n`;
   } else if (rest.type === "application") {
     const extRaw = (appExternalNetworkNames ?? []).map((s) => s.trim()).filter(Boolean);
     const stk = (appStackNetworkKeys ?? []).map((s) => s.trim()).filter(Boolean);
-    const ext =
-      extRaw.length === 0
-        ? ["weehawk"]
-        : extRaw.some((n) => n.toLowerCase() === "weehawk")
-          ? extRaw
-          : ["weehawk", ...extRaw];
+    const attach = attachToWeehawkNetwork !== false;
+    const ext = attach
+      ? extRaw.some((n) => n.toLowerCase() === "weehawk")
+        ? extRaw
+        : ["weehawk", ...extRaw]
+      : extRaw;
     let header = "# weehawk application service\n";
-    header += `# app.networks.external: ${ext.join("|")}\n`;
+    header += `# network.weehawk: ${attach ? "attach" : "standalone"}\n`;
+    if (ext.length) header += `# app.networks.external: ${ext.join("|")}\n`;
+    else header += `# app.networks: none\n`;
     if (stk.length) header += `# app.networks.stack: ${stk.join("|")}\n`;
     dockerConfig = header;
   }
@@ -460,6 +464,7 @@ export async function applyDatabaseApi(
     replicas?: number;
     publishPort?: number;
     image?: string;
+    attachToWeehawkNetwork?: boolean;
   },
 ): Promise<Service> {
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}`, {
@@ -492,7 +497,7 @@ export async function updatePostgresStackApi(
 export async function updateDatabaseStackApi(
   id: string,
   engine: DatabaseEngineId,
-  body: { publishPort?: number | null; replicas?: number },
+  body: { publishPort?: number | null; replicas?: number; attachToWeehawkNetwork?: boolean },
 ): Promise<Service> {
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/database/${encodeURIComponent(engine)}/stack`, {
     method: "PATCH",
@@ -552,7 +557,7 @@ export async function updateServiceApi(
 
 export async function patchApplicationNetworksApi(
   id: string,
-  body: { external: string[]; stack: string[] },
+  body: { external: string[]; stack: string[]; attachToWeehawkNetwork?: boolean },
 ): Promise<Service> {
   const res = await apiFetch(`/api/services/${encodeURIComponent(id)}/application/networks`, {
     method: "PATCH",

@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import {
+  weehawkNetworkHeaderLine,
+  type WeehawkNetworkMode,
+} from '../common/weehawk-network-preference';
+import { WEEHAWK_TRAEFIK_EXTERNAL_NETWORK } from '../traefik/traefik.constants';
 
 export type DatabaseEngine =
   | 'postgres'
@@ -123,6 +128,7 @@ export class DatabaseGeneratorService {
     publishPort?: number | null,
     volumePath?: string,
     plainEnvKeys?: string[],
+    attachToWeehawkNetwork: boolean = false,
   ): string {
     const safe = this.sanitizeDbName(dbName);
     const rep = Math.min(10, Math.max(1, Math.floor(replicas)));
@@ -136,6 +142,17 @@ export class DatabaseGeneratorService {
     const mount = (volumePath ?? '').trim() || this.defaultDataMount(engine);
     const redisCmd = this.buildRedisCommand(envKeys);
     const commandSection = redisCmd;
+    const weehawkAlias = 'weehawk-proxy';
+    const svcNetLines = [`      - ${safe}-network`];
+    const rootNetBlocks = [
+      `  ${safe}-network:\n    driver: overlay\n    internal: true\n    attachable: true`,
+    ];
+    if (attachToWeehawkNetwork) {
+      svcNetLines.push(`      - ${weehawkAlias}`);
+      rootNetBlocks.push(
+        `  ${weehawkAlias}:\n    external: true\n    name: ${WEEHAWK_TRAEFIK_EXTERNAL_NETWORK}`,
+      );
+    }
 
     return `
 services:
@@ -149,17 +166,14 @@ ${expose}    deploy:
 ${commandSection}${env}    volumes:
       - ${safe}-data:${mount}
     networks:
-      - ${safe}-network
+${svcNetLines.join('\n')}
 
 volumes:
   ${safe}-data:
     driver: local
 
 networks:
-  ${safe}-network:
-    driver: overlay
-    internal: true
-    attachable: true
+${rootNetBlocks.join('\n')}
 `.trim();
   }
 
@@ -168,9 +182,10 @@ networks:
     imageForComment: string,
     dbName: string,
     volumePath: string,
+    weehawkMode: WeehawkNetworkMode,
   ): string {
     return `# weehawk database service
-# engine: ${engine}
+${weehawkNetworkHeaderLine(weehawkMode)}# engine: ${engine}
 # image: ${imageForComment}
 # dbName: ${dbName}
 # volumePath: ${volumePath}
@@ -185,11 +200,15 @@ networks:
     imageRef?: string | null,
     volumePath?: string | null,
     plainEnvKeys?: string[],
+    attachToWeehawkNetwork: boolean = false,
   ): string {
     const img = this.normalizeImage(engine, imageRef);
     const mount = (volumePath ?? '').trim() || this.defaultDataMount(engine);
+    const mode: WeehawkNetworkMode = attachToWeehawkNetwork
+      ? 'attach'
+      : 'standalone';
     return (
-      this.buildDatabaseHeader(engine, img, dbName, mount) +
+      this.buildDatabaseHeader(engine, img, dbName, mount, mode) +
       this.generateDatabaseCompose(
         engine,
         dbName,
@@ -198,6 +217,7 @@ networks:
         publishPort,
         mount,
         plainEnvKeys,
+        attachToWeehawkNetwork,
       )
     );
   }

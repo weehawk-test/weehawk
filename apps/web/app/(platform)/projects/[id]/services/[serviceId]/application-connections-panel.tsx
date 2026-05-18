@@ -5,6 +5,7 @@ import { ChevronDown, Link2, X } from "lucide-react";
 import { useServices } from "@/hooks/use-services";
 import type { Service } from "@/lib/schema";
 import { buildApplicationConnectionOptions, buildDatabaseConnectionOptions } from "@/lib/project-networks";
+import { WeehawkNetworkOption } from "@/components/weehawk-network-option";
 
 export function ApplicationConnectionsPanel({
   service,
@@ -14,6 +15,8 @@ export function ApplicationConnectionsPanel({
   stackKeys,
   onExternalChange,
   onStackKeysChange,
+  attachToWeehawk,
+  onAttachToWeehawkChange,
   open = false,
   onOpenChange,
 }: {
@@ -25,6 +28,8 @@ export function ApplicationConnectionsPanel({
   stackKeys: string[];
   onExternalChange: (next: string[]) => void;
   onStackKeysChange: (next: string[]) => void;
+  attachToWeehawk: boolean;
+  onAttachToWeehawkChange: (next: boolean) => void;
   open?: boolean;
   onOpenChange?: (next: boolean) => void;
 }) {
@@ -242,6 +247,11 @@ export function ApplicationConnectionsPanel({
               </div>
             ))}
           </div>
+          <WeehawkNetworkOption
+            attached={attachToWeehawk}
+            onAttachedChange={onAttachToWeehawkChange}
+            hint="Required for public domains (Traefik). Disable to keep this app on private overlay networks only."
+          />
           </div>
         </div>
       </details>

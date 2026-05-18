@@ -208,11 +208,13 @@ export function usePatchApplicationNetworks() {
       id,
       external,
       stack,
+      attachToWeehawkNetwork,
     }: {
       id: string;
       external: string[];
       stack: string[];
-    }) => patchApplicationNetworksApi(id, { external, stack }),
+      attachToWeehawkNetwork?: boolean;
+    }) => patchApplicationNetworksApi(id, { external, stack, attachToWeehawkNetwork }),
     onSuccess: (data) => {
       void invalidateProjectServicesQueries(qc, data.projectId);
       qc.invalidateQueries({ queryKey: ["services"] });

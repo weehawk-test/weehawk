@@ -121,6 +121,8 @@ export const createServiceSchema = z
     appExternalNetworkNames: z.array(z.string()).default([]),
     /** Compose network keys to create in this stack (overlay; Docker name `{stack}_{key}`). */
     appStackNetworkKeys: z.array(z.string()).default([]),
+    /** Join shared Traefik `weehawk` overlay (applications + databases). */
+    attachToWeehawkNetwork: z.boolean().optional(),
     databaseEngine: databaseEngineIdSchema.optional(),
     /** Template catalog id when type is template. */
     templateCatalogId: z.string().optional(),
