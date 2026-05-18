@@ -766,6 +766,30 @@ docker compose -f docker-compose.yml -p ${projQ} ${tail}
   }
 
   /**
+   * Whether any container in a `docker compose -p` project is running (label-based; no compose file/env).
+   */
+  async isComposeProjectRunningOnRemoteViaSsh(
+    remoteServerId: number,
+    projectUserId: number | null,
+    projectName: string,
+  ): Promise<boolean> {
+    const projQ = shSingleQuoteRemote(
+      toSafePathSegment(projectName || 'service'),
+    );
+    const script = `docker ps -q --filter label=com.docker.compose.project=${projQ} --filter status=running 2>/dev/null | head -n 1`;
+    try {
+      const r = await this.execDockerCliOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId,
+        script,
+      );
+      return r.stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Creates a `.tar.gz` of a named volume on the remote host at `${stagingDir}/${archiveBasename}`.
    * Caller should upload or import from this path, then remove `stagingDir` (e.g. {@link removeRemoteTreeBestEffort}).
    */

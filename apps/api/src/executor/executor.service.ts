@@ -351,6 +351,12 @@ fi
    * Template services: auto-fill every SERVICE_* / compose placeholder at deploy time.
    * Saved `service.env` overrides generated defaults.
    */
+  /** Env for remote `docker compose` CLI (templates need generated SERVICE_* defaults). */
+  private composeDeployEnvForCli(service: Service): Record<string, string> {
+    const yaml = this.composeYamlForResolvedDeploy(service);
+    return this.resolveDeployEnvForService(service, yaml);
+  }
+
   private resolveDeployEnvForService(
     service: Service,
     composeYaml: string,
@@ -1225,19 +1231,14 @@ fi
         return { running: false };
       }
 
-      const deployEnv = parseEnv(service.env || '');
-      const r = await this.withRuntimeTimeout(
-        this.remoteServersService.composeInPersistentDeploymentViaSsh(
+      const running = await this.withRuntimeTimeout(
+        this.remoteServersService.isComposeProjectRunningOnRemoteViaSsh(
           sshIds.remoteServerId,
           projectUserId,
-          {
-            projectName: service.appName,
-            composeArgvTail: ['ps', '--status', 'running', '-q'],
-            deployEnv,
-          },
+          service.appName || 'service',
         ),
       );
-      return { running: r.stdout.trim().length > 0 };
+      return { running };
     } catch {
       return { running: false };
     }
@@ -1885,7 +1886,7 @@ ${script}
       if (sshIds.remoteServerId == null) {
         throw new BadRequestException(COMPOSE_NEEDS_DEPLOY_HOST_MESSAGE);
       }
-      const deployEnv = parseEnv(service.env || '');
+      const deployEnv = this.composeDeployEnvForCli(service);
       await this.remoteServersService.composeInPersistentDeploymentViaSsh(
         sshIds.remoteServerId,
         projectUserId,
@@ -1895,6 +1896,23 @@ ${script}
           deployEnv,
         },
       );
+      const stillRunning =
+        await this.remoteServersService.isComposeProjectRunningOnRemoteViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          service.appName || 'service',
+        );
+      if (stillRunning) {
+        await this.remoteServersService.composeInPersistentDeploymentViaSsh(
+          sshIds.remoteServerId,
+          projectUserId,
+          {
+            projectName: service.appName,
+            composeArgvTail: ['kill'],
+            deployEnv,
+          },
+        );
+      }
       return { success: true, message: 'Containers stopped' };
     } catch (error) {
       if (error instanceof BadRequestException) {
