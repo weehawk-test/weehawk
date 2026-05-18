@@ -325,6 +325,26 @@ html.dark {
     @apply invert dark:invert-0;
   }
 
+  /**
+   * Template catalog logos: dark warm tile + amber border (matches template picker header).
+   */
+  .template-catalog-logo-tile {
+    @apply flex shrink-0 items-center justify-center overflow-hidden border border-amber-500/25 bg-zinc-950/90 shadow-sm ring-1 ring-amber-500/15;
+    @apply dark:bg-amber-500/10 dark:ring-amber-500/20;
+  }
+  .template-catalog-logo-img {
+    @apply object-contain brightness-110 contrast-[1.02];
+  }
+  .template-catalog-logo-tile--sm {
+    @apply h-9 w-9 rounded-lg p-1;
+  }
+  .template-catalog-logo-tile--md {
+    @apply h-14 w-14 rounded-xl p-2;
+  }
+  .template-catalog-logo-tile--lg {
+    @apply h-14 w-14 rounded-2xl p-2 sm:h-16 sm:w-16 sm:p-2.5;
+  }
+
   /** Full-screen overlays: lighter scrim in light mode */
   .modal-scrim {
     @apply bg-slate-900/20 backdrop-blur-sm dark:bg-black/60;

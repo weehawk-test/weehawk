@@ -1256,13 +1256,14 @@ export default function ServiceDetails({
           <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
             <div className="flex min-w-0 items-start gap-3 sm:gap-5">
               <div
-                className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl sm:h-16 sm:w-16 ${
-                  dbEngineLogoSrc
-                    ? "border border-sky-500/25 bg-transparent p-2"
-                    : templateLogoSrc
-                      ? "border border-amber-500/25 bg-transparent p-2"
-                      : typeConf.color
-                }`}
+                className={cn(
+                  "flex shrink-0 items-center justify-center overflow-hidden",
+                  templateLogoSrc
+                    ? "template-catalog-logo-tile template-catalog-logo-tile--lg"
+                    : dbEngineLogoSrc
+                      ? "h-14 w-14 rounded-2xl border border-sky-500/25 bg-transparent p-2 sm:h-16 sm:w-16"
+                      : cn("h-14 w-14 rounded-2xl sm:h-16 sm:w-16", typeConf.color),
+                )}
               >
                 {dbEngineLogoSrc && dbEngineId ? (
                   <Image
@@ -1279,7 +1280,7 @@ export default function ServiceDetails({
                     alt=""
                     width={56}
                     height={56}
-                    className="object-contain h-auto w-auto max-h-12 max-w-[3.5rem] dark:brightness-110"
+                    className="template-catalog-logo-img max-h-12 max-w-[3.5rem]"
                     sizes="64px"
                     unoptimized
                   />

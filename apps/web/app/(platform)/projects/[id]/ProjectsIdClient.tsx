@@ -25,6 +25,7 @@ import {
   type ServicesPageResponse,
 } from "@/lib/services-api";
 import { invalidateServiceScopedQueries } from "@/lib/invalidate-service-queries";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { useConfirm } from "@/components/confirm/ConfirmProvider";
@@ -1244,15 +1245,16 @@ export default function ProjectsIdClient({
                     <div className="relative flex min-h-0 flex-1 flex-col">
                       <div className="mb-2 flex items-start justify-between gap-1.5">
                         <div
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg overflow-hidden ${
-                            service.isActive
-                              ? dbLogo || tplLogo
+                          className={cn(
+                            "flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg",
+                            tplLogo
+                              ? "template-catalog-logo-tile template-catalog-logo-tile--sm"
+                              : service.isActive
                                 ? dbLogo
                                   ? "border border-sky-500/25 bg-transparent p-0.5"
-                                  : "border border-amber-500/25 bg-transparent p-0.5"
-                                : `border ${typeConf.color}`
-                              : "border border-border bg-muted/50 text-muted-foreground"
-                          }`}
+                                  : `border ${typeConf.color}`
+                                : "border border-border bg-muted/50 text-muted-foreground",
+                          )}
                         >
                           {dbLogo && dbEngineId ? (
                             <Image
@@ -1269,7 +1271,7 @@ export default function ProjectsIdClient({
                               alt=""
                               width={28}
                               height={28}
-                              className="object-contain h-auto w-auto max-h-7 dark:brightness-110"
+                              className="template-catalog-logo-img max-h-7 max-w-7"
                               sizes="36px"
                               unoptimized
                             />
