@@ -76,6 +76,47 @@ export function firstComposeServiceName(config: string): string {
   return 'app';
 }
 
+/**
+ * Prefer the compose service that exposes a public URL (template `SERVICE_URL_*`),
+ * so exec/terminal attach to the app container—not the first dependency (db/redis).
+ */
+export function primaryComposeServiceNameForExec(config: string): string {
+  const lines = config.split(/\r?\n/);
+  let inServices = false;
+  let servicesIndent = 0;
+  let serviceChildIndent: number | null = null;
+  let currentService: string | null = null;
+  let firstService: string | null = null;
+
+  for (const line of lines) {
+    const t = line.trim();
+    if (!inServices) {
+      if (t === 'services:' || /^\s*services:\s*$/.test(line)) {
+        inServices = true;
+        servicesIndent = line.match(/^\s*/)?.[0]?.length ?? 0;
+      }
+      continue;
+    }
+    const indent = line.match(/^\s*/)?.[0]?.length ?? 0;
+    if (indent <= servicesIndent && t && !t.startsWith('#')) break;
+
+    const svcM = line.match(/^\s*([a-zA-Z0-9_.-]+)\s*:/);
+    if (svcM && indent > servicesIndent) {
+      if (serviceChildIndent == null) serviceChildIndent = indent;
+      if (indent === serviceChildIndent) {
+        currentService = svcM[1]!;
+        if (!firstService) firstService = currentService;
+      }
+      continue;
+    }
+    if (currentService && /SERVICE_URL_/.test(line)) {
+      return currentService;
+    }
+  }
+
+  return firstService ?? firstComposeServiceName(config);
+}
+
 /** Container port from `ports: - "host:container"` in stack compose (application services). */
 export function parseContainerPortFromComposeYaml(
   config: string,

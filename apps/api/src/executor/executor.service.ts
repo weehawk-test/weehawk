@@ -24,10 +24,17 @@ import {
 import { resolveEffectiveDockerfileRel } from '../services/weehawk-build-paths';
 import { maybeRemoveApplicationSourceAfterDeploy } from './executor-app-source';
 import {
+  extractDockerContainerIdFromOutput,
+  firstNonEmptyCliLine,
+  isDockerContainerId,
+  looksLikeDockerContainerName,
+} from './docker-container-ref';
+import {
   firstComposeServiceName,
   firstImageRefFromComposeYaml,
   parseConfigHeaderValue,
   parseEnv,
+  primaryComposeServiceNameForExec,
   resolveNixpacksNodeMajorForRemoteBuild,
 } from './executor-compose-parse';
 import { removeDeploymentFolder } from './executor-deployment-fs';
@@ -48,7 +55,10 @@ import {
   parseTemplateIdFromDockerConfig,
   parseTemplatePortFromDockerConfig,
 } from '../common/template-service';
-import { templateComposeTraefikDynamicFilename } from '../traefik/template-compose-traefik-dynamic';
+import {
+  templateComposeTraefikContainerName,
+  templateComposeTraefikDynamicFilename,
+} from '../traefik/template-compose-traefik-dynamic';
 import { flattenVolumesFromComposeJson } from './executor-volumes';
 import { ensureComposeDependsOnListForSwarm } from './compose-depends-on-normalize';
 import { ensureComposeNamedVolumesDeclared } from './compose-volume-normalize';
@@ -1245,6 +1255,36 @@ fi
   }
 
   /**
+   * Resolve a running container ID from a name or ambiguous `docker ps`/`compose ps` output.
+   */
+  private async resolveRunningContainerIdByRefOnRemote(
+    remoteServerId: number,
+    projectUserId: number | null,
+    ref: string,
+  ): Promise<string | null> {
+    const token = ref.trim();
+    if (!token) return null;
+    if (isDockerContainerId(token)) return token.toLowerCase();
+
+    const refEsc = token.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = [
+      `cid=$(docker ps -q -f "name=^/${refEsc}$" -f status=running 2>/dev/null | head -n1 || true)`,
+      `if [ -z "$cid" ]; then cid=$(docker ps -q -f "name=${refEsc}" -f status=running 2>/dev/null | head -n1 || true); fi`,
+      `printf '%s' "$cid"`,
+    ].join('\n');
+    try {
+      const r = await this.remoteServersService.execDockerCliOnRemoteViaSsh(
+        remoteServerId,
+        projectUserId,
+        script,
+      );
+      return extractDockerContainerIdFromOutput(r.stdout);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Resolves a running container ID for docker exec (compose project or Swarm stack task).
    * @param composeServiceKey Optional exact `services:` key (e.g. database backup `composeService`).
    *   When omitted, uses the first service name in the compose YAML (legacy behavior).
@@ -1272,6 +1312,8 @@ fi
       } catch {
         return { error: 'Invalid compose service name.' };
       }
+    } else if (isWeehawkTemplateDockerConfig(service.dockerConfig || '')) {
+      key = primaryComposeServiceNameForExec(service.dockerConfig || '');
     } else {
       key = firstComposeServiceName(service.dockerConfig || '');
     }
@@ -1324,7 +1366,17 @@ fi
         } else {
           return { error: SWARM_NEEDS_DEPLOY_HOST_MESSAGE };
         }
-        const cid = stdout.trim().split(/\r?\n/).filter(Boolean)[0];
+        let cid = extractDockerContainerIdFromOutput(stdout);
+        if (!cid && sshIds.remoteServerId != null) {
+          const nameRef = firstNonEmptyCliLine(stdout);
+          if (looksLikeDockerContainerName(nameRef)) {
+            cid = await this.resolveRunningContainerIdByRefOnRemote(
+              sshIds.remoteServerId,
+              projectUserId,
+              nameRef,
+            );
+          }
+        }
         if (!cid) {
           return {
             error:
@@ -1349,7 +1401,31 @@ fi
             deployEnv,
           },
         );
-      const cid = pr.stdout.trim().split(/\r?\n/).filter(Boolean)[0];
+      let cid = extractDockerContainerIdFromOutput(pr.stdout);
+      if (!cid) {
+        const nameRef = firstNonEmptyCliLine(pr.stdout);
+        if (looksLikeDockerContainerName(nameRef)) {
+          cid = await this.resolveRunningContainerIdByRefOnRemote(
+            sshIds.remoteServerId,
+            projectUserId,
+            nameRef,
+          );
+        }
+      }
+      if (
+        !cid &&
+        isWeehawkTemplateDockerConfig(service.dockerConfig || '')
+      ) {
+        const stableName = templateComposeTraefikContainerName(
+          service.appName,
+          key,
+        );
+        cid = await this.resolveRunningContainerIdByRefOnRemote(
+          sshIds.remoteServerId,
+          projectUserId,
+          stableName,
+        );
+      }
       if (!cid) {
         return {
           error:

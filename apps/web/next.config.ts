@@ -32,7 +32,7 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "raw.githubusercontent.com",
-        pathname: "/coollabsio/coolify/**",
+        pathname: "/weehawkio/weehawk-templates/**",
       },
     ],
   },
